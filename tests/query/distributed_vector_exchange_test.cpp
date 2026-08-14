@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <memory>
+#include <optional>
 #include <ranges>
 #include <utility>
 #include <vector>
@@ -23,10 +25,22 @@ namespace {
   return schema::TabletId::from_uuid(uuid(seed)).value();
 }
 
+template <typename Value>
+[[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
 void store_u32_le(std::vector<std::byte>& bytes, const std::size_t offset,
                   const std::uint32_t value) {
   for (std::size_t index = 0U; index < 4U; ++index)
     bytes[offset + index] = static_cast<std::byte>((value >> (index * 8U)) & 0xffU);
+}
+
+TEST(DistributedVectorExchangeTest, DefinesExactCoordinatorByteLimits) {
+  EXPECT_EQ(kDefaultDistributedVectorCoordinatorBytes, std::size_t{64U} * 1024U * 1024U);
+  EXPECT_EQ(kMaximumDistributedVectorCoordinatorBytes, std::size_t{1024U} * 1024U * 1024U);
+  EXPECT_EQ(DistributedVectorCoordinatorLimits{}.maximum_total_batch_bytes,
+            kDefaultDistributedVectorCoordinatorBytes);
 }
 
 TEST(DistributedVectorExchangeTest, WrapsCanonicalAllTypeBatchAndEmptyTerminal) {
@@ -128,8 +142,10 @@ TEST(DistributedVectorExchangeTest, OwnsBoundedPartialReadsAndShortWriteProgress
     const auto suffix = reader.consume(first_encoded->bytes().subspan(split));
     ASSERT_TRUE(suffix.has_value()) << "split=" << split;
     EXPECT_EQ(suffix->consumed_bytes, first_encoded->bytes().size() - split) << "split=" << split;
-    const DistributedVectorExchangeMessage* decoded =
-        prefix->message.has_value() ? &*prefix->message : &*suffix->message;
+    const DistributedVectorExchangeMessage* decoded = optional_pointer(prefix->message);
+    if (decoded == nullptr)
+      decoded = optional_pointer(suffix->message);
+    ASSERT_NE(decoded, nullptr) << "split=" << split;
     EXPECT_EQ(decoded->sequence, 1U) << "split=" << split;
     EXPECT_TRUE(std::ranges::equal(decoded->encoded_batch, nested->bytes())) << "split=" << split;
     EXPECT_EQ(reader.buffered_bytes(), 0U) << "split=" << split;
@@ -147,8 +163,10 @@ TEST(DistributedVectorExchangeTest, OwnsBoundedPartialReadsAndShortWriteProgress
   ASSERT_TRUE(second.has_value());
   ASSERT_TRUE(second->message.has_value());
   EXPECT_EQ(second->consumed_bytes, second_encoded->bytes().size());
-  EXPECT_EQ(second->message->sequence, 2U);
-  EXPECT_TRUE(second->message->terminal);
+  const DistributedVectorExchangeMessage* decoded_second = optional_pointer(second->message);
+  ASSERT_NE(decoded_second, nullptr);
+  EXPECT_EQ(decoded_second->sequence, 2U);
+  EXPECT_TRUE(decoded_second->terminal);
 
   std::vector<std::byte> corrupt(first_encoded->bytes().begin(), first_encoded->bytes().end());
   corrupt.front() ^= std::byte{1U};

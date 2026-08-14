@@ -118,8 +118,10 @@ private:
   std::size_t written_bytes_{};
 };
 
-inline constexpr std::size_t kDefaultDistributedVectorCoordinatorBytes = 64U * 1024U * 1024U;
-inline constexpr std::size_t kMaximumDistributedVectorCoordinatorBytes = 1024U * 1024U * 1024U;
+inline constexpr std::size_t kDefaultDistributedVectorCoordinatorBytes =
+    std::size_t{64U} * 1024U * 1024U;
+inline constexpr std::size_t kMaximumDistributedVectorCoordinatorBytes =
+    std::size_t{1024U} * 1024U * 1024U;
 
 struct DistributedVectorCoordinatorLimits {
   DistributedCoordinatorLimits messages;
