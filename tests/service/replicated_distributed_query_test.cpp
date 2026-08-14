@@ -1,4 +1,6 @@
+#include "chronos/cluster/distributed_vector_aggregate_query_tcp_server_v2.hpp"
 #include "chronos/cluster/raft_observation_tcp_server.hpp"
+#include "chronos/common/byte_reader.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/storage.hpp"
 #include "chronos/manifest/temporal_codec.hpp"
@@ -247,6 +249,71 @@ make_follower_vector_aggregate_plan(const schema::TabletId& tablet_id,
   plan.read_policy = make_follower_plan(tablet_id, applied_position).read_policy;
   return plan;
 }
+
+[[nodiscard]] query::DistributedVectorQueryPlan
+make_follower_vector_count_plan(const schema::TabletId& tablet_id,
+                                const raft::LogIndex applied_position) {
+  query::DistributedVectorQueryPlan plan =
+      make_follower_vector_aggregate_plan(tablet_id, applied_position);
+  plan.query_id = uuid(27U);
+  plan.intent.aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}};
+  return plan;
+}
+
+class CountStarVectorAggregateWorker final
+    : public cluster::DistributedVectorAggregateQueryWorkerServiceV2 {
+public:
+  common::Result<std::vector<query::VectorAggregateDefinition>>
+  bind_definitions(const query::DistributedVectorFragmentDispatchV2& dispatch) override {
+    ++bind_calls;
+    return definitions(dispatch);
+  }
+
+  common::Result<query::DistributedVectorAggregateWorkerResultV2>
+  execute(const query::DistributedVectorFragmentDispatchV2& dispatch) override {
+    ++execute_calls;
+    auto bound = definitions(dispatch);
+    if (!bound.has_value())
+      return common::make_unexpected(bound.error());
+    auto state = query::MergeableVectorAggregateState::create(bound->front());
+    if (!state.has_value())
+      return common::make_unexpected(state.error());
+    for (std::size_t row = 0U; row < 3U; ++row) {
+      auto accumulated = state->accumulate_count_star();
+      if (!accumulated.has_value())
+        return common::make_unexpected(accumulated.error());
+    }
+    query::DistributedVectorAggregateWorkerResultV2 result{.definitions = std::move(*bound),
+                                                           .input_rows = 3U};
+    result.messages.emplace_back(
+        query::DistributedVectorAggregateExchangePosition{.query_id = dispatch.dispatch.query_id,
+                                                          .tablet_id = dispatch.dispatch.tablet_id,
+                                                          .sequence = 1U,
+                                                          .aggregate_ordinal = 0U,
+                                                          .terminal = true},
+        std::move(*state));
+    return result;
+  }
+
+  std::size_t bind_calls{};
+  std::size_t execute_calls{};
+
+private:
+  [[nodiscard]] static common::Result<std::vector<query::VectorAggregateDefinition>>
+  definitions(const query::DistributedVectorFragmentDispatchV2& dispatch) {
+    if (dispatch.dispatch.plan.mode != query::DistributedVectorPlanMode::kUngroupedAggregate ||
+        dispatch.dispatch.plan.aggregates.size() != 1U ||
+        dispatch.dispatch.plan.aggregates.front().operation !=
+            query::VectorAggregateOperation::kCountStar ||
+        dispatch.dispatch.plan.aggregates.front().input_index.has_value()) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInvalidArgument,
+                         "count-star test worker received a different aggregate plan"});
+    }
+    return std::vector<query::VectorAggregateDefinition>{
+        {.operation = query::VectorAggregateOperation::kCountStar, .input = std::nullopt}};
+  }
+};
 
 TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwner) {
   TemporaryDirectory directory;
@@ -732,6 +799,116 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
   EXPECT_EQ(grouped_lifecycle->state(),
             ReplicatedFollowerDistributedGroupedFloat64QueryState::kCancelled);
   EXPECT_EQ(grouped_lifecycle->result().error(), grouped_lifecycle_cancelled);
+
+  auto successful_snapshot = publisher->snapshot();
+  ASSERT_TRUE(successful_snapshot.has_value());
+  auto successful_lifecycle = ReplicatedFollowerDistributedVectorAggregateQueryV2::create(
+      make_follower_vector_count_plan(tablet_id, applied_position), std::move(*successful_snapshot),
+      query::DistributedVectorResultSchema{
+          .columns = {{"count",
+                       schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
+                       false}}},
+      {.source_node_id = 1U,
+       .first_correlation_id = 121U,
+       .tls_contexts = observation_tls_contexts,
+       .authenticator = &authenticator,
+       .node_authorizer = &authorizer,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000}},
+       .connect_timeout = std::chrono::milliseconds{1000},
+       .retry = {.maximum_attempts = 1U,
+                 .initial_backoff = std::chrono::milliseconds{1},
+                 .maximum_backoff = std::chrono::milliseconds{1}},
+       .maximum_pairs = 1U},
+      vector_lifecycle_query_config);
+  ASSERT_TRUE(successful_lifecycle.has_value()) << successful_lifecycle.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       successful_lifecycle->state() ==
+           ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kAcquiringAuthority;
+       ++iteration) {
+    ASSERT_TRUE(successful_lifecycle->poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(leader_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(follower_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(successful_lifecycle->state(),
+            ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting)
+      << successful_lifecycle->failure().to_string();
+  EXPECT_EQ(leader_service.calls, 4U);
+  EXPECT_EQ(follower_service.calls, 4U);
+
+  const network::Ipv4Endpoint follower_query_endpoint = follower_server->bound_endpoint();
+  ASSERT_TRUE(follower_server->shutdown().is_ok());
+  CountStarVectorAggregateWorker aggregate_worker;
+  auto aggregate_receiver = cluster::DistributedVectorAggregateQueryReceiverV2::create(
+      {.local_node_id = 12U,
+       .authorizer = &authorizer,
+       .worker = &aggregate_worker,
+       .maximum_response_frames = 1U,
+       .maximum_response_bytes = std::size_t{1024U} * 1024U});
+  ASSERT_TRUE(aggregate_receiver.has_value()) << aggregate_receiver.error().to_string();
+  auto aggregate_server = cluster::DistributedVectorAggregateQueryTcpServerV2::start(
+      {.listener = {.bind_endpoint = follower_query_endpoint},
+       .tls = observation_server_tls_config(),
+       .authenticator = &authenticator,
+       .receiver = &*aggregate_receiver,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000},
+                          .maximum_response_frames = 1U,
+                          .maximum_response_bytes = std::size_t{1024U} * 1024U},
+       .maximum_connections = 4U,
+       .maximum_accepts_per_poll = 4U});
+  ASSERT_TRUE(aggregate_server.has_value()) << aggregate_server.error().to_string();
+  ASSERT_EQ(aggregate_server->bound_endpoint(), follower_query_endpoint);
+
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       successful_lifecycle->state() ==
+           ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting;
+       ++iteration) {
+    ASSERT_TRUE(successful_lifecycle->poll_once(std::chrono::milliseconds{1}).is_ok())
+        << successful_lifecycle->failure().to_string();
+    ASSERT_TRUE(aggregate_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(successful_lifecycle->state(),
+            ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kComplete)
+      << successful_lifecycle->failure().to_string();
+  auto successful_result = successful_lifecycle->result();
+  ASSERT_TRUE(successful_result.has_value()) << successful_result.error().to_string();
+  // Guarded by the completed owner state and result assertion above.
+  // NOLINTBEGIN(bugprone-unchecked-optional-access)
+  const auto* const retained_result = std::addressof(successful_result->get());
+  ASSERT_EQ(retained_result->row_count, 1U);
+  ASSERT_EQ(retained_result->result_schema.columns.size(), 1U);
+  EXPECT_EQ(retained_result->result_schema.columns.front().name, "count");
+  auto decoded_result = network::decode_query_result_batch(retained_result->encoded_batch);
+  ASSERT_TRUE(decoded_result.has_value()) << decoded_result.error().to_string();
+  ASSERT_EQ(decoded_result->row_count(), 1U);
+  ASSERT_EQ(decoded_result->columns().size(), 1U);
+  const network::QueryResultCell* count_cell = decoded_result->cell(0U, 0U);
+  ASSERT_NE(count_cell, nullptr);
+  common::ByteReader count_reader{count_cell->value};
+  auto count = count_reader.read_i64_le();
+  ASSERT_TRUE(count.has_value());
+  EXPECT_EQ(*count, 3);
+  EXPECT_TRUE(count_reader.empty());
+  auto retained_again = successful_lifecycle->result();
+  ASSERT_TRUE(retained_again.has_value());
+  EXPECT_EQ(std::addressof(retained_again->get()), retained_result);
+  // NOLINTEND(bugprone-unchecked-optional-access)
+  EXPECT_TRUE(successful_lifecycle->poll_once(std::chrono::milliseconds{0}).is_ok());
+  EXPECT_EQ(successful_lifecycle->cancel().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(aggregate_worker.bind_calls, 1U);
+  EXPECT_EQ(aggregate_worker.execute_calls, 1U);
+  const auto successful_metrics = successful_lifecycle->metrics();
+  EXPECT_EQ(successful_metrics.authority.completed_pairs, 1U);
+  ASSERT_TRUE(successful_metrics.execution.has_value());
+  // Guarded by the execution-metrics assertion above.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  EXPECT_EQ(successful_metrics.execution->transport_completed_attempts, 1U);
+  EXPECT_EQ(aggregate_server->metrics().completed_connections, 1U);
+  EXPECT_TRUE(aggregate_server->shutdown().is_ok());
+  EXPECT_TRUE(leader_server->shutdown().is_ok());
 
   EXPECT_TRUE(barrier->shutdown().is_ok());
   EXPECT_TRUE(missing_tablet_barrier->shutdown().is_ok());

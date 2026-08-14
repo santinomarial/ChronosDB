@@ -425,8 +425,10 @@ aggregate definitions. The packaged leader-linearizable service boundary now tra
 through committed route resolution, portable aggregate execution, TCP scheduling, and final Native
 result publication without exposing an intermediate correlation vector. A distinct bounded-stale
 constructor carries an already-correlated leader/follower authority vector through the same
-post-binding lifecycle while preserving the follower target. Remote follower authority acquisition
-composition remains.
+post-binding lifecycle while preserving the follower target. The remote lifecycle now owns
+placement-backed authority acquisition, the pinned plan/schema/Manifest bundle, phase transition,
+execution cancellation, and final result access without returning the authority vector to its
+embedding.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated
@@ -460,7 +462,11 @@ before I/O. Packaged service ownership now includes the schema-bound vector aggr
 the original vector plan, result schema, and Manifest through acquisition, binds the complete
 authority through the metadata barrier, and transfers directly into TCP query execution. A focused
 one-process loopback now returns a real installed-CSEG response through the production inbound
-service. Moved or multi-process real-CSEG responses, remote worker-interrupt delivery, pooled
+service. A second end-to-end loopback drives the complete remote-follower owner through observation
+acquisition, same-endpoint aggregate-v2 mutual TLS, one terminal state, global finalization, and
+decoding of the retained Native Protocol `COUNT(*)` result. The test-local deterministic aggregate
+worker isolates lifecycle correlation from the separately covered production real-CSEG worker.
+Moved or multi-process real-CSEG responses, remote worker-interrupt delivery, pooled
 multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node
 fault handling remain work.
 

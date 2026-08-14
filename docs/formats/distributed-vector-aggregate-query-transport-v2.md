@@ -196,4 +196,7 @@ bounded authenticated lifecycle.
 retains the original vector plan, caller result schema, and Manifest pin while placement-backed
 leader/follower observation pairs execute. Only the complete canonical authority batch transfers
 into bounded-stale binding and the existing TCP owner. Phase-aware metrics, failure, cancellation,
-and final result access never expose a partial authority or aggregate result.
+and final result access never expose a partial authority or aggregate result. The executable
+loopback contract drives both mutual-TLS phases through `COMPLETE`, decodes the retained Native
+Protocol result, and verifies that the committed follower route is unchanged across the phase
+boundary.

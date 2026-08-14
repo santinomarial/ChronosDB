@@ -80,6 +80,19 @@ installed-consumer, formatter, changed-line static analysis, ASan/UBSan, and the
 suite. A later end-to-end task should drive the execution phase through a real aggregate worker to
 `COMPLETE` and decode the final Native result.
 
+## Retrospective validation evidence (2026-08-13)
+
+The end-to-end completion follow-up now drives the same owner from two real mutual-TLS observation
+services into a real definition-bound aggregate-v2 mutual-TLS service at the unchanged committed
+follower endpoint. A deterministic worker returns one complete `COUNT(*)` state, the owner reaches
+`COMPLETE`, and the test decodes the retained Native Protocol payload as one non-null `INT64` value
+of three. It also proves stable repeated result access, completed-state poll idempotence, rejection
+of post-completion cancellation, one authority request per peer, one worker execution, one completed
+query transport attempt, and clean server shutdown. The separately covered production inbound
+real-CSEG worker remains the authority/execution proof for installed data; this follow-up closes the
+composite phase-transition and final-publication evidence without changing a wire or ownership
+decision.
+
 ## Migration or rollback considerations
 
 Remote bounded-stale aggregate-v2 embeddings should replace manual phase orchestration with this
