@@ -93,6 +93,11 @@ struct ChunkPlan {
   std::vector<std::size_t> variable_value_bytes;
 };
 
+struct ChunkRange {
+  std::uint32_t first_row{};
+  std::uint32_t row_count{};
+};
+
 [[nodiscard]] common::Result<std::size_t> source_charge(const columnar::OwnedColumnarBatch& batch) {
   auto objects = multiply(batch.columns().size(), sizeof(columnar::OwnedColumnVector) + 64U,
                           "columnar batch source accounting overflowed");
@@ -106,12 +111,11 @@ struct ChunkPlan {
 }
 
 [[nodiscard]] common::Result<ChunkPlan> plan_chunk(const columnar::OwnedColumnarBatch& batch,
-                                                   const std::uint32_t first_row,
-                                                   const std::uint32_t row_count,
+                                                   const ChunkRange range,
                                                    const ColumnarBatchScanLimits& limits) {
   if (batch.columns().size() > limits.chunk.maximum_columns)
     return common::make_unexpected(exhausted("columnar batch scan exceeds the column limit"));
-  ChunkPlan plan{.row_count = row_count};
+  ChunkPlan plan{.row_count = range.row_count};
   try {
     plan.variable_value_bytes.resize(batch.columns().size());
   } catch (const std::bad_alloc&) {
@@ -119,28 +123,28 @@ struct ChunkPlan {
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("columnar batch column count exceeds limits"));
   }
-  auto selection =
-      multiply(row_count, sizeof(std::uint32_t), "columnar batch selection accounting overflowed");
+  auto selection = multiply(range.row_count, sizeof(std::uint32_t),
+                            "columnar batch selection accounting overflowed");
   if (!selection.has_value())
     return common::make_unexpected(selection.error());
   std::size_t retained = *selection;
   for (std::size_t column = 0U; column < batch.columns().size(); ++column) {
     const columnar::OwnedColumnVector& source = batch.columns()[column];
     if (source.nullable()) {
-      auto next = add(retained, columnar::bitmap_size(row_count),
+      auto next = add(retained, columnar::bitmap_size(range.row_count),
                       "columnar batch validity accounting overflowed");
       if (!next.has_value())
         return common::make_unexpected(next.error());
       retained = *next;
     }
     if (source.type().kind() == schema::LogicalTypeKind::kBool) {
-      auto next = add(retained, columnar::bitmap_size(row_count),
+      auto next = add(retained, columnar::bitmap_size(range.row_count),
                       "columnar batch Boolean accounting overflowed");
       if (!next.has_value())
         return common::make_unexpected(next.error());
       retained = *next;
     } else if (source.type().is_variable_width()) {
-      auto offsets = multiply(static_cast<std::size_t>(row_count) + 1U, sizeof(std::uint32_t),
+      auto offsets = multiply(static_cast<std::size_t>(range.row_count) + 1U, sizeof(std::uint32_t),
                               "columnar batch offset accounting overflowed");
       if (!offsets.has_value())
         return common::make_unexpected(offsets.error());
@@ -149,8 +153,8 @@ struct ChunkPlan {
         return common::make_unexpected(next.error());
       retained = *next;
       std::size_t values{};
-      for (std::uint32_t row = 0U; row < row_count; ++row) {
-        auto cell = batch.cell({column, first_row + row});
+      for (std::uint32_t row = 0U; row < range.row_count; ++row) {
+        auto cell = batch.cell({column, range.first_row + row});
         if (!cell.has_value())
           return common::make_unexpected(internal("columnar batch cell became inaccessible"));
         if (cell->is_null())
@@ -171,7 +175,7 @@ struct ChunkPlan {
         return common::make_unexpected(next.error());
       retained = *next;
     } else {
-      auto values = multiply(row_count, fixed_width(source.type().kind()),
+      auto values = multiply(range.row_count, fixed_width(source.type().kind()),
                              "columnar batch fixed values overflowed");
       if (!values.has_value())
         return common::make_unexpected(values.error());
@@ -327,7 +331,8 @@ ColumnarBatchScanOperator::next(const QueryResourceContext& resources) {
   const std::uint32_t maximum =
       std::min(limits_.maximum_rows_per_chunk, limits_.chunk.maximum_rows);
   const std::uint32_t row_count = std::min(batch_->row_count() - next_row_, maximum);
-  auto plan = plan_chunk(*batch_, next_row_, row_count, limits_);
+  auto plan =
+      plan_chunk(*batch_, ChunkRange{.first_row = next_row_, .row_count = row_count}, limits_);
   if (!plan.has_value())
     return common::make_unexpected(plan.error());
   auto reservation = resources.reserve(plan->charge);

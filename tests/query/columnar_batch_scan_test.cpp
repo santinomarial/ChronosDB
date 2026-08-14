@@ -46,6 +46,7 @@ TEST(ColumnarBatchScanTest, EmitsBoundedOwnedCanonicalChunksAndReleasesSourceCre
   ASSERT_TRUE(second.has_value()) << second.error().to_string();
   ASSERT_EQ(second->kind(), PhysicalOperatorStepKind::kChunk);
   const VectorChunk& second_chunk = second->chunk()->chunk();
+  EXPECT_EQ(second_chunk.physical_row_count(), 1U);
   EXPECT_TRUE(second_chunk.cell({1U, 0U})->is_null());
   EXPECT_FALSE(second_chunk.cell({2U, 0U})->boolean().value());
 
