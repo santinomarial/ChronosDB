@@ -162,7 +162,7 @@ common::Status MetadataStateMachine::apply_committed(const LogIndex index,
                impl_->nodes.size() >= impl_->limits.maximum_nodes)) {
             return invalid("cluster node metadata is invalid or full");
           }
-          impl_->nodes.insert_or_assign(value.node_id, std::move(value));
+          impl_->nodes.insert_or_assign(value.node_id, std::forward<decltype(value)>(value));
         } else if constexpr (std::is_same_v<T, SchemaMetadata>) {
           if (value.table_id.uuid().is_nil() || value.schema_id.uuid().is_nil() ||
               (!impl_->schemas.contains(value.schema_id) &&
@@ -195,7 +195,7 @@ common::Status MetadataStateMachine::apply_committed(const LogIndex index,
                value.placement_epoch <= existing->second.placement_epoch)) {
             return invalid("tablet placement must preserve table and advance epoch");
           }
-          impl_->tablets.insert_or_assign(value.tablet_id, std::move(value));
+          impl_->tablets.insert_or_assign(value.tablet_id, std::forward<decltype(value)>(value));
         } else if constexpr (std::is_same_v<T, RetentionMetadata>) {
           if (value.table_id.uuid().is_nil() || value.system_history_ns < 0 ||
               value.retry_retention_positions == 0U) {
@@ -275,7 +275,7 @@ MetadataStateMachine::apply_committed_tablet_group_binding(const LogIndex index,
     if (!owner_inserted)
       return invalid("Raft group identity is already bound");
     try {
-      impl_->tablet_groups.emplace(binding.tablet_id, std::move(binding));
+      impl_->tablet_groups.emplace(binding.tablet_id, binding);
     } catch (...) {
       impl_->group_tablets.erase(owner);
       throw;

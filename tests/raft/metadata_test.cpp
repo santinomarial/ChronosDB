@@ -34,7 +34,7 @@ TEST(MetadataStateMachineTest, AppliesSchemaPlacementNodesAndRetentionOnlyInComm
           ->apply_committed(2U, SchemaMetadata{table, schema_id, schema::SchemaVersion::initial()})
           .is_ok());
   EXPECT_TRUE(
-      metadata->apply_committed(3U, TabletPlacementMetadata{table, tablet, 1U, {1U, 2U, 3U}, 1U})
+      metadata->apply_committed(3U, TabletPlacementMetadata{table, tablet, 1U, {3U, 1U, 2U}, 1U})
           .is_ok());
   const GroupId tablet_group = group(4U);
   EXPECT_TRUE(metadata
@@ -54,6 +54,7 @@ TEST(MetadataStateMachineTest, AppliesSchemaPlacementNodesAndRetentionOnlyInComm
   EXPECT_EQ(metadata->find_node(1U)->endpoint, "node-1");
   EXPECT_EQ(metadata->find_schema(schema_id)->table_id, table);
   EXPECT_EQ(metadata->find_tablet(tablet)->leader_hint, 1U);
+  EXPECT_EQ(metadata->find_tablet(tablet)->replicas, (std::vector<NodeId>{1U, 2U, 3U}));
   EXPECT_EQ(metadata->find_tablet_group_binding(tablet)->group_id, tablet_group);
   EXPECT_EQ(metadata->find_retention(table)->system_history_ns, 1000);
   EXPECT_FALSE(metadata->apply_committed(8U, ClusterNodeMetadata{2U, "node-2"}).is_ok());
