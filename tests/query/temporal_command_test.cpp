@@ -8,6 +8,12 @@
 namespace chronos::query {
 namespace {
 
+TEST(TemporalCommandTest, DefaultsToSixtyFourMebibytesOfMutationMetadata) {
+  const TemporalCommandLimits limits;
+
+  EXPECT_EQ(limits.maximum_metadata_bytes, std::size_t{64U} * 1024U * 1024U);
+}
+
 TEST(TemporalCommandTest, RoundTripsCanonicalBatchAndMutationMetadata) {
   auto batch = columnar::OwnedColumnarBatch::create(columnar::test::batch_schema(),
                                                     columnar::test::batch_columns());

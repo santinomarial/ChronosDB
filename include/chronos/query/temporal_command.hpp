@@ -30,7 +30,7 @@ struct TemporalMutationDescriptor {
 struct TemporalCommandLimits {
   std::uint32_t maximum_mutations{1U << 20U};
   std::size_t maximum_identity_bytes{1024U};
-  std::size_t maximum_metadata_bytes{64U * 1024U * 1024U};
+  std::size_t maximum_metadata_bytes{std::size_t{64U} * 1024U * 1024U};
   columnar::ColumnarBatchDecodeLimits batch;
 };
 
