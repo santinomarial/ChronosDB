@@ -10,7 +10,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <optional>
 #include <utility>
 #include <vector>
 
@@ -30,23 +29,29 @@ inline constexpr std::size_t kEntryFixedSize = 32U;
 }
 
 [[nodiscard]] common::Result<std::size_t> payload_size(const PersistentState& state) {
-  std::optional<std::size_t> size{kStateFixedSizeV1_1};
   const auto voter_bytes = common::checked_multiply(state.snapshot.voters.size(), sizeof(NodeId));
   if (!voter_bytes.has_value())
     return common::make_unexpected(
         common::Status{common::StatusCode::kOutOfRange, "snapshot voter size overflows"});
-  size = common::checked_add(*size, *voter_bytes);
+  const auto initial_size = common::checked_add(kStateFixedSizeV1_1, voter_bytes.value());
+  if (!initial_size.has_value())
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kOutOfRange, "snapshot voter size overflows"});
+  std::size_t size = initial_size.value();
   for (const LogEntry& entry : state.log) {
-    size = common::checked_add(*size, kEntryFixedSize);
-    if (size.has_value()) {
-      size = common::checked_add(*size, entry.payload.size());
-    }
-    if (!size.has_value()) {
+    const auto entry_size = common::checked_add(size, kEntryFixedSize);
+    if (!entry_size.has_value()) {
       return common::make_unexpected(common::Status{common::StatusCode::kOutOfRange,
                                                     "multiplexed log payload size overflows"});
     }
+    const auto next_size = common::checked_add(entry_size.value(), entry.payload.size());
+    if (!next_size.has_value()) {
+      return common::make_unexpected(common::Status{common::StatusCode::kOutOfRange,
+                                                    "multiplexed log payload size overflows"});
+    }
+    size = next_size.value();
   }
-  return *size;
+  return size;
 }
 
 [[nodiscard]] common::Status write_state(common::ByteWriter& writer, const PersistentState& state) {

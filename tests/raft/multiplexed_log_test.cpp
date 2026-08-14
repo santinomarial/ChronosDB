@@ -87,5 +87,25 @@ TEST(MultiplexedLogTest, DecodesLegacyMinorZeroWithoutSnapshotMembershipCheckpoi
   EXPECT_EQ(decoded->persistent.state, state);
 }
 
+TEST(MultiplexedLogTest, EncodesTheExactMaximumAndRejectsTheNextByte) {
+  GroupPersistentState persistent{group_id(std::byte{3U}), 1U, {}};
+  persistent.state.current_term = 1U;
+  persistent.state.log = {LogEntry{1U, 1U, 1U, {}}};
+  auto encoded = encode_multiplexed_log_record_v1(persistent);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  const std::size_t maximum_entry_payload = kMaximumMultiplexedLogRecordSize - encoded->size();
+  persistent.state.log.front().payload.assign(maximum_entry_payload, std::byte{0xa5U});
+
+  encoded = encode_multiplexed_log_record_v1(persistent);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  EXPECT_EQ(encoded->size(), kMaximumMultiplexedLogRecordSize);
+
+  persistent.physical_sequence = 2U;
+  persistent.state.log.front().payload.push_back(std::byte{0x5aU});
+  auto too_large = encode_multiplexed_log_record_v1(persistent);
+  ASSERT_FALSE(too_large.has_value());
+  EXPECT_EQ(too_large.error().code(), common::StatusCode::kResourceExhausted);
+}
+
 } // namespace
 } // namespace chronos::raft

@@ -15,7 +15,7 @@ inline constexpr std::uint16_t kMultiplexedLogFormatMajor = 1U;
 inline constexpr std::uint16_t kMultiplexedLogFormatMinor = 1U;
 inline constexpr std::size_t kMultiplexedLogHeaderSize = 64U;
 inline constexpr std::size_t kMultiplexedLogTrailerSize = 4U;
-inline constexpr std::size_t kMaximumMultiplexedLogRecordSize = 16U * 1024U * 1024U;
+inline constexpr std::size_t kMaximumMultiplexedLogRecordSize = std::size_t{16U} * 1024U * 1024U;
 
 struct DecodedGroupPersistentState {
   GroupPersistentState persistent;
