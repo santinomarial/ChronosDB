@@ -78,15 +78,25 @@ TEST(TemporalCommandExecutorTest, AcknowledgesLocalSyncThenRecoversThePublishedC
   auto provider = TemporalSnapshotProvider::create(values->schema_ptr());
   ASSERT_TRUE(provider.has_value()) << provider.error().to_string();
 
-  auto executed = execute_temporal_command(input(values, TemporalMutationKind::kOriginal, 1000),
-                                           **provider, *coordinator);
-  ASSERT_TRUE(executed.has_value()) << executed.error().to_string();
-  EXPECT_EQ(executed->wal_commit.requested_durability, wal::WalDurabilityMode::kLocalSync);
-  EXPECT_EQ(executed->wal_commit.effective_durability, wal::WalDurabilityMode::kLocalSync);
-  ASSERT_TRUE(executed->wal_commit.durable_record_sequence.has_value());
-  EXPECT_GE(*executed->wal_commit.durable_record_sequence,
-            executed->wal_commit.append.record_sequence);
-  EXPECT_EQ(executed->application.system_commit_position, 1U);
+  const auto request = input(values, TemporalMutationKind::kOriginal, 1000);
+  auto executed = execute_temporal_command(request, **provider, *coordinator);
+  if (!executed.has_value()) {
+    ADD_FAILURE() << executed.error().to_string();
+    return;
+  }
+  const TemporalCommandExecutionResult& execution = executed.value();
+  EXPECT_EQ(request.mutations.size(), 2U);
+  EXPECT_EQ(request.batch, values);
+  EXPECT_EQ(execution.wal_commit.requested_durability, wal::WalDurabilityMode::kLocalSync);
+  EXPECT_EQ(execution.wal_commit.effective_durability, wal::WalDurabilityMode::kLocalSync);
+  if (!execution.wal_commit.durable_record_sequence.has_value()) {
+    ADD_FAILURE() << "LOCAL_SYNC completion did not report a durable record sequence";
+    return;
+  }
+  const std::uint64_t durable_record_sequence =
+      execution.wal_commit.durable_record_sequence.value();
+  EXPECT_GE(durable_record_sequence, execution.wal_commit.append.record_sequence);
+  EXPECT_EQ(execution.application.system_commit_position, 1U);
   EXPECT_EQ((*provider)->latest_commit_position(), 1U);
   EXPECT_FALSE((*provider)->is_failed());
   EXPECT_TRUE(coordinator->shutdown().is_ok());

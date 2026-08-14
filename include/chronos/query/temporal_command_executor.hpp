@@ -32,7 +32,8 @@ struct TemporalCommandExecutionResult {
 // caller must serialize this function with every other write to provider. Any failure after WAL
 // admission fails provider closed because recovery must reconcile whether the command is durable.
 [[nodiscard]] common::Result<TemporalCommandExecutionResult>
-execute_temporal_command(TemporalCommandExecutionInput input, TemporalSnapshotProvider& provider,
+execute_temporal_command(const TemporalCommandExecutionInput& input,
+                         TemporalSnapshotProvider& provider,
                          wal::WalCommitCoordinator& wal_coordinator);
 
 } // namespace chronos::query

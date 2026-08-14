@@ -111,15 +111,16 @@ materialize(const columnar::OwnedColumnarBatch& batch,
 
 template <typename Result>
 [[nodiscard]] common::Result<Result> fail_after_admission(TemporalSnapshotProvider& provider,
-                                                          common::Status status) {
+                                                          const common::Status& status) {
   const common::Status failed = provider.fail_closed();
-  return common::make_unexpected(failed.is_ok() ? std::move(status) : failed);
+  return common::make_unexpected(failed.is_ok() ? status : failed);
 }
 
 } // namespace
 
 common::Result<TemporalCommandExecutionResult>
-execute_temporal_command(TemporalCommandExecutionInput input, TemporalSnapshotProvider& provider,
+execute_temporal_command(const TemporalCommandExecutionInput& input,
+                         TemporalSnapshotProvider& provider,
                          wal::WalCommitCoordinator& wal_coordinator) {
   if (input.batch == nullptr) {
     return common::make_unexpected(invalid("temporal execution requires an owning batch"));
