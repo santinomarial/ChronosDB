@@ -276,14 +276,14 @@ std::size_t EncodedTemporalManifest::size() const noexcept {
 }
 
 DecodedTemporalManifestView::DecodedTemporalManifestView(
-    const std::uint64_t generation, const std::uint64_t previous_generation,
-    const DatabaseId database_id,
+    const GenerationLineage lineage, const DatabaseId database_id,
     std::optional<TemporalWalReclaimCheckpoint> wal_reclaim_checkpoint,
     std::vector<TemporalTabletDescriptor> tablets, std::vector<TemporalPartDescriptor> parts,
     std::vector<TemporalRetryDescriptor> retries, const common::ByteView encoded_bytes) noexcept
-    : generation_(generation), previous_generation_(previous_generation), database_id_(database_id),
-      wal_reclaim_checkpoint_(std::move(wal_reclaim_checkpoint)), tablets_(std::move(tablets)),
-      parts_(std::move(parts)), retries_(std::move(retries)), encoded_bytes_(encoded_bytes) {}
+    : generation_(lineage.generation), previous_generation_(lineage.previous_generation),
+      database_id_(database_id), wal_reclaim_checkpoint_(wal_reclaim_checkpoint),
+      tablets_(std::move(tablets)), parts_(std::move(parts)), retries_(std::move(retries)),
+      encoded_bytes_(encoded_bytes) {}
 std::span<const TemporalTabletDescriptor> DecodedTemporalManifestView::tablets() const noexcept {
   return tablets_;
 }
@@ -704,9 +704,14 @@ TemporalManifestDecodeResult decode_manifest_v2_temporal_prefix(const common::By
   if (!model.is_ok()) {
     return std::unexpected(corruption(model.message()));
   }
-  return DecodedTemporalManifestView{generation,         previous,           *database_id,
-                                     wal_checkpoint,     std::move(tablets), std::move(parts),
-                                     std::move(retries), generation_bytes};
+  return DecodedTemporalManifestView{DecodedTemporalManifestView::GenerationLineage{
+                                         .generation = generation, .previous_generation = previous},
+                                     *database_id,
+                                     wal_checkpoint,
+                                     std::move(tablets),
+                                     std::move(parts),
+                                     std::move(retries),
+                                     generation_bytes};
 }
 
 TemporalManifestDecodeResult decode_manifest_v2_temporal_exact(const common::ByteView bytes,

@@ -118,8 +118,7 @@ TEST(TemporalManifestCodecTest, RoundTripsCanonicalSourceBoundGenerationDetermin
   ASSERT_TRUE(decoded.has_value()) << decoded.error().status().to_string();
   EXPECT_EQ(decoded->generation(), 2U);
   EXPECT_EQ(decoded->previous_generation(), 1U);
-  ASSERT_TRUE(decoded->wal_reclaim_checkpoint().has_value());
-  EXPECT_EQ(decoded->wal_reclaim_checkpoint()->coordinate.record_sequence, 5U);
+  EXPECT_EQ(decoded->wal_reclaim_checkpoint(), fixture.input().wal_reclaim_checkpoint);
   EXPECT_TRUE(std::ranges::equal(decoded->tablets(), fixture.tablets));
   EXPECT_TRUE(std::ranges::equal(decoded->parts(), fixture.parts));
   EXPECT_TRUE(std::ranges::equal(decoded->retries(), fixture.retries));

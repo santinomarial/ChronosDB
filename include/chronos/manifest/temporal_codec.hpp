@@ -128,8 +128,12 @@ public:
   [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept;
 
 private:
-  DecodedTemporalManifestView(std::uint64_t generation, std::uint64_t previous_generation,
-                              DatabaseId database_id,
+  struct GenerationLineage {
+    std::uint64_t generation{};
+    std::uint64_t previous_generation{};
+  };
+
+  DecodedTemporalManifestView(GenerationLineage lineage, DatabaseId database_id,
                               std::optional<TemporalWalReclaimCheckpoint> wal_reclaim_checkpoint,
                               std::vector<TemporalTabletDescriptor> tablets,
                               std::vector<TemporalPartDescriptor> parts,
