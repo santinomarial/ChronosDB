@@ -45,8 +45,8 @@ public:
     return failure;
   }
 
-  [[nodiscard]] common::Status publish_catalog() {
-    auto projected = machine->state().catalog_snapshot();
+  [[nodiscard]] common::Status publish_catalog(DurableMetadataStateMachine& active_machine) {
+    auto projected = active_machine.state().catalog_snapshot();
     if (!projected.has_value())
       return fail(projected.error());
     try {
@@ -70,8 +70,8 @@ public:
                                                    config.codec_limits, config.schema_codec_limits);
     if (!recovered.has_value())
       return fail(recovered.error());
-    machine.emplace(std::move(*recovered));
-    const common::Status published_status = publish_catalog();
+    DurableMetadataStateMachine& active_machine = machine.emplace(std::move(*recovered));
+    common::Status published_status = publish_catalog(active_machine);
     if (!published_status.is_ok())
       return published_status;
     config.snapshot_storage.reset();
@@ -83,14 +83,16 @@ public:
     std::lock_guard lock{mutex};
     if (!failure.is_ok())
       return failure;
-    if (!initialized || shutdown || !machine.has_value())
+    DurableMetadataStateMachine* const active_machine =
+        machine.has_value() ? &machine.value() : nullptr;
+    if (!initialized || shutdown || active_machine == nullptr)
       return fail(unavailable("metadata application owner is not active"));
-    auto applied = machine->apply_committed();
+    auto applied = active_machine->apply_committed();
     if (!applied.has_value())
       return fail(applied.error());
     if (applied->last_applied_index == 0U)
       return common::Status::ok();
-    return publish_catalog();
+    return publish_catalog(*active_machine);
   }
 
   mutable std::mutex mutex;

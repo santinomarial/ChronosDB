@@ -272,5 +272,13 @@ TEST(AsyncRaftMetadataApplicationTest, RejectsNilGroupBeforeStartingAWorker) {
   EXPECT_EQ(invalid.error().code(), common::StatusCode::kInvalidArgument);
 }
 
+TEST(AsyncRaftMetadataApplicationTest, PublishesNothingBeforeWorkerInitialization) {
+  auto extension = application(group_id(0x56U));
+  ASSERT_TRUE(extension.has_value()) << extension.error().to_string();
+  EXPECT_FALSE((*extension)->initialized());
+  EXPECT_FALSE((*extension)->failed());
+  EXPECT_EQ((*extension)->catalog_snapshot().error().code(), common::StatusCode::kUnavailable);
+}
+
 } // namespace
 } // namespace chronos::raft
