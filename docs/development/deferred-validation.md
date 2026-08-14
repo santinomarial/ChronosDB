@@ -402,9 +402,11 @@
   specialization/lifecycle gates while retaining the proved follower target. A packaged remote
   lifecycle now pins the plan/Manifest through placement-backed authenticated batch acquisition,
   transfers only the complete group-sorted authority vector, and owns metrics/cancellation across
-  both phases. Retryable terminal grouped failures now accept only a finite explicit whole-query
-  replacement after exact logical-shape, group-key, nonregressing-generation, and unchanged-limit
-  validation; old partials and pins are discarded together.
+  both phases. Deterministic allocation sweeps cover its construction and real mutual-TLS
+  authority-to-scheduler transition: local exhaustion is sticky, publishes no execution/result,
+  and restores the exact Manifest pin. Retryable terminal grouped failures now accept only a finite
+  explicit whole-query replacement after exact logical-shape, group-key, nonregressing-generation,
+  and unchanged-limit validation; old partials and pins are discarded together.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,

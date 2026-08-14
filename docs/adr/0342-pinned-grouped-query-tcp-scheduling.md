@@ -66,6 +66,11 @@ clears every active client, and leaves retry and transport-failure metrics uncha
 Allocator-linked construction coverage includes the TLS owner's sticky diagnostic state instead of
 hiding that allocation behind `noexcept`. No wire or durable format changes.
 
+The packaged bounded-stale grouped lifecycle additionally sweeps scheduler construction after real
+mutual-TLS authority acquisition. The scheduler owner's diagnostic status may allocate, so its
+implementation constructor is not `noexcept`; an injected failure returns
+`RESOURCE_EXHAUSTED` with no active attempt, no published result, and exact Manifest-pin rollback.
+
 Packaged metadata-backed grouped construction, explicit whole-query authority rebinding,
 multi-key/non-FLOAT64 grouping, general vector fragments, and broad fault/measurement evidence
 remain incomplete. No Phase 16 exit gate is claimed.

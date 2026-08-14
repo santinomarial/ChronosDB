@@ -45,6 +45,12 @@ follower pair exactly once for the grouped lifecycle, transitions to a running g
 exposes both phase metrics, and proves execution-phase cancellation is sticky. Header
 self-containment and the installed-consumer gate cover the public lifecycle.
 
+Deterministic allocation sweeps now cover lifecycle construction and the real mutual-TLS
+authority-to-execution transition. Every selected allocation failure returns sticky
+`RESOURCE_EXHAUSTED`, cancels authority, installs no execution or result, and restores the exact
+Manifest-pin count. The service and grouped TCP scheduler implementations therefore do not claim
+`noexcept` around constructors that retain allocating diagnostic statuses.
+
 The test does not complete a real remote CSEG response. Explicit grouped authority rebinding,
 general vector fragments, multi-key/non-FLOAT64 grouping, real multi-process failover, and broad
 fault/measurement evidence remain incomplete. No Phase 16 exit gate is claimed.
