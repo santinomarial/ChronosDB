@@ -361,7 +361,7 @@ decode_distributed_aggregate_fragment_exact(const common::ByteView bytes,
     return common::make_unexpected(corruption("distributed fragment identity is invalid"));
   }
 
-  DistributedReadConsistency decoded_consistency;
+  DistributedReadConsistency decoded_consistency{DistributedReadConsistency::kLeaderLinearizable};
   switch (*consistency) {
   case static_cast<std::uint8_t>(DistributedReadConsistency::kLeaderLinearizable):
     decoded_consistency = DistributedReadConsistency::kLeaderLinearizable;
@@ -423,7 +423,7 @@ decode_distributed_aggregate_fragment_exact(const common::ByteView bytes,
                                     : std::nullopt,
         .destination_column_ordinals = std::move(projection),
         .aggregate_input_index = *aggregate_input_index,
-        .event_time_predicate = std::move(predicate)};
+        .event_time_predicate = predicate};
     const common::Status validation = validate_fragment(fragment);
     if (!validation.is_ok())
       return common::make_unexpected(corruption("distributed fragment semantics are invalid"));

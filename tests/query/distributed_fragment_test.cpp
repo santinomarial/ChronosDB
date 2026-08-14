@@ -160,6 +160,11 @@ TEST(DistributedFragmentTest, RejectsCorruptionVersionsCanonicalViolationsAndLim
   rewrite_checksums(future, true);
   EXPECT_EQ(decode_distributed_aggregate_fragment_exact(future).error().code(),
             common::StatusCode::kNotSupported);
+  std::vector<std::byte> unknown_consistency = canonical;
+  unknown_consistency[188U] = std::byte{0xffU};
+  rewrite_checksums(unknown_consistency, true);
+  EXPECT_EQ(decode_distributed_aggregate_fragment_exact(unknown_consistency).error().code(),
+            common::StatusCode::kCorruption);
 
   std::vector<std::byte> duplicate = canonical;
   store_u32_le(duplicate, 220U, 4U);
@@ -183,7 +188,7 @@ TEST(DistributedFragmentTest, EncoderRejectsNoncanonicalRoutesProjectionAndReadP
   EXPECT_EQ(encode_distributed_aggregate_fragment(fragment).error().code(),
             common::StatusCode::kInvalidArgument);
   fragment = linearizable_fragment();
-  fragment.linearizable_barrier->read_index = 11U;
+  fragment.linearizable_barrier = raft::ReadBarrier{9U, 11U, 11U};
   EXPECT_EQ(encode_distributed_aggregate_fragment(fragment).error().code(),
             common::StatusCode::kInvalidArgument);
   fragment = linearizable_fragment();
