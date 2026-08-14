@@ -3,6 +3,8 @@
 #include <chrono>
 #include <filesystem>
 #include <gtest/gtest.h>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -54,6 +56,14 @@ public:
   Term last_term{};
 };
 
+class ThrowingDeadlineSource final : public RaftElectionDeadlineSource {
+public:
+  common::Result<RaftTimerRuntime::TimePoint>
+  next_election_deadline(const GroupId&, Term, RaftTimerRuntime::TimePoint) override {
+    throw std::runtime_error{"deadline source failure"};
+  }
+};
+
 [[nodiscard]] RaftGroupObservation follower(const GroupId& id) {
   return {.group_id = id, .node_id = 1U, .role = Role::kFollower, .current_term = 0U};
 }
@@ -86,24 +96,28 @@ TEST(RaftTimerDriverTest, DrivesBootstrapElectionAndHeartbeatThroughDurableOwner
   ASSERT_TRUE(driver.has_value()) << driver.error().to_string();
   const auto start = RaftTimerDriver::TimePoint{};
   ASSERT_TRUE(driver->add_group(follower(group()), start).is_ok());
-  ASSERT_TRUE(driver->next_deadline().has_value());
-  EXPECT_EQ(*driver->next_deadline(), start + 5ms);
+  EXPECT_EQ(driver->next_deadline(), std::optional{start + 5ms});
   EXPECT_EQ(deadlines.last_term, 0U);
   EXPECT_TRUE(driver->drive(start + 4ms).is_ok());
   EXPECT_EQ(driver->inflight_actions(), 0U);
 
   drive_until_completed(*driver, start + 5ms, 1U);
+  EXPECT_EQ(driver->next_completed_sequence(), std::optional<std::uint64_t>{1U});
   auto election = driver->take_completed();
   ASSERT_TRUE(election.has_value()) << election.error().to_string();
   EXPECT_EQ(election->submission_sequence, 1U);
   EXPECT_EQ(election->action.kind, RaftTimerActionKind::kStartElection);
   ASSERT_TRUE(election->result.status.is_ok()) << election->result.status.to_string();
-  ASSERT_TRUE(election->result.transition.has_value());
-  EXPECT_TRUE(election->result.transition->persistence.has_value());
+  const auto& election_transition = election->result.transition;
+  if (!election_transition.has_value()) {
+    ADD_FAILURE() << "election completion lacks its transition";
+  } else {
+    EXPECT_TRUE(election_transition.value().persistence.has_value());
+  }
   EXPECT_EQ(election->observation.role, Role::kLeader);
   EXPECT_EQ(election->observation.current_term, 1U);
-  ASSERT_TRUE(driver->next_deadline().has_value());
-  EXPECT_EQ(*driver->next_deadline(), start + 7ms);
+  EXPECT_EQ(driver->next_completed_sequence(), std::nullopt);
+  EXPECT_EQ(driver->next_deadline(), std::optional{start + 7ms});
 
   drive_until_completed(*driver, start + 7ms, 1U);
   auto heartbeat = driver->take_completed();
@@ -112,6 +126,26 @@ TEST(RaftTimerDriverTest, DrivesBootstrapElectionAndHeartbeatThroughDurableOwner
   EXPECT_EQ(heartbeat->action.kind, RaftTimerActionKind::kHeartbeat);
   EXPECT_TRUE(heartbeat->result.status.is_ok());
   EXPECT_EQ(heartbeat->observation.role, Role::kLeader);
+  ASSERT_TRUE(runtime->shutdown().is_ok());
+}
+
+TEST(RaftTimerDriverTest, ContainsElectionDeadlineSourceExceptions) {
+  TemporaryDirectory directory;
+  auto runtime = AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group(), {1U}}});
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  ThrowingDeadlineSource deadlines;
+  auto driver = RaftTimerDriver::create({.runtime = &runtime.value(),
+                                         .election_deadlines = &deadlines,
+                                         .limits = {.maximum_inflight_actions = 1U,
+                                                    .maximum_completed_actions = 1U,
+                                                    .timers = {.maximum_groups = 1U}}});
+  ASSERT_TRUE(driver.has_value()) << driver.error().to_string();
+
+  const common::Status status = driver->add_group(follower(group()), RaftTimerDriver::TimePoint{});
+  EXPECT_EQ(status.code(), common::StatusCode::kInternal);
+  EXPECT_FALSE(driver->failed());
+  EXPECT_FALSE(driver->next_deadline().has_value());
   ASSERT_TRUE(runtime->shutdown().is_ok());
 }
 
@@ -137,9 +171,11 @@ TEST(RaftTimerDriverTest, CompletedQueueBackpressuresOwningResults) {
   ASSERT_TRUE(driver->add_group(follower(second), start).is_ok());
   drive_until_completed(*driver, start + 5ms, 1U);
   EXPECT_LE(driver->inflight_actions(), 1U);
+  EXPECT_TRUE(driver->next_completed_sequence().has_value());
   auto one = driver->take_completed();
   ASSERT_TRUE(one.has_value());
   drive_until_completed(*driver, start + 5ms, 1U);
+  EXPECT_TRUE(driver->next_completed_sequence().has_value());
   auto two = driver->take_completed();
   ASSERT_TRUE(two.has_value());
   EXPECT_LT(one->submission_sequence, two->submission_sequence);

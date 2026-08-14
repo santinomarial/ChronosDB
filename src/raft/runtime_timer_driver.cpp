@@ -28,14 +28,14 @@ public:
       : config_(config), timers_(std::move(timers)), pending_(std::move(pending)),
         completed_(std::move(completed)) {}
 
-  [[nodiscard]] common::Status fail(common::Status failure) noexcept {
+  [[nodiscard]] common::Status fail(common::Status failure) {
     if (failure_.is_ok())
       failure_ = std::move(failure);
     return failure_;
   }
 
   [[nodiscard]] common::Result<TimePoint> election_deadline(const RaftGroupObservation& observation,
-                                                            const TimePoint now) {
+                                                            const TimePoint now) const {
     if (observation.role == Role::kLeader)
       return TimePoint::max();
     common::Result<TimePoint> deadline = common::make_unexpected(
@@ -72,37 +72,56 @@ public:
   [[nodiscard]] common::Status collect_ready(const TimePoint now) {
     while (completed_count_ != completed_.size()) {
       std::optional<std::size_t> next;
+      std::uint64_t next_sequence{};
       for (std::size_t index = 0U; index < pending_.size(); ++index) {
-        if (!pending_[index].has_value() || !pending_[index]->completion.is_ready())
+        const std::optional<Pending>& slot = pending_[index];
+        if (!slot.has_value())
           continue;
-        if (!next.has_value() || pending_[index]->completion.submission_sequence() <
-                                     pending_[*next]->completion.submission_sequence())
+        const Pending& candidate = slot.value();
+        if (!candidate.completion.is_ready())
+          continue;
+        const std::uint64_t candidate_sequence = candidate.completion.submission_sequence();
+        if (!next.has_value() || candidate_sequence < next_sequence) {
           next = index;
+          next_sequence = candidate_sequence;
+        }
       }
       if (!next.has_value())
         break;
-      std::optional<Pending>& pending = pending_[*next];
-      auto results = pending->completion.wait();
+      std::optional<Pending>& pending_slot = pending_[next.value()];
+      if (!pending_slot.has_value()) {
+        return fail(make_status(common::StatusCode::kCorruption,
+                                "Raft timer pending selection is inconsistent"));
+      }
+      Pending& pending = pending_slot.value();
+      auto results = pending.completion.wait();
       if (!results.has_value())
         return fail(results.error());
-      if (results->size() != 2U || !(*results)[1].status.is_ok() ||
-          !(*results)[1].observation.has_value() || (*results)[1].transition.has_value()) {
+      std::vector<DurableRaftResult>& batch = results.value();
+      if (batch.size() != 2U || !batch[1].status.is_ok() || !batch[1].observation.has_value() ||
+          batch[1].transition.has_value()) {
         return fail(make_status(common::StatusCode::kCorruption,
                                 "Raft timer batch lacks its ordered group observation"));
       }
-      RaftGroupObservation observation = std::move(*(*results)[1].observation);
+      RaftGroupObservation observation = std::move(batch[1].observation).value();
       auto deadline = election_deadline(observation, now);
       if (!deadline.has_value())
         return fail(deadline.error());
-      const common::Status rearmed = timers_.complete(pending->action, observation, now, *deadline);
+      const common::Status rearmed =
+          timers_.complete(pending.action, observation, now, deadline.value());
       if (!rearmed.is_ok() && rearmed.code() != common::StatusCode::kInvalidArgument)
         return fail(rearmed);
-      completed_[completed_tail_].emplace(
-          RaftTimerCompletedAction{pending->completion.submission_sequence(), pending->action,
-                                   std::move((*results)[0]), std::move(observation)});
+      std::optional<RaftTimerCompletedAction>& completed_slot = completed_[completed_tail_];
+      if (completed_slot.has_value()) {
+        return fail(make_status(common::StatusCode::kCorruption,
+                                "Raft timer completed accounting is inconsistent"));
+      }
+      completed_slot.emplace(RaftTimerCompletedAction{pending.completion.submission_sequence(),
+                                                      pending.action, std::move(batch[0]),
+                                                      std::move(observation)});
       completed_tail_ = (completed_tail_ + 1U) % completed_.size();
       ++completed_count_;
-      pending.reset();
+      pending_slot.reset();
       --pending_count_;
     }
     return common::Status::ok();
@@ -158,7 +177,7 @@ public:
   std::size_t completed_head_{};
   std::size_t completed_tail_{};
   std::size_t completed_count_{};
-  common::Status failure_{};
+  common::Status failure_;
 };
 
 RaftTimerDriver::RaftTimerDriver(std::unique_ptr<Impl> implementation) noexcept
@@ -245,9 +264,14 @@ common::Result<RaftTimerCompletedAction> RaftTimerDriver::take_completed() {
   if (implementation_->completed_count_ == 0U)
     return common::make_unexpected(
         make_status(common::StatusCode::kUnavailable, "Raft timer result is not ready"));
-  RaftTimerCompletedAction result =
-      std::move(*implementation_->completed_[implementation_->completed_head_]);
-  implementation_->completed_[implementation_->completed_head_].reset();
+  std::optional<RaftTimerCompletedAction>& completed =
+      implementation_->completed_[implementation_->completed_head_];
+  if (!completed.has_value()) {
+    return common::make_unexpected(implementation_->fail(make_status(
+        common::StatusCode::kCorruption, "Raft timer completed accounting is inconsistent")));
+  }
+  RaftTimerCompletedAction result = std::move(completed.value());
+  completed.reset();
   implementation_->completed_head_ =
       (implementation_->completed_head_ + 1U) % implementation_->completed_.size();
   --implementation_->completed_count_;
@@ -255,11 +279,12 @@ common::Result<RaftTimerCompletedAction> RaftTimerDriver::take_completed() {
 }
 
 std::optional<std::uint64_t> RaftTimerDriver::next_completed_sequence() const noexcept {
-  return implementation_ && implementation_->completed_count_ != 0U
-             ? std::optional<std::uint64_t>{implementation_
-                                                ->completed_[implementation_->completed_head_]
-                                                ->submission_sequence}
-             : std::nullopt;
+  if (!implementation_ || implementation_->completed_count_ == 0U)
+    return std::nullopt;
+  const std::optional<RaftTimerCompletedAction>& completed =
+      implementation_->completed_[implementation_->completed_head_];
+  return completed.has_value() ? std::optional<std::uint64_t>{completed.value().submission_sequence}
+                               : std::nullopt;
 }
 
 std::optional<RaftTimerDriver::TimePoint> RaftTimerDriver::next_deadline() const noexcept {
