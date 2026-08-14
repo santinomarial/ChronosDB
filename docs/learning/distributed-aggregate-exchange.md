@@ -497,8 +497,14 @@ through attempt construction, definition copying, socket creation, TCP ownership
 TLS-carrier installation. It found that local `RESOURCE_EXHAUSTED` was incorrectly entering transport
 backoff and that the outbound TCP owner's allocating diagnostic status was hidden behind `noexcept`.
 Both are fail-closed now: every injected start failure is sticky with zero active attempts and exact
-pin rollback, while the first successful start owns one attempt that cancellation closes. In-flight
-response and final-publication allocation injection remain to be qualified.
+pin rollback, while the first successful start owns one attempt that cancellation closes. The final
+phase-specific sweep pre-acquires independent owners, replaces the observation endpoint with the real
+aggregate server, starts one attempt per owner without injection, and selects each later allocation
+across TLS setup, response decode, coordinator finish, Native encoding, and publication. It exposed
+client-local resource exhaustion incorrectly entering transport retry and another allocating
+diagnostic status behind `noexcept` in the TLS owner. Both are closed: observed failures are sticky,
+close the attempt, publish nothing, and release the exact Manifest pin; the no-fault boundary decodes
+the expected count result.
 Moved or multi-process real-CSEG responses, remote worker-interrupt delivery, pooled
 multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node
 fault handling remain work.

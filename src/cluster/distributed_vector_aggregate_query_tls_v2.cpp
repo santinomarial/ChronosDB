@@ -85,7 +85,7 @@ public:
        ClientIdentity identity, const raft::NodeId target,
        std::vector<query::VectorAggregateDefinition>&& definitions,
        query::QueryResourceContext resources,
-       const DistributedVectorAggregateQueryTlsClientConfigV2 config, const TimePoint now) noexcept
+       const DistributedVectorAggregateQueryTlsClientConfigV2 config, const TimePoint now)
       : socket_(std::move(socket)), request_(std::move(request)), identity_(identity),
         target_(target), expected_response_frames_(definitions.size()), config_(config),
         deadline_(deadline_after(now, config.limits.handshake_timeout)),

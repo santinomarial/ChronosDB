@@ -219,3 +219,8 @@ The next lifecycle-only sweep begins at that execution boundary and classifies e
 the first attempt-start poll. Local allocation failure is terminal rather than a retryable transport
 outcome, owns no active client, and releases the pinned snapshot when the failed owner is destroyed;
 the first successful poll owns exactly one cancellable attempt. No frame or status encoding changes.
+A final lifecycle-only sweep transfers that endpoint to the real aggregate service and covers every
+observed allocation from TLS carrier installation through response decode, coordinator completion,
+Native result encoding, and publication. Failure is sticky and publishes no result; the no-fault
+boundary decodes the expected count. Client-local resource exhaustion is terminal and remains
+distinct from a correlated remote `RESOURCE_EXHAUSTED` response. These checks also change no bytes.

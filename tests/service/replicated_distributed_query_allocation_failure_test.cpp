@@ -1,4 +1,6 @@
+#include "chronos/cluster/distributed_vector_aggregate_query_tcp_server_v2.hpp"
 #include "chronos/cluster/raft_observation_tcp_server.hpp"
+#include "chronos/common/byte_reader.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/storage.hpp"
 #include "chronos/manifest/temporal_codec.hpp"
@@ -234,6 +236,41 @@ private:
   raft::LogIndex position_{};
 };
 
+class CountStarWorker final : public cluster::DistributedVectorAggregateQueryWorkerServiceV2 {
+public:
+  common::Result<std::vector<query::VectorAggregateDefinition>>
+  bind_definitions(const query::DistributedVectorFragmentDispatchV2&) override {
+    return definitions();
+  }
+
+  common::Result<query::DistributedVectorAggregateWorkerResultV2>
+  execute(const query::DistributedVectorFragmentDispatchV2& dispatch) override {
+    auto state = query::MergeableVectorAggregateState::create(definitions().front());
+    if (!state.has_value())
+      return common::make_unexpected(state.error());
+    for (std::size_t row = 0U; row < 3U; ++row) {
+      auto accumulated = state->accumulate_count_star();
+      if (!accumulated.has_value())
+        return common::make_unexpected(accumulated.error());
+    }
+    query::DistributedVectorAggregateWorkerResultV2 result{.definitions = definitions(),
+                                                           .input_rows = 3U};
+    result.messages.emplace_back(
+        query::DistributedVectorAggregateExchangePosition{.query_id = dispatch.dispatch.query_id,
+                                                          .tablet_id = dispatch.dispatch.tablet_id,
+                                                          .sequence = 1U,
+                                                          .aggregate_ordinal = 0U,
+                                                          .terminal = true},
+        std::move(*state));
+    return result;
+  }
+
+private:
+  [[nodiscard]] static std::vector<query::VectorAggregateDefinition> definitions() {
+    return {{.operation = query::VectorAggregateOperation::kCountStar, .input = std::nullopt}};
+  }
+};
+
 [[nodiscard]] network::TlsServerConfig observation_server_tls_config() {
   return {.certificate_chain_file = tls_fixture("server.pem").string(),
           .private_key_file = tls_fixture("server-key.pem").string(),
@@ -260,6 +297,13 @@ private:
           .intent = {.mode = query::DistributedVectorPlanMode::kUngroupedAggregate,
                      .aggregates = {{.operation = query::VectorAggregateOperation::kAverage,
                                      .input_index = 1U}}}};
+}
+
+[[nodiscard]] query::DistributedVectorQueryPlan
+make_count_plan(const schema::TabletId& tablet_id, const raft::LogIndex applied_position) {
+  query::DistributedVectorQueryPlan plan = make_plan(tablet_id, applied_position);
+  plan.intent.aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}};
+  return plan;
 }
 
 TEST(ReplicatedDistributedQueryAllocationFailureTest,
@@ -375,7 +419,7 @@ TEST(ReplicatedDistributedQueryAllocationFailureTest,
 }
 
 TEST(ReplicatedDistributedQueryAllocationFailureTest,
-     ClassifiesFollowerVectorTransitionAndExecutionStartAllocationsAtomically) {
+     ClassifiesFollowerVectorLifecycleAllocationsAtomically) {
   TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   ASSERT_TRUE(std::filesystem::create_directory(directory.path() / "raft"));
@@ -672,10 +716,158 @@ TEST(ReplicatedDistributedQueryAllocationFailureTest,
   EXPECT_TRUE(saw_execution_failure);
   EXPECT_TRUE(saw_execution_success);
 
+  constexpr std::size_t kMaximumPublicationFaults = 256U;
+  const auto count_type = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  std::vector<ReplicatedFollowerDistributedVectorAggregateQueryV2> publication_lifecycles;
+  publication_lifecycles.reserve(kMaximumPublicationFaults);
+  for (std::size_t lifecycle_index = 0U; lifecycle_index < kMaximumPublicationFaults;
+       ++lifecycle_index) {
+    auto snapshot = publisher->snapshot();
+    ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+    auto lifecycle = ReplicatedFollowerDistributedVectorAggregateQueryV2::create(
+        make_count_plan(tablet_id, applied_position), std::move(*snapshot),
+        query::DistributedVectorResultSchema{.columns = {{"count", count_type, false}}},
+        authority_config, query_config);
+    ASSERT_TRUE(lifecycle.has_value()) << lifecycle.error().to_string();
+    for (std::size_t poll = 0U;
+         poll < 8192U &&
+         lifecycle->state() ==
+             ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kAcquiringAuthority;
+         ++poll) {
+      ASSERT_TRUE(lifecycle->poll_once(std::chrono::milliseconds{1}).is_ok())
+          << lifecycle->failure().to_string();
+    }
+    ASSERT_EQ(lifecycle->state(),
+              ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting)
+        << lifecycle->failure().to_string();
+    publication_lifecycles.push_back(std::move(*lifecycle));
+  }
+
   server_thread_guard.stop_and_join();
   EXPECT_FALSE(server_failed.load());
+  const network::Ipv4Endpoint query_endpoint = follower_server->bound_endpoint();
   EXPECT_TRUE(follower_server->shutdown().is_ok());
   EXPECT_TRUE(leader_server->shutdown().is_ok());
+
+  CountStarWorker query_worker;
+  auto query_receiver = cluster::DistributedVectorAggregateQueryReceiverV2::create(
+      {.local_node_id = 12U,
+       .authorizer = &authorizer,
+       .worker = &query_worker,
+       .maximum_response_frames = 1U,
+       .maximum_response_bytes = std::size_t{1024U} * 1024U});
+  ASSERT_TRUE(query_receiver.has_value()) << query_receiver.error().to_string();
+  auto query_server = cluster::DistributedVectorAggregateQueryTcpServerV2::start(
+      {.listener = {.bind_endpoint = query_endpoint},
+       .tls = observation_server_tls_config(),
+       .authenticator = &authenticator,
+       .receiver = &*query_receiver,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000},
+                          .maximum_response_frames = 1U,
+                          .maximum_response_bytes = std::size_t{1024U} * 1024U},
+       .maximum_connections = 16U,
+       .maximum_accepts_per_poll = 16U});
+  ASSERT_TRUE(query_server.has_value()) << query_server.error().to_string();
+  ASSERT_EQ(query_server->bound_endpoint(), query_endpoint);
+
+  std::atomic<bool> stop_query_server;
+  std::atomic<bool> query_server_failed;
+  std::thread query_server_thread([&] {
+    while (!stop_query_server.load() && !query_server_failed.load()) {
+      if (!query_server->poll_once(std::chrono::milliseconds{1}).is_ok())
+        query_server_failed.store(true);
+    }
+  });
+  ThreadJoinGuard query_server_thread_guard{stop_query_server, query_server_thread};
+
+  bool saw_publication_failure = false;
+  bool saw_publication_success = false;
+  for (std::size_t fail_after = 0U; fail_after < kMaximumPublicationFaults; ++fail_after) {
+    SCOPED_TRACE(testing::Message{} << "publication fail_after=" << fail_after);
+    const long pin_count_before = selected_manifest.use_count();
+    {
+      auto lifecycle = std::move(publication_lifecycles.back());
+      publication_lifecycles.pop_back();
+      ASSERT_TRUE(lifecycle.poll_once(std::chrono::milliseconds{0}).is_ok())
+          << lifecycle.failure().to_string();
+      ASSERT_TRUE(lifecycle.metrics().execution.has_value());
+      // Guarded by the execution-metrics assertion above.
+      // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+      ASSERT_EQ(lifecycle.metrics().execution->active_attempts, 1U);
+
+      common::Status progress;
+      bool terminal = false;
+      std::size_t observed_allocations{};
+      {
+        test::ScopedAllocationFailure failure{fail_after};
+        try {
+          for (std::size_t poll = 0U; poll < 8192U; ++poll) {
+            progress = lifecycle.poll_once(std::chrono::milliseconds{1});
+            if (!progress.is_ok() ||
+                lifecycle.state() !=
+                    ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting) {
+              terminal = true;
+              break;
+            }
+          }
+        } catch (...) {
+          failure.disable();
+          throw;
+        }
+        observed_allocations = failure.observed_allocations();
+        failure.disable();
+      }
+      ASSERT_TRUE(terminal);
+      const bool injected = observed_allocations > fail_after;
+      if (injected) {
+        saw_publication_failure = true;
+        EXPECT_EQ(progress.code(), common::StatusCode::kResourceExhausted) << progress.to_string();
+        EXPECT_EQ(lifecycle.state(),
+                  ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kFailed);
+        EXPECT_EQ(lifecycle.failure(), progress);
+        ASSERT_TRUE(lifecycle.metrics().execution.has_value());
+        // Guarded by the execution-metrics assertion above.
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+        EXPECT_EQ(lifecycle.metrics().execution->active_attempts, 0U);
+        EXPECT_EQ(lifecycle.result().error(), progress);
+        EXPECT_EQ(lifecycle.poll_once(std::chrono::milliseconds{0}), progress);
+      } else {
+        saw_publication_success = true;
+        EXPECT_TRUE(progress.is_ok()) << progress.to_string();
+        EXPECT_EQ(lifecycle.state(),
+                  ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kComplete);
+        auto result = lifecycle.result();
+        ASSERT_TRUE(result.has_value()) << result.error().to_string();
+        EXPECT_EQ(result->get().row_count, 1U);
+        auto batch = network::decode_query_result_batch(result->get().encoded_batch);
+        ASSERT_TRUE(batch.has_value()) << batch.error().to_string();
+        const network::QueryResultCell* count_cell = batch->cell(0U, 0U);
+        ASSERT_NE(count_cell, nullptr);
+        common::ByteReader count_reader{count_cell->value};
+        auto count = count_reader.read_i64_le();
+        ASSERT_TRUE(count.has_value());
+        EXPECT_EQ(*count, 3);
+        EXPECT_TRUE(count_reader.empty());
+        ASSERT_TRUE(lifecycle.metrics().execution.has_value());
+        // Guarded by the execution-metrics assertion above.
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+        EXPECT_EQ(lifecycle.metrics().execution->active_attempts, 0U);
+      }
+    }
+    EXPECT_EQ(selected_manifest.use_count(), pin_count_before - 1L);
+    ASSERT_FALSE(query_server_failed.load());
+    if (saw_publication_success)
+      break;
+  }
+  EXPECT_TRUE(saw_publication_failure);
+  EXPECT_TRUE(saw_publication_success);
+  publication_lifecycles.clear();
+  EXPECT_EQ(selected_manifest.use_count(), baseline_use_count);
+
+  query_server_thread_guard.stop_and_join();
+  EXPECT_FALSE(query_server_failed.load());
+  EXPECT_TRUE(query_server->shutdown().is_ok());
   EXPECT_TRUE(query_barrier->shutdown().is_ok());
   EXPECT_TRUE(runtime->shutdown().is_ok());
 }

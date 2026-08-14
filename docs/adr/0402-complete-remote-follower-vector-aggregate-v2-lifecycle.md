@@ -121,8 +121,8 @@ provider epoch after definition binding but before real-CSEG execution. The work
 fresh authority acquisition rejects the stale dispatch as `UNAVAILABLE`; with one configured query
 attempt, the composite preserves that correlated failure, releases both transports, and exposes
 neither the first tablet's successful state nor a final result. Multi-process, real
-movement-transfer, post-movement rebinding, in-flight response/final-publication allocation-fault,
-and broader timeout/retry/packet-level network campaigns remain.
+movement-transfer, post-movement rebinding, and broader timeout/retry/packet-level network
+campaigns remain.
 
 A dedicated construction-failure executable now injects `std::bad_alloc` at every owned allocation
 from placement-backed batch construction through nested observation acquisition and final composite
@@ -131,8 +131,8 @@ Manifest owner back to its exact baseline reference count, and exposes no lifecy
 successful construction starts exactly one authority pair; cancellation returns that count to zero.
 The sweep found and removed incorrect `noexcept` specifications on four nested implementations whose
 diagnostic `Status` members can allocate, restoring the surrounding status-returning catch boundaries.
-Allocation injection after an aggregate attempt has entered its in-flight TLS exchange remains
-deferred with final publication and the broader fault campaign.
+Allocation injection across the aggregate lifecycle is closed by the construction, transition,
+execution-start, and response/publication sweeps below.
 
 The phase-transition follow-up holds allocation failure armed across live mutual-TLS authority
 acquisition and the complete transfer into follower snapshot binding, route resolution, query
@@ -153,6 +153,16 @@ zero active attempts, and releases the Manifest pin at destruction. The successf
 exactly one active attempt and cancels it back to zero. This sweep removed an incorrect `noexcept`
 from the outbound aggregate TCP client owner; its allocating diagnostic status can now reach the
 client's existing catch boundary instead of terminating the process.
+
+The response/publication follow-up pre-acquires independent owners, replaces the follower
+observation listener with the real aggregate service at the documented endpoint handoff, starts
+each attempt without injection, and then holds one selected failure across TLS carrier creation,
+request/response exchange, canonical state decode, sender/coordinator completion, Native result
+encoding, and publication. Every observed failure returns sticky `RESOURCE_EXHAUSTED`, closes the
+active attempt, publishes no result, and releases the exact Manifest pin at owner destruction. The
+first no-fault completion publishes and decodes the expected count. The sweep made client-local
+resource failure terminal instead of transport-retryable and removed an incorrect `noexcept` from
+the aggregate TLS client owner.
 
 ## Migration or rollback considerations
 

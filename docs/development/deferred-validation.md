@@ -350,9 +350,13 @@
   first successful transition. A third sweep begins only after that transition and covers first-poll
   attempt/request-definition/socket/TLS-owner allocation: local resource failure bypasses transport
   retry, fails atomically with zero active attempts and exact pin rollback, while the first successful
-  start owns one attempt and cancels it cleanly. Allocation faults during the in-flight response and
-  final-publication phases; real movement-transfer interleavings; post-movement rebinding; broader
-  timeout/retry/packet-level network campaigns; and multi-process qualification remain.
+  start owns one attempt and cancels it cleanly. A final bounded sweep pre-acquires independent
+  owners, switches the shared endpoint to the real aggregate service, and injects across TLS carrier
+  setup, exchange/decode, coordinator finish, Native encoding, and publication. Every observed
+  allocation failure is sticky `RESOURCE_EXHAUSTED` with zero active attempts, no result, and exact
+  pin rollback; the first no-fault completion decodes the expected count. Real movement-transfer
+  interleavings; post-movement rebinding; broader timeout/retry/packet-level network campaigns; and
+  multi-process qualification remain.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an
