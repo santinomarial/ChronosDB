@@ -185,6 +185,11 @@ TEST(SqlStatementBinderTest, BindsAndMaterializesConstantInsertRowsInSchemaOrder
   EXPECT_EQ(price_type->kind(), schema::LogicalTypeKind::kFloat64);
   EXPECT_TRUE(materialized->rows()[0][4].is_null());
   EXPECT_EQ(std::get<std::string>(materialized->rows()[1][1].storage()), "B");
+  for (const std::vector<ScalarValue>& row : materialized->rows()) {
+    ASSERT_EQ(row.size(), materialized->schema_ptr()->columns().size());
+    for (std::size_t ordinal = 0U; ordinal < row.size(); ++ordinal)
+      EXPECT_EQ(row[ordinal].type(), materialized->schema_ptr()->columns()[ordinal].type());
+  }
 
   common::Result<columnar::OwnedColumnarBatch> batch =
       materialize_sql_v1_insert_batch(*materialized);

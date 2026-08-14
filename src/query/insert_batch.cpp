@@ -207,7 +207,7 @@ materialize_sql_v1_insert_batch(const MaterializedSqlInsert& statement,
       const std::size_t width = fixed_width(definition.type().kind());
       for (std::size_t row = 0U; row < statement.rows().size(); ++row) {
         const ScalarValue& value = statement.rows()[row][ordinal];
-        if (!value.type().has_value() || *value.type() != definition.type())
+        if (value.type() != definition.type())
           return common::make_unexpected(invalid("INSERT scalar type disagrees with its schema"));
         if (value.is_null()) {
           if (!definition.nullable())
