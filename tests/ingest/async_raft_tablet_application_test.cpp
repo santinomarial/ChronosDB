@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <memory>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <unistd.h>
@@ -143,8 +144,10 @@ TEST(AsyncRaftTabletApplicationTest, AppliesOnlyTouchedGroupsBeforePublishingCom
   EXPECT_EQ(untouched->visible_row_count(), 0U);
   const auto receipt = (*extension)->latest_quorum_sync_receipt(group_id(0x41U));
   ASSERT_TRUE(receipt.has_value());
-  EXPECT_EQ(receipt->group_id, group_id(0x41U));
-  EXPECT_EQ(receipt->log_index, 1U);
+  EXPECT_EQ(receipt.transform([](const raft::QuorumSyncReceipt& value) { return value.group_id; }),
+            std::optional<raft::GroupId>{group_id(0x41U)});
+  EXPECT_EQ(receipt.transform([](const raft::QuorumSyncReceipt& value) { return value.log_index; }),
+            std::optional<raft::LogIndex>{1U});
   EXPECT_FALSE((*extension)->latest_quorum_sync_receipt(group_id(0x42U)).has_value());
   raft::AsyncDurableMultiRaftRuntime wrong_runtime;
   auto mismatched = (*extension)->request_quorum_sync(wrong_runtime, group_id(0x41U), 1U, 1U);
@@ -159,6 +162,7 @@ TEST(AsyncRaftTabletApplicationTest, AppliesOnlyTouchedGroupsBeforePublishingCom
   auto exact_receipt = exact->wait();
   ASSERT_TRUE(exact_receipt.has_value()) << exact_receipt.error().to_string();
   EXPECT_EQ(exact_receipt->log_index, 1U);
+  EXPECT_FALSE(exact->is_ready());
   EXPECT_EQ(exact->wait().error().code(), common::StatusCode::kInvalidArgument);
   AsyncRaftTabletQuorumCompletion invalid_completion;
   EXPECT_FALSE(invalid_completion.is_valid());

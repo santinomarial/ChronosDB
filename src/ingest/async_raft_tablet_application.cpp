@@ -66,8 +66,13 @@ public:
     if (consumed_) {
       return common::make_unexpected(invalid("Raft tablet quorum completion was already consumed"));
     }
+    std::optional<QuorumResult> result = std::move(result_);
+    if (!result.has_value()) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kInternal, "ready Raft tablet quorum completion has no result"});
+    }
     consumed_ = true;
-    return std::move(*result_);
+    return std::move(result).value();
   }
 
 private:
@@ -200,7 +205,7 @@ public:
           auto exact = owned.machine.prove_applied_quorum_sync(pending_receipt.log_index);
           if (!exact.has_value())
             return fail(exact.error());
-          ready.push_back({std::move(state), std::move(*exact)});
+          ready.push_back({std::move(state), exact.value()});
           pending_receipt.resolved = true;
         }
         if (node->role() != raft::Role::kLeader || node->applied_index() == 0U)
@@ -327,8 +332,10 @@ common::Result<AsyncRaftTabletQuorumCompletion> AsyncRaftTabletApplication::requ
     state->complete(common::make_unexpected(observation.error()));
     return common::make_unexpected(observation.error());
   }
-  return AsyncRaftTabletQuorumCompletion{std::move(state), group_id, required_leader_term,
-                                         log_index};
+  return AsyncRaftTabletQuorumCompletion{
+      std::move(state),
+      AsyncRaftTabletQuorumCompletion::Identity{
+          .group_id = group_id, .leader_term = required_leader_term, .log_index = log_index}};
 }
 
 std::size_t AsyncRaftTabletApplication::tablet_count() const {
@@ -418,10 +425,10 @@ AsyncRaftTabletQuorumCompletion&
 AsyncRaftTabletQuorumCompletion::operator=(AsyncRaftTabletQuorumCompletion&&) noexcept = default;
 
 AsyncRaftTabletQuorumCompletion::AsyncRaftTabletQuorumCompletion(
-    std::shared_ptr<detail::AsyncRaftTabletQuorumCompletionState> state, raft::GroupId group_id,
-    const raft::Term leader_term, const raft::LogIndex log_index) noexcept
-    : state_(std::move(state)), group_id_(group_id), leader_term_(leader_term),
-      log_index_(log_index) {}
+    std::shared_ptr<detail::AsyncRaftTabletQuorumCompletionState> state,
+    const Identity identity) noexcept
+    : state_(std::move(state)), group_id_(identity.group_id), leader_term_(identity.leader_term),
+      log_index_(identity.log_index) {}
 
 bool AsyncRaftTabletQuorumCompletion::is_valid() const noexcept {
   return state_ != nullptr;

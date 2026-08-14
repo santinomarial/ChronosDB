@@ -50,9 +50,15 @@ public:
   [[nodiscard]] common::Result<raft::QuorumSyncReceipt> wait();
 
 private:
+  struct Identity {
+    raft::GroupId group_id;
+    raft::Term leader_term{};
+    raft::LogIndex log_index{};
+  };
+
   AsyncRaftTabletQuorumCompletion(
-      std::shared_ptr<detail::AsyncRaftTabletQuorumCompletionState> state, raft::GroupId group_id,
-      raft::Term leader_term, raft::LogIndex log_index) noexcept;
+      std::shared_ptr<detail::AsyncRaftTabletQuorumCompletionState> state,
+      Identity identity) noexcept;
   std::shared_ptr<detail::AsyncRaftTabletQuorumCompletionState> state_;
   raft::GroupId group_id_;
   raft::Term leader_term_{};
