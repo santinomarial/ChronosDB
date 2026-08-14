@@ -233,6 +233,8 @@ public:
   common::Result<ReplicatedDistributedQueryWorkerContext>
   acquire(const query::DistributedVectorFragmentDispatchV2&) override {
     ++vector_calls;
+    if (vector_calls == vector_failure_call_)
+      return common::make_unexpected(vector_failure_);
     return ReplicatedDistributedQueryWorkerContext{.snapshot = snapshot_,
                                                    .lineage = lineage_,
                                                    .placement = placement_,
@@ -258,6 +260,11 @@ public:
     lineage_.reset();
   }
 
+  void fail_vector_acquisition_on_call(const std::size_t call, const common::Status& failure) {
+    vector_failure_call_ = call;
+    vector_failure_ = failure;
+  }
+
   std::size_t calls{};
   std::size_t grouped_calls{};
   std::size_t vector_calls{};
@@ -268,6 +275,9 @@ private:
   raft::TabletPlacementMetadata placement_;
   raft::GroupId raft_group_id_;
   std::optional<raft::ReadBarrier> barrier_;
+  std::size_t vector_failure_call_{};
+  common::Status vector_failure_{common::StatusCode::kInternal,
+                                 "vector context acquisition was not configured to fail"};
 };
 
 TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesRealCseg) {
@@ -1261,7 +1271,7 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
 }
 
 TEST(ReplicatedDistributedQueryWorkerTest,
-     CompletesTwoProductionFollowerCsegFragmentsAsOneAtomicResult) {
+     PublishesAndFailsTwoProductionFollowerCsegFragmentsAtomically) {
   TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   ASSERT_TRUE(std::filesystem::create_directory(directory.path() / manifest::kPartsDirectoryName));
@@ -1505,42 +1515,46 @@ TEST(ReplicatedDistributedQueryWorkerTest,
       cluster::DistributedQueryNodeTlsContext{11U, std::addressof(*tls_context)},
       cluster::DistributedQueryNodeTlsContext{12U, std::addressof(*tls_context)}};
   Authenticator remote_authenticator{92U};
-  auto lifecycle = ReplicatedFollowerDistributedVectorAggregateQueryV2::create(
-      plan, std::move(*coordinator_snapshot),
-      query::DistributedVectorResultSchema{
-          .columns = {{.name = "count",
-                       .type = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
-                       .nullable = false},
-                      {.name = "sum",
-                       .type = schema_value->columns()[1].type(),
-                       .nullable = true}}},
-      {.source_node_id = 1U,
-       .first_correlation_id = 301U,
-       .tls_contexts = observation_tls_contexts,
-       .authenticator = &remote_authenticator,
-       .node_authorizer = &node_authorizer,
-       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
-                          .exchange_timeout = std::chrono::milliseconds{1000}},
-       .connect_timeout = std::chrono::milliseconds{1000},
-       .retry = {.maximum_attempts = 1U,
-                 .initial_backoff = std::chrono::milliseconds{1},
-                 .maximum_backoff = std::chrono::milliseconds{1}},
-       .maximum_pairs = 2U},
-      {.source_node_id = 1U,
-       .read_barrier = &*metadata_barrier,
-       .metadata_group_id = metadata_group,
-       .catalog = std::cref(catalog),
-       .table_id = schema_value->table_id(),
-       .destination_column_ordinals = projection,
-       .tls_contexts = query_tls_contexts,
-       .authenticator = &remote_authenticator,
-       .node_authorizer = &node_authorizer,
-       .binding_limits = {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U},
-       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
-                          .exchange_timeout = std::chrono::milliseconds{1000},
-                          .maximum_response_frames = 2U,
-                          .maximum_response_bytes = std::size_t{1024U} * 1024U},
-       .connect_timeout = std::chrono::milliseconds{1000}});
+  const auto make_lifecycle = [&](const query::DistributedVectorQueryPlan& owned_plan,
+                                  const manifest::TemporalDatabaseStorageSnapshot& snapshot,
+                                  const std::uint64_t first_correlation_id) {
+    return ReplicatedFollowerDistributedVectorAggregateQueryV2::create(
+        owned_plan, snapshot,
+        query::DistributedVectorResultSchema{
+            .columns =
+                {{.name = "count",
+                  .type = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
+                  .nullable = false},
+                 {.name = "sum", .type = schema_value->columns()[1].type(), .nullable = true}}},
+        {.source_node_id = 1U,
+         .first_correlation_id = first_correlation_id,
+         .tls_contexts = observation_tls_contexts,
+         .authenticator = &remote_authenticator,
+         .node_authorizer = &node_authorizer,
+         .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                            .exchange_timeout = std::chrono::milliseconds{1000}},
+         .connect_timeout = std::chrono::milliseconds{1000},
+         .retry = {.maximum_attempts = 1U,
+                   .initial_backoff = std::chrono::milliseconds{1},
+                   .maximum_backoff = std::chrono::milliseconds{1}},
+         .maximum_pairs = 2U},
+        {.source_node_id = 1U,
+         .read_barrier = &*metadata_barrier,
+         .metadata_group_id = metadata_group,
+         .catalog = std::cref(catalog),
+         .table_id = schema_value->table_id(),
+         .destination_column_ordinals = projection,
+         .tls_contexts = query_tls_contexts,
+         .authenticator = &remote_authenticator,
+         .node_authorizer = &node_authorizer,
+         .binding_limits = {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U},
+         .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                            .exchange_timeout = std::chrono::milliseconds{1000},
+                            .maximum_response_frames = 2U,
+                            .maximum_response_bytes = std::size_t{1024U} * 1024U},
+         .connect_timeout = std::chrono::milliseconds{1000}});
+  };
+  auto lifecycle = make_lifecycle(plan, *coordinator_snapshot, 301U);
   ASSERT_TRUE(lifecycle.has_value()) << lifecycle.error().to_string();
   for (std::size_t iteration = 0U;
        iteration < 4096U &&
@@ -1562,30 +1576,26 @@ TEST(ReplicatedDistributedQueryWorkerTest,
                                    observation_servers[1].bound_endpoint()};
   ASSERT_TRUE(observation_servers[0].shutdown().is_ok());
   ASSERT_TRUE(observation_servers[1].shutdown().is_ok());
-  auto first_query_server = ReplicatedDistributedVectorAggregateQueryTcpServerV2::start(
-      {.worker = {.local_node_id = 11U, .storage = &*storage, .context_provider = &first_provider},
-       .listener = {.bind_endpoint = query_endpoints[0]},
-       .tls = tls_server_config(),
-       .authenticator = &inbound_authenticator,
-       .node_authorizer = &node_authorizer,
-       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
-                          .exchange_timeout = std::chrono::milliseconds{1000},
-                          .maximum_response_frames = 2U,
-                          .maximum_response_bytes = std::size_t{1024U} * 1024U},
-       .maximum_connections = 4U,
-       .maximum_accepts_per_poll = 4U});
-  auto second_query_server = ReplicatedDistributedVectorAggregateQueryTcpServerV2::start(
-      {.worker = {.local_node_id = 12U, .storage = &*storage, .context_provider = &second_provider},
-       .listener = {.bind_endpoint = query_endpoints[1]},
-       .tls = tls_server_config(),
-       .authenticator = &inbound_authenticator,
-       .node_authorizer = &node_authorizer,
-       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
-                          .exchange_timeout = std::chrono::milliseconds{1000},
-                          .maximum_response_frames = 2U,
-                          .maximum_response_bytes = std::size_t{1024U} * 1024U},
-       .maximum_connections = 4U,
-       .maximum_accepts_per_poll = 4U});
+  const auto start_query_server = [&](const raft::NodeId local_node_id,
+                                      const network::Ipv4Endpoint endpoint,
+                                      ContextProvider& provider) {
+    return ReplicatedDistributedVectorAggregateQueryTcpServerV2::start(
+        {.worker = {.local_node_id = local_node_id,
+                    .storage = &*storage,
+                    .context_provider = &provider},
+         .listener = {.bind_endpoint = endpoint},
+         .tls = tls_server_config(),
+         .authenticator = &inbound_authenticator,
+         .node_authorizer = &node_authorizer,
+         .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                            .exchange_timeout = std::chrono::milliseconds{1000},
+                            .maximum_response_frames = 2U,
+                            .maximum_response_bytes = std::size_t{1024U} * 1024U},
+         .maximum_connections = 4U,
+         .maximum_accepts_per_poll = 4U});
+  };
+  auto first_query_server = start_query_server(11U, query_endpoints[0], first_provider);
+  auto second_query_server = start_query_server(12U, query_endpoints[1], second_provider);
   ASSERT_TRUE(first_query_server.has_value()) << first_query_server.error().to_string();
   ASSERT_TRUE(second_query_server.has_value()) << second_query_server.error().to_string();
   for (std::size_t iteration = 0U;
@@ -1644,6 +1654,109 @@ TEST(ReplicatedDistributedQueryWorkerTest,
   EXPECT_EQ(second_query_server->metrics().completed_connections, 1U);
   EXPECT_TRUE(first_query_server->shutdown().is_ok());
   EXPECT_TRUE(second_query_server->shutdown().is_ok());
+
+  auto first_restarted_observation = cluster::RaftObservationTcpServer::start(
+      {.listener = {.bind_endpoint = query_endpoints[0]},
+       .tls = tls_server_config(),
+       .authenticator = &inbound_authenticator,
+       .receiver = &observation_receivers[0],
+       .session_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000}},
+       .maximum_connections = 4U,
+       .maximum_accepts_per_poll = 4U});
+  auto second_restarted_observation = cluster::RaftObservationTcpServer::start(
+      {.listener = {.bind_endpoint = query_endpoints[1]},
+       .tls = tls_server_config(),
+       .authenticator = &inbound_authenticator,
+       .receiver = &observation_receivers[1],
+       .session_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000}},
+       .maximum_connections = 4U,
+       .maximum_accepts_per_poll = 4U});
+  ASSERT_TRUE(first_restarted_observation.has_value())
+      << first_restarted_observation.error().to_string();
+  ASSERT_TRUE(second_restarted_observation.has_value())
+      << second_restarted_observation.error().to_string();
+  observation_servers[0] = std::move(*first_restarted_observation);
+  observation_servers[1] = std::move(*second_restarted_observation);
+
+  auto failure_snapshot = publisher->snapshot();
+  ASSERT_TRUE(failure_snapshot.has_value()) << failure_snapshot.error().to_string();
+  auto failing_plan = plan;
+  failing_plan.query_id = uuid(32U);
+  auto failing_lifecycle = make_lifecycle(failing_plan, *failure_snapshot, 401U);
+  ASSERT_TRUE(failing_lifecycle.has_value()) << failing_lifecycle.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       failing_lifecycle->state() ==
+           ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kAcquiringAuthority;
+       ++iteration) {
+    ASSERT_TRUE(failing_lifecycle->poll_once(std::chrono::milliseconds{1}).is_ok())
+        << failing_lifecycle->failure().to_string();
+    for (cluster::RaftObservationTcpServer& observation_server : observation_servers)
+      ASSERT_TRUE(observation_server.poll_once(std::chrono::milliseconds{0}).is_ok());
+  }
+  ASSERT_EQ(failing_lifecycle->state(),
+            ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting)
+      << failing_lifecycle->failure().to_string();
+  for (const LifecycleObservationService& observation_service : observation_services)
+    EXPECT_EQ(observation_service.calls, 2U);
+
+  ASSERT_TRUE(observation_servers[0].shutdown().is_ok());
+  ASSERT_TRUE(observation_servers[1].shutdown().is_ok());
+  second_provider.fail_vector_acquisition_on_call(
+      4U,
+      {common::StatusCode::kInvalidArgument, "injected second-tablet execution authority failure"});
+  auto failing_first_query_server = start_query_server(11U, query_endpoints[0], first_provider);
+  auto failing_second_query_server = start_query_server(12U, query_endpoints[1], second_provider);
+  ASSERT_TRUE(failing_first_query_server.has_value())
+      << failing_first_query_server.error().to_string();
+  ASSERT_TRUE(failing_second_query_server.has_value())
+      << failing_second_query_server.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 256U && failing_first_query_server->metrics().completed_connections == 0U;
+       ++iteration) {
+    ASSERT_TRUE(failing_lifecycle->poll_once(std::chrono::milliseconds{0}).is_ok())
+        << failing_lifecycle->failure().to_string();
+    ASSERT_TRUE(failing_first_query_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(failing_first_query_server->metrics().completed_connections, 1U);
+  EXPECT_EQ(failing_lifecycle->state(),
+            ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting);
+  EXPECT_EQ(failing_lifecycle->result().error().code(), common::StatusCode::kInvalidArgument);
+
+  common::Status terminal_failure = common::Status::ok();
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       failing_lifecycle->state() ==
+           ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting;
+       ++iteration) {
+    terminal_failure = failing_lifecycle->poll_once(std::chrono::milliseconds{1});
+    ASSERT_TRUE(failing_first_query_server->poll_once(std::chrono::milliseconds{0}).is_ok());
+    ASSERT_TRUE(failing_second_query_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(failing_lifecycle->state(),
+            ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kFailed);
+  EXPECT_EQ(terminal_failure.code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(failing_lifecycle->failure(), terminal_failure);
+  EXPECT_EQ(failing_lifecycle->result().error(), terminal_failure);
+  EXPECT_EQ(failing_lifecycle->poll_once(std::chrono::milliseconds{0}), terminal_failure);
+  EXPECT_EQ(failing_lifecycle->cancel(), terminal_failure);
+  EXPECT_EQ(first_provider.vector_calls, 4U);
+  EXPECT_EQ(second_provider.vector_calls, 4U);
+  const auto failure_metrics = failing_lifecycle->metrics();
+  EXPECT_EQ(failure_metrics.authority.completed_pairs, 2U);
+  ASSERT_TRUE(failure_metrics.execution.has_value());
+  // Guarded by the execution-metrics assertion above.
+  // NOLINTBEGIN(bugprone-unchecked-optional-access)
+  EXPECT_EQ(failure_metrics.execution->attempts_started, 2U);
+  EXPECT_EQ(failure_metrics.execution->transport_completed_attempts, 2U);
+  EXPECT_EQ(failure_metrics.execution->transport_failed_attempts, 0U);
+  EXPECT_EQ(failure_metrics.execution->active_attempts, 0U);
+  // NOLINTEND(bugprone-unchecked-optional-access)
+  EXPECT_EQ(failing_second_query_server->metrics().completed_connections, 1U);
+  EXPECT_TRUE(failing_first_query_server->shutdown().is_ok());
+  EXPECT_TRUE(failing_second_query_server->shutdown().is_ok());
   EXPECT_TRUE(observation_servers[2].shutdown().is_ok());
   EXPECT_TRUE(observation_servers[3].shutdown().is_ok());
   EXPECT_TRUE(metadata_barrier->shutdown().is_ok());

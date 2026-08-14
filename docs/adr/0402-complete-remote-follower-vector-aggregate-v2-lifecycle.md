@@ -109,7 +109,12 @@ different production follower service. It deliberately withholds progress from t
 after the first completes and proves the composite remains `EXECUTING` with no result. Only after
 both definition-bound state vectors arrive does it publish the global `COUNT(*) = 4` and
 `SUM(value) = 12.0` Native result. This closes focused one-process multi-tablet atomic-publication
-evidence; multi-process, movement-interleaved, and fault-injected campaigns remain.
+evidence. The same production composition then reacquires both authority pairs, retains the first
+tablet's successful terminal vector, and injects a nonretryable context-acquisition failure while
+the second follower executes. The correlated failure response poisons the whole lifecycle, releases
+both client attempts, remains sticky through result access, polling, and cancellation, and never
+publishes the retained prefix. Multi-process, movement-interleaved, allocation-fault, and
+network-fault campaigns remain.
 
 ## Migration or rollback considerations
 

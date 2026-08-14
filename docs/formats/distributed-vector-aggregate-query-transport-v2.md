@@ -202,4 +202,6 @@ Protocol result, and verifies that the committed follower route is unchanged acr
 boundary. A production-composition loopback uses that same lifecycle with the owning real-CSEG
 inbound service and decodes the expected count and sum from installed temporal-part bytes. A
 two-tablet variant proves that one completed follower stream remains private until the second
-production follower completes and global finalization can publish exactly once.
+production follower completes and global finalization can publish exactly once. Its failure variant
+returns one correlated nonretryable response after the other follower succeeds and proves the
+composite closes every attempt without exposing the retained state prefix.

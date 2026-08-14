@@ -332,8 +332,10 @@
   count/sum output from installed temporal-part bytes. A two-tablet gate now acquires two authority
   pairs, executes two distinct production follower services over independently identified CSEGs,
   withholds one terminal stream to prove no partial publication, and validates the exact global
-  count/sum result. Multi-process, movement-interleaved, allocation-fault, and network-fault
-  campaigns remain.
+  count/sum result. Its failure companion retains the first successful tablet privately, injects a
+  nonretryable execution-authority failure at the second production follower, and proves sticky
+  whole-query failure, zero active attempts, and no result publication. Multi-process,
+  movement-interleaved, allocation-fault, and network-fault campaigns remain.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

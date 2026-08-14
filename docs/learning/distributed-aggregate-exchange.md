@@ -471,7 +471,10 @@ loads the installed temporal CSEG, and returns the exact `COUNT(*)` and `SUM` re
 Native finalization. The multi-tablet gate extends that chain across two Raft groups, two correlated
 authority pairs, two production follower endpoints, and two independently identified CSEGs. It
 stalls one follower after the other completes to show that global output remains unavailable until
-both terminal vectors can merge atomically.
+both terminal vectors can merge atomically. A companion run makes the delayed production worker
+fail only after definition binding, so the authenticated transport returns a correlated terminal
+error. The composite drops every live client, preserves that error as its sticky terminal state,
+and never converts the already retained tablet vector into a partial Native result.
 Moved or multi-process real-CSEG responses, remote worker-interrupt delivery, pooled
 multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node
 fault handling remain work.
