@@ -324,8 +324,13 @@
   result batches including one schema-bearing zero-row result. One shared in-memory all-type
   aggregate kernel now merges exact sums, AVG/variance sufficient state, and bounded extrema for
   local operators and future workers. Its canonical nested v1 bytes now add integrity-first bounded
-  decode, query-accounted variable extrema, and partial-I/O ownership. The correlated aggregate
-  exchange, authority rebinding, and process integration remain.
+  decode, query-accounted variable extrema, and partial-I/O ownership. The remote bounded-stale
+  aggregate-v2 lifecycle now acquires placement-backed leader/follower authority, retains the
+  plan/schema/Manifest bundle, transfers only a complete proof vector into the pinned scheduler,
+  and returns one globally finalized Native result. A focused production-composition loopback
+  executes that lifecycle through the owning real-CSEG inbound service and validates exact
+  count/sum output from installed temporal-part bytes. Multi-tablet, multi-process,
+  movement-interleaved, allocation-fault, and network-fault campaigns remain.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

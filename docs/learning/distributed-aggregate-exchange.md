@@ -465,7 +465,10 @@ one-process loopback now returns a real installed-CSEG response through the prod
 service. A second end-to-end loopback drives the complete remote-follower owner through observation
 acquisition, same-endpoint aggregate-v2 mutual TLS, one terminal state, global finalization, and
 decoding of the retained Native Protocol `COUNT(*)` result. The test-local deterministic aggregate
-worker isolates lifecycle correlation from the separately covered production real-CSEG worker.
+worker isolates lifecycle correlation. A production-composition loopback then drives the same
+owner into the heap-stable production inbound service, which reacquires request-local authority,
+loads the installed temporal CSEG, and returns the exact `COUNT(*)` and `SUM` result through global
+Native finalization.
 Moved or multi-process real-CSEG responses, remote worker-interrupt delivery, pooled
 multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node
 fault handling remain work.

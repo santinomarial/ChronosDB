@@ -93,6 +93,16 @@ real-CSEG worker remains the authority/execution proof for installed data; this 
 composite phase-transition and final-publication evidence without changing a wire or ownership
 decision.
 
+The production-chain follow-up then replaces the deterministic worker with
+`ReplicatedDistributedVectorAggregateQueryTcpServerV2`. Its request-local provider reacquires the
+pinned Manifest, schema, placement, group, and follower-read authority and executes over a real
+installed temporal CSEG. The complete remote owner returns and decodes the expected one-row
+`COUNT(*) = 2` and `SUM(value) = 4.0` result, with one completed authority pair, one completed query
+attempt, two production provider acquisitions (definition binding and execution), certificate
+fingerprints on both sides, and deterministic shutdown of every listener and Raft owner. This
+closes the single-tablet one-process production-composition evidence; multi-process, multi-tablet,
+and fault-injected campaigns remain Phase 18 validation work.
+
 ## Migration or rollback considerations
 
 Remote bounded-stale aggregate-v2 embeddings should replace manual phase orchestration with this

@@ -199,4 +199,5 @@ into bounded-stale binding and the existing TCP owner. Phase-aware metrics, fail
 and final result access never expose a partial authority or aggregate result. The executable
 loopback contract drives both mutual-TLS phases through `COMPLETE`, decodes the retained Native
 Protocol result, and verifies that the committed follower route is unchanged across the phase
-boundary.
+boundary. A production-composition loopback uses that same lifecycle with the owning real-CSEG
+inbound service and decodes the expected count and sum from installed temporal-part bytes.
