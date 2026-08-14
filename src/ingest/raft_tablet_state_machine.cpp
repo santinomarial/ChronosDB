@@ -55,7 +55,7 @@ public:
        RetryDirectory configured_retry_directory, TabletState configured_tablet,
        std::vector<std::shared_ptr<const schema::TableSchema>> configured_schemas,
        const ColumnarAppendDecodeLimits configured_decode_limits) noexcept
-      : group_id(std::move(configured_group_id)), runtime(&configured_runtime),
+      : group_id(configured_group_id), runtime(&configured_runtime),
         snapshot_storage(std::move(configured_snapshot_storage)),
         retry_directory(std::move(configured_retry_directory)),
         tablet(std::move(configured_tablet)), retained_schemas(std::move(configured_schemas)),
@@ -161,13 +161,14 @@ public:
     }
     const head::HeadCommitPosition final_position =
         head::HeadCommitPosition::raft(group_id, report.last_applied_index);
-    if (!current->applied_position().has_value() ||
-        current->applied_position()->record_sequence < report.last_applied_index) {
+    const std::optional<head::HeadCommitPosition>& applied_position = current->applied_position();
+    if (!applied_position.has_value() ||
+        applied_position->record_sequence < report.last_applied_index) {
       auto advanced = tablet.advance_recovered_position(final_position);
       if (!advanced.has_value()) {
         return common::make_unexpected(fail(advanced.error()));
       }
-    } else if (*current->applied_position() != final_position) {
+    } else if (applied_position.value() != final_position) {
       return common::make_unexpected(
           fail(corruption("tablet publication frontier exceeds applied Raft batch")));
     }
@@ -244,7 +245,7 @@ public:
     raft::SnapshotMetadata next_snapshot{.last_included_index = last_included_index,
                                          .last_included_term = boundary.term,
                                          .manifest_generation = manifest_generation,
-                                         .part_set_checksum = std::move(part_set_checksum),
+                                         .part_set_checksum = part_set_checksum,
                                          .configuration_index =
                                              current_snapshot.configuration_index};
     RaftTabletApplicationSnapshot application_snapshot{.group_id = group_id,
@@ -305,8 +306,8 @@ public:
       pending_installed_snapshot.emplace(application_snapshot.raft_snapshot);
       report.snapshot = application_snapshot.raft_snapshot;
       report.application_entries = application_snapshot.entries.size();
-      compaction_request.push_back(
-          {group_id, raft::CompactSnapshotOperation{application_snapshot.raft_snapshot}});
+      compaction_request.emplace_back(
+          group_id, raft::CompactSnapshotOperation{application_snapshot.raft_snapshot});
     } catch (const std::bad_alloc&) {
       return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
                                                     "Raft tablet compaction allocation failed"});
@@ -360,7 +361,7 @@ common::Result<RaftTabletStateMachine> RaftTabletStateMachine::recover(
     raft::GroupId group_id, raft::DurableMultiRaftRuntime& runtime, RetryDirectory retry_directory,
     TabletState tablet, std::vector<std::shared_ptr<const schema::TableSchema>> retained_schemas,
     const ColumnarAppendDecodeLimits decode_limits) {
-  return recover_impl(std::move(group_id), runtime, std::nullopt, std::move(retry_directory),
+  return recover_impl(group_id, runtime, std::nullopt, std::move(retry_directory),
                       std::move(tablet), std::move(retained_schemas), decode_limits);
 }
 
@@ -369,10 +370,9 @@ common::Result<RaftTabletStateMachine> RaftTabletStateMachine::recover(
     RaftTabletSnapshotStorage snapshot_storage, RetryDirectory retry_directory, TabletState tablet,
     std::vector<std::shared_ptr<const schema::TableSchema>> retained_schemas,
     const ColumnarAppendDecodeLimits decode_limits) {
-  return recover_impl(std::move(group_id), runtime,
-                      std::optional<RaftTabletSnapshotStorage>{std::move(snapshot_storage)},
-                      std::move(retry_directory), std::move(tablet), std::move(retained_schemas),
-                      decode_limits);
+  return recover_impl(
+      group_id, runtime, std::optional<RaftTabletSnapshotStorage>{std::move(snapshot_storage)},
+      std::move(retry_directory), std::move(tablet), std::move(retained_schemas), decode_limits);
 }
 
 common::Result<RaftTabletStateMachine> RaftTabletStateMachine::recover_impl(
@@ -417,11 +417,12 @@ common::Result<RaftTabletStateMachine> RaftTabletStateMachine::recover_impl(
                                      std::move(retained_schemas), decode_limits);
   std::vector<raft::LogEntry> snapshot_entries;
   if (snapshot_index != 0U) {
-    if (!impl->snapshot_storage.has_value()) {
+    std::optional<RaftTabletSnapshotStorage>& owned_snapshot_storage = impl->snapshot_storage;
+    if (!owned_snapshot_storage.has_value()) {
       return common::make_unexpected(
           unsupported("Raft tablet recovery requires its installed application snapshot"));
     }
-    auto loaded = impl->snapshot_storage->load(snapshot_index);
+    auto loaded = owned_snapshot_storage.value().load(snapshot_index);
     if (!loaded.has_value()) {
       return common::make_unexpected(loaded.error());
     }
@@ -489,8 +490,7 @@ common::Result<RaftTabletApplicationReport> RaftTabletStateMachine::apply_commit
       return common::make_unexpected(
           impl_->fail(corruption("Raft application snapshot boundary moved backward")));
     }
-  } else if (!impl_->installed_snapshot.has_value() ||
-             *impl_->installed_snapshot != node->persistent_state().snapshot) {
+  } else if (impl_->installed_snapshot != node->persistent_state().snapshot) {
     return common::make_unexpected(impl_->fail(
         unsupported("Raft tablet application cannot cross a different application snapshot")));
   }
@@ -501,15 +501,15 @@ common::Result<RaftTabletSnapshotCompactionReport>
 RaftTabletStateMachine::compact_applied_prefix(const raft::LogIndex last_included_index,
                                                const std::uint64_t manifest_generation,
                                                std::array<std::byte, 32U> part_set_checksum) {
-  return impl_->compact_applied_prefix(last_included_index, manifest_generation,
-                                       std::move(part_set_checksum));
+  return impl_->compact_applied_prefix(last_included_index, manifest_generation, part_set_checksum);
 }
 
 common::Result<RaftTabletSnapshotReclamationReport>
 RaftTabletStateMachine::reclaim_obsolete_snapshots() {
   if (!impl_->failure.is_ok())
     return common::make_unexpected(impl_->failure);
-  if (!impl_->snapshot_storage.has_value()) {
+  std::optional<RaftTabletSnapshotStorage>& owned_snapshot_storage = impl_->snapshot_storage;
+  if (!owned_snapshot_storage.has_value()) {
     return common::make_unexpected(
         unsupported("Raft tablet snapshot reclamation requires snapshot-storage ownership"));
   }
@@ -522,13 +522,13 @@ RaftTabletStateMachine::reclaim_obsolete_snapshots() {
       return common::make_unexpected(
           impl_->fail(corruption("Raft application snapshot boundary moved backward")));
     }
-    return impl_->snapshot_storage->reclaim_obsolete(std::nullopt);
+    return owned_snapshot_storage.value().reclaim_obsolete(std::nullopt);
   }
-  if (!impl_->installed_snapshot.has_value() || *impl_->installed_snapshot != snapshot) {
+  if (impl_->installed_snapshot != snapshot) {
     return common::make_unexpected(impl_->fail(
         unsupported("Raft tablet reclamation cannot cross a different application snapshot")));
   }
-  return impl_->snapshot_storage->reclaim_obsolete(snapshot.last_included_index);
+  return owned_snapshot_storage.value().reclaim_obsolete(snapshot.last_included_index);
 }
 
 common::Result<raft::QuorumSyncReceipt>
@@ -545,10 +545,10 @@ RaftTabletStateMachine::prove_applied_quorum_sync(const raft::LogIndex index) co
   if (!snapshot.has_value()) {
     return common::make_unexpected(snapshot.error());
   }
-  if (!snapshot->applied_position().has_value() ||
-      snapshot->applied_position()->source != head::CommitSource::kRaft ||
-      snapshot->applied_position()->raft_group_id != impl_->group_id ||
-      snapshot->applied_position()->record_sequence < index) {
+  const std::optional<head::HeadCommitPosition>& applied_position = snapshot->applied_position();
+  if (!applied_position.has_value() || applied_position->source != head::CommitSource::kRaft ||
+      applied_position->raft_group_id != impl_->group_id ||
+      applied_position->record_sequence < index) {
     return common::make_unexpected(
         corruption("Raft applied index is not covered by the tablet publication frontier"));
   }

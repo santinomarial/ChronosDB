@@ -4,6 +4,7 @@
 #include "columnar/columnar_test_support.hpp"
 #include "ingest/ingest_test_support.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -177,6 +178,10 @@ TEST(RaftTabletStateMachineTest, RebuildsCompactedPrefixThenCommittedSuffixFromI
   const raft::RaftPersistentLogConfig log_config{.directory_path = log_directory.string()};
   const std::vector<std::byte> payload = command();
   const std::vector<std::byte> suffix_payload = command(2U);
+  std::array<std::byte, 32U> first_part_set_checksum{};
+  first_part_set_checksum.front() = std::byte{0xA5U};
+  std::array<std::byte, 32U> second_part_set_checksum{};
+  second_part_set_checksum.back() = std::byte{0x5AU};
 
   {
     raft::DurableMultiRaftRuntime durable = runtime(log_config, {1U});
@@ -195,9 +200,10 @@ TEST(RaftTabletStateMachineTest, RebuildsCompactedPrefixThenCommittedSuffixFromI
     ASSERT_TRUE(machine->apply_committed().has_value());
     ASSERT_EQ(durable.find_group(group_id())->applied_index(), 1U);
 
-    auto compacted = machine->compact_applied_prefix(1U, 1U, {});
+    auto compacted = machine->compact_applied_prefix(1U, 1U, first_part_set_checksum);
     ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
     EXPECT_EQ(compacted->snapshot.last_included_index, 1U);
+    EXPECT_EQ(compacted->snapshot.part_set_checksum, first_part_set_checksum);
     EXPECT_EQ(compacted->application_entries, 1U);
     EXPECT_FALSE(compacted->application_snapshot_already_present);
     EXPECT_EQ(durable.find_group(group_id())->persistent_state().snapshot, compacted->snapshot);
@@ -211,9 +217,10 @@ TEST(RaftTabletStateMachineTest, RebuildsCompactedPrefixThenCommittedSuffixFromI
     EXPECT_EQ(durable.find_group(group_id())->commit_index(), 2U);
     EXPECT_EQ(durable.find_group(group_id())->applied_index(), 1U);
     ASSERT_TRUE(machine->apply_committed().has_value());
-    auto compacted_again = machine->compact_applied_prefix(2U, 2U, {});
+    auto compacted_again = machine->compact_applied_prefix(2U, 2U, second_part_set_checksum);
     ASSERT_TRUE(compacted_again.has_value()) << compacted_again.error().to_string();
     EXPECT_EQ(compacted_again->snapshot.last_included_index, 2U);
+    EXPECT_EQ(compacted_again->snapshot.part_set_checksum, second_part_set_checksum);
     EXPECT_EQ(compacted_again->application_entries, 2U);
     EXPECT_TRUE(durable.find_group(group_id())->persistent_state().log.empty());
     auto reclaimed = machine->reclaim_obsolete_snapshots();
@@ -237,6 +244,8 @@ TEST(RaftTabletStateMachineTest, RebuildsCompactedPrefixThenCommittedSuffixFromI
   auto reopened = raft::DurableMultiRaftRuntime::open_existing(
       1U, log_config, {}, {{.group_id = group_id(), .voters = {1U}}});
   ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  EXPECT_EQ(reopened->find_group(group_id())->persistent_state().snapshot.part_set_checksum,
+            second_part_set_checksum);
   auto missing = RaftTabletStateMachine::recover(group_id(), *reopened, retry_directory(), tablet(),
                                                  schemas());
   ASSERT_FALSE(missing.has_value());
