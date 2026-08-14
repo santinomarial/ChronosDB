@@ -5,6 +5,13 @@ or newer, an explicit server chain and key, an explicit trust store, and a verif
 certificate. There is no fallback or opportunistic downgrade. Backend event-loop integration must
 be explicit: epoll provides it; io_uring currently returns `NOT_SUPPORTED` for TLS.
 
+OpenSSL record I/O uses a shared custom BIO over a borrowed socket. The BIO never closes the
+descriptor and its method owner outlives every session. Writes suppress `SIGPIPE` per call on Linux
+or per socket on macOS without replacing the application's process-wide signal policy. Broken-pipe
+and hangup races therefore become ordinary carrier failures that the socket owner observes and
+removes. Reusing one BIO method is also required for long-lived processes because OpenSSL reserves a
+finite type range for custom BIO implementations.
+
 `ConnectionAuthenticator` is a borrowed synchronous callback invoked by the socket owner after
 transport verification. For TLS it receives the verified certificate SHA-256 fingerprint and maps
 that identity to rejection or a stable nonzero principal. The reactor attaches that identity to

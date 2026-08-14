@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <fcntl.h>
@@ -43,6 +44,40 @@ struct SslDeleter {
 
 using ClientContext = std::unique_ptr<SSL_CTX, SslContextDeleter>;
 using ClientSession = std::unique_ptr<SSL, SslDeleter>;
+
+volatile std::sig_atomic_t sigpipe_observed{};
+
+void observe_sigpipe(int) {
+  sigpipe_observed = 1;
+}
+
+class SigpipeObserver {
+public:
+  SigpipeObserver() {
+    struct sigaction action {};
+    action.sa_handler = &observe_sigpipe;
+    if (sigemptyset(&action.sa_mask) == 0 &&
+        ::sigaction(SIGPIPE, &action, &previous_action_) == 0) {
+      installed_ = true;
+    }
+  }
+
+  ~SigpipeObserver() {
+    if (installed_)
+      (void)::sigaction(SIGPIPE, &previous_action_, nullptr);
+  }
+
+  SigpipeObserver(const SigpipeObserver&) = delete;
+  SigpipeObserver& operator=(const SigpipeObserver&) = delete;
+
+  [[nodiscard]] bool installed() const noexcept {
+    return installed_;
+  }
+
+private:
+  struct sigaction previous_action_ {};
+  bool installed_{};
+};
 
 [[nodiscard]] std::filesystem::path fixture(const char* name) {
   return std::filesystem::path{CHRONOS_NETWORK_FIXTURE_DIR} / "tls" / name;
@@ -149,6 +184,23 @@ TEST(TlsSocketTest, InvalidCredentialConfigurationFailsClosed) {
   EXPECT_EQ(missing_client_context.error().code(), common::StatusCode::kUnauthenticated);
 }
 
+TEST(TlsSocketTest, ReusesSignalSafeBioMethodAcrossSessionLifetimes) {
+  auto server_context = TlsServerContext::create(server_config());
+  ASSERT_TRUE(server_context.has_value()) << server_context.error().message();
+  auto client_context_owner = TlsClientContext::create(client_config());
+  ASSERT_TRUE(client_context_owner.has_value()) << client_context_owner.error().message();
+
+  for (std::size_t session = 0U; session < 256U; ++session) {
+    SocketPair sockets = nonblocking_socket_pair();
+    auto server = TlsSocket::accept(*server_context, sockets.sockets[0]);
+    ASSERT_TRUE(server.has_value())
+        << "server session " << session << ": " << server.error().message();
+    auto client = TlsSocket::connect(*client_context_owner, sockets.sockets[1]);
+    ASSERT_TRUE(client.has_value())
+        << "client session " << session << ": " << client.error().message();
+  }
+}
+
 TEST(TlsSocketTest, MutualHandshakeCarriesVerifiedIdentityAndPlaintext) {
   auto server_context = TlsServerContext::create(server_config());
   ASSERT_TRUE(server_context.has_value()) << server_context.error().message();
@@ -213,6 +265,47 @@ TEST(TlsSocketTest, MutualHandshakeCarriesVerifiedIdentityAndPlaintext) {
   EXPECT_EQ(client_read->state, TlsIoState::kComplete);
   EXPECT_TRUE(std::ranges::equal(std::span{client_received}.first(client_read->bytes_transferred),
                                  std::span{response}));
+}
+
+TEST(TlsSocketTest, AbruptPeerCloseNeverRaisesSigpipe) {
+  auto server_context = TlsServerContext::create(server_config());
+  ASSERT_TRUE(server_context.has_value()) << server_context.error().message();
+  auto client_context_owner = TlsClientContext::create(client_config());
+  ASSERT_TRUE(client_context_owner.has_value()) << client_context_owner.error().message();
+  SocketPair sockets = nonblocking_socket_pair();
+  auto server = TlsSocket::accept(*server_context, sockets.sockets[0]);
+  ASSERT_TRUE(server.has_value()) << server.error().message();
+  auto client = TlsSocket::connect(*client_context_owner, sockets.sockets[1]);
+  ASSERT_TRUE(client.has_value()) << client.error().message();
+  complete_handshake(*server, *client);
+
+  constexpr std::array<std::byte, 1U> initial_byte{std::byte{0x5a}};
+  const auto initial_write = server->write(initial_byte);
+  ASSERT_TRUE(initial_write.has_value()) << initial_write.error().message();
+  ASSERT_EQ(initial_write->state, TlsIoState::kComplete);
+  std::array<std::byte, 1U> initial_read_buffer{};
+  const auto initial_read = client->read(initial_read_buffer);
+  ASSERT_TRUE(initial_read.has_value()) << initial_read.error().message();
+  ASSERT_EQ(initial_read->state, TlsIoState::kComplete);
+  ASSERT_EQ(initial_read->bytes_transferred, initial_read_buffer.size());
+
+  SigpipeObserver observer;
+  ASSERT_TRUE(observer.installed());
+  sigpipe_observed = 0;
+  *client = TlsSocket{};
+  ASSERT_EQ(::close(sockets.sockets[1]), 0);
+  sockets.sockets[1] = -1;
+
+  const std::array<std::byte, std::size_t{16U} * 1024U> bytes{};
+  std::optional<common::Status> write_failure;
+  for (std::size_t attempt = 0U; attempt < 1024U && !write_failure.has_value(); ++attempt) {
+    const auto written = server->write(bytes);
+    if (!written.has_value())
+      write_failure = written.error();
+  }
+  ASSERT_TRUE(write_failure.has_value());
+  EXPECT_EQ(write_failure->code(), common::StatusCode::kIoError);
+  EXPECT_EQ(sigpipe_observed, 0);
 }
 
 TEST(TlsSocketTest, ClientRejectsServerCertificateForDifferentIdentity) {

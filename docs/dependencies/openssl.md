@@ -7,6 +7,8 @@
 DNS/IP identity-verification, SNI, and EVP certificate-digest APIs behind an OpenSSL-free public
 PIMPL boundary. OpenSSL does not define a
 durable representation, database command, application principal, or authorization policy.
+The network wrapper supplies a shared borrowed-socket BIO so record writes can suppress `SIGPIPE`
+without changing process-global signal handling or transferring descriptor ownership to OpenSSL.
 
 ## Version source and compatibility
 

@@ -2,7 +2,12 @@
 
 #include <arpa/inet.h>
 #include <array>
+#include <cerrno>
+#include <cstddef>
+#include <memory>
+#include <mutex>
 #include <new>
+#include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/ssl.h>
@@ -10,6 +15,7 @@
 #include <openssl/x509v3.h>
 #include <optional>
 #include <string>
+#include <sys/socket.h>
 #include <utility>
 
 namespace chronos::network {
@@ -29,6 +35,177 @@ namespace {
 
 [[nodiscard]] common::Status exhausted(std::string message) {
   return {common::StatusCode::kResourceExhausted, std::move(message)};
+}
+
+struct SocketBioState {
+  int descriptor{-1};
+};
+
+[[nodiscard]] SocketBioState* socket_bio_state(BIO* bio) noexcept {
+  return static_cast<SocketBioState*>(BIO_get_data(bio));
+}
+
+int socket_bio_create(BIO* bio) noexcept {
+  auto* state = new (std::nothrow) SocketBioState;
+  if (state == nullptr)
+    return 0;
+  BIO_set_data(bio, state);
+  BIO_set_init(bio, 1);
+  BIO_set_shutdown(bio, BIO_NOCLOSE);
+  return 1;
+}
+
+int socket_bio_destroy(BIO* bio) noexcept {
+  if (bio == nullptr)
+    return 0;
+  delete socket_bio_state(bio);
+  BIO_set_data(bio, nullptr);
+  BIO_set_init(bio, 0);
+  return 1;
+}
+
+int socket_bio_read(BIO* bio, char* destination, const std::size_t size,
+                    std::size_t* transferred) noexcept {
+  *transferred = 0U;
+  BIO_clear_retry_flags(bio);
+  const SocketBioState* state = socket_bio_state(bio);
+  if (state == nullptr || state->descriptor < 0 || destination == nullptr || size == 0U) {
+    errno = EINVAL;
+    return 0;
+  }
+  const ssize_t result = ::recv(state->descriptor, destination, size, 0);
+  if (result <= 0) {
+    if (result < 0 && BIO_sock_should_retry(-1) != 0)
+      BIO_set_retry_read(bio);
+    return 0;
+  }
+  *transferred = static_cast<std::size_t>(result);
+  return 1;
+}
+
+int socket_bio_write(BIO* bio, const char* source, const std::size_t size,
+                     std::size_t* transferred) noexcept {
+  *transferred = 0U;
+  BIO_clear_retry_flags(bio);
+  const SocketBioState* state = socket_bio_state(bio);
+  if (state == nullptr || state->descriptor < 0 || source == nullptr || size == 0U) {
+    errno = EINVAL;
+    return 0;
+  }
+#if defined(MSG_NOSIGNAL)
+  constexpr int flags = MSG_NOSIGNAL;
+#else
+  constexpr int flags = 0;
+#endif
+  const ssize_t result = ::send(state->descriptor, source, size, flags);
+  if (result <= 0) {
+    if (result < 0 && BIO_sock_should_retry(-1) != 0)
+      BIO_set_retry_write(bio);
+    return 0;
+  }
+  *transferred = static_cast<std::size_t>(result);
+  return 1;
+}
+
+long socket_bio_control(BIO* bio, const int command, long, void* argument) noexcept {
+  if (command == BIO_CTRL_FLUSH)
+    return 1L;
+  if (command != BIO_C_GET_FD)
+    return 0L;
+  const SocketBioState* state = socket_bio_state(bio);
+  const int descriptor = state == nullptr ? -1 : state->descriptor;
+  if (argument != nullptr)
+    *static_cast<int*>(argument) = descriptor;
+  return descriptor;
+}
+
+[[nodiscard]] common::Result<BIO_METHOD*> create_socket_bio_method() {
+  const int type = BIO_get_new_index();
+  if (type < 0)
+    return common::make_unexpected(exhausted("OpenSSL socket BIO type limit is exhausted"));
+  BIO_METHOD* method =
+      BIO_meth_new(type | BIO_TYPE_SOURCE_SINK | BIO_TYPE_DESCRIPTOR, "ChronosDB socket");
+  if (method == nullptr)
+    return common::make_unexpected(exhausted("OpenSSL socket BIO method allocation failed"));
+  if (BIO_meth_set_create(method, &socket_bio_create) != 1 ||
+      BIO_meth_set_destroy(method, &socket_bio_destroy) != 1 ||
+      BIO_meth_set_read_ex(method, &socket_bio_read) != 1 ||
+      BIO_meth_set_write_ex(method, &socket_bio_write) != 1 ||
+      BIO_meth_set_ctrl(method, &socket_bio_control) != 1) {
+    BIO_meth_free(method);
+    return common::make_unexpected(io_error("OpenSSL socket BIO method configuration failed"));
+  }
+  return method;
+}
+
+class SocketBioMethod {
+public:
+  explicit SocketBioMethod(BIO_METHOD* method) noexcept : method_(method) {}
+  ~SocketBioMethod() {
+    BIO_meth_free(method_);
+  }
+
+  SocketBioMethod(const SocketBioMethod&) = delete;
+  SocketBioMethod& operator=(const SocketBioMethod&) = delete;
+
+  [[nodiscard]] BIO_METHOD* get() const noexcept {
+    return method_;
+  }
+
+private:
+  BIO_METHOD* method_{};
+};
+
+struct SocketBioMethodRegistry {
+  std::mutex mutex;
+  std::shared_ptr<SocketBioMethod> method;
+};
+
+[[nodiscard]] common::Result<std::shared_ptr<SocketBioMethod>> acquire_socket_bio_method() {
+  static SocketBioMethodRegistry registry;
+  const std::lock_guard lock(registry.mutex);
+  if (registry.method)
+    return registry.method;
+  auto created = create_socket_bio_method();
+  if (!created.has_value())
+    return common::make_unexpected(created.error());
+  try {
+    registry.method = std::make_shared<SocketBioMethod>(*created);
+  } catch (const std::bad_alloc&) {
+    BIO_meth_free(*created);
+    return common::make_unexpected(exhausted("OpenSSL socket BIO method owner allocation failed"));
+  }
+  return registry.method;
+}
+
+[[nodiscard]] common::Result<std::shared_ptr<SocketBioMethod>> attach_socket(SSL* session,
+                                                                             const int descriptor) {
+#if defined(SO_NOSIGPIPE)
+  const int enabled = 1;
+  if (::setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof(enabled)) != 0)
+    return common::make_unexpected(io_error("TLS socket could not suppress SIGPIPE"));
+#elif !defined(MSG_NOSIGNAL)
+#error "ChronosDB TLS requires MSG_NOSIGNAL or SO_NOSIGPIPE"
+#endif
+  auto method = acquire_socket_bio_method();
+  if (!method.has_value())
+    return common::make_unexpected(method.error());
+  BIO* bio = BIO_new((*method)->get());
+  if (bio == nullptr)
+    return common::make_unexpected(exhausted("OpenSSL socket BIO allocation failed"));
+  SocketBioState* state = socket_bio_state(bio);
+  if (state == nullptr) {
+    BIO_free(bio);
+    return common::make_unexpected(io_error("OpenSSL socket BIO state is unavailable"));
+  }
+  state->descriptor = descriptor;
+  if (BIO_up_ref(bio) != 1) {
+    BIO_free(bio);
+    return common::make_unexpected(exhausted("OpenSSL socket BIO reference allocation failed"));
+  }
+  SSL_set0_rbio(session, bio);
+  SSL_set0_wbio(session, bio);
+  return *method;
 }
 
 [[nodiscard]] common::Result<TlsIoResult> classify_io(SSL* ssl, const int result,
@@ -71,12 +248,14 @@ public:
 
 class TlsSocket::Impl {
 public:
-  explicit Impl(SSL* session) noexcept : session_(session) {}
+  Impl(SSL* session, std::shared_ptr<SocketBioMethod> socket_bio_method) noexcept
+      : session_(session), socket_bio_method_(std::move(socket_bio_method)) {}
   ~Impl() {
     SSL_free(session_);
   }
 
   SSL* session_{};
+  std::shared_ptr<SocketBioMethod> socket_bio_method_;
   std::optional<PeerCertificateSha256> peer_certificate_sha256_;
 };
 
@@ -190,13 +369,14 @@ common::Result<TlsSocket> TlsSocket::accept(const TlsServerContext& context,
   SSL* session = SSL_new(context.implementation_->context_);
   if (session == nullptr)
     return common::make_unexpected(exhausted("OpenSSL session allocation failed"));
-  if (SSL_set_fd(session, connected_socket) != 1) {
+  auto socket_bio_method = attach_socket(session, connected_socket);
+  if (!socket_bio_method.has_value()) {
     SSL_free(session);
-    return common::make_unexpected(io_error("OpenSSL could not attach the connected socket"));
+    return common::make_unexpected(socket_bio_method.error());
   }
   SSL_set_accept_state(session);
   try {
-    return TlsSocket{std::make_unique<Impl>(session)};
+    return TlsSocket{std::make_unique<Impl>(session, *socket_bio_method)};
   } catch (const std::bad_alloc&) {
     SSL_free(session);
     return common::make_unexpected(exhausted("TLS socket owner allocation failed"));
@@ -216,9 +396,6 @@ common::Result<TlsSocket> TlsSocket::connect(const TlsClientContext& context,
     session = nullptr;
     return common::make_unexpected(std::move(status));
   };
-  if (SSL_set_fd(session, connected_socket) != 1)
-    return release_on_error(io_error("OpenSSL could not attach the connected socket"));
-
   const std::string& identity = context.implementation_->expected_server_identity_;
   std::array<unsigned char, 16> address{};
   const bool is_ip_address = ::inet_pton(AF_INET, identity.c_str(), address.data()) == 1 ||
@@ -236,10 +413,15 @@ common::Result<TlsSocket> TlsSocket::connect(const TlsClientContext& context,
       return release_on_error(io_error("OpenSSL could not configure the expected DNS identity"));
   }
   SSL_set_connect_state(session);
+  auto socket_bio_method = attach_socket(session, connected_socket);
+  if (!socket_bio_method.has_value())
+    return release_on_error(socket_bio_method.error());
   try {
-    return TlsSocket{std::make_unique<Impl>(session)};
+    return TlsSocket{std::make_unique<Impl>(session, *socket_bio_method)};
   } catch (const std::bad_alloc&) {
-    return release_on_error(exhausted("TLS socket owner allocation failed"));
+    SSL_free(session);
+    session = nullptr;
+    return common::make_unexpected(exhausted("TLS socket owner allocation failed"));
   }
 }
 

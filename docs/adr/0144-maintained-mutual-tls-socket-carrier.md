@@ -28,7 +28,11 @@ ChronosDB principal. Transport verification and application authorization remain
 
 Handshake, read, and write calls return explicit complete, want-read, want-write, or clean-close
 states. They never block or own an event loop. A session and its borrowed descriptor have one owner
-thread, and the context must outlive every session created from it.
+thread, and the context must outlive every session created from it. The carrier attaches OpenSSL to
+the borrowed descriptor through one process-wide custom BIO method. Its writes suppress `SIGPIPE`
+per operation with `MSG_NOSIGNAL` where available or per descriptor with `SO_NOSIGPIPE`; it never
+changes the embedding process's signal disposition. The method is shared across session lifetimes so
+the finite OpenSSL custom-BIO type namespace is not consumed per connection.
 
 ## Alternatives considered
 
@@ -51,7 +55,8 @@ OpenSSL types. TLS credentials are owning strings in the copied server configura
 application authenticator remains borrowed and must outlive the reactor. The socket carrier is
 usable independently and is the only accepted transport-authentication source. ADR 0145 integrates
 its readiness states into epoll. Other backends may not claim TLS serving support until they provide
-their own tested record scheduling.
+their own tested record scheduling. Abrupt peer closure is returned through the existing TLS I/O
+status boundary and cannot terminate the host process with `SIGPIPE`.
 
 ## Affected invariants
 
@@ -64,7 +69,11 @@ observable statuses rather than successful placeholders.
 Focused socket-pair tests use a test CA plus distinct server and client certificates. They cover
 credential loading failure, successful nonblocking mutual handshake, verified fingerprint delivery
 to the application authenticator, bidirectional plaintext records, and rejection without a client
-certificate. Sanitizer and installed-consumer checks cover the same OpenSSL-free public boundary.
+certificate. An abrupt-close regression installs a temporary observing `SIGPIPE` handler and proves
+TLS writes do not raise it. A repeated-session regression exceeds OpenSSL's finite custom-BIO type
+range and proves one method is reused. Real mutual-TLS query execution drives the server after the
+client's terminal local failure to cover hangup plus write readiness. Sanitizer and
+installed-consumer checks cover the same OpenSSL-free public boundary.
 
 ## Migration or rollback considerations
 

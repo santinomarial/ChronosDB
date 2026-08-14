@@ -1110,6 +1110,10 @@ TEST(DistributedVectorQueryTcpExecutionV2Test, LocalCarrierResourceFailureIsWhol
   EXPECT_EQ(metrics.transport_completed_attempts, 0U);
   EXPECT_EQ(metrics.transport_failed_attempts, 0U);
   EXPECT_EQ(metrics.active_attempts, 0U);
+  for (std::size_t iteration = 0U; iteration < 64U && server->metrics().active_connections != 0U;
+       ++iteration)
+    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  EXPECT_EQ(server->metrics().active_connections, 0U);
   EXPECT_TRUE(server->shutdown().is_ok());
 }
 
