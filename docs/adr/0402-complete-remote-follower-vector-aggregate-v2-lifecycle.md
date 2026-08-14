@@ -100,8 +100,16 @@ installed temporal CSEG. The complete remote owner returns and decodes the expec
 `COUNT(*) = 2` and `SUM(value) = 4.0` result, with one completed authority pair, one completed query
 attempt, two production provider acquisitions (definition binding and execution), certificate
 fingerprints on both sides, and deterministic shutdown of every listener and Raft owner. This
-closes the single-tablet one-process production-composition evidence; multi-process, multi-tablet,
-and fault-injected campaigns remain Phase 18 validation work.
+closes the single-tablet one-process production-composition evidence; multi-process and
+fault-injected campaigns remain Phase 18 validation work.
+
+The multi-tablet follow-up installs two independently identified temporal CSEGs under distinct
+tablets and Raft groups, acquires two leader/follower authority pairs, and routes each fragment to a
+different production follower service. It deliberately withholds progress from the second service
+after the first completes and proves the composite remains `EXECUTING` with no result. Only after
+both definition-bound state vectors arrive does it publish the global `COUNT(*) = 4` and
+`SUM(value) = 12.0` Native result. This closes focused one-process multi-tablet atomic-publication
+evidence; multi-process, movement-interleaved, and fault-injected campaigns remain.
 
 ## Migration or rollback considerations
 

@@ -232,6 +232,10 @@ make_valid_part_with_rows(const std::uint32_t rows, const std::uint32_t rows_per
 struct TemporalPartFixtureOptions {
   temporal_format::CommitSource commit_source{temporal_format::CommitSource::kWal};
   common::Uuid source_id{common::Uuid{identifier<schema::SchemaId>(8U).bytes()}};
+  std::uint8_t part_id_seed{1U};
+  std::uint8_t tablet_id_seed{3U};
+  double first_float64_value{1.5};
+  double second_float64_value{2.5};
 };
 
 [[nodiscard]] inline EncodedCsegPart
@@ -337,19 +341,20 @@ make_valid_temporal_part(const PageCompression compression = PageCompression::kN
                                                      .first_page_index = 0U,
                                                      .minimum_event_time = 10,
                                                      .maximum_event_time = 20}};
-  return encode_cseg_v2_temporal_part({.part_id = identifier<PartId>(1U),
-                                       .table_id = identifier<schema::TableId>(2U),
-                                       .tablet_id = identifier<schema::TabletId>(3U),
-                                       .schema_id = identifier<schema::SchemaId>(4U),
-                                       .schema_version = schema::SchemaVersion::initial(),
-                                       .row_count = kRows,
-                                       .event_time_column_ordinal = 0U,
-                                       .ordering_column_count = 1U,
-                                       .minimum_event_time = 10,
-                                       .maximum_event_time = 20,
-                                       .columns = columns,
-                                       .granules = granules,
-                                       .pages = pages})
+  return encode_cseg_v2_temporal_part(
+             {.part_id = identifier<PartId>(options.part_id_seed),
+              .table_id = identifier<schema::TableId>(2U),
+              .tablet_id = identifier<schema::TabletId>(options.tablet_id_seed),
+              .schema_id = identifier<schema::SchemaId>(4U),
+              .schema_version = schema::SchemaVersion::initial(),
+              .row_count = kRows,
+              .event_time_column_ordinal = 0U,
+              .ordering_column_count = 1U,
+              .minimum_event_time = 10,
+              .maximum_event_time = 20,
+              .columns = columns,
+              .granules = granules,
+              .pages = pages})
       .value();
 }
 
@@ -415,8 +420,8 @@ make_valid_temporal_float64_part(const PageCompression compression = PageCompres
   append_little_endian(event_times, std::int64_t{10});
   append_little_endian(event_times, std::int64_t{20});
   std::vector<std::byte> values;
-  append_little_endian(values, std::bit_cast<std::uint64_t>(1.5));
-  append_little_endian(values, std::bit_cast<std::uint64_t>(2.5));
+  append_little_endian(values, std::bit_cast<std::uint64_t>(options.first_float64_value));
+  append_little_endian(values, std::bit_cast<std::uint64_t>(options.second_float64_value));
   const std::vector<std::byte> sources(kRows,
                                        std::byte{static_cast<std::uint8_t>(options.commit_source)});
   const common::Uuid::Bytes source = options.source_id.bytes();
@@ -465,19 +470,20 @@ make_valid_temporal_float64_part(const PageCompression compression = PageCompres
                                                      .first_page_index = 0U,
                                                      .minimum_event_time = 10,
                                                      .maximum_event_time = 20}};
-  return encode_cseg_v2_temporal_part({.part_id = identifier<PartId>(1U),
-                                       .table_id = identifier<schema::TableId>(2U),
-                                       .tablet_id = identifier<schema::TabletId>(3U),
-                                       .schema_id = identifier<schema::SchemaId>(4U),
-                                       .schema_version = schema::SchemaVersion::initial(),
-                                       .row_count = kRows,
-                                       .event_time_column_ordinal = 0U,
-                                       .ordering_column_count = 1U,
-                                       .minimum_event_time = 10,
-                                       .maximum_event_time = 20,
-                                       .columns = columns,
-                                       .granules = granules,
-                                       .pages = pages})
+  return encode_cseg_v2_temporal_part(
+             {.part_id = identifier<PartId>(options.part_id_seed),
+              .table_id = identifier<schema::TableId>(2U),
+              .tablet_id = identifier<schema::TabletId>(options.tablet_id_seed),
+              .schema_id = identifier<schema::SchemaId>(4U),
+              .schema_version = schema::SchemaVersion::initial(),
+              .row_count = kRows,
+              .event_time_column_ordinal = 0U,
+              .ordering_column_count = 1U,
+              .minimum_event_time = 10,
+              .maximum_event_time = 20,
+              .columns = columns,
+              .granules = granules,
+              .pages = pages})
       .value();
 }
 

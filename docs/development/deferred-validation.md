@@ -329,8 +329,11 @@
   plan/schema/Manifest bundle, transfers only a complete proof vector into the pinned scheduler,
   and returns one globally finalized Native result. A focused production-composition loopback
   executes that lifecycle through the owning real-CSEG inbound service and validates exact
-  count/sum output from installed temporal-part bytes. Multi-tablet, multi-process,
-  movement-interleaved, allocation-fault, and network-fault campaigns remain.
+  count/sum output from installed temporal-part bytes. A two-tablet gate now acquires two authority
+  pairs, executes two distinct production follower services over independently identified CSEGs,
+  withholds one terminal stream to prove no partial publication, and validates the exact global
+  count/sum result. Multi-process, movement-interleaved, allocation-fault, and network-fault
+  campaigns remain.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

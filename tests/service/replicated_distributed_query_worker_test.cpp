@@ -124,7 +124,8 @@ public:
   common::Result<bool> authorize_node(const std::uint64_t principal_id,
                                       const raft::NodeId node_id) const override {
     return common::Result<bool>{(principal_id == 91U && node_id == 1U) ||
-                                (principal_id == 92U && (node_id == 11U || node_id == 13U))};
+                                (principal_id == 92U && (node_id == 11U || node_id == 12U ||
+                                                         node_id == 13U || node_id == 14U))};
   }
 };
 
@@ -135,11 +136,12 @@ public:
     raft::Role role{raft::Role::kFollower};
     raft::NodeId leader_id{};
     raft::LogIndex position{};
+    std::array<raft::NodeId, 2U> voters{11U, 13U};
   };
 
   explicit LifecycleObservationService(const Config config)
       : node_id_(config.node_id), role_(config.role), leader_id_(config.leader_id),
-        position_(config.position) {}
+        position_(config.position), voters_(config.voters) {}
 
   common::Result<raft::RaftGroupObservation> observe(const raft::GroupId& group_id) override {
     ++calls;
@@ -151,8 +153,8 @@ public:
                                       .last_log_index = position_,
                                       .commit_index = position_,
                                       .applied_index = position_,
-                                      .voters = {11U, 13U},
-                                      .committed_voters = {11U, 13U}};
+                                      .voters = {voters_[0], voters_[1]},
+                                      .committed_voters = {voters_[0], voters_[1]}};
   }
 
   std::size_t calls{};
@@ -162,6 +164,7 @@ private:
   raft::Role role_{raft::Role::kFollower};
   raft::NodeId leader_id_{};
   raft::LogIndex position_{};
+  std::array<raft::NodeId, 2U> voters_{};
 };
 
 [[nodiscard]] std::string endpoint_text(const network::Ipv4Endpoint& endpoint) {
@@ -1255,6 +1258,396 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
   provider.clear_lineage();
   EXPECT_EQ(worker->execute(dispatch).error().code(), common::StatusCode::kInvalidArgument);
   EXPECT_EQ(provider.calls, 5U);
+}
+
+TEST(ReplicatedDistributedQueryWorkerTest,
+     CompletesTwoProductionFollowerCsegFragmentsAsOneAtomicResult) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  ASSERT_TRUE(std::filesystem::create_directory(directory.path() / manifest::kPartsDirectoryName));
+  ASSERT_TRUE(
+      std::filesystem::create_directory(directory.path() / manifest::kManifestDirectoryName));
+  write_file(directory.path() / manifest::kManifestDirectoryName / manifest::kManifestLockFileName,
+             {});
+
+  const auto lineage = make_lineage();
+  const auto schema_value = lineage->current();
+  ASSERT_NE(schema_value, nullptr);
+  const manifest::DatabaseId database_id = id<manifest::DatabaseId>(1U);
+  const std::array tablet_ids{id<schema::TabletId>(3U), id<schema::TabletId>(7U)};
+  const std::array<raft::GroupId, 2U> group_ids{uuid(8U), uuid(9U)};
+  const std::array encoded_parts{
+      cseg::test::make_valid_temporal_float64_part(
+          cseg::PageCompression::kNone,
+          {.commit_source = cseg::temporal_format::CommitSource::kRaft, .source_id = group_ids[0]}),
+      cseg::test::make_valid_temporal_float64_part(
+          cseg::PageCompression::kNone,
+          {.commit_source = cseg::temporal_format::CommitSource::kRaft,
+           .source_id = group_ids[1],
+           .part_id_seed = 2U,
+           .tablet_id_seed = 7U,
+           .first_float64_value = 3.5,
+           .second_float64_value = 4.5})};
+  std::vector<manifest::TemporalPartDescriptor> parts;
+  parts.reserve(encoded_parts.size());
+  for (std::size_t index = 0U; index < encoded_parts.size(); ++index) {
+    auto described = manifest::describe_manifest_v2_temporal_part_image(
+        encoded_parts[index].bytes(), *schema_value, tablet_ids[index],
+        manifest::ManifestCommitSource::kRaft, group_ids[index]);
+    ASSERT_TRUE(described.has_value()) << described.error().to_string();
+    parts.push_back(*described);
+    write_file(directory.path() / manifest::kPartsDirectoryName /
+                   manifest::part_file_name(parts[index].part_id),
+               encoded_parts[index].bytes());
+  }
+  const std::array tablets{
+      manifest::TemporalTabletDescriptor{.table_id = schema_value->table_id(),
+                                         .tablet_id = tablet_ids[0],
+                                         .recovery_schema_id = schema_value->schema_id(),
+                                         .recovery_schema_version = schema_value->version(),
+                                         .source_id = group_ids[0],
+                                         .durable_position = 10U,
+                                         .reclaim_position = 0U,
+                                         .first_part_index = 0U,
+                                         .part_count = 1U,
+                                         .durable_version_count = 2U,
+                                         .commit_source = manifest::ManifestCommitSource::kRaft},
+      manifest::TemporalTabletDescriptor{.table_id = schema_value->table_id(),
+                                         .tablet_id = tablet_ids[1],
+                                         .recovery_schema_id = schema_value->schema_id(),
+                                         .recovery_schema_version = schema_value->version(),
+                                         .source_id = group_ids[1],
+                                         .durable_position = 10U,
+                                         .reclaim_position = 0U,
+                                         .first_part_index = 1U,
+                                         .part_count = 1U,
+                                         .durable_version_count = 2U,
+                                         .commit_source = manifest::ManifestCommitSource::kRaft}};
+  auto encoded_manifest =
+      manifest::encode_manifest_v2_temporal({.generation = 1U,
+                                             .database_id = database_id,
+                                             .wal_reclaim_checkpoint = std::nullopt,
+                                             .tablets = tablets,
+                                             .parts = parts,
+                                             .retries = {}});
+  ASSERT_TRUE(encoded_manifest.has_value()) << encoded_manifest.error().to_string();
+  write_file(directory.path() / manifest::kManifestDirectoryName /
+                 *manifest::manifest_file_name(1U),
+             encoded_manifest->bytes());
+  auto storage =
+      manifest::ManifestStorage::open_existing({.database_root = directory.path().string()});
+  ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+  const std::array schema_bindings{
+      manifest::TabletSchemaBinding{.tablet_id = tablet_ids[0], .lineage = std::cref(*lineage)},
+      manifest::TabletSchemaBinding{.tablet_id = tablet_ids[1], .lineage = std::cref(*lineage)}};
+  const std::array source_bindings{
+      manifest::TemporalTabletSourceBinding{.tablet_id = tablet_ids[0],
+                                            .commit_source = manifest::ManifestCommitSource::kRaft,
+                                            .source_id = group_ids[0]},
+      manifest::TemporalTabletSourceBinding{.tablet_id = tablet_ids[1],
+                                            .commit_source = manifest::ManifestCommitSource::kRaft,
+                                            .source_id = group_ids[1]}};
+  auto loaded = storage->load_selected_temporal_manifest({.expected_database_id = database_id,
+                                                          .schema_bindings = schema_bindings,
+                                                          .source_bindings = source_bindings});
+  ASSERT_TRUE(loaded.has_value()) << loaded.error().to_string();
+  auto selected =
+      std::make_shared<const manifest::LoadedTemporalManifestGeneration>(std::move(*loaded));
+  auto publisher = manifest::TemporalDatabaseStoragePublisher::create(selected, schema_bindings);
+  ASSERT_TRUE(publisher.has_value()) << publisher.error().to_string();
+  auto first_worker_snapshot = publisher->snapshot();
+  auto second_worker_snapshot = publisher->snapshot();
+  auto coordinator_snapshot = publisher->snapshot();
+  ASSERT_TRUE(first_worker_snapshot.has_value()) << first_worker_snapshot.error().to_string();
+  ASSERT_TRUE(second_worker_snapshot.has_value()) << second_worker_snapshot.error().to_string();
+  ASSERT_TRUE(coordinator_snapshot.has_value()) << coordinator_snapshot.error().to_string();
+  ContextProvider first_provider{std::move(*first_worker_snapshot),
+                                 lineage,
+                                 {.table_id = schema_value->table_id(),
+                                  .tablet_id = tablet_ids[0],
+                                  .placement_epoch = 12U,
+                                  .replicas = {11U, 13U},
+                                  .leader_hint = 13U},
+                                 group_ids[0],
+                                 std::nullopt};
+  ContextProvider second_provider{std::move(*second_worker_snapshot),
+                                  lineage,
+                                  {.table_id = schema_value->table_id(),
+                                   .tablet_id = tablet_ids[1],
+                                   .placement_epoch = 12U,
+                                   .replicas = {12U, 14U},
+                                   .leader_hint = 14U},
+                                  group_ids[1],
+                                  std::nullopt};
+
+  const raft::GroupId metadata_group = uuid(30U);
+  ASSERT_TRUE(std::filesystem::create_directory(directory.path() / "metadata-raft"));
+  auto metadata_runtime = raft::AsyncDurableMultiRaftRuntime::create_new(
+      13U, {.directory_path = (directory.path() / "metadata-raft").string()},
+      {{metadata_group, {13U}}});
+  ASSERT_TRUE(metadata_runtime.has_value()) << metadata_runtime.error().to_string();
+  auto metadata_election =
+      metadata_runtime->try_submit({{metadata_group, raft::StartElectionOperation{}}});
+  ASSERT_TRUE(metadata_election.has_value()) << metadata_election.error().to_string();
+  ASSERT_TRUE(metadata_election->wait().has_value());
+  auto metadata_barrier =
+      ReplicatedReadBarrier::create_local(std::addressof(*metadata_runtime), {metadata_group});
+  ASSERT_TRUE(metadata_barrier.has_value()) << metadata_barrier.error().to_string();
+  auto metadata_authority = metadata_barrier->await_authority();
+  ASSERT_TRUE(metadata_authority.has_value()) << metadata_authority.error().to_string();
+  ASSERT_EQ(metadata_authority->size(), 1U);
+  const raft::LogIndex metadata_applied_position =
+      metadata_authority->front().barrier.barrier.read_index;
+  auto metadata_applied = metadata_runtime->try_submit(
+      {{metadata_group, raft::MarkAppliedOperation{.index = metadata_applied_position}}});
+  ASSERT_TRUE(metadata_applied.has_value()) << metadata_applied.error().to_string();
+  auto metadata_applied_result = metadata_applied->wait();
+  ASSERT_TRUE(metadata_applied_result.has_value()) << metadata_applied_result.error().to_string();
+  ASSERT_EQ(metadata_applied_result->size(), 1U);
+  ASSERT_TRUE(metadata_applied_result->front().status.is_ok())
+      << metadata_applied_result->front().status.to_string();
+
+  std::array observation_services{LifecycleObservationService{{.node_id = 11U,
+                                                               .role = raft::Role::kFollower,
+                                                               .leader_id = 13U,
+                                                               .position = 10U,
+                                                               .voters = {11U, 13U}}},
+                                  LifecycleObservationService{{.node_id = 12U,
+                                                               .role = raft::Role::kFollower,
+                                                               .leader_id = 14U,
+                                                               .position = 10U,
+                                                               .voters = {12U, 14U}}},
+                                  LifecycleObservationService{{.node_id = 13U,
+                                                               .role = raft::Role::kLeader,
+                                                               .leader_id = 13U,
+                                                               .position = 10U,
+                                                               .voters = {11U, 13U}}},
+                                  LifecycleObservationService{{.node_id = 14U,
+                                                               .role = raft::Role::kLeader,
+                                                               .leader_id = 14U,
+                                                               .position = 10U,
+                                                               .voters = {12U, 14U}}}};
+  NodeAuthorizer node_authorizer;
+  std::vector<cluster::RaftObservationReceiver> observation_receivers;
+  observation_receivers.reserve(observation_services.size());
+  for (std::size_t index = 0U; index < observation_services.size(); ++index) {
+    auto receiver =
+        cluster::RaftObservationReceiver::create({.local_node_id = 11U + index,
+                                                  .authorizer = &node_authorizer,
+                                                  .service = &observation_services[index]});
+    ASSERT_TRUE(receiver.has_value()) << receiver.error().to_string();
+    observation_receivers.push_back(*receiver);
+  }
+  Authenticator inbound_authenticator{91U};
+  std::vector<cluster::RaftObservationTcpServer> observation_servers;
+  observation_servers.reserve(observation_receivers.size());
+  for (cluster::RaftObservationReceiver& receiver : observation_receivers) {
+    auto observation_server = cluster::RaftObservationTcpServer::start(
+        {.listener = {},
+         .tls = tls_server_config(),
+         .authenticator = &inbound_authenticator,
+         .receiver = &receiver,
+         .session_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                            .exchange_timeout = std::chrono::milliseconds{1000}},
+         .maximum_connections = 4U,
+         .maximum_accepts_per_poll = 4U});
+    ASSERT_TRUE(observation_server.has_value()) << observation_server.error().to_string();
+    observation_servers.push_back(std::move(*observation_server));
+  }
+  auto tls_context = network::TlsClientContext::create(tls_client_config());
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  const raft::MetadataCatalogSnapshot catalog{
+      .applied_index = metadata_applied_position,
+      .cluster_nodes = {{11U, endpoint_text(observation_servers[0].bound_endpoint())},
+                        {12U, endpoint_text(observation_servers[1].bound_endpoint())},
+                        {13U, endpoint_text(observation_servers[2].bound_endpoint())},
+                        {14U, endpoint_text(observation_servers[3].bound_endpoint())}},
+      .schema_definitions = {{"metrics", false, schema_value}},
+      .active_schemas = {{schema_value->table_id(), schema_value->schema_id()}},
+      .tablet_placements = {{schema_value->table_id(),
+                             tablet_ids[0],
+                             12U,
+                             {11U, 13U},
+                             std::optional<raft::NodeId>{13U}},
+                            {schema_value->table_id(),
+                             tablet_ids[1],
+                             12U,
+                             {12U, 14U},
+                             std::optional<raft::NodeId>{14U}}},
+      .tablet_group_bindings = {{tablet_ids[0], group_ids[0]}, {tablet_ids[1], group_ids[1]}}};
+  const query::DistributedVectorQueryPlan plan{
+      .query_id = uuid(31U),
+      .read_policy = {.consistency = query::DistributedReadConsistency::kFollowerBoundedStale,
+                      .maximum_staleness_positions = 1U},
+      .fragments = {{.tablet_id = tablet_ids[0],
+                     .minimum_event_time = 0,
+                     .maximum_event_time = 100,
+                     .leader_node = 13U,
+                     .local_applied_position = 10U,
+                     .known_leader_commit_position = 10U},
+                    {.tablet_id = tablet_ids[1],
+                     .minimum_event_time = 0,
+                     .maximum_event_time = 100,
+                     .leader_node = 14U,
+                     .local_applied_position = 10U,
+                     .known_leader_commit_position = 10U}},
+      .intent = {
+          .mode = query::DistributedVectorPlanMode::kUngroupedAggregate,
+          .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar},
+                         {.operation = query::VectorAggregateOperation::kSum, .input_index = 1U}}}};
+  const std::array<std::uint32_t, 2U> projection{0U, 1U};
+  const std::array observation_tls_contexts{
+      cluster::RaftObservationNodeTlsContext{11U, std::addressof(*tls_context)},
+      cluster::RaftObservationNodeTlsContext{12U, std::addressof(*tls_context)},
+      cluster::RaftObservationNodeTlsContext{13U, std::addressof(*tls_context)},
+      cluster::RaftObservationNodeTlsContext{14U, std::addressof(*tls_context)}};
+  const std::array query_tls_contexts{
+      cluster::DistributedQueryNodeTlsContext{11U, std::addressof(*tls_context)},
+      cluster::DistributedQueryNodeTlsContext{12U, std::addressof(*tls_context)}};
+  Authenticator remote_authenticator{92U};
+  auto lifecycle = ReplicatedFollowerDistributedVectorAggregateQueryV2::create(
+      plan, std::move(*coordinator_snapshot),
+      query::DistributedVectorResultSchema{
+          .columns = {{.name = "count",
+                       .type = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
+                       .nullable = false},
+                      {.name = "sum",
+                       .type = schema_value->columns()[1].type(),
+                       .nullable = true}}},
+      {.source_node_id = 1U,
+       .first_correlation_id = 301U,
+       .tls_contexts = observation_tls_contexts,
+       .authenticator = &remote_authenticator,
+       .node_authorizer = &node_authorizer,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000}},
+       .connect_timeout = std::chrono::milliseconds{1000},
+       .retry = {.maximum_attempts = 1U,
+                 .initial_backoff = std::chrono::milliseconds{1},
+                 .maximum_backoff = std::chrono::milliseconds{1}},
+       .maximum_pairs = 2U},
+      {.source_node_id = 1U,
+       .read_barrier = &*metadata_barrier,
+       .metadata_group_id = metadata_group,
+       .catalog = std::cref(catalog),
+       .table_id = schema_value->table_id(),
+       .destination_column_ordinals = projection,
+       .tls_contexts = query_tls_contexts,
+       .authenticator = &remote_authenticator,
+       .node_authorizer = &node_authorizer,
+       .binding_limits = {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U},
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000},
+                          .maximum_response_frames = 2U,
+                          .maximum_response_bytes = std::size_t{1024U} * 1024U},
+       .connect_timeout = std::chrono::milliseconds{1000}});
+  ASSERT_TRUE(lifecycle.has_value()) << lifecycle.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       lifecycle->state() ==
+           ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kAcquiringAuthority;
+       ++iteration) {
+    ASSERT_TRUE(lifecycle->poll_once(std::chrono::milliseconds{1}).is_ok())
+        << lifecycle->failure().to_string();
+    for (cluster::RaftObservationTcpServer& observation_server : observation_servers)
+      ASSERT_TRUE(observation_server.poll_once(std::chrono::milliseconds{0}).is_ok());
+  }
+  ASSERT_EQ(lifecycle->state(),
+            ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting)
+      << lifecycle->failure().to_string();
+  for (const LifecycleObservationService& observation_service : observation_services)
+    EXPECT_EQ(observation_service.calls, 1U);
+
+  const std::array query_endpoints{observation_servers[0].bound_endpoint(),
+                                   observation_servers[1].bound_endpoint()};
+  ASSERT_TRUE(observation_servers[0].shutdown().is_ok());
+  ASSERT_TRUE(observation_servers[1].shutdown().is_ok());
+  auto first_query_server = ReplicatedDistributedVectorAggregateQueryTcpServerV2::start(
+      {.worker = {.local_node_id = 11U, .storage = &*storage, .context_provider = &first_provider},
+       .listener = {.bind_endpoint = query_endpoints[0]},
+       .tls = tls_server_config(),
+       .authenticator = &inbound_authenticator,
+       .node_authorizer = &node_authorizer,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000},
+                          .maximum_response_frames = 2U,
+                          .maximum_response_bytes = std::size_t{1024U} * 1024U},
+       .maximum_connections = 4U,
+       .maximum_accepts_per_poll = 4U});
+  auto second_query_server = ReplicatedDistributedVectorAggregateQueryTcpServerV2::start(
+      {.worker = {.local_node_id = 12U, .storage = &*storage, .context_provider = &second_provider},
+       .listener = {.bind_endpoint = query_endpoints[1]},
+       .tls = tls_server_config(),
+       .authenticator = &inbound_authenticator,
+       .node_authorizer = &node_authorizer,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000},
+                          .maximum_response_frames = 2U,
+                          .maximum_response_bytes = std::size_t{1024U} * 1024U},
+       .maximum_connections = 4U,
+       .maximum_accepts_per_poll = 4U});
+  ASSERT_TRUE(first_query_server.has_value()) << first_query_server.error().to_string();
+  ASSERT_TRUE(second_query_server.has_value()) << second_query_server.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 256U && first_query_server->metrics().completed_connections == 0U; ++iteration) {
+    ASSERT_TRUE(lifecycle->poll_once(std::chrono::milliseconds{0}).is_ok())
+        << lifecycle->failure().to_string();
+    ASSERT_TRUE(first_query_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(first_query_server->metrics().completed_connections, 1U);
+  EXPECT_EQ(lifecycle->state(),
+            ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting);
+  EXPECT_EQ(lifecycle->result().error().code(), common::StatusCode::kInvalidArgument);
+
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       lifecycle->state() == ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting;
+       ++iteration) {
+    ASSERT_TRUE(lifecycle->poll_once(std::chrono::milliseconds{1}).is_ok())
+        << lifecycle->failure().to_string();
+    ASSERT_TRUE(first_query_server->poll_once(std::chrono::milliseconds{0}).is_ok());
+    ASSERT_TRUE(second_query_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(lifecycle->state(), ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kComplete)
+      << lifecycle->failure().to_string();
+  auto result = lifecycle->result();
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  // Guarded by the completed lifecycle and result assertion above.
+  // NOLINTBEGIN(bugprone-unchecked-optional-access)
+  auto batch = network::decode_query_result_batch(result->get().encoded_batch);
+  ASSERT_TRUE(batch.has_value()) << batch.error().to_string();
+  ASSERT_EQ(batch->row_count(), 1U);
+  ASSERT_EQ(batch->columns().size(), 2U);
+  const network::QueryResultCell* count_cell = batch->cell(0U, 0U);
+  const network::QueryResultCell* sum_cell = batch->cell(0U, 1U);
+  ASSERT_NE(count_cell, nullptr);
+  ASSERT_NE(sum_cell, nullptr);
+  common::ByteReader count_reader{count_cell->value};
+  common::ByteReader sum_reader{sum_cell->value};
+  auto count = count_reader.read_i64_le();
+  auto sum_bits = sum_reader.read_u64_le();
+  ASSERT_TRUE(count.has_value());
+  ASSERT_TRUE(sum_bits.has_value());
+  EXPECT_EQ(*count, 4);
+  EXPECT_EQ(std::bit_cast<double>(*sum_bits), 12.0);
+  EXPECT_TRUE(count_reader.empty());
+  EXPECT_TRUE(sum_reader.empty());
+  // NOLINTEND(bugprone-unchecked-optional-access)
+  EXPECT_EQ(first_provider.vector_calls, 2U);
+  EXPECT_EQ(second_provider.vector_calls, 2U);
+  const auto metrics = lifecycle->metrics();
+  EXPECT_EQ(metrics.authority.completed_pairs, 2U);
+  ASSERT_TRUE(metrics.execution.has_value());
+  // Guarded by the execution-metrics assertion above.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  EXPECT_EQ(metrics.execution->transport_completed_attempts, 2U);
+  EXPECT_EQ(second_query_server->metrics().completed_connections, 1U);
+  EXPECT_TRUE(first_query_server->shutdown().is_ok());
+  EXPECT_TRUE(second_query_server->shutdown().is_ok());
+  EXPECT_TRUE(observation_servers[2].shutdown().is_ok());
+  EXPECT_TRUE(observation_servers[3].shutdown().is_ok());
+  EXPECT_TRUE(metadata_barrier->shutdown().is_ok());
+  EXPECT_TRUE(metadata_runtime->shutdown().is_ok());
 }
 
 } // namespace
