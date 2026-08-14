@@ -9,6 +9,10 @@ static_assert(
     !std::is_copy_constructible_v<chronos::service::ReplicatedFollowerDistributedAggregateQuery>);
 static_assert(
     std::is_move_constructible_v<chronos::service::ReplicatedFollowerDistributedAggregateQuery>);
+static_assert(!std::is_copy_constructible_v<
+              chronos::service::ReplicatedFollowerDistributedVectorAggregateQueryV2>);
+static_assert(std::is_move_constructible_v<
+              chronos::service::ReplicatedFollowerDistributedVectorAggregateQueryV2>);
 
 namespace {
 [[maybe_unused]] const auto kCreateReplicatedDistributedAggregateQuery =
@@ -19,4 +23,6 @@ namespace {
     &chronos::service::create_replicated_distributed_vector_aggregate_query_v2;
 [[maybe_unused]] const auto kCreateReplicatedFollowerDistributedVectorAggregateQueryV2 =
     &chronos::service::create_replicated_follower_distributed_vector_aggregate_query_v2;
+[[maybe_unused]] const auto kCreateReplicatedFollowerDistributedVectorAggregateLifecycleV2 =
+    &chronos::service::ReplicatedFollowerDistributedVectorAggregateQueryV2::create;
 } // namespace

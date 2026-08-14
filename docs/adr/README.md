@@ -436,3 +436,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0399](0399-packaged-leader-linearizable-vector-aggregate-v2-query.md) | Packaged leader-linearizable vector aggregate v2 query | accepted |
 | [0400](0400-packaged-bounded-stale-vector-aggregate-v2-query.md) | Packaged bounded-stale vector aggregate v2 query | accepted |
 | [0401](0401-placement-backed-vector-raft-observation-batch-construction.md) | Placement-backed vector Raft observation batch construction | accepted |
+| [0402](0402-complete-remote-follower-vector-aggregate-v2-lifecycle.md) | Complete remote follower vector aggregate v2 lifecycle | accepted |

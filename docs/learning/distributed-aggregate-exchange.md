@@ -456,9 +456,9 @@ complete group-sorted authority vector. Its placement-backed constructor accepts
 aggregate and schema-bound vector plans through one shared tablet/group/node selection contract.
 Placement-backed remote pair selection prefers an eligible coordinator follower and otherwise the
 lowest nonleader replica, resolves every unique target once, and assigns bounded correlations
-before I/O. Packaged
-service ownership now pins the plan/Manifest through acquisition, binds the complete authority
-through the metadata barrier, and transfers directly into TCP query execution. A focused
+before I/O. Packaged service ownership now includes the schema-bound vector aggregate path: it pins
+the original vector plan, result schema, and Manifest through acquisition, binds the complete
+authority through the metadata barrier, and transfers directly into TCP query execution. A focused
 one-process loopback now returns a real installed-CSEG response through the production inbound
 service. Moved or multi-process real-CSEG responses, remote worker-interrupt delivery, pooled
 multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node

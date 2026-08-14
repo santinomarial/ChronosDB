@@ -185,6 +185,59 @@ private:
   std::unique_ptr<Impl> implementation_;
 };
 
+enum class ReplicatedFollowerDistributedVectorAggregateQueryStateV2 : std::uint8_t {
+  kAcquiringAuthority = 1,
+  kExecuting = 2,
+  kComplete = 3,
+  kFailed = 4,
+  kCancelled = 5,
+};
+
+struct ReplicatedFollowerDistributedVectorAggregateQueryMetricsV2 {
+  cluster::RaftObservationTcpBatchAcquisitionMetrics authority;
+  std::optional<cluster::DistributedVectorAggregateQueryTcpExecutionMetricsV2> execution;
+};
+
+// Owns the complete remote bounded-stale aggregate-v2 lifecycle. The plan, result schema, and
+// Manifest pin survive placement-backed authority acquisition and transfer together into packaged
+// follower execution. Catalog/barrier/projection views and all authentication/TLS policies in both
+// configs are borrowed and must outlive this single-threaded owner. A successful result reference
+// remains valid until the owner is moved, destroyed, or otherwise mutated.
+class ReplicatedFollowerDistributedVectorAggregateQueryV2 {
+public:
+  ReplicatedFollowerDistributedVectorAggregateQueryV2() noexcept;
+  ~ReplicatedFollowerDistributedVectorAggregateQueryV2();
+  ReplicatedFollowerDistributedVectorAggregateQueryV2(
+      const ReplicatedFollowerDistributedVectorAggregateQueryV2&) = delete;
+  ReplicatedFollowerDistributedVectorAggregateQueryV2&
+  operator=(const ReplicatedFollowerDistributedVectorAggregateQueryV2&) = delete;
+  ReplicatedFollowerDistributedVectorAggregateQueryV2(
+      ReplicatedFollowerDistributedVectorAggregateQueryV2&&) noexcept;
+  ReplicatedFollowerDistributedVectorAggregateQueryV2&
+  operator=(ReplicatedFollowerDistributedVectorAggregateQueryV2&&) noexcept;
+
+  [[nodiscard]] static common::Result<ReplicatedFollowerDistributedVectorAggregateQueryV2>
+  create(query::DistributedVectorQueryPlan plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+         query::DistributedVectorResultSchema&& result_schema,
+         cluster::RaftObservationTcpBatchConstructionConfig authority_config,
+         ReplicatedDistributedVectorAggregateQueryConfigV2 query_config);
+  [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait);
+  [[nodiscard]] common::Status cancel();
+
+  [[nodiscard]] ReplicatedFollowerDistributedVectorAggregateQueryStateV2 state() const noexcept;
+  [[nodiscard]] ReplicatedFollowerDistributedVectorAggregateQueryMetricsV2 metrics() const noexcept;
+  [[nodiscard]] common::Result<
+      std::reference_wrapper<const cluster::DistributedVectorAggregateFinalizedResultV2>>
+  result() const;
+  [[nodiscard]] const common::Status& failure() const noexcept;
+
+private:
+  class Impl;
+  explicit ReplicatedFollowerDistributedVectorAggregateQueryV2(
+      std::unique_ptr<Impl> implementation) noexcept;
+  std::unique_ptr<Impl> implementation_;
+};
+
 enum class ReplicatedFollowerDistributedGroupedFloat64QueryState : std::uint8_t {
   kAcquiringAuthority = 1,
   kExecuting = 2,

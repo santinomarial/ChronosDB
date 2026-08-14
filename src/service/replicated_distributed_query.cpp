@@ -523,6 +523,237 @@ const common::Status& ReplicatedFollowerDistributedAggregateQuery::failure() con
   return implementation_ ? implementation_->owner_failure : empty;
 }
 
+class ReplicatedFollowerDistributedVectorAggregateQueryV2::Impl {
+public:
+  Impl(query::DistributedVectorQueryPlan owned_plan,
+       manifest::TemporalDatabaseStorageSnapshot owned_snapshot,
+       query::DistributedVectorResultSchema&& owned_result_schema,
+       ReplicatedDistributedVectorAggregateQueryConfigV2 configured,
+       cluster::RaftObservationTcpBatchAcquisition acquisition) noexcept
+      : plan(std::move(owned_plan)), snapshot(std::move(owned_snapshot)),
+        result_schema(std::move(owned_result_schema)), config(configured),
+        authority(std::move(acquisition)) {}
+
+  [[nodiscard]] common::Status fail(common::Status failure) {
+    if (authority.state() == cluster::RaftObservationTcpBatchAcquisitionState::kRunning)
+      static_cast<void>(authority.cancel());
+    if (execution.has_value() &&
+        execution->state() ==
+            cluster::DistributedVectorAggregateQueryTcpExecutionStateV2::kRunning) {
+      static_cast<void>(execution->cancel());
+    }
+    owner_failure = std::move(failure);
+    owner_state = ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kFailed;
+    return owner_failure;
+  }
+
+  query::DistributedVectorQueryPlan plan;
+  manifest::TemporalDatabaseStorageSnapshot snapshot;
+  query::DistributedVectorResultSchema result_schema;
+  ReplicatedDistributedVectorAggregateQueryConfigV2 config;
+  cluster::RaftObservationTcpBatchAcquisition authority;
+  std::optional<cluster::DistributedVectorAggregateQueryTcpExecutionV2> execution;
+  ReplicatedFollowerDistributedVectorAggregateQueryStateV2 owner_state{
+      ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kAcquiringAuthority};
+  common::Status owner_failure{common::StatusCode::kInternal,
+                               "replicated follower vector aggregate query v2 has not failed"};
+};
+
+ReplicatedFollowerDistributedVectorAggregateQueryV2::
+    ReplicatedFollowerDistributedVectorAggregateQueryV2() noexcept = default;
+ReplicatedFollowerDistributedVectorAggregateQueryV2::
+    ReplicatedFollowerDistributedVectorAggregateQueryV2(
+        std::unique_ptr<Impl> implementation) noexcept
+    : implementation_(std::move(implementation)) {}
+ReplicatedFollowerDistributedVectorAggregateQueryV2::
+    ~ReplicatedFollowerDistributedVectorAggregateQueryV2() = default;
+ReplicatedFollowerDistributedVectorAggregateQueryV2::
+    ReplicatedFollowerDistributedVectorAggregateQueryV2(
+        ReplicatedFollowerDistributedVectorAggregateQueryV2&&) noexcept = default;
+ReplicatedFollowerDistributedVectorAggregateQueryV2&
+ReplicatedFollowerDistributedVectorAggregateQueryV2::operator=(
+    ReplicatedFollowerDistributedVectorAggregateQueryV2&&) noexcept = default;
+
+common::Result<ReplicatedFollowerDistributedVectorAggregateQueryV2>
+ReplicatedFollowerDistributedVectorAggregateQueryV2::create(
+    query::DistributedVectorQueryPlan plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    query::DistributedVectorResultSchema&& result_schema,
+    cluster::RaftObservationTcpBatchConstructionConfig authority_config,
+    ReplicatedDistributedVectorAggregateQueryConfigV2 query_config) {
+  const common::Status query_status = validate_config(query_config);
+  if (!query_status.is_ok())
+    return common::make_unexpected(query_status);
+  const common::Status schema_status =
+      query::validate_distributed_vector_result_schema_value(result_schema);
+  if (!schema_status.is_ok())
+    return common::make_unexpected(schema_status);
+  if (plan.read_policy.consistency != query::DistributedReadConsistency::kFollowerBoundedStale ||
+      !plan.read_policy.maximum_staleness_positions.has_value() ||
+      plan.intent.mode != query::DistributedVectorPlanMode::kUngroupedAggregate ||
+      authority_config.source_node_id != query_config.source_node_id ||
+      authority_config.authenticator != query_config.authenticator ||
+      authority_config.node_authorizer != query_config.node_authorizer) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInvalidArgument,
+                       "replicated follower vector aggregate query v2 authority policy differs "
+                       "from execution"});
+  }
+  auto batch_config = cluster::construct_raft_observation_tcp_batch(
+      plan, query_config.catalog.get(), authority_config);
+  if (!batch_config.has_value())
+    return common::make_unexpected(batch_config.error());
+  auto authority = cluster::RaftObservationTcpBatchAcquisition::create(std::move(*batch_config));
+  if (!authority.has_value())
+    return common::make_unexpected(authority.error());
+  try {
+    return ReplicatedFollowerDistributedVectorAggregateQueryV2{
+        std::make_unique<Impl>(std::move(plan), std::move(snapshot), std::move(result_schema),
+                               query_config, std::move(*authority))};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "replicated follower vector aggregate query v2 owner allocation failed"});
+  }
+}
+
+common::Status ReplicatedFollowerDistributedVectorAggregateQueryV2::poll_once(
+    const std::chrono::milliseconds maximum_wait) {
+  if (!implementation_) {
+    return {common::StatusCode::kInvalidArgument,
+            "replicated follower vector aggregate query v2 owner is empty"};
+  }
+  if (maximum_wait.count() < 0 || maximum_wait.count() > INT_MAX) {
+    return {common::StatusCode::kInvalidArgument,
+            "replicated follower vector aggregate query v2 poll wait is invalid"};
+  }
+  Impl& impl = *implementation_;
+  if (impl.owner_state == ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kFailed ||
+      impl.owner_state == ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kCancelled) {
+    return impl.owner_failure;
+  }
+  if (impl.owner_state == ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kComplete)
+    return common::Status::ok();
+  if (impl.owner_state ==
+      ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kAcquiringAuthority) {
+    const common::Status progress = impl.authority.poll_once(maximum_wait);
+    if (!progress.is_ok())
+      return impl.fail(progress);
+    if (impl.authority.state() != cluster::RaftObservationTcpBatchAcquisitionState::kComplete)
+      return common::Status::ok();
+    auto authorities = impl.authority.result();
+    if (!authorities.has_value())
+      return impl.fail(authorities.error());
+    auto execution = create_replicated_follower_distributed_vector_aggregate_query_v2(
+        impl.plan, std::move(impl.snapshot), std::move(impl.result_schema), *authorities,
+        impl.config);
+    if (!execution.has_value())
+      return impl.fail(execution.error());
+    impl.execution.emplace(std::move(*execution));
+    impl.owner_state = ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting;
+    return common::Status::ok();
+  }
+  if (!impl.execution.has_value()) {
+    return impl.fail(
+        common::Status{common::StatusCode::kInternal,
+                       "replicated follower vector aggregate query v2 lost execution"});
+  }
+  common::Status progress = impl.execution->poll_once(maximum_wait);
+  const auto state = impl.execution->state();
+  if (state == cluster::DistributedVectorAggregateQueryTcpExecutionStateV2::kComplete) {
+    impl.owner_state = ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kComplete;
+    return common::Status::ok();
+  }
+  if (state == cluster::DistributedVectorAggregateQueryTcpExecutionStateV2::kFailed)
+    return impl.fail(impl.execution->failure());
+  if (state == cluster::DistributedVectorAggregateQueryTcpExecutionStateV2::kCancelled) {
+    impl.owner_failure = impl.execution->failure();
+    impl.owner_state = ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kCancelled;
+    return impl.owner_failure;
+  }
+  if (!progress.is_ok())
+    return impl.fail(std::move(progress));
+  return progress;
+}
+
+common::Status ReplicatedFollowerDistributedVectorAggregateQueryV2::cancel() {
+  if (!implementation_) {
+    return {common::StatusCode::kInvalidArgument,
+            "replicated follower vector aggregate query v2 owner is empty"};
+  }
+  Impl& impl = *implementation_;
+  if (impl.owner_state == ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kFailed ||
+      impl.owner_state == ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kCancelled) {
+    return impl.owner_failure;
+  }
+  if (impl.owner_state == ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kComplete) {
+    return {common::StatusCode::kInvalidArgument,
+            "completed replicated follower vector aggregate query v2 cannot be cancelled"};
+  }
+  if (impl.owner_state ==
+      ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kAcquiringAuthority) {
+    static_cast<void>(impl.authority.cancel());
+  } else if (impl.execution.has_value()) {
+    static_cast<void>(impl.execution->cancel());
+  }
+  impl.owner_failure = {common::StatusCode::kCancelled,
+                        "replicated follower vector aggregate query v2 was cancelled"};
+  impl.owner_state = ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kCancelled;
+  return impl.owner_failure;
+}
+
+ReplicatedFollowerDistributedVectorAggregateQueryStateV2
+ReplicatedFollowerDistributedVectorAggregateQueryV2::state() const noexcept {
+  return implementation_ ? implementation_->owner_state
+                         : ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kFailed;
+}
+
+ReplicatedFollowerDistributedVectorAggregateQueryMetricsV2
+ReplicatedFollowerDistributedVectorAggregateQueryV2::metrics() const noexcept {
+  if (!implementation_)
+    return {};
+  const auto execution_metrics = implementation_->execution.transform(
+      [](const auto& execution) { return execution.metrics(); });
+  return {.authority = implementation_->authority.metrics(), .execution = execution_metrics};
+}
+
+common::Result<std::reference_wrapper<const cluster::DistributedVectorAggregateFinalizedResultV2>>
+ReplicatedFollowerDistributedVectorAggregateQueryV2::result() const {
+  if (!implementation_) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInvalidArgument,
+                       "replicated follower vector aggregate query v2 owner is empty"});
+  }
+  if (implementation_->owner_state ==
+          ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kFailed ||
+      implementation_->owner_state ==
+          ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kCancelled) {
+    return common::make_unexpected(implementation_->owner_failure);
+  }
+  if (implementation_->owner_state !=
+          ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kComplete ||
+      !implementation_->execution.has_value()) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInvalidArgument,
+                       "replicated follower vector aggregate query v2 result is unavailable"});
+  }
+  const auto finalized = implementation_->execution.and_then([](const auto& execution) {
+    return execution.result().transform([](const auto& result) { return std::cref(result); });
+  });
+  if (!finalized.has_value()) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInternal,
+                       "completed replicated follower vector aggregate query v2 has no result"});
+  }
+  return finalized.value();
+}
+
+const common::Status&
+ReplicatedFollowerDistributedVectorAggregateQueryV2::failure() const noexcept {
+  static const common::Status empty{common::StatusCode::kInvalidArgument,
+                                    "replicated follower vector aggregate query v2 owner is empty"};
+  return implementation_ ? implementation_->owner_failure : empty;
+}
+
 class ReplicatedFollowerDistributedGroupedFloat64Query::Impl {
 public:
   Impl(query::DistributedAggregatePlan owned_plan,
