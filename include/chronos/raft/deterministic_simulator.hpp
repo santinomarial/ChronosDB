@@ -130,6 +130,11 @@ struct RaftSimulationStats {
   friend bool operator==(const RaftSimulationStats&, const RaftSimulationStats&) = default;
 };
 
+struct RaftSeededSimulationSchedule {
+  std::uint64_t seed{};
+  std::size_t actions{};
+};
+
 // Deterministic single-threaded Raft laboratory. Explicit delivery order is virtual network time;
 // links, duplication, loss, crashes, and atomic full-state persistence are controlled by actions.
 // Every step checks election safety, log matching, leader completeness, and committed-prefix truth.
@@ -146,7 +151,7 @@ public:
   create(RaftSimulationConfig config);
   [[nodiscard]] common::Status step(RaftSimulationAction action);
   [[nodiscard]] common::Status replay(std::span<const RaftSimulationAction> actions);
-  [[nodiscard]] common::Status run_seeded(std::uint64_t seed, std::size_t actions);
+  [[nodiscard]] common::Status run_seeded(RaftSeededSimulationSchedule schedule);
   [[nodiscard]] static common::Result<std::vector<RaftSimulationAction>>
   shrink_failing_trace(const RaftSimulationConfig& config,
                        std::span<const RaftSimulationAction> failing_trace);

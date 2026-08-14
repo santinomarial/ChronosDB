@@ -77,9 +77,9 @@ TEST(DeterministicRaftSimulatorTest, RunsReproducibleSeededFaultSchedules) {
     auto second = DeterministicRaftSimulator::create(config());
     ASSERT_TRUE(first.has_value());
     ASSERT_TRUE(second.has_value());
-    ASSERT_TRUE(first->run_seeded(seed, 500U).is_ok())
+    ASSERT_TRUE(first->run_seeded({.seed = seed, .actions = 500U}).is_ok())
         << "seed=" << seed << " " << first->status().to_string();
-    ASSERT_TRUE(second->run_seeded(seed, 500U).is_ok())
+    ASSERT_TRUE(second->run_seeded({.seed = seed, .actions = 500U}).is_ok())
         << "seed=" << seed << " " << second->status().to_string();
     EXPECT_TRUE(std::ranges::equal(first->trace(), second->trace()));
     EXPECT_EQ(first->stats().actions, 500U);

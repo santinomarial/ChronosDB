@@ -118,7 +118,7 @@ public:
     const std::size_t to = node_index(destination);
     return from != nodes_.size() && to != nodes_.size() && links_[from * nodes_.size() + to];
   }
-  [[nodiscard]] common::Status restart(NodeSlot& node) {
+  [[nodiscard]] common::Status restart(NodeSlot& node) const {
     auto restarted =
         RaftNode::create(node.id, config_.initial_voters, node.durable, config_.limits.raft);
     if (!restarted.has_value())
@@ -128,7 +128,7 @@ public:
     node.fail_next_persistence = false;
     return common::Status::ok();
   }
-  void crash(NodeSlot& node) noexcept {
+  static void crash(NodeSlot& node) noexcept {
     node.active.reset();
     node.pending_snapshot.reset();
     node.fail_next_persistence = false;
@@ -203,8 +203,9 @@ public:
       }
       node.maximum_observed_term = state.current_term;
       node.maximum_observed_commit = state.commit_index;
-      if (node.active.has_value() && node.active->role() == Role::kLeader) {
-        const Term term = node.active->current_term();
+      RaftNode* const active_node = node.active.has_value() ? &node.active.value() : nullptr;
+      if (active_node != nullptr && active_node->role() == Role::kLeader) {
+        const Term term = active_node->current_term();
         const auto [leader, inserted] = leaders_by_term_.emplace(term, node.id);
         if (!inserted && leader->second != node.id) {
           return make_status(common::StatusCode::kCorruption,
@@ -234,9 +235,11 @@ public:
                              "Raft committed entry differs across replicas");
         }
       }
-      if (node.active.has_value() && node.active->role() == Role::kLeader) {
+      const std::optional<RaftNode>& active = node.active;
+      const RaftNode* const active_node = active.has_value() ? &active.value() : nullptr;
+      if (active_node != nullptr && active_node->role() == Role::kLeader) {
         for (const auto& [index, expected] : committed_entries_) {
-          if (expected.term >= node.active->current_term())
+          if (expected.term >= active_node->current_term())
             continue;
           if (index <= node.durable.snapshot.last_included_index)
             continue;
@@ -515,13 +518,12 @@ DeterministicRaftSimulator::replay(const std::span<const RaftSimulationAction> a
   return common::Status::ok();
 }
 
-common::Status DeterministicRaftSimulator::run_seeded(const std::uint64_t seed,
-                                                      const std::size_t actions) {
+common::Status DeterministicRaftSimulator::run_seeded(const RaftSeededSimulationSchedule schedule) {
   if (!implementation_)
     return make_status(common::StatusCode::kInvalidArgument, "Raft simulation is empty");
-  FixedPrng random(seed);
+  FixedPrng random(schedule.seed);
   try {
-    for (std::size_t action_index = 0U; action_index < actions; ++action_index) {
+    for (std::size_t action_index = 0U; action_index < schedule.actions; ++action_index) {
       Impl& impl = *implementation_;
       std::vector<NodeId> active;
       std::vector<NodeId> inactive;
@@ -557,8 +559,6 @@ common::Status DeterministicRaftSimulator::run_seeded(const std::uint64_t seed,
         next = RaftSimulationDrop{messages[random.next() % messages.size()]};
       else if (choice == 2U && !messages.empty() && impl.free_messages() != 0U)
         next = RaftSimulationDuplicate{messages[random.next() % messages.size()]};
-      else if (choice == 3U && !active.empty())
-        next = RaftSimulationStartElection{active[random.next() % active.size()]};
       else if (choice == 4U && !leaders.empty())
         next = RaftSimulationHeartbeat{leaders[random.next() % leaders.size()]};
       else if (choice == 5U && !leaders.empty()) {

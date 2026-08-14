@@ -6,7 +6,8 @@
 `RaftSimulationAction` values. Callers can execute one action, replay a retained trace, generate a
 seeded schedule, inspect active and durable node state, list queued message routes, or shrink a
 failing trace. The simulator uses the production deterministic `RaftNode`; it does not contain a
-second consensus implementation.
+second consensus implementation. `RaftSeededSimulationSchedule` names the seed and finite action
+budget so two width-compatible integral arguments cannot be transposed at a call site.
 
 ## Data structures and ownership
 
@@ -72,4 +73,3 @@ faults, and minimized corpus retention remain in the hardening ledger.
 Useful questions include: why can a queued message survive a sender crash; why must durable state be
 installed before outbound admission; why does replay use explicit message IDs; why is a snapshot
 allowed to hide a committed entry; and why does seeded generation avoid `std::uniform_distribution`?
-
