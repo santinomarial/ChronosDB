@@ -110,12 +110,12 @@ TEST(DurableMetadataStateMachineTest, AppliesAndRebuildsCommittedMetadataGroup) 
   const auto schema_id = id<schema::SchemaId>(2U);
   const auto tablet = id<schema::TabletId>(3U);
   std::vector<DurableRaftRequest> requests;
-  requests.push_back({group_id(), proposal(ClusterNodeMetadata{1U, "node-1"})});
-  requests.push_back(
-      {group_id(), proposal(SchemaMetadata{table, schema_id, schema::SchemaVersion::initial()})});
-  requests.push_back({group_id(), proposal(TabletPlacementMetadata{table, tablet, 1U, {1U}, 1U})});
-  requests.push_back({group_id(), binding_proposal(tablet)});
-  requests.push_back({group_id(), proposal(RetentionMetadata{table, 1000, 100U})});
+  requests.emplace_back(group_id(), proposal(ClusterNodeMetadata{1U, "node-1"}));
+  requests.emplace_back(
+      group_id(), proposal(SchemaMetadata{table, schema_id, schema::SchemaVersion::initial()}));
+  requests.emplace_back(group_id(), proposal(TabletPlacementMetadata{table, tablet, 1U, {1U}, 1U}));
+  requests.emplace_back(group_id(), binding_proposal(tablet));
+  requests.emplace_back(group_id(), proposal(RetentionMetadata{table, 1000, 100U}));
   ASSERT_TRUE(runtime->execute_batch(std::move(requests)).has_value());
   EXPECT_EQ(runtime->find_group(group_id())->commit_index(), 5U);
   EXPECT_EQ(metadata->state().applied_index(), 0U);
@@ -326,6 +326,10 @@ TEST(DurableMetadataStateMachineTest, InstallsCompactsAndReopensSnapshotPlusComm
       DurableMetadataStateMachine::recover(group_id(), *runtime, std::move(*snapshot_storage));
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   std::optional<DurableMetadataStateMachine> metadata{std::move(*recovered)};
+  auto initial_reclamation = metadata->reclaim_obsolete_snapshots();
+  ASSERT_TRUE(initial_reclamation.has_value()) << initial_reclamation.error().to_string();
+  EXPECT_EQ(initial_reclamation->authoritative_index, std::nullopt);
+  EXPECT_EQ(initial_reclamation->reclaimed_files, 0U);
 
   const CatalogTableDefinition definition = schema_definition();
   const auto tablet = id<schema::TabletId>(41U);

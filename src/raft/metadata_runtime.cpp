@@ -108,7 +108,7 @@ public:
        MetadataStateMachine configured_state,
        const MetadataCommandCodecLimits configured_codec_limits,
        const SchemaDefinitionCodecLimits configured_schema_codec_limits) noexcept
-      : group_id(std::move(configured_group_id)), runtime(&configured_runtime),
+      : group_id(configured_group_id), runtime(&configured_runtime),
         snapshot_storage(std::move(configured_snapshot_storage)),
         metadata(std::move(configured_state)), codec_limits(configured_codec_limits),
         schema_codec_limits(configured_schema_codec_limits) {}
@@ -145,7 +145,7 @@ public:
         if (decoded->group_id == group_id)
           return common::make_unexpected(
               fail(invalid("tablet group binding names the metadata group")));
-        commands.emplace_back(std::move(*decoded));
+        commands.emplace_back(*decoded);
         continue;
       }
       if (entry.type != kRaftMetadataCommandEntryType) {
@@ -166,8 +166,7 @@ public:
         status = metadata.apply_committed_schema_definition(entries[ordinal].index,
                                                             std::move(*definition));
       } else if (auto* binding = std::get_if<TabletGroupBindingMetadata>(&commands[ordinal])) {
-        status = metadata.apply_committed_tablet_group_binding(entries[ordinal].index,
-                                                               std::move(*binding));
+        status = metadata.apply_committed_tablet_group_binding(entries[ordinal].index, *binding);
       } else {
         status = metadata.apply_internal_noop(entries[ordinal].index);
       }
@@ -218,7 +217,7 @@ public:
             return decoded.error();
           if (decoded->group_id == group_id)
             return invalid("tablet group binding names the metadata group");
-          commands.emplace_back(std::move(*decoded));
+          commands.emplace_back(*decoded);
         } else {
           return corruption("metadata snapshot contains an unsupported application type");
         }
@@ -237,7 +236,7 @@ public:
           applied = metadata.apply_committed_schema_definition(entry.index, std::move(*definition));
         } else {
           applied = metadata.apply_committed_tablet_group_binding(
-              entry.index, std::move(std::get<TabletGroupBindingMetadata>(commands[ordinal])));
+              entry.index, std::get<TabletGroupBindingMetadata>(commands[ordinal]));
         }
         if (!applied.is_ok())
           return applied;
@@ -255,16 +254,22 @@ public:
     if (!snapshot_storage.has_value())
       return common::make_unexpected(
           unsupported("metadata compaction requires application-snapshot storage ownership"));
+    MetadataSnapshotStorage& storage = snapshot_storage.value();
     const RaftNode* node = runtime->find_group(group_id);
     if (node == nullptr)
       return common::make_unexpected(fail(unavailable("metadata Raft group disappeared")));
     const PersistentState& persistent = node->persistent_state();
     const SnapshotMetadata& current_snapshot = persistent.snapshot;
-    if ((current_snapshot.last_included_index == 0U && installed_snapshot.has_value()) ||
-        (current_snapshot.last_included_index != 0U &&
-         (!installed_snapshot.has_value() || *installed_snapshot != current_snapshot))) {
-      return common::make_unexpected(
-          fail(corruption("metadata application snapshot boundary changed outside its owner")));
+    if (current_snapshot.last_included_index == 0U) {
+      if (installed_snapshot.has_value()) {
+        return common::make_unexpected(
+            fail(corruption("metadata application snapshot boundary changed outside its owner")));
+      }
+    } else {
+      if (!installed_snapshot.has_value() || installed_snapshot.value() != current_snapshot) {
+        return common::make_unexpected(
+            fail(corruption("metadata application snapshot boundary changed outside its owner")));
+      }
     }
     if (last_included_index <= current_snapshot.last_included_index ||
         last_included_index > persistent.applied_index || node->joint_membership_active()) {
@@ -293,7 +298,7 @@ public:
     try {
       next_snapshot.voters.assign(node->voters().begin(), node->voters().end());
       if (current_snapshot.last_included_index != 0U) {
-        auto loaded = snapshot_storage->load(current_snapshot.last_included_index);
+        auto loaded = storage.load(current_snapshot.last_included_index);
         if (!loaded.has_value())
           return common::make_unexpected(fail(loaded.error()));
         if (loaded->snapshot.group_id != group_id ||
@@ -346,7 +351,7 @@ public:
     next_snapshot.part_set_checksum = *digest;
     application_snapshot.raft_snapshot = next_snapshot;
 
-    auto installed = snapshot_storage->install(application_snapshot);
+    auto installed = storage.install(application_snapshot);
     if (!installed.has_value())
       return common::make_unexpected(installed.error());
     auto compacted = runtime->execute_batch(
@@ -395,7 +400,7 @@ DurableMetadataStateMachine::recover(GroupId group_id, DurableMultiRaftRuntime& 
                                      const MetadataLimits state_limits,
                                      const MetadataCommandCodecLimits codec_limits,
                                      const SchemaDefinitionCodecLimits schema_codec_limits) {
-  return recover_impl(std::move(group_id), runtime, std::nullopt, state_limits, codec_limits,
+  return recover_impl(group_id, runtime, std::nullopt, state_limits, codec_limits,
                       schema_codec_limits);
 }
 
@@ -403,7 +408,7 @@ common::Result<DurableMetadataStateMachine> DurableMetadataStateMachine::recover
     GroupId group_id, DurableMultiRaftRuntime& runtime, MetadataSnapshotStorage snapshot_storage,
     const MetadataLimits state_limits, const MetadataCommandCodecLimits codec_limits,
     const SchemaDefinitionCodecLimits schema_codec_limits) {
-  return recover_impl(std::move(group_id), runtime,
+  return recover_impl(group_id, runtime,
                       std::optional<MetadataSnapshotStorage>{std::move(snapshot_storage)},
                       state_limits, codec_limits, schema_codec_limits);
 }
@@ -434,11 +439,13 @@ DurableMetadataStateMachine::recover_impl(GroupId group_id, DurableMultiRaftRunt
   auto impl = std::make_unique<Impl>(group_id, runtime, std::move(snapshot_storage),
                                      std::move(*state), codec_limits, schema_codec_limits);
   if (snapshot_index != 0U) {
-    if (!impl->snapshot_storage.has_value()) {
+    std::optional<MetadataSnapshotStorage>& storage_owner = impl->snapshot_storage;
+    if (!storage_owner.has_value()) {
       return common::make_unexpected(
           unsupported("metadata recovery requires its installed application snapshot"));
     }
-    auto loaded = impl->snapshot_storage->load(snapshot_index);
+    MetadataSnapshotStorage& storage = storage_owner.value();
+    auto loaded = storage.load(snapshot_index);
     if (!loaded.has_value())
       return common::make_unexpected(loaded.error());
     if (loaded->snapshot.group_id != group_id ||
@@ -472,10 +479,12 @@ common::Result<MetadataApplicationReport> DurableMetadataStateMachine::apply_com
       return common::make_unexpected(
           impl_->fail(corruption("metadata snapshot boundary moved backward")));
     }
-  } else if (!impl_->installed_snapshot.has_value() ||
-             *impl_->installed_snapshot != node->persistent_state().snapshot) {
-    return common::make_unexpected(
-        impl_->fail(unsupported("metadata application cannot cross a different snapshot")));
+  } else {
+    const std::optional<SnapshotMetadata>& installed = impl_->installed_snapshot;
+    if (!installed.has_value() || installed.value() != node->persistent_state().snapshot) {
+      return common::make_unexpected(
+          impl_->fail(unsupported("metadata application cannot cross a different snapshot")));
+    }
   }
   return impl_->apply_entries(node->committed_unapplied(), true);
 }
@@ -489,10 +498,12 @@ common::Result<MetadataSnapshotReclamationReport>
 DurableMetadataStateMachine::reclaim_obsolete_snapshots() {
   if (!impl_->failure.is_ok())
     return common::make_unexpected(impl_->failure);
-  if (!impl_->snapshot_storage.has_value()) {
+  std::optional<MetadataSnapshotStorage>& storage_owner = impl_->snapshot_storage;
+  if (!storage_owner.has_value()) {
     return common::make_unexpected(
         unsupported("metadata snapshot reclamation requires snapshot-storage ownership"));
   }
+  MetadataSnapshotStorage& storage = storage_owner.value();
   const RaftNode* const node = impl_->runtime->find_group(impl_->group_id);
   if (node == nullptr)
     return common::make_unexpected(impl_->fail(unavailable("metadata Raft group disappeared")));
@@ -502,13 +513,14 @@ DurableMetadataStateMachine::reclaim_obsolete_snapshots() {
       return common::make_unexpected(
           impl_->fail(corruption("metadata snapshot boundary moved backward")));
     }
-    return impl_->snapshot_storage->reclaim_obsolete(std::nullopt);
+    return storage.reclaim_obsolete(std::nullopt);
   }
-  if (!impl_->installed_snapshot.has_value() || *impl_->installed_snapshot != snapshot) {
+  const std::optional<SnapshotMetadata>& installed = impl_->installed_snapshot;
+  if (!installed.has_value() || installed.value() != snapshot) {
     return common::make_unexpected(
         impl_->fail(unsupported("metadata reclamation cannot cross a different snapshot")));
   }
-  return impl_->snapshot_storage->reclaim_obsolete(snapshot.last_included_index);
+  return storage.reclaim_obsolete(snapshot.last_included_index);
 }
 
 common::Result<QuorumSyncReceipt>
