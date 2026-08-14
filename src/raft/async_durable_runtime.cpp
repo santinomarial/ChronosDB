@@ -79,14 +79,21 @@ public:
 
   [[nodiscard]] BatchResult wait() {
     std::unique_lock lock{mutex_};
-    condition_.wait(lock, [this] { return result_.has_value(); });
+    condition_.wait(lock, [this] { return result_.has_value() || consumed_; });
     if (consumed_) {
       return common::make_unexpected(
           common::Status{common::StatusCode::kInvalidArgument,
                          "asynchronous durable Raft completion was already consumed"});
     }
+    if (!result_.has_value()) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInternal,
+                         "asynchronous durable Raft completion has no published result"});
+    }
     consumed_ = true;
-    return std::move(*result_);
+    BatchResult result = std::move(result_).value();
+    result_.reset();
+    return result;
   }
 
 private:
