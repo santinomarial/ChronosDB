@@ -114,7 +114,7 @@ public:
       poison = status;
     return status;
   }
-  [[nodiscard]] common::Status cleanup() {
+  [[nodiscard]] common::Status cleanup() const {
     auto entries = directory.list_entries();
     if (!entries.has_value())
       return entries.error();
@@ -294,13 +294,17 @@ TabletReconfigurationActionLedger::prepare(const TabletReconfigurationAction& ac
   if (!decoded.has_value() || decoded->id != action.id)
     return common::make_unexpected(
         decoded.has_value() ? corruption("action readback identity changed") : decoded.error());
-  if (!(status = file->sync_all()).is_ok())
+  status = file->sync_all();
+  if (!status.is_ok())
     return common::make_unexpected(context("synchronize action", status));
-  if (!(status = file->close()).is_ok())
+  status = file->close();
+  if (!status.is_ok())
     return common::make_unexpected(context("close action temporary", status));
-  if (!(status = impl_->directory.rename_no_replace({temp, *name})).is_ok())
+  status = impl_->directory.rename_no_replace({temp, *name});
+  if (!status.is_ok())
     return common::make_unexpected(context("install action", status));
-  if (!(status = impl_->directory.sync()).is_ok())
+  status = impl_->directory.sync();
+  if (!status.is_ok())
     return common::make_unexpected(
         impl_->fail(context("synchronize action directory", status), true));
   return PreparedTabletReconfigurationAction{action.id, *name, false};

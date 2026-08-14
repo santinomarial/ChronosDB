@@ -68,7 +68,14 @@ TEST(TabletReconfigurationActionLedgerTest, PreparesRetriesConflictsAndReopens) 
     EXPECT_EQ(locked.error().code(), common::StatusCode::kUnavailable);
     auto prepared = ledger->prepare(action());
     ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
-    EXPECT_FALSE(prepared->already_present);
+    if (prepared.has_value()) {
+      EXPECT_FALSE(prepared->already_present);
+      EXPECT_EQ(prepared->file_name, "action-00000000000000000007-001.ract");
+      EXPECT_TRUE(std::filesystem::is_regular_file(directory.path() / prepared->file_name));
+      EXPECT_FALSE(std::filesystem::exists(directory.path() / (prepared->file_name + ".tmp")));
+    }
+    EXPECT_TRUE(ledger->is_usable());
+    EXPECT_TRUE(ledger->poison_status().is_ok());
     auto retry = ledger->prepare(action());
     ASSERT_TRUE(retry.has_value());
     EXPECT_TRUE(retry->already_present);
