@@ -93,7 +93,7 @@ matching_result(const DecodedColumnarAppendView& command, const RetryIdentity& r
     return common::make_unexpected(
         invalid("matching committed retry is absent from the owning tablet"));
   }
-  if (current->applied_position().has_value() && *current->applied_position() == position) {
+  if (current->applied_position() == position) {
     return CommittedColumnarAppendResult{CommittedColumnarAppendKind::kMatchingRetry,
                                          std::move(*current), outcome};
   }

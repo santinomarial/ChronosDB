@@ -123,6 +123,10 @@ TEST(RaftTabletStateMachineTest, AppliesCommittedEntriesOnceAndRebuildsFromRetai
     EXPECT_EQ(machine->tablet().snapshot()->visible_row_count(), 2U);
     EXPECT_EQ(machine->tablet().snapshot()->applied_position(),
               head::HeadCommitPosition::raft(group_id(), 1U));
+    const RetryIdentity retry_identity{test::request_id<ClientId>(1U),
+                                       test::request_id<ClientBatchId>(33U)};
+    const auto first_outcome = machine->tablet().snapshot()->retry_outcome(retry_identity);
+    ASSERT_NE(first_outcome, nullptr);
     EXPECT_EQ(durable.find_group(group_id())->applied_index(), 1U);
     EXPECT_EQ(machine->compact_applied_prefix(1U, 1U, {}).error().code(),
               common::StatusCode::kNotSupported);
@@ -140,8 +144,12 @@ TEST(RaftTabletStateMachineTest, AppliesCommittedEntriesOnceAndRebuildsFromRetai
     ASSERT_TRUE(duplicate.has_value()) << duplicate.error().to_string();
     EXPECT_EQ(duplicate->applied_entries, 1U);
     EXPECT_EQ(duplicate->matching_retries, 1U);
-    EXPECT_EQ(machine->tablet().snapshot()->visible_row_count(), 2U);
-    EXPECT_EQ(machine->tablet().snapshot()->applied_position(),
+    const TabletSnapshot duplicate_snapshot = machine->tablet().snapshot().value();
+    EXPECT_EQ(duplicate_snapshot.visible_row_count(), 2U);
+    EXPECT_EQ(duplicate_snapshot.retry_outcome(retry_identity).get(), first_outcome.get());
+    EXPECT_EQ(duplicate_snapshot.active_generation().applied_position(),
+              head::HeadCommitPosition::raft(group_id(), 1U));
+    EXPECT_EQ(duplicate_snapshot.applied_position(),
               head::HeadCommitPosition::raft(group_id(), 2U));
     EXPECT_EQ(durable.find_group(group_id())->applied_index(), 2U);
   }
