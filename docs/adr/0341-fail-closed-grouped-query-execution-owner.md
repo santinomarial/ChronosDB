@@ -45,6 +45,11 @@ reject, retry backoff does not poison the coordinator, and exhausted transport f
 becomes the exact query failure. Header self-containment and installed-consumer compilation cover
 the public API.
 
+An end-to-end packaged follower allocation sweep selects every main-thread allocation from grouped
+TLS response retention through sender acceptance, coordinator merge, `finish`, and result
+publication. Each selected failure is sticky `RESOURCE_EXHAUSTED`, leaves no active attempt or
+public result, and restores the exact Manifest pin; the no-fault boundary publishes the exact group.
+
 Multi-tablet TCP scheduling, packaged metadata-backed grouped construction, multi-key/non-FLOAT64
 grouping, general vector fragments, and broad fault/measurement evidence remain incomplete. No
 Phase 16 exit gate is claimed.

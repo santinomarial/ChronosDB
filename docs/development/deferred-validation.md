@@ -404,7 +404,9 @@
   transfers only the complete group-sorted authority vector, and owns metrics/cancellation across
   both phases. Deterministic allocation sweeps cover its construction and real mutual-TLS
   authority-to-scheduler transition: local exhaustion is sticky, publishes no execution/result,
-  and restores the exact Manifest pin. Retryable terminal grouped failures now accept only a finite
+  and restores the exact Manifest pin. Pre-acquired owners are also swept through grouped mutual-TLS
+  response decode, sender/coordinator completion, and result installation with the same atomic
+  failure and pin-release contract. Retryable terminal grouped failures now accept only a finite
   explicit whole-query replacement after exact logical-shape, group-key, nonregressing-generation,
   and unchanged-limit validation; old partials and pins are discarded together.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through

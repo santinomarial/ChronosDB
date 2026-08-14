@@ -1,3 +1,4 @@
+#include "chronos/cluster/distributed_grouped_query_tcp_server.hpp"
 #include "chronos/cluster/distributed_vector_aggregate_query_tcp_server_v2.hpp"
 #include "chronos/cluster/raft_observation_tcp_server.hpp"
 #include "chronos/common/byte_reader.hpp"
@@ -268,6 +269,26 @@ public:
 private:
   [[nodiscard]] static std::vector<query::VectorAggregateDefinition> definitions() {
     return {{.operation = query::VectorAggregateOperation::kCountStar, .input = std::nullopt}};
+  }
+};
+
+class GroupedFloat64Worker final : public cluster::DistributedGroupedQueryWorkerService {
+public:
+  common::Result<query::DistributedGroupedFloat64WorkerResult>
+  execute(const query::DistributedGroupedFloat64FragmentDispatch& dispatch) override {
+    query::MergeableAggregateState partial;
+    const common::Status added = partial.add(2.5);
+    if (!added.is_ok())
+      return common::make_unexpected(added);
+    return query::DistributedGroupedFloat64WorkerResult{
+        std::vector<query::GroupedFloat64ExchangeMessage>{{
+            .query_id = dispatch.fragment.aggregate.query_id,
+            .tablet_id = dispatch.fragment.aggregate.tablet_id,
+            .sequence = 1U,
+            .group_key = 5.0,
+            .partial = partial,
+            .terminal = true,
+        }}};
   }
 };
 
@@ -989,6 +1010,29 @@ TEST(ReplicatedDistributedQueryAllocationFailureTest,
   EXPECT_TRUE(saw_execution_success);
 
   constexpr std::size_t kMaximumPublicationFaults = 256U;
+  std::vector<ReplicatedFollowerDistributedGroupedFloat64Query> grouped_publication_lifecycles;
+  grouped_publication_lifecycles.reserve(kMaximumPublicationFaults);
+  for (std::size_t lifecycle_index = 0U; lifecycle_index < kMaximumPublicationFaults;
+       ++lifecycle_index) {
+    auto snapshot = publisher->snapshot();
+    ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+    auto lifecycle = ReplicatedFollowerDistributedGroupedFloat64Query::create(
+        make_scalar_plan(tablet_id, applied_position), std::move(*snapshot), authority_config,
+        grouped_query_config);
+    ASSERT_TRUE(lifecycle.has_value()) << lifecycle.error().to_string();
+    for (std::size_t poll = 0U;
+         poll < 8192U &&
+         lifecycle->state() ==
+             ReplicatedFollowerDistributedGroupedFloat64QueryState::kAcquiringAuthority;
+         ++poll) {
+      ASSERT_TRUE(lifecycle->poll_once(std::chrono::milliseconds{1}).is_ok())
+          << lifecycle->failure().to_string();
+    }
+    ASSERT_EQ(lifecycle->state(), ReplicatedFollowerDistributedGroupedFloat64QueryState::kExecuting)
+        << lifecycle->failure().to_string();
+    grouped_publication_lifecycles.push_back(std::move(*lifecycle));
+  }
+
   const auto count_type = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
   std::vector<ReplicatedFollowerDistributedVectorAggregateQueryV2> publication_lifecycles;
   publication_lifecycles.reserve(kMaximumPublicationFaults);
@@ -1020,6 +1064,120 @@ TEST(ReplicatedDistributedQueryAllocationFailureTest,
   const network::Ipv4Endpoint query_endpoint = follower_server->bound_endpoint();
   EXPECT_TRUE(follower_server->shutdown().is_ok());
   EXPECT_TRUE(leader_server->shutdown().is_ok());
+
+  GroupedFloat64Worker grouped_query_worker;
+  auto grouped_query_receiver =
+      cluster::DistributedGroupedQueryReceiver::create({.local_node_id = 12U,
+                                                        .authorizer = &authorizer,
+                                                        .worker = &grouped_query_worker,
+                                                        .maximum_response_frames = 1U});
+  ASSERT_TRUE(grouped_query_receiver.has_value()) << grouped_query_receiver.error().to_string();
+  auto grouped_query_server = cluster::DistributedGroupedQueryTcpServer::start(
+      {.listener = {.bind_endpoint = query_endpoint},
+       .tls = observation_server_tls_config(),
+       .authenticator = &authenticator,
+       .receiver = &*grouped_query_receiver,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000},
+                          .maximum_response_frames = 1U},
+       .maximum_connections = 16U,
+       .maximum_accepts_per_poll = 16U});
+  ASSERT_TRUE(grouped_query_server.has_value()) << grouped_query_server.error().to_string();
+  ASSERT_EQ(grouped_query_server->bound_endpoint(), query_endpoint);
+
+  std::atomic<bool> stop_grouped_query_server;
+  std::atomic<bool> grouped_query_server_failed;
+  std::thread grouped_query_server_thread([&] {
+    while (!stop_grouped_query_server.load() && !grouped_query_server_failed.load()) {
+      if (!grouped_query_server->poll_once(std::chrono::milliseconds{1}).is_ok())
+        grouped_query_server_failed.store(true);
+    }
+  });
+  ThreadJoinGuard grouped_query_server_thread_guard{stop_grouped_query_server,
+                                                    grouped_query_server_thread};
+
+  bool saw_grouped_publication_failure = false;
+  bool saw_grouped_publication_success = false;
+  for (std::size_t fail_after = 0U; fail_after < kMaximumPublicationFaults; ++fail_after) {
+    SCOPED_TRACE(testing::Message{} << "grouped publication fail_after=" << fail_after);
+    const long pin_count_before = selected_manifest.use_count();
+    {
+      auto lifecycle = std::move(grouped_publication_lifecycles.back());
+      grouped_publication_lifecycles.pop_back();
+      ASSERT_TRUE(lifecycle.poll_once(std::chrono::milliseconds{0}).is_ok())
+          << lifecycle.failure().to_string();
+      ASSERT_TRUE(lifecycle.metrics().execution.has_value());
+      // Guarded by the execution-metrics assertion above.
+      // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+      ASSERT_EQ(lifecycle.metrics().execution->active_attempts, 1U);
+
+      common::Status progress;
+      bool terminal = false;
+      std::size_t observed_allocations{};
+      {
+        test::ScopedAllocationFailure failure{fail_after};
+        try {
+          for (std::size_t poll = 0U; poll < 8192U; ++poll) {
+            progress = lifecycle.poll_once(std::chrono::milliseconds{1});
+            if (!progress.is_ok() ||
+                lifecycle.state() !=
+                    ReplicatedFollowerDistributedGroupedFloat64QueryState::kExecuting) {
+              terminal = true;
+              break;
+            }
+          }
+        } catch (...) {
+          failure.disable();
+          throw;
+        }
+        observed_allocations = failure.observed_allocations();
+        failure.disable();
+      }
+      ASSERT_TRUE(terminal);
+      const bool injected = observed_allocations > fail_after;
+      if (injected) {
+        saw_grouped_publication_failure = true;
+        EXPECT_EQ(progress.code(), common::StatusCode::kResourceExhausted) << progress.to_string();
+        EXPECT_EQ(lifecycle.state(),
+                  ReplicatedFollowerDistributedGroupedFloat64QueryState::kFailed);
+        EXPECT_EQ(lifecycle.failure(), progress);
+        ASSERT_TRUE(lifecycle.metrics().execution.has_value());
+        // Guarded by the execution-metrics assertion above.
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+        EXPECT_EQ(lifecycle.metrics().execution->active_attempts, 0U);
+        EXPECT_EQ(lifecycle.result().error(), progress);
+        EXPECT_EQ(lifecycle.poll_once(std::chrono::milliseconds{0}), progress);
+      } else {
+        saw_grouped_publication_success = true;
+        EXPECT_TRUE(progress.is_ok()) << progress.to_string();
+        EXPECT_EQ(lifecycle.state(),
+                  ReplicatedFollowerDistributedGroupedFloat64QueryState::kComplete);
+        auto result = lifecycle.result();
+        ASSERT_TRUE(result.has_value()) << result.error().to_string();
+        ASSERT_EQ(result->size(), 1U);
+        EXPECT_EQ(result->front().group_key, 5.0);
+        EXPECT_EQ(result->front().aggregate.count, 1U);
+        EXPECT_EQ(result->front().aggregate.sum, 2.5);
+        ASSERT_TRUE(lifecycle.metrics().execution.has_value());
+        // Guarded by the execution-metrics assertion above.
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+        EXPECT_EQ(lifecycle.metrics().execution->active_attempts, 0U);
+      }
+    }
+    EXPECT_EQ(selected_manifest.use_count(), pin_count_before - 1L);
+    ASSERT_FALSE(grouped_query_server_failed.load());
+    if (saw_grouped_publication_success)
+      break;
+  }
+  EXPECT_TRUE(saw_grouped_publication_failure);
+  EXPECT_TRUE(saw_grouped_publication_success);
+  grouped_publication_lifecycles.clear();
+  EXPECT_EQ(selected_manifest.use_count(),
+            baseline_use_count + static_cast<long>(publication_lifecycles.size()));
+
+  grouped_query_server_thread_guard.stop_and_join();
+  EXPECT_FALSE(grouped_query_server_failed.load());
+  EXPECT_TRUE(grouped_query_server->shutdown().is_ok());
 
   CountStarWorker query_worker;
   auto query_receiver = cluster::DistributedVectorAggregateQueryReceiverV2::create(

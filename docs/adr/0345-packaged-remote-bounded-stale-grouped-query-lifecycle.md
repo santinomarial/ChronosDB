@@ -51,6 +51,12 @@ authority-to-execution transition. Every selected allocation failure returns sti
 Manifest-pin count. The service and grouped TCP scheduler implementations therefore do not claim
 `noexcept` around constructors that retain allocating diagnostic statuses.
 
+A subsequent sweep pre-acquires independent lifecycle owners, replaces the observation endpoint
+with the real grouped mutual-TLS server, and selects every main-thread allocation across response
+decode, bounded retention, sender/coordinator completion, and result installation. Each injected
+failure is sticky `RESOURCE_EXHAUSTED`, closes the attempt, exposes no result, and restores the exact
+pin; the no-fault boundary publishes the expected group, count, and sum.
+
 The test does not complete a real remote CSEG response. Explicit grouped authority rebinding,
 general vector fragments, multi-key/non-FLOAT64 grouping, real multi-process failover, and broad
 fault/measurement evidence remain incomplete. No Phase 16 exit gate is claimed.

@@ -48,6 +48,10 @@ and returns two ordered partials only after terminal closure. A second test prov
 limit is rejected and the exact connect deadline creates a sticky `UNAVAILABLE` failure after the
 descriptor is closed. The installed external-consumer gate references the public constructor.
 
+The packaged bounded-stale lifecycle allocation sweep now carries pre-acquired owners through a
+real mutual-TLS grouped response. Selected client response-decode and bounded-retention failures
+become sticky `RESOURCE_EXHAUSTED`, close the attempt, and expose no response prefix or query result.
+
 ADR 0337 subsequently supplies bounded inbound TCP listener/server ownership. Sender/coordinator
 integration, packaged multi-tablet execution, multi-process failover, and broad fault/measurement
 evidence remain incomplete. No Phase 16 exit gate is claimed.

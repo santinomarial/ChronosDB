@@ -524,6 +524,10 @@ authority-to-scheduler transition evidence. Its service and grouped scheduler im
 allow allocating diagnostics to propagate to their existing resource-exhaustion boundary; every
 selected failure is sticky, publishes neither execution nor result, and restores the exact Manifest
 pin.
+Pre-acquired grouped owners now continue that sweep through a real mutual-TLS response, client
+decode and retention, sender/coordinator completion, and result installation. Each selected
+allocation fails the whole lifecycle atomically; the first no-fault boundary exposes the exact
+group, count, and sum.
 Moved or multi-process real-CSEG responses, remote worker-interrupt delivery, pooled
 multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node
 fault handling remain work.

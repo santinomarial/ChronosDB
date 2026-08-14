@@ -70,6 +70,10 @@ The packaged bounded-stale grouped lifecycle additionally sweeps scheduler const
 mutual-TLS authority acquisition. The scheduler owner's diagnostic status may allocate, so its
 implementation constructor is not `noexcept`; an injected failure returns
 `RESOURCE_EXHAUSTED` with no active attempt, no published result, and exact Manifest-pin rollback.
+Pre-acquired owners are also swept through real mutual-TLS response decode, sender/coordinator
+acceptance, and final result installation. Every selected allocation failure closes the active
+client and fails the whole query atomically; the first unselected boundary publishes the exact
+grouped result.
 
 Packaged metadata-backed grouped construction, explicit whole-query authority rebinding,
 multi-key/non-FLOAT64 grouping, general vector fragments, and broad fault/measurement evidence
