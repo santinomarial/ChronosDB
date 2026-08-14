@@ -203,6 +203,11 @@ class ContextProvider final : public ReplicatedDistributedQueryWorkerContextProv
                               public ReplicatedDistributedGroupedQueryWorkerContextProvider,
                               public ReplicatedDistributedVectorQueryWorkerContextProviderV2 {
 public:
+  struct VectorPlacementChange {
+    std::size_t call{};
+    std::uint64_t epoch{};
+  };
+
   ContextProvider(manifest::TemporalDatabaseStorageSnapshot snapshot,
                   std::shared_ptr<const schema::SchemaLineage> lineage,
                   raft::TabletPlacementMetadata placement, raft::GroupId raft_group_id,
@@ -235,6 +240,8 @@ public:
     ++vector_calls;
     if (vector_calls == vector_failure_call_)
       return common::make_unexpected(vector_failure_);
+    if (vector_calls == vector_placement_change_call_)
+      placement_.placement_epoch = vector_placement_epoch_;
     return ReplicatedDistributedQueryWorkerContext{.snapshot = snapshot_,
                                                    .lineage = lineage_,
                                                    .placement = placement_,
@@ -265,6 +272,11 @@ public:
     vector_failure_ = failure;
   }
 
+  void change_vector_placement_epoch_on_call(const VectorPlacementChange change) {
+    vector_placement_change_call_ = change.call;
+    vector_placement_epoch_ = change.epoch;
+  }
+
   std::size_t calls{};
   std::size_t grouped_calls{};
   std::size_t vector_calls{};
@@ -278,6 +290,8 @@ private:
   std::size_t vector_failure_call_{};
   common::Status vector_failure_{common::StatusCode::kInternal,
                                  "vector context acquisition was not configured to fail"};
+  std::size_t vector_placement_change_call_{};
+  std::uint64_t vector_placement_epoch_{};
 };
 
 TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesRealCseg) {
@@ -1517,7 +1531,8 @@ TEST(ReplicatedDistributedQueryWorkerTest,
   Authenticator remote_authenticator{92U};
   const auto make_lifecycle = [&](const query::DistributedVectorQueryPlan& owned_plan,
                                   const manifest::TemporalDatabaseStorageSnapshot& snapshot,
-                                  const std::uint64_t first_correlation_id) {
+                                  const std::uint64_t first_correlation_id,
+                                  const std::size_t maximum_query_attempts) {
     return ReplicatedFollowerDistributedVectorAggregateQueryV2::create(
         owned_plan, snapshot,
         query::DistributedVectorResultSchema{
@@ -1548,13 +1563,14 @@ TEST(ReplicatedDistributedQueryWorkerTest,
          .authenticator = &remote_authenticator,
          .node_authorizer = &node_authorizer,
          .binding_limits = {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U},
+         .execution_limits = {.sender = {.retry = {.maximum_attempts = maximum_query_attempts}}},
          .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
                             .exchange_timeout = std::chrono::milliseconds{1000},
                             .maximum_response_frames = 2U,
                             .maximum_response_bytes = std::size_t{1024U} * 1024U},
          .connect_timeout = std::chrono::milliseconds{1000}});
   };
-  auto lifecycle = make_lifecycle(plan, *coordinator_snapshot, 301U);
+  auto lifecycle = make_lifecycle(plan, *coordinator_snapshot, 301U, 5U);
   ASSERT_TRUE(lifecycle.has_value()) << lifecycle.error().to_string();
   for (std::size_t iteration = 0U;
        iteration < 4096U &&
@@ -1679,7 +1695,7 @@ TEST(ReplicatedDistributedQueryWorkerTest,
   ASSERT_TRUE(failure_snapshot.has_value()) << failure_snapshot.error().to_string();
   auto failing_plan = plan;
   failing_plan.query_id = uuid(32U);
-  auto failing_lifecycle = make_lifecycle(failing_plan, *failure_snapshot, 401U);
+  auto failing_lifecycle = make_lifecycle(failing_plan, *failure_snapshot, 401U, 5U);
   ASSERT_TRUE(failing_lifecycle.has_value()) << failing_lifecycle.error().to_string();
   for (std::size_t iteration = 0U;
        iteration < 4096U &&
@@ -1766,7 +1782,7 @@ TEST(ReplicatedDistributedQueryWorkerTest,
   ASSERT_TRUE(network_snapshot.has_value()) << network_snapshot.error().to_string();
   auto network_plan = plan;
   network_plan.query_id = uuid(33U);
-  auto network_lifecycle = make_lifecycle(network_plan, *network_snapshot, 501U);
+  auto network_lifecycle = make_lifecycle(network_plan, *network_snapshot, 501U, 5U);
   ASSERT_TRUE(network_lifecycle.has_value()) << network_lifecycle.error().to_string();
   for (std::size_t iteration = 0U;
        iteration < 4096U &&
@@ -1843,6 +1859,91 @@ TEST(ReplicatedDistributedQueryWorkerTest,
   EXPECT_EQ(network_metrics.execution->active_attempts, 0U);
   // NOLINTEND(bugprone-unchecked-optional-access)
   EXPECT_TRUE(network_first_query_server->shutdown().is_ok());
+
+  auto first_movement_observation = start_follower_observation(0U);
+  auto second_movement_observation = start_follower_observation(1U);
+  ASSERT_TRUE(first_movement_observation.has_value())
+      << first_movement_observation.error().to_string();
+  ASSERT_TRUE(second_movement_observation.has_value())
+      << second_movement_observation.error().to_string();
+  observation_servers[0] = std::move(*first_movement_observation);
+  observation_servers[1] = std::move(*second_movement_observation);
+
+  auto movement_snapshot = publisher->snapshot();
+  ASSERT_TRUE(movement_snapshot.has_value()) << movement_snapshot.error().to_string();
+  auto movement_plan = plan;
+  movement_plan.query_id = uuid(34U);
+  auto movement_lifecycle = make_lifecycle(movement_plan, *movement_snapshot, 601U, 1U);
+  ASSERT_TRUE(movement_lifecycle.has_value()) << movement_lifecycle.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       movement_lifecycle->state() ==
+           ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kAcquiringAuthority;
+       ++iteration) {
+    ASSERT_TRUE(movement_lifecycle->poll_once(std::chrono::milliseconds{1}).is_ok())
+        << movement_lifecycle->failure().to_string();
+    for (cluster::RaftObservationTcpServer& observation_server : observation_servers)
+      ASSERT_TRUE(observation_server.poll_once(std::chrono::milliseconds{0}).is_ok());
+  }
+  ASSERT_EQ(movement_lifecycle->state(),
+            ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting)
+      << movement_lifecycle->failure().to_string();
+  for (const LifecycleObservationService& observation_service : observation_services)
+    EXPECT_EQ(observation_service.calls, 4U);
+
+  ASSERT_TRUE(observation_servers[0].shutdown().is_ok());
+  ASSERT_TRUE(observation_servers[1].shutdown().is_ok());
+  second_provider.change_vector_placement_epoch_on_call({.call = 6U, .epoch = 13U});
+  auto movement_first_query_server = start_query_server(11U, query_endpoints[0], first_provider);
+  auto movement_second_query_server = start_query_server(12U, query_endpoints[1], second_provider);
+  ASSERT_TRUE(movement_first_query_server.has_value())
+      << movement_first_query_server.error().to_string();
+  ASSERT_TRUE(movement_second_query_server.has_value())
+      << movement_second_query_server.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 256U && movement_first_query_server->metrics().completed_connections == 0U;
+       ++iteration) {
+    ASSERT_TRUE(movement_lifecycle->poll_once(std::chrono::milliseconds{0}).is_ok())
+        << movement_lifecycle->failure().to_string();
+    ASSERT_TRUE(movement_first_query_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(movement_first_query_server->metrics().completed_connections, 1U);
+  EXPECT_EQ(movement_lifecycle->state(),
+            ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting);
+  EXPECT_EQ(movement_lifecycle->result().error().code(), common::StatusCode::kInvalidArgument);
+
+  common::Status movement_failure = common::Status::ok();
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       movement_lifecycle->state() ==
+           ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting;
+       ++iteration) {
+    movement_failure = movement_lifecycle->poll_once(std::chrono::milliseconds{1});
+    ASSERT_TRUE(movement_first_query_server->poll_once(std::chrono::milliseconds{0}).is_ok());
+    ASSERT_TRUE(movement_second_query_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(movement_lifecycle->state(),
+            ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kFailed);
+  EXPECT_EQ(movement_failure.code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(movement_lifecycle->failure(), movement_failure);
+  EXPECT_EQ(movement_lifecycle->result().error(), movement_failure);
+  EXPECT_EQ(movement_lifecycle->poll_once(std::chrono::milliseconds{0}), movement_failure);
+  EXPECT_EQ(movement_lifecycle->cancel(), movement_failure);
+  EXPECT_EQ(first_provider.vector_calls, 8U);
+  EXPECT_EQ(second_provider.vector_calls, 6U);
+  const auto movement_metrics = movement_lifecycle->metrics();
+  EXPECT_EQ(movement_metrics.authority.completed_pairs, 2U);
+  ASSERT_TRUE(movement_metrics.execution.has_value());
+  // Guarded by the execution-metrics assertion above.
+  // NOLINTBEGIN(bugprone-unchecked-optional-access)
+  EXPECT_EQ(movement_metrics.execution->attempts_started, 2U);
+  EXPECT_EQ(movement_metrics.execution->transport_completed_attempts, 2U);
+  EXPECT_EQ(movement_metrics.execution->transport_failed_attempts, 0U);
+  EXPECT_EQ(movement_metrics.execution->active_attempts, 0U);
+  // NOLINTEND(bugprone-unchecked-optional-access)
+  EXPECT_EQ(movement_second_query_server->metrics().completed_connections, 1U);
+  EXPECT_TRUE(movement_first_query_server->shutdown().is_ok());
+  EXPECT_TRUE(movement_second_query_server->shutdown().is_ok());
   EXPECT_TRUE(observation_servers[2].shutdown().is_ok());
   EXPECT_TRUE(observation_servers[3].shutdown().is_ok());
   EXPECT_TRUE(metadata_barrier->shutdown().is_ok());

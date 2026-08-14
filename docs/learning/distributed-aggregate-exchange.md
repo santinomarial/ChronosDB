@@ -477,7 +477,10 @@ error. The composite drops every live client, preserves that error as its sticky
 and never converts the already retained tablet vector into a partial Native result. The network
 companion accepts the delayed follower session, completes the other real-CSEG fragment, then closes
 the delayed service. Finite retry exhaustion turns that disconnect into sticky whole-query I/O
-failure, clears the client table, and retains no externally visible result.
+failure, clears the client table, and retains no externally visible result. The placement-drift
+companion advances the delayed provider's epoch only after definitions bind. Its independent
+execution acquisition rejects the stale dispatch, returns correlated `UNAVAILABLE`, and proves the
+remote composite cannot reuse binding authority or publish the other tablet's retained state.
 Moved or multi-process real-CSEG responses, remote worker-interrupt delivery, pooled
 multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node
 fault handling remain work.

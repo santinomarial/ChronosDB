@@ -206,4 +206,5 @@ production follower completes and global finalization can publish exactly once. 
 returns one correlated nonretryable response after the other follower succeeds and proves the
 composite closes every attempt without exposing the retained state prefix. A live-session shutdown
 variant reaches the same fail-closed publication gate through terminal transport I/O rather than an
-application response.
+application response. A placement-drift variant changes fresh execution authority after definitions
+bind and proves the correlated `UNAVAILABLE` response also remains whole-query terminal.

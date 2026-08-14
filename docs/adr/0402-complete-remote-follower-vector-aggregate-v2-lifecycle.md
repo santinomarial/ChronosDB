@@ -116,8 +116,13 @@ both client attempts, remains sticky through result access, polling, and cancell
 publishes the retained prefix. A third run accepts the delayed follower connection, completes the
 other production CSEG fragment, and then shuts down the delayed follower with its mTLS session
 active. The default five-attempt query policy exhausts as `IO_ERROR`, closes every client, preserves
-the sticky failure, and exposes no partial result. Multi-process, movement-interleaved,
-allocation-fault, and broader timeout/retry/packet-level network campaigns remain.
+the sticky failure, and exposes no partial result. A fourth run changes the delayed follower's
+provider epoch after definition binding but before real-CSEG execution. The worker's independent
+fresh authority acquisition rejects the stale dispatch as `UNAVAILABLE`; with one configured query
+attempt, the composite preserves that correlated failure, releases both transports, and exposes
+neither the first tablet's successful state nor a final result. Multi-process, real
+movement-transfer, post-movement rebinding, allocation-fault, and broader
+timeout/retry/packet-level network campaigns remain.
 
 ## Migration or rollback considerations
 
