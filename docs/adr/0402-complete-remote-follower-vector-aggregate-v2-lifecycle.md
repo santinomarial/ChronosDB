@@ -121,8 +121,8 @@ provider epoch after definition binding but before real-CSEG execution. The work
 fresh authority acquisition rejects the stale dispatch as `UNAVAILABLE`; with one configured query
 attempt, the composite preserves that correlated failure, releases both transports, and exposes
 neither the first tablet's successful state nor a final result. Multi-process, real
-movement-transfer, post-movement rebinding, phase-transition/execution allocation-fault, and broader
-timeout/retry/packet-level network campaigns remain.
+movement-transfer, post-movement rebinding, execution/final-publication allocation-fault, and
+broader timeout/retry/packet-level network campaigns remain.
 
 A dedicated construction-failure executable now injects `std::bad_alloc` at every owned allocation
 from placement-backed batch construction through nested observation acquisition and final composite
@@ -131,8 +131,19 @@ Manifest owner back to its exact baseline reference count, and exposes no lifecy
 successful construction starts exactly one authority pair; cancellation returns that count to zero.
 The sweep found and removed incorrect `noexcept` specifications on four nested implementations whose
 diagnostic `Status` members can allocate, restoring the surrounding status-returning catch boundaries.
-Allocation injection during authority-to-query phase transition, aggregate execution, and final
-publication remains deferred with the broader fault campaign.
+Allocation injection during aggregate execution and final publication remains deferred with the
+broader fault campaign.
+
+The phase-transition follow-up holds allocation failure armed across live mutual-TLS authority
+acquisition and the complete transfer into follower snapshot binding, route resolution, query
+resources, senders, coordinator, and the aggregate TCP scheduler. Every observed allocation before
+the first successful transition returns sticky `RESOURCE_EXHAUSTED`, cancels the authority pair to
+zero active work, retains no execution metrics or result, and releases the Manifest pin when the
+failed composite is destroyed. The successful boundary enters `EXECUTING` without opening a query
+attempt and cancels cleanly. This sweep removed incorrect `noexcept` specifications from the
+observation TCP/TLS and aggregate TCP owner constructors, plus the TLS failure publisher, so their
+allocating diagnostic state now reaches the surrounding status boundary instead of terminating the
+process.
 
 ## Migration or rollback considerations
 

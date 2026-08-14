@@ -119,7 +119,7 @@ public:
   Impl(DistributedVectorAggregateQueryExecutionV2 owned_execution,
        DistributedVectorAggregateQueryTcpExecutionConfigV2 configured,
        std::vector<Slot> owned_slots, std::vector<pollfd> descriptors,
-       std::vector<std::size_t> indexes) noexcept
+       std::vector<std::size_t> indexes)
       : execution(std::move(owned_execution)), config(std::move(configured)),
         slots(std::move(owned_slots)), poll_descriptors(std::move(descriptors)),
         poll_slot_indexes(std::move(indexes)) {}

@@ -486,8 +486,13 @@ observation owners and composite installation. Each injected failure is a return
 `RESOURCE_EXHAUSTED` with exact Manifest-pin rollback; the first successful owner is cancelled and
 reports zero active authority pairs. The sweep also caught incorrect `noexcept` constructors around
 allocating diagnostic state, which would otherwise have terminated the process instead of reaching
-the API's error boundary. Phase-transition, execution, and final-publication allocation injection
-remain to be qualified.
+the API's error boundary. A follow-up keeps failure injection armed while real mutual-TLS authority
+acquisition transfers through follower binding, route construction, shared query resources,
+senders, coordinator, and aggregate TCP scheduler installation. Every allocation before the first
+successful transition fails the composite atomically with `RESOURCE_EXHAUSTED`, zero active
+authority work, no retained execution/result, and exact pin rollback. It also removed the same
+incorrect `noexcept` pattern from the observation TCP/TLS and aggregate TCP owners. Execution and
+final-publication allocation injection remain to be qualified.
 Moved or multi-process real-CSEG responses, remote worker-interrupt delivery, pooled
 multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node
 fault handling remain work.

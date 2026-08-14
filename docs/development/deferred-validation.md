@@ -343,10 +343,13 @@
   already successful tablet. A deterministic construction allocation sweep now covers every owned
   placement-batch, observation-owner, and composite-owner allocation through the first successful
   construction, requires `RESOURCE_EXHAUSTED` plus exact Manifest-pin rollback on every failure,
-  and cancels the successful authority batch back to zero active pairs. Allocation faults during
-  phase transition, execution, and final publication; real movement-transfer interleavings;
-  post-movement rebinding; broader timeout/retry/packet-level network campaigns; and multi-process
-  qualification remain.
+  and cancels the successful authority batch back to zero active pairs. A second deterministic
+  sweep holds failure injection across real mutual-TLS acquisition and the complete
+  authority-to-query transfer, requiring sticky `RESOURCE_EXHAUSTED`, zero active authority work,
+  no retained execution/result, and exact Manifest-pin rollback at every allocation before the
+  first successful transition. Allocation faults during execution and final publication; real
+  movement-transfer interleavings; post-movement rebinding; broader timeout/retry/packet-level
+  network campaigns; and multi-process qualification remain.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

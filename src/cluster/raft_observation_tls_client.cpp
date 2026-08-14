@@ -37,12 +37,12 @@ class RaftObservationTlsClient::Impl {
 public:
   Impl(network::TlsSocket socket, RaftObservationFrameWriteCursor request,
        RaftObservationResponseReader response_reader, RaftObservationTlsClientConfig config,
-       const TimePoint now) noexcept
+       const TimePoint now)
       : socket_(std::move(socket)), request_(std::move(request)),
         response_reader_(std::move(response_reader)), config_(config),
         deadline_(deadline_after(now, config.limits.handshake_timeout)) {}
 
-  [[nodiscard]] common::Status fail(common::Status failure) noexcept {
+  [[nodiscard]] common::Status fail(common::Status failure) {
     if (state_ != RaftObservationTlsClientState::kFailed) {
       failure_ = std::move(failure);
       state_ = RaftObservationTlsClientState::kFailed;

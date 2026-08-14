@@ -211,3 +211,7 @@ bind and proves the correlated `UNAVAILABLE` response also remains whole-query t
 Construction allocation injection additionally proves that every failure before the owner becomes
 observable is classified as `RESOURCE_EXHAUSTED`, releases the Manifest pin, and leaves no active
 authority pair. This is lifecycle evidence only and changes no bytes in this format.
+The transition sweep extends that classification across real mutual-TLS observation acquisition,
+follower binding, resource/sender/coordinator creation, route packaging, and aggregate TCP scheduler
+installation. Failure remains whole-query terminal with no retained execution or result; the first
+successful transition has not yet opened a query attempt. These checks also change no wire bytes.

@@ -33,7 +33,7 @@ deadline_after(const RaftObservationTcpClient::TimePoint now,
 class RaftObservationTcpClient::Impl {
 public:
   Impl(network::TcpSocket owned_socket, RaftObservationTcpClientConfig configured,
-       const TimePoint now) noexcept
+       const TimePoint now)
       : socket(std::move(owned_socket)), config(configured),
         connect_deadline(deadline_after(now, config.connect_timeout)) {}
 
