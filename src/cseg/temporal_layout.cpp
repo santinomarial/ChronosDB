@@ -19,12 +19,16 @@ namespace {
   return common::Status{common::StatusCode::kResourceExhausted, std::string{message}};
 }
 
-[[nodiscard]] common::Result<std::uint64_t> checked_table_end(const std::uint64_t offset,
-                                                              const std::uint64_t count,
-                                                              const std::uint64_t element_length,
+struct DescriptorTableLayout {
+  std::uint64_t offset{};
+  std::uint64_t entry_count{};
+  std::uint64_t entry_length{};
+};
+
+[[nodiscard]] common::Result<std::uint64_t> checked_table_end(const DescriptorTableLayout table,
                                                               const std::string_view label) {
-  const auto length = common::checked_multiply(count, element_length);
-  const auto end = length.has_value() ? common::checked_add(offset, *length) : std::nullopt;
+  const auto length = common::checked_multiply(table.entry_count, table.entry_length);
+  const auto end = length.has_value() ? common::checked_add(table.offset, *length) : std::nullopt;
   return end.has_value() ? common::Result<std::uint64_t>{*end}
                          : common::make_unexpected(exhausted(label));
 }
@@ -50,17 +54,21 @@ plan_cseg_v2_temporal_metadata_layout(const CsegMetadataLayoutInput input) {
     return common::make_unexpected(exhausted("CSEG v2 page count exceeds its field"));
   }
   const std::uint64_t columns_offset = format::kColumnsOffset;
-  auto granules_offset =
-      checked_table_end(columns_offset, *stored_columns, format::kColumnDescriptorLength,
-                        "CSEG v2 column table overflowed");
+  auto granules_offset = checked_table_end({.offset = columns_offset,
+                                            .entry_count = *stored_columns,
+                                            .entry_length = format::kColumnDescriptorLength},
+                                           "CSEG v2 column table overflowed");
   if (!granules_offset.has_value())
     return common::make_unexpected(granules_offset.error());
-  auto pages_offset =
-      checked_table_end(*granules_offset, input.granule_count, format::kGranuleDescriptorLength,
-                        "CSEG v2 granule table overflowed");
+  auto pages_offset = checked_table_end({.offset = *granules_offset,
+                                         .entry_count = input.granule_count,
+                                         .entry_length = format::kGranuleDescriptorLength},
+                                        "CSEG v2 granule table overflowed");
   if (!pages_offset.has_value())
     return common::make_unexpected(pages_offset.error());
-  auto trailer_offset = checked_table_end(*pages_offset, *page_count, format::kPageDescriptorLength,
+  auto trailer_offset = checked_table_end({.offset = *pages_offset,
+                                           .entry_count = *page_count,
+                                           .entry_length = format::kPageDescriptorLength},
                                           "CSEG v2 page table overflowed");
   if (!trailer_offset.has_value())
     return common::make_unexpected(trailer_offset.error());
