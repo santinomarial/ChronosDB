@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <unistd.h>
@@ -90,15 +91,23 @@ TEST(MetadataSnapshotStorageTest, InstallsRetriesSelectsAndReopensHighestSnapsho
     ASSERT_TRUE(storage->install(snapshot(8U)).has_value());
     auto latest = storage->load_latest();
     ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
-    ASSERT_TRUE(latest->has_value());
-    EXPECT_EQ((*latest)->snapshot, snapshot(8U));
+    const std::optional<LoadedMetadataSnapshot>& selected = *latest;
+    if (!selected.has_value()) {
+      ADD_FAILURE() << "installed metadata snapshot is missing";
+      return;
+    }
+    EXPECT_EQ(selected.value().snapshot, snapshot(8U));
   }
   auto reopened = MetadataSnapshotStorage::open_existing(config(directory));
   ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
   auto latest = reopened->load_latest();
   ASSERT_TRUE(latest.has_value());
-  ASSERT_TRUE(latest->has_value());
-  EXPECT_EQ((*latest)->snapshot, snapshot(8U));
+  const std::optional<LoadedMetadataSnapshot>& selected = *latest;
+  if (!selected.has_value()) {
+    ADD_FAILURE() << "reopened metadata snapshot is missing";
+    return;
+  }
+  EXPECT_EQ(selected.value().snapshot, snapshot(8U));
 }
 
 TEST(MetadataSnapshotStorageTest, CleansTemporaryAndRejectsDamagedInstalledBytes) {
@@ -111,16 +120,23 @@ TEST(MetadataSnapshotStorageTest, CleansTemporaryAndRejectsDamagedInstalledBytes
     ASSERT_TRUE(installed.has_value());
     final_path = directory.path() / installed->file_name;
   }
-  const std::filesystem::path temporary =
+  const std::filesystem::path first_temporary =
       directory.path() / "metadata-snapshot-00000000000000000008.rmas.tmp";
+  const std::filesystem::path second_temporary =
+      directory.path() / "metadata-snapshot-00000000000000000009.rmas.tmp";
   {
-    std::ofstream output{temporary, std::ios::binary | std::ios::trunc};
+    std::ofstream output{first_temporary, std::ios::binary | std::ios::trunc};
+    output.put('x');
+  }
+  {
+    std::ofstream output{second_temporary, std::ios::binary | std::ios::trunc};
     output.put('x');
   }
   {
     auto reopened = MetadataSnapshotStorage::open_existing(config(directory));
     ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
-    EXPECT_FALSE(std::filesystem::exists(temporary));
+    EXPECT_FALSE(std::filesystem::exists(first_temporary));
+    EXPECT_FALSE(std::filesystem::exists(second_temporary));
   }
   {
     std::fstream file{final_path, std::ios::binary | std::ios::in | std::ios::out};

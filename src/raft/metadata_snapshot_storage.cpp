@@ -99,7 +99,7 @@ public:
                ? common::Status::ok()
                : unavailable("metadata snapshot storage is poisoned: " + poison.message());
   }
-  [[nodiscard]] common::Status cleanup_temporaries() {
+  [[nodiscard]] common::Status cleanup_temporaries() const {
     auto entries = directory.list_entries();
     if (!entries.has_value())
       return entries.error();
