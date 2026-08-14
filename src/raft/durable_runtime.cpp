@@ -223,14 +223,16 @@ DurableMultiRaftRuntime::execute_batch(std::vector<DurableRaftRequest> requests)
                          "durable Multi-Raft batch exceeds its outbound-message bound"}));
     }
     outbound_count += transition->outbound.size();
-    if (transition->persistence.has_value()) {
-      auto appended = impl_->log.append(*transition->persistence);
+    MultiRaftTransition owned_transition = std::move(*transition);
+    const std::optional<GroupPersistentState>& persistence = owned_transition.persistence;
+    if (persistence.has_value()) {
+      auto appended = impl_->log.append(persistence.value());
       if (!appended.has_value())
         return common::make_unexpected(impl_->fail(appended.error()));
       needs_sync = true;
     }
     results.push_back(
-        DurableRaftResult{common::Status::ok(), std::move(*transition), std::nullopt});
+        DurableRaftResult{common::Status::ok(), std::move(owned_transition), std::nullopt});
   }
   if (needs_sync) {
     auto synchronized = impl_->log.synchronize();

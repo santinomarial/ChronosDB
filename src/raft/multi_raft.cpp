@@ -44,17 +44,19 @@ public:
       return common::make_unexpected(
           common::Status{common::StatusCode::kInternal, "Multi-Raft group disappeared"});
     }
+    Transition core = std::move(*transition);
     MultiRaftTransition output;
-    output.advanced_commit_index = transition->advanced_commit_index;
-    if (transition->snapshot_install.has_value()) {
-      output.snapshot_install =
-          GroupSnapshotInstall{group_id, std::move(*transition->snapshot_install)};
+    output.advanced_commit_index = core.advanced_commit_index;
+    std::optional<PendingSnapshotInstall> snapshot_install = std::move(core.snapshot_install);
+    if (snapshot_install.has_value()) {
+      output.snapshot_install = GroupSnapshotInstall{group_id, std::move(snapshot_install).value()};
     }
-    if (transition->read_barrier_ready.has_value()) {
-      output.read_barrier_ready =
-          GroupReadBarrier{group_id, std::move(*transition->read_barrier_ready)};
+    const std::optional<ReadBarrier> read_barrier = core.read_barrier_ready;
+    if (read_barrier.has_value()) {
+      output.read_barrier_ready = GroupReadBarrier{group_id, read_barrier.value()};
     }
-    if (transition->persistent_state.has_value()) {
+    std::optional<PersistentState> persistent_state = std::move(core.persistent_state);
+    if (persistent_state.has_value()) {
       if (physical_sequence == std::numeric_limits<std::uint64_t>::max()) {
         failed_state = true;
         return common::make_unexpected(
@@ -62,11 +64,11 @@ public:
                            "Multi-Raft physical persistence sequence is exhausted"});
       }
       ++physical_sequence;
-      output.persistence = GroupPersistentState{group_id, physical_sequence,
-                                                std::move(*transition->persistent_state)};
+      output.persistence =
+          GroupPersistentState{group_id, physical_sequence, std::move(persistent_state).value()};
     }
-    output.outbound.reserve(transition->outbound.size());
-    for (OutboundMessage& message : transition->outbound) {
+    output.outbound.reserve(core.outbound.size());
+    for (OutboundMessage& message : core.outbound) {
       output.outbound.push_back(GroupOutboundMessage{group_id, local_node_id, std::move(message)});
     }
     return output;
