@@ -54,9 +54,15 @@ releases the exact Manifest pin. The sweep removed incorrect `noexcept` specific
 service owner and TCP scheduler constructors: their owned diagnostic statuses may allocate, so
 termination was not a valid failure boundary.
 
-The test does not complete a real distributed query response. Real three-process SQL/data-plane
-execution, process loss/failover, remote CSEG reads, broader fault matrices, and measurement evidence
-remain incomplete.
+A subsequent sweep pre-acquires independent lifecycle owners, replaces the observation endpoint
+with the real scalar mutual-TLS server, and selects every main-thread allocation across response
+decode, retained ownership, sender/coordinator completion, and aggregate installation. Each
+injected failure is sticky `RESOURCE_EXHAUSTED`, closes the attempt, exposes no result, and restores
+the exact pin; the no-fault boundary publishes the expected count and sum.
+
+The test response comes from a synthetic scalar worker, not a real remote CSEG scan. Real
+three-process SQL/data-plane execution, process loss/failover, remote CSEG reads, broader fault
+matrices, and measurement evidence remain incomplete.
 
 Invariants 4–6, 10, 11, 14, 15, and 18 apply.
 

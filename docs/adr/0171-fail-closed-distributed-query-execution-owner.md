@@ -46,6 +46,11 @@ states merge exactly, an unknown tablet and a duplicate response reject, retry b
 poison the coordinator, exhausted transport failure becomes the query failure, and reordered
 admissions cannot be paired with pinned dispatches.
 
+An end-to-end packaged follower allocation sweep selects every main-thread allocation from scalar
+TLS response decode through sender acceptance, coordinator merge, `finish`, and result publication.
+Every selected failure is sticky `RESOURCE_EXHAUSTED`, leaves no active attempt or public aggregate,
+and restores the exact Manifest pin; the no-fault boundary publishes the exact count and sum.
+
 Socket/TLS readiness, deadlines, cancellation propagation, leader rebinding, general vector
 fragments, and multi-node fault simulation remain separate work.
 

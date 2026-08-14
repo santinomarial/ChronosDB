@@ -1,4 +1,5 @@
 #include "chronos/cluster/distributed_grouped_query_tcp_server.hpp"
+#include "chronos/cluster/distributed_query_tcp_server.hpp"
 #include "chronos/cluster/distributed_vector_aggregate_query_tcp_server_v2.hpp"
 #include "chronos/cluster/raft_observation_tcp_server.hpp"
 #include "chronos/common/byte_reader.hpp"
@@ -289,6 +290,22 @@ public:
             .partial = partial,
             .terminal = true,
         }}};
+  }
+};
+
+class ScalarFloat64Worker final : public cluster::DistributedQueryWorkerService {
+public:
+  common::Result<query::ExchangeMessage>
+  execute(const query::DistributedAggregateFragmentDispatch& dispatch) override {
+    query::MergeableAggregateState partial;
+    const common::Status added = partial.add(2.5);
+    if (!added.is_ok())
+      return common::make_unexpected(added);
+    return query::ExchangeMessage{.query_id = dispatch.fragment.query_id,
+                                  .tablet_id = dispatch.fragment.tablet_id,
+                                  .sequence = 1U,
+                                  .partial = partial,
+                                  .terminal = true};
   }
 };
 
@@ -1033,6 +1050,28 @@ TEST(ReplicatedDistributedQueryAllocationFailureTest,
     grouped_publication_lifecycles.push_back(std::move(*lifecycle));
   }
 
+  std::vector<ReplicatedFollowerDistributedAggregateQuery> scalar_publication_lifecycles;
+  scalar_publication_lifecycles.reserve(kMaximumPublicationFaults);
+  for (std::size_t lifecycle_index = 0U; lifecycle_index < kMaximumPublicationFaults;
+       ++lifecycle_index) {
+    auto snapshot = publisher->snapshot();
+    ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+    auto lifecycle = ReplicatedFollowerDistributedAggregateQuery::create(
+        make_scalar_plan(tablet_id, applied_position), std::move(*snapshot), authority_config,
+        scalar_query_config);
+    ASSERT_TRUE(lifecycle.has_value()) << lifecycle.error().to_string();
+    for (std::size_t poll = 0U;
+         poll < 8192U && lifecycle->state() ==
+                             ReplicatedFollowerDistributedAggregateQueryState::kAcquiringAuthority;
+         ++poll) {
+      ASSERT_TRUE(lifecycle->poll_once(std::chrono::milliseconds{1}).is_ok())
+          << lifecycle->failure().to_string();
+    }
+    ASSERT_EQ(lifecycle->state(), ReplicatedFollowerDistributedAggregateQueryState::kExecuting)
+        << lifecycle->failure().to_string();
+    scalar_publication_lifecycles.push_back(std::move(*lifecycle));
+  }
+
   const auto count_type = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
   std::vector<ReplicatedFollowerDistributedVectorAggregateQueryV2> publication_lifecycles;
   publication_lifecycles.reserve(kMaximumPublicationFaults);
@@ -1173,11 +1212,117 @@ TEST(ReplicatedDistributedQueryAllocationFailureTest,
   EXPECT_TRUE(saw_grouped_publication_success);
   grouped_publication_lifecycles.clear();
   EXPECT_EQ(selected_manifest.use_count(),
-            baseline_use_count + static_cast<long>(publication_lifecycles.size()));
+            baseline_use_count + static_cast<long>(scalar_publication_lifecycles.size()) +
+                static_cast<long>(publication_lifecycles.size()));
 
   grouped_query_server_thread_guard.stop_and_join();
   EXPECT_FALSE(grouped_query_server_failed.load());
   EXPECT_TRUE(grouped_query_server->shutdown().is_ok());
+
+  ScalarFloat64Worker scalar_query_worker;
+  auto scalar_query_receiver = cluster::DistributedQueryReceiver::create(
+      {.local_node_id = 12U, .authorizer = &authorizer, .worker = &scalar_query_worker});
+  ASSERT_TRUE(scalar_query_receiver.has_value()) << scalar_query_receiver.error().to_string();
+  auto scalar_query_server = cluster::DistributedQueryTcpServer::start(
+      {.listener = {.bind_endpoint = query_endpoint},
+       .tls = observation_server_tls_config(),
+       .authenticator = &authenticator,
+       .receiver = &*scalar_query_receiver,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000}},
+       .maximum_connections = 16U,
+       .maximum_accepts_per_poll = 16U});
+  ASSERT_TRUE(scalar_query_server.has_value()) << scalar_query_server.error().to_string();
+  ASSERT_EQ(scalar_query_server->bound_endpoint(), query_endpoint);
+
+  std::atomic<bool> stop_scalar_query_server;
+  std::atomic<bool> scalar_query_server_failed;
+  std::thread scalar_query_server_thread([&] {
+    while (!stop_scalar_query_server.load() && !scalar_query_server_failed.load()) {
+      if (!scalar_query_server->poll_once(std::chrono::milliseconds{1}).is_ok())
+        scalar_query_server_failed.store(true);
+    }
+  });
+  ThreadJoinGuard scalar_query_server_thread_guard{stop_scalar_query_server,
+                                                   scalar_query_server_thread};
+
+  bool saw_scalar_publication_failure = false;
+  bool saw_scalar_publication_success = false;
+  for (std::size_t fail_after = 0U; fail_after < kMaximumPublicationFaults; ++fail_after) {
+    SCOPED_TRACE(testing::Message{} << "scalar publication fail_after=" << fail_after);
+    const long pin_count_before = selected_manifest.use_count();
+    {
+      auto lifecycle = std::move(scalar_publication_lifecycles.back());
+      scalar_publication_lifecycles.pop_back();
+      ASSERT_TRUE(lifecycle.poll_once(std::chrono::milliseconds{0}).is_ok())
+          << lifecycle.failure().to_string();
+      ASSERT_TRUE(lifecycle.metrics().execution.has_value());
+      // Guarded by the execution-metrics assertion above.
+      // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+      ASSERT_EQ(lifecycle.metrics().execution->active_attempts, 1U);
+
+      common::Status progress;
+      bool terminal = false;
+      std::size_t observed_allocations{};
+      {
+        test::ScopedAllocationFailure failure{fail_after};
+        try {
+          for (std::size_t poll = 0U; poll < 8192U; ++poll) {
+            progress = lifecycle.poll_once(std::chrono::milliseconds{1});
+            if (!progress.is_ok() ||
+                lifecycle.state() != ReplicatedFollowerDistributedAggregateQueryState::kExecuting) {
+              terminal = true;
+              break;
+            }
+          }
+        } catch (...) {
+          failure.disable();
+          throw;
+        }
+        observed_allocations = failure.observed_allocations();
+        failure.disable();
+      }
+      ASSERT_TRUE(terminal);
+      const bool injected = observed_allocations > fail_after;
+      if (injected) {
+        saw_scalar_publication_failure = true;
+        EXPECT_EQ(progress.code(), common::StatusCode::kResourceExhausted) << progress.to_string();
+        EXPECT_EQ(lifecycle.state(), ReplicatedFollowerDistributedAggregateQueryState::kFailed);
+        EXPECT_EQ(lifecycle.failure(), progress);
+        ASSERT_TRUE(lifecycle.metrics().execution.has_value());
+        // Guarded by the execution-metrics assertion above.
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+        EXPECT_EQ(lifecycle.metrics().execution->active_attempts, 0U);
+        EXPECT_EQ(lifecycle.result().error(), progress);
+        EXPECT_EQ(lifecycle.poll_once(std::chrono::milliseconds{0}), progress);
+      } else {
+        saw_scalar_publication_success = true;
+        EXPECT_TRUE(progress.is_ok()) << progress.to_string();
+        EXPECT_EQ(lifecycle.state(), ReplicatedFollowerDistributedAggregateQueryState::kComplete);
+        auto result = lifecycle.result();
+        ASSERT_TRUE(result.has_value()) << result.error().to_string();
+        EXPECT_EQ(result->count, 1U);
+        EXPECT_EQ(result->sum, 2.5);
+        ASSERT_TRUE(lifecycle.metrics().execution.has_value());
+        // Guarded by the execution-metrics assertion above.
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+        EXPECT_EQ(lifecycle.metrics().execution->active_attempts, 0U);
+      }
+    }
+    EXPECT_EQ(selected_manifest.use_count(), pin_count_before - 1L);
+    ASSERT_FALSE(scalar_query_server_failed.load());
+    if (saw_scalar_publication_success)
+      break;
+  }
+  EXPECT_TRUE(saw_scalar_publication_failure);
+  EXPECT_TRUE(saw_scalar_publication_success);
+  scalar_publication_lifecycles.clear();
+  EXPECT_EQ(selected_manifest.use_count(),
+            baseline_use_count + static_cast<long>(publication_lifecycles.size()));
+
+  scalar_query_server_thread_guard.stop_and_join();
+  EXPECT_FALSE(scalar_query_server_failed.load());
+  EXPECT_TRUE(scalar_query_server->shutdown().is_ok());
 
   CountStarWorker query_worker;
   auto query_receiver = cluster::DistributedVectorAggregateQueryReceiverV2::create(

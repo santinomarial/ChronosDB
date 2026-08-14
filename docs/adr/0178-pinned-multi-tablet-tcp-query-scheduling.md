@@ -81,6 +81,10 @@ The packaged bounded-stale scalar lifecycle additionally sweeps scheduler constr
 mutual-TLS authority acquisition. Its scheduler owner may allocate the sticky diagnostic status;
 that constructor is therefore not `noexcept`, allowing the existing creation boundary to return
 `RESOURCE_EXHAUSTED` with no retained attempts or snapshot-pin leak.
+Pre-acquired owners are also swept through real mutual-TLS response decode, sender/coordinator
+acceptance, and final aggregate installation. Every selected allocation failure closes the active
+client and fails the whole query atomically; the first unselected boundary publishes the exact
+count and sum.
 
 Invariants 5, 6, 10, 11, 14, 15, and 18 apply.
 

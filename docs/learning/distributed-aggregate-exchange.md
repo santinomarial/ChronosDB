@@ -519,6 +519,9 @@ The older scalar bounded-stale owner now has the same construction and phase-tra
 evidence. Its service and TCP scheduler implementations no longer claim `noexcept` around owned
 diagnostic strings; an injected failure returns sticky resource exhaustion, cancels authority work,
 and releases the pinned Manifest generation instead of terminating the process.
+Pre-acquired scalar owners now continue that sweep through a real mutual-TLS response, client decode
+and retention, sender/coordinator completion, and aggregate installation. Each selected allocation
+fails the whole lifecycle atomically; the first no-fault boundary exposes the exact count and sum.
 The grouped bounded-stale owner now has equivalent construction and real mutual-TLS
 authority-to-scheduler transition evidence. Its service and grouped scheduler implementations also
 allow allocating diagnostics to propagate to their existing resource-exhaustion boundary; every

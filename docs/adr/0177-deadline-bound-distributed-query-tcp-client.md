@@ -53,6 +53,10 @@ real listener test proves invalid configuration rejects before connection, a pre
 not expire, the exact connect deadline fails with `UNAVAILABLE`, the descriptor is already closed,
 and later calls return the identical sticky failure.
 
+The packaged bounded-stale lifecycle allocation sweep now carries pre-acquired owners through a
+real mutual-TLS scalar response. Selected client response-decode and retained-response failures
+become sticky `RESOURCE_EXHAUSTED`, close the attempt, and expose no response or aggregate prefix.
+
 Invariants 5, 6, 10, 11, 14, 15, and 18 apply.
 
 ## Alternatives considered
