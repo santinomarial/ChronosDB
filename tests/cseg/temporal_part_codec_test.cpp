@@ -272,9 +272,13 @@ TEST(TemporalPartValidatorTest, AcceptsExactTemporalSemanticsAndSchemaBinding) {
 TEST(TemporalPartValidatorTest, RejectsInvalidAndUnsupportedTemporalValues) {
   TemporalFixtureValues values;
   values.commit_source = 0U;
-  EXPECT_EQ(validate_fixture(values).code(), common::StatusCode::kCorruption);
+  const common::Status zero_source = validate_fixture(values);
+  EXPECT_EQ(zero_source.code(), common::StatusCode::kCorruption);
+  EXPECT_EQ(zero_source.message(), "CSEG v2 temporal COMMIT_SOURCE is zero or malformed");
   values.commit_source = 3U;
-  EXPECT_EQ(validate_fixture(values).code(), common::StatusCode::kNotSupported);
+  const common::Status unknown_source = validate_fixture(values);
+  EXPECT_EQ(unknown_source.code(), common::StatusCode::kNotSupported);
+  EXPECT_EQ(unknown_source.message(), "CSEG v2 temporal COMMIT_SOURCE is unsupported");
 
   values = {};
   values.commit_position = 0U;

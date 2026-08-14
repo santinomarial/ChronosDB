@@ -278,23 +278,22 @@ namespace {
     }
 
     const std::size_t system_start = metadata.ordering_column_count();
-    const common::Status system =
-        temporal ? detail::validate_cseg_v2_temporal_system_rows(
-                       {.commit_source = key_pages[system_start].physical(),
-                        .source_id = key_pages[system_start + 1U].physical(),
-                        .commit_position = key_pages[system_start + 2U].physical(),
-                        .row_ordinal = key_pages[system_start + 3U].physical(),
-                        .operation = remaining_system_pages[0U].physical(),
-                        .logical_identity = remaining_system_pages[1U].physical(),
-                        .receive_time = remaining_system_pages[2U].physical(),
-                        .system_commit_time = remaining_system_pages[3U].physical()},
-                       granule.row_count)
-                 : detail::validate_cseg_v1_system_rows(
-                       {.wal_id = key_pages[system_start].physical(),
-                        .record_sequence = key_pages[system_start + 1U].physical(),
-                        .row_ordinal = key_pages[system_start + 2U].physical(),
-                        .operation = remaining_system_pages[0U].physical()},
-                       granule.row_count);
+    auto system = temporal ? detail::validate_cseg_v2_temporal_system_rows(
+                                 {.commit_source = key_pages[system_start].physical(),
+                                  .source_id = key_pages[system_start + 1U].physical(),
+                                  .commit_position = key_pages[system_start + 2U].physical(),
+                                  .row_ordinal = key_pages[system_start + 3U].physical(),
+                                  .operation = remaining_system_pages[0U].physical(),
+                                  .logical_identity = remaining_system_pages[1U].physical(),
+                                  .receive_time = remaining_system_pages[2U].physical(),
+                                  .system_commit_time = remaining_system_pages[3U].physical()},
+                                 granule.row_count)
+                           : detail::validate_cseg_v1_system_rows(
+                                 {.wal_id = key_pages[system_start].physical(),
+                                  .record_sequence = key_pages[system_start + 1U].physical(),
+                                  .row_ordinal = key_pages[system_start + 2U].physical(),
+                                  .operation = remaining_system_pages[0U].physical()},
+                                 granule.row_count);
     if (!system.is_ok()) {
       return system;
     }
