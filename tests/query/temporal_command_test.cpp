@@ -37,8 +37,9 @@ TEST(TemporalCommandTest, RoundTripsCanonicalBatchAndMutationMetadata) {
   EXPECT_EQ(decode_temporal_command_v1(damaged).error().code(), common::StatusCode::kCorruption);
 
   descriptors[1].logical_identity = descriptors[0].logical_identity;
-  EXPECT_EQ(encode_temporal_command_v1(*batch, std::move(descriptors), 1000).error().code(),
+  EXPECT_EQ(encode_temporal_command_v1(*batch, descriptors, 1000).error().code(),
             common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(descriptors.size(), 2U);
 }
 
 } // namespace

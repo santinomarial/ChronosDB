@@ -68,9 +68,11 @@ std::int64_t DecodedTemporalCommandView::system_commit_time_ns() const noexcept 
   return system_commit_time_ns_;
 }
 
-common::Result<EncodedTemporalCommand> encode_temporal_command_v1(
-    const columnar::OwnedColumnarBatch& batch, std::vector<TemporalMutationDescriptor> mutations,
-    const std::int64_t system_commit_time_ns, const TemporalCommandLimits limits) {
+common::Result<EncodedTemporalCommand>
+encode_temporal_command_v1(const columnar::OwnedColumnarBatch& batch,
+                           const std::vector<TemporalMutationDescriptor>& mutations,
+                           const std::int64_t system_commit_time_ns,
+                           const TemporalCommandLimits limits) {
   if (mutations.empty() || mutations.size() != batch.row_count() ||
       mutations.size() > limits.maximum_mutations || limits.maximum_identity_bytes == 0U ||
       limits.maximum_metadata_bytes == 0U) {
@@ -107,7 +109,8 @@ common::Result<EncodedTemporalCommand> encode_temporal_command_v1(
       metadata_size > std::numeric_limits<std::uint32_t>::max()) {
     return common::make_unexpected(invalid("temporal command size exceeds v1 bounds"));
   }
-  std::vector<std::byte> body(*body_size, std::byte{0U});
+  const std::size_t command_size = body_size.value();
+  std::vector<std::byte> body(command_size, std::byte{0U});
   const std::size_t metadata_offset = kTemporalCommandHeaderSize + encoded_batch->size();
   std::copy(encoded_batch->bytes().begin(), encoded_batch->bytes().end(),
             body.begin() + static_cast<std::ptrdiff_t>(kTemporalCommandHeaderSize));
@@ -128,7 +131,7 @@ common::Result<EncodedTemporalCommand> encode_temporal_command_v1(
   for (const common::Status& status :
        {header.write_exact(kMagic), header.write_u16_le(kMajor), header.write_u16_le(kMinor),
         header.write_u32_le(kTemporalCommandHeaderSize),
-        header.write_u32_le(static_cast<std::uint32_t>(*body_size)),
+        header.write_u32_le(static_cast<std::uint32_t>(command_size)),
         header.write_u32_le(static_cast<std::uint32_t>(encoded_batch->size())),
         header.write_u32_le(static_cast<std::uint32_t>(mutations.size())),
         header.write_u32_le(static_cast<std::uint32_t>(metadata_size)),

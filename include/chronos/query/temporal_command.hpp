@@ -50,7 +50,7 @@ private:
 
   friend common::Result<EncodedTemporalCommand>
   encode_temporal_command_v1(const columnar::OwnedColumnarBatch&,
-                             std::vector<TemporalMutationDescriptor>, std::int64_t,
+                             const std::vector<TemporalMutationDescriptor>&, std::int64_t,
                              TemporalCommandLimits);
 };
 
@@ -83,7 +83,7 @@ private:
 
 [[nodiscard]] common::Result<EncodedTemporalCommand>
 encode_temporal_command_v1(const columnar::OwnedColumnarBatch& batch,
-                           std::vector<TemporalMutationDescriptor> mutations,
+                           const std::vector<TemporalMutationDescriptor>& mutations,
                            std::int64_t system_commit_time_ns, TemporalCommandLimits limits = {});
 
 [[nodiscard]] common::Result<DecodedTemporalCommandView>
