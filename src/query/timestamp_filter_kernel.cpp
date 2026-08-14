@@ -1,5 +1,6 @@
 #include "query/timestamp_filter_kernel.hpp"
 
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -93,11 +94,11 @@ std::size_t compact_avx2(const common::ByteView values, const std::span<std::uin
                                        const TimestampRangePredicate& predicate) noexcept {
   std::size_t output = 0U;
   std::size_t row = 0U;
-  alignas(16) std::uint64_t lanes[2]{};
+  alignas(16) std::array<std::uint64_t, 2U> lanes{};
   for (; indices.size() - row >= 2U; row += 2U) {
-    alignas(16) std::int64_t input[2]{};
-    std::memcpy(input, values.data() + row * sizeof(std::int64_t), sizeof(input));
-    const int64x2_t timestamps = vld1q_s64(input);
+    alignas(16) std::array<std::int64_t, 2U> input{};
+    std::memcpy(input.data(), values.data() + row * sizeof(std::int64_t), sizeof(input));
+    const int64x2_t timestamps = vld1q_s64(input.data());
     uint64x2_t matches = vdupq_n_u64(std::numeric_limits<std::uint64_t>::max());
     if (predicate.lower.has_value()) {
       const int64x2_t lower = vdupq_n_s64(predicate.lower->value);
@@ -111,7 +112,7 @@ std::size_t compact_avx2(const common::ByteView values, const std::span<std::uin
           predicate.upper->inclusive ? vcleq_s64(timestamps, upper) : vcltq_s64(timestamps, upper);
       matches = vandq_u64(matches, accepted);
     }
-    vst1q_u64(lanes, matches);
+    vst1q_u64(lanes.data(), matches);
     for (std::uint32_t offset = 0U; offset < 2U; ++offset) {
       if (lanes[offset] != 0U)
         indices[output++] = static_cast<std::uint32_t>(row) + offset;

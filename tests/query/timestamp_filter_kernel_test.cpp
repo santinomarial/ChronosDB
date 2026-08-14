@@ -34,7 +34,8 @@ encode_timestamps(const std::vector<std::int64_t>& timestamps) {
 }
 
 TEST(TimestampFilterKernelTest, EveryAvailableKernelMatchesExactScalarBounds) {
-  constexpr std::array<std::size_t, 12U> sizes{1U, 2U, 3U, 4U, 5U, 7U, 8U, 9U, 15U, 16U, 17U, 257U};
+  constexpr std::array<std::size_t, 13U> sizes{1U, 2U, 3U,  4U,  5U,  6U,  7U,
+                                               8U, 9U, 15U, 16U, 17U, 257U};
   const std::array<TimestampRangePredicate, 9U> predicates{
       TimestampRangePredicate{},
       TimestampRangePredicate{.lower = TimestampRangeBound{-10, true}},
