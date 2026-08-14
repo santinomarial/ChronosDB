@@ -247,7 +247,7 @@ class DatabaseBootstrap::Impl {
 public:
   Impl(std::string configured_root, DatabaseBootstrapDescriptor configured_descriptor,
        io::PosixDirectory configured_directory, io::PosixAdvisoryLock configured_lock) noexcept
-      : root(std::move(configured_root)), descriptor(std::move(configured_descriptor)),
+      : root(std::move(configured_root)), descriptor(configured_descriptor),
         directory(std::move(configured_directory)), lock(std::move(configured_lock)) {}
 
   std::string root;
@@ -297,7 +297,7 @@ DatabaseBootstrap::open_or_create(const DatabaseBootstrapConfig& config) {
     auto decoded = read_descriptor_file(*root, kDatabaseBootstrapFileName);
     if (!decoded.has_value())
       return common::make_unexpected(decoded.error());
-    descriptor = std::move(*decoded);
+    descriptor = *decoded;
   } else {
     const bool resuming = temporary != nullptr;
     if (auto status = reject_unexpected_creation_entries(*entries, resuming); !status.is_ok())
@@ -309,7 +309,7 @@ DatabaseBootstrap::open_or_create(const DatabaseBootstrapConfig& config) {
       auto decoded = read_descriptor_file(*root, kDatabaseBootstrapTemporaryFileName);
       if (!decoded.has_value())
         return common::make_unexpected(decoded.error());
-      descriptor = std::move(*decoded);
+      descriptor = *decoded;
     } else {
       auto encoded = encode_database_bootstrap_v1(config.new_database);
       if (!encoded.has_value())
@@ -359,7 +359,7 @@ DatabaseBootstrap::open_or_create(const DatabaseBootstrapConfig& config) {
   }
 
   try {
-    return DatabaseBootstrap{std::make_unique<Impl>(config.database_root, std::move(descriptor),
+    return DatabaseBootstrap{std::make_unique<Impl>(config.database_root, descriptor,
                                                     std::move(*root), std::move(*lock))};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("database bootstrap owner allocation failed"));

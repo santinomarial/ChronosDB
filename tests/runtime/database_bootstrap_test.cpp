@@ -1,5 +1,6 @@
 #include "chronos/runtime/database_bootstrap.hpp"
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -45,10 +46,10 @@ private:
           .local_node_id = 7U,
           .mutable_head_rows = 4096U,
           .maximum_sealed_generations = 8U,
-          .variable_column_bytes = 4U * 1024U * 1024U,
+          .variable_column_bytes = std::uint64_t{4U} * 1024U * 1024U,
           .maximum_retry_entries = 65'536U,
-          .wal_segment_target_bytes = 16U * 1024U * 1024U,
-          .raft_segment_target_bytes = 16U * 1024U * 1024U};
+          .wal_segment_target_bytes = std::uint64_t{16U} * 1024U * 1024U,
+          .raft_segment_target_bytes = std::uint64_t{16U} * 1024U * 1024U};
 }
 
 TEST(DatabaseBootstrapCodecTest, RoundTripsExactChecksummedImage) {
@@ -83,8 +84,16 @@ TEST(DatabaseBootstrapTest, CreatesReopensAndLocksOneDurableRoot) {
   EXPECT_EQ(locked.error().code(), common::StatusCode::kUnavailable);
   ASSERT_TRUE(created->close().is_ok());
 
+  DatabaseBootstrapDescriptor replacement = descriptor(10U);
+  replacement.local_node_id = 17U;
+  replacement.mutable_head_rows = 8'192U;
+  replacement.maximum_sealed_generations = 16U;
+  replacement.variable_column_bytes = std::uint64_t{8U} * 1024U * 1024U;
+  replacement.maximum_retry_entries = 131'072U;
+  replacement.wal_segment_target_bytes = std::uint64_t{32U} * 1024U * 1024U;
+  replacement.raft_segment_target_bytes = std::uint64_t{64U} * 1024U * 1024U;
   auto reopened = DatabaseBootstrap::open_or_create(
-      {.database_root = directory.path().string(), .new_database = descriptor(10U)});
+      {.database_root = directory.path().string(), .new_database = replacement});
   ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
   EXPECT_EQ(reopened->descriptor(), descriptor());
 }
@@ -97,7 +106,7 @@ TEST(DatabaseBootstrapTest, ResumesTheExactSynchronizedIntentIdentity) {
   {
     std::ofstream output(directory.path() / kDatabaseBootstrapTemporaryFileName,
                          std::ios::binary | std::ios::trunc);
-    output.write(reinterpret_cast<const char*>(encoded->data()),
+    output.write(std::bit_cast<const char*>(encoded->data()),
                  static_cast<std::streamsize>(encoded->size()));
   }
   ASSERT_TRUE(std::filesystem::create_directory(directory.path() / kDatabaseWalDirectoryName));
