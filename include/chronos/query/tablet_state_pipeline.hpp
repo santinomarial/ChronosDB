@@ -18,7 +18,7 @@ namespace chronos::query {
 
 struct TabletStatePipelineLimits {
   HeadScanLimits scan{};
-  std::size_t maximum_source_configuration_bytes{8U * 1024U * 1024U};
+  std::size_t maximum_source_configuration_bytes{std::size_t{8U} * 1024U * 1024U};
 };
 
 // Instantiates one checked physical SQL pipeline over a stable set of TabletState publications for

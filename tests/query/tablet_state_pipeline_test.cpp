@@ -37,21 +37,26 @@ namespace {
           .value());
 }
 
-void append(ingest::TabletState& target, const schema::TabletId& target_id, const std::uint8_t seed,
-            const std::uint64_t sequence) {
+struct AppendVersion {
+  std::uint8_t seed{};
+  std::uint64_t sequence{};
+};
+
+void append(ingest::TabletState& target, const schema::TabletId& target_id,
+            const AppendVersion version) {
   const ingest::RetryIdentity retry{
-      .client_id = ingest::test::request_id<ingest::ClientId>(seed),
-      .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(seed + 32U)};
+      .client_id = ingest::test::request_id<ingest::ClientId>(version.seed),
+      .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(version.seed + 32U)};
   const ingest::ColumnarAppendMutationIdentity mutation{
       .table_id = columnar::test::batch_schema()->table_id(),
       .tablet_id = target_id,
-      .request_digest = digest(seed)};
+      .request_digest = digest(version.seed)};
   auto prepared = target.prepare_append(retry, mutation, batch());
   ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
   ASSERT_TRUE(prepared->mark_wal_started().is_ok());
   wal::WalId wal_id;
   wal_id.bytes.front() = std::byte{1U};
-  auto published = prepared->publish({.wal_id = wal_id, .record_sequence = sequence});
+  auto published = prepared->publish({.wal_id = wal_id, .record_sequence = version.sequence});
   ASSERT_TRUE(published.has_value()) << published.error().to_string();
 }
 
@@ -69,6 +74,11 @@ void append(ingest::TabletState& target, const schema::TabletId& target_id, cons
   return std::move(*lowered);
 }
 
+TEST(TabletStatePipelineTest, DefaultsToAnEightMebibyteSourceConfigurationLimit) {
+  EXPECT_EQ(TabletStatePipelineLimits{}.maximum_source_configuration_bytes,
+            std::size_t{8U} * 1024U * 1024U);
+}
+
 TEST(TabletStatePipelineTest, ExecutesOneGlobalVectorPipelineAcrossSealedAndActiveHeads) {
   auto schema = columnar::test::batch_schema();
   auto target = ingest::TabletState::create(
@@ -79,8 +89,8 @@ TEST(TabletStatePipelineTest, ExecutesOneGlobalVectorPipelineAcrossSealedAndActi
        .maximum_retry_entries = 4U,
        .flush_queue = nullptr});
   ASSERT_TRUE(target.has_value()) << target.error().to_string();
-  append(*target, tablet_id(), 1U, 1U);
-  append(*target, tablet_id(), 2U, 2U);
+  append(*target, tablet_id(), {.seed = 1U, .sequence = 1U});
+  append(*target, tablet_id(), {.seed = 2U, .sequence = 2U});
   auto snapshot = target->snapshot();
   ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
   ASSERT_EQ(snapshot->sealed_generations().size(), 1U);
@@ -88,7 +98,8 @@ TEST(TabletStatePipelineTest, ExecutesOneGlobalVectorPipelineAcrossSealedAndActi
 
   auto lineage = schema::SchemaLineage::create(*schema);
   ASSERT_TRUE(lineage.has_value());
-  QueryResourceContext resources = QueryResourceContext::create(16U * 1024U * 1024U).value();
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{16U} * 1024U * 1024U).value();
   auto pipeline =
       instantiate_tablet_state_pipeline(resources, *snapshot, *lineage, schema->schema_id(),
                                         lower("SELECT count(*) AS rows FROM events"));
@@ -121,11 +132,12 @@ TEST(TabletStatePipelineTest, ExecutesOneGlobalAggregateAcrossMultipleTablets) {
       .flush_queue = nullptr};
   auto first = ingest::TabletState::create(schema, first_id, config).value();
   auto second = ingest::TabletState::create(schema, second_id, config).value();
-  append(first, first_id, 1U, 1U);
-  append(second, second_id, 2U, 2U);
+  append(first, first_id, {.seed = 1U, .sequence = 1U});
+  append(second, second_id, {.seed = 2U, .sequence = 2U});
   const std::vector snapshots{first.snapshot().value(), second.snapshot().value()};
   auto lineage = schema::SchemaLineage::create(*schema).value();
-  QueryResourceContext resources = QueryResourceContext::create(16U * 1024U * 1024U).value();
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{16U} * 1024U * 1024U).value();
 
   auto pipeline =
       instantiate_tablet_states_pipeline(resources, snapshots, lineage, schema->schema_id(),
