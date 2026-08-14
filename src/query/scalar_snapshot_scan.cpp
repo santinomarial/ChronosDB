@@ -36,6 +36,11 @@ inline constexpr std::size_t kConservativeAllocationOverheadBytes = 64U;
   return common::Status{common::StatusCode::kInternal, message};
 }
 
+template <typename Value>
+[[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
 [[nodiscard]] common::Result<std::size_t> add(const std::size_t left, const std::size_t right,
                                               const char* message) {
   const std::optional<std::size_t> result = common::checked_add(left, right);
@@ -103,9 +108,10 @@ void store_u32_le(std::vector<std::byte>& bytes, const std::size_t offset,
 [[nodiscard]] common::Result<void>
 store_fixed(const ScalarValue& value, std::vector<std::byte>& bytes, const std::size_t offset) {
   using schema::LogicalTypeKind;
-  if (!value.type().has_value() || value.is_null())
+  const schema::LogicalType* value_type = optional_pointer(value.type());
+  if (value_type == nullptr || value.is_null())
     return common::make_unexpected(internal("scalar snapshot fixed value is untyped or null"));
-  switch (value.type()->kind()) {
+  switch (value_type->kind()) {
   case LogicalTypeKind::kInt8:
     store_unsigned_le(bytes, offset,
                       std::bit_cast<std::uint8_t>(
@@ -186,38 +192,42 @@ struct ChunkPlan {
   std::vector<std::size_t> variable_value_bytes;
 };
 
+struct ChunkRange {
+  std::size_t first_row{};
+  std::uint32_t row_count{};
+};
+
 [[nodiscard]] common::Result<ChunkPlan> plan_chunk(const ScalarTableSnapshot& snapshot,
-                                                   const std::size_t first_row,
-                                                   const std::uint32_t row_count,
+                                                   const ChunkRange range,
                                                    const ScalarSnapshotScanLimits& limits) {
   const auto columns = snapshot.schema_ptr()->columns();
   if (columns.size() > limits.chunk.maximum_columns)
     return common::make_unexpected(exhausted("scalar snapshot scan exceeds the column limit"));
-  ChunkPlan plan{.row_count = row_count, .variable_value_bytes = {}};
+  ChunkPlan plan{.row_count = range.row_count, .variable_value_bytes = {}};
   plan.variable_value_bytes.resize(columns.size());
-  common::Result<std::size_t> selection_bytes =
-      multiply(row_count, sizeof(std::uint32_t), "scalar snapshot selection accounting overflowed");
+  common::Result<std::size_t> selection_bytes = multiply(
+      range.row_count, sizeof(std::uint32_t), "scalar snapshot selection accounting overflowed");
   if (!selection_bytes.has_value())
     return common::make_unexpected(selection_bytes.error());
   std::size_t retained = *selection_bytes;
   for (std::size_t column = 0U; column < columns.size(); ++column) {
     const schema::ColumnDefinition& definition = columns[column];
     if (definition.nullable()) {
-      common::Result<std::size_t> next = add(retained, columnar::bitmap_size(row_count),
+      common::Result<std::size_t> next = add(retained, columnar::bitmap_size(range.row_count),
                                              "scalar snapshot scan validity accounting overflowed");
       if (!next.has_value())
         return common::make_unexpected(next.error());
       retained = *next;
     }
     if (definition.type().kind() == schema::LogicalTypeKind::kBool) {
-      common::Result<std::size_t> next = add(retained, columnar::bitmap_size(row_count),
+      common::Result<std::size_t> next = add(retained, columnar::bitmap_size(range.row_count),
                                              "scalar snapshot scan Boolean accounting overflowed");
       if (!next.has_value())
         return common::make_unexpected(next.error());
       retained = *next;
     } else if (definition.type().is_variable_width()) {
       common::Result<std::size_t> offsets =
-          multiply(static_cast<std::size_t>(row_count) + 1U, sizeof(std::uint32_t),
+          multiply(static_cast<std::size_t>(range.row_count) + 1U, sizeof(std::uint32_t),
                    "scalar snapshot scan offset accounting overflowed");
       if (!offsets.has_value())
         return common::make_unexpected(offsets.error());
@@ -227,8 +237,8 @@ struct ChunkPlan {
         return common::make_unexpected(next.error());
       retained = *next;
       std::size_t values = 0U;
-      for (std::uint32_t row = 0U; row < row_count; ++row) {
-        const ScalarValue& value = snapshot.rows()[first_row + row].columns[column];
+      for (std::uint32_t row = 0U; row < range.row_count; ++row) {
+        const ScalarValue& value = snapshot.rows()[range.first_row + row].columns[column];
         if (value.is_null())
           continue;
         common::Result<common::ByteView> bytes = variable_bytes(value);
@@ -248,7 +258,7 @@ struct ChunkPlan {
       retained = *next;
     } else {
       common::Result<std::size_t> values =
-          multiply(row_count, fixed_width(definition.type().kind()),
+          multiply(range.row_count, fixed_width(definition.type().kind()),
                    "scalar snapshot fixed values overflowed");
       if (!values.has_value())
         return common::make_unexpected(values.error());
@@ -384,7 +394,8 @@ ScalarSnapshotScanOperator::next(const QueryResourceContext& resources) {
   const std::size_t maximum =
       std::min<std::size_t>(limits_.maximum_rows_per_chunk, limits_.chunk.maximum_rows);
   const std::uint32_t row_count = static_cast<std::uint32_t>(std::min(remaining, maximum));
-  common::Result<ChunkPlan> plan = plan_chunk(*snapshot_, next_row_, row_count, limits_);
+  common::Result<ChunkPlan> plan =
+      plan_chunk(*snapshot_, ChunkRange{.first_row = next_row_, .row_count = row_count}, limits_);
   if (!plan.has_value())
     return common::make_unexpected(plan.error());
   common::Result<QueryMemoryReservation> reservation = resources.reserve(plan->charge);

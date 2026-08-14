@@ -136,6 +136,7 @@ TEST(ScalarSnapshotScanTest, EmitsTemporalWinnersAsCanonicalBoundedChunks) {
   ASSERT_TRUE(second.has_value()) << second.error().to_string();
   ASSERT_EQ(second->kind(), PhysicalOperatorStepKind::kChunk);
   const VectorChunk& second_chunk = second->chunk()->chunk();
+  EXPECT_EQ(second_chunk.physical_row_count(), 1U);
   EXPECT_EQ(std::get<std::int64_t>(cell_value(second_chunk, 0U, 0U).storage()), 200);
   EXPECT_EQ(std::get<std::int64_t>(cell_value(second_chunk, 1U, 0U).storage()), 20);
   EXPECT_EQ(std::get<std::string>(cell_value(second_chunk, 2U, 0U).storage()), "keep");
