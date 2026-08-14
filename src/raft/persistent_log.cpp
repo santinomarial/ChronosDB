@@ -807,12 +807,17 @@ RaftPersistentLog::checkpoint_and_reclaim(const std::vector<GroupPersistentState
   encoded_sizes.reserve(checkpoint.size());
   std::uint64_t expected_sequence = impl_->recovered.written_position.physical_sequence;
   for (const GroupPersistentState& persistent : checkpoint) {
-    if (expected_sequence == std::numeric_limits<std::uint64_t>::max() ||
-        persistent.physical_sequence != ++expected_sequence ||
+    if (expected_sequence == std::numeric_limits<std::uint64_t>::max()) {
+      return common::make_unexpected(
+          invalid("Raft reclamation checkpoint identity or sequence is invalid"));
+    }
+    const std::uint64_t next_sequence = expected_sequence + 1U;
+    if (persistent.physical_sequence != next_sequence ||
         !checkpoint_groups.insert(persistent.group_id).second) {
       return common::make_unexpected(
           invalid("Raft reclamation checkpoint identity or sequence is invalid"));
     }
+    expected_sequence = next_sequence;
     auto encoded = encode_multiplexed_log_record_v1(persistent);
     if (!encoded.has_value())
       return common::make_unexpected(encoded.error());

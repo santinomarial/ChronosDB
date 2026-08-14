@@ -45,10 +45,10 @@ private:
 }
 
 [[nodiscard]] GroupPersistentState state(const GroupId group, const std::uint64_t sequence,
-                                         const std::uint8_t value) {
+                                         const std::byte value) {
   PersistentState persistent{};
   persistent.current_term = 1U;
-  persistent.log.push_back(LogEntry{1U, 1U, 1U, {std::byte{value}}});
+  persistent.log.push_back(LogEntry{1U, 1U, 1U, {value}});
   persistent.commit_index = 1U;
   return GroupPersistentState{group, sequence, std::move(persistent)};
 }
@@ -78,9 +78,9 @@ TEST(RaftPersistentLogTest, RotatesRecoversLatestGroupStatesAndContinuesSequence
   ASSERT_TRUE(log.has_value()) << log.error().to_string();
   const GroupId first = group_id(std::byte{1U});
   const GroupId second = group_id(std::byte{2U});
-  ASSERT_TRUE(log->append(state(first, 1U, 0x11U)).has_value());
-  ASSERT_TRUE(log->append(state(second, 2U, 0x22U)).has_value());
-  ASSERT_TRUE(log->append(state(first, 3U, 0x33U)).has_value());
+  ASSERT_TRUE(log->append(state(first, 1U, std::byte{0x11U})).has_value());
+  ASSERT_TRUE(log->append(state(second, 2U, std::byte{0x22U})).has_value());
+  ASSERT_TRUE(log->append(state(first, 3U, std::byte{0x33U})).has_value());
   auto durable = log->synchronize();
   ASSERT_TRUE(durable.has_value()) << durable.error().to_string();
   EXPECT_EQ(durable->physical_sequence, 3U);
@@ -90,10 +90,10 @@ TEST(RaftPersistentLogTest, RotatesRecoversLatestGroupStatesAndContinuesSequence
   auto reopened = RaftPersistentLog::open_existing(config);
   ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
   ASSERT_EQ(reopened->recovery().latest_group_states.size(), 2U);
-  EXPECT_EQ(reopened->recovery().latest_group_states[0], state(first, 3U, 0x33U));
-  EXPECT_EQ(reopened->recovery().latest_group_states[1], state(second, 2U, 0x22U));
+  EXPECT_EQ(reopened->recovery().latest_group_states[0], state(first, 3U, std::byte{0x33U}));
+  EXPECT_EQ(reopened->recovery().latest_group_states[1], state(second, 2U, std::byte{0x22U}));
   EXPECT_EQ(reopened->durable_physical_sequence(), 3U);
-  auto appended = reopened->append(state(second, 4U, 0x44U));
+  auto appended = reopened->append(state(second, 4U, std::byte{0x44U}));
   ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
   EXPECT_EQ(appended->physical_sequence, 4U);
 }
@@ -106,13 +106,13 @@ TEST(RaftPersistentLogTest, CheckpointsEveryGroupBeforeReclaimingSharedSegmentPr
   ASSERT_TRUE(log.has_value()) << log.error().to_string();
   const GroupId first = group_id(std::byte{11U});
   const GroupId second = group_id(std::byte{12U});
-  ASSERT_TRUE(log->append(state(first, 1U, 0x11U)).has_value());
-  ASSERT_TRUE(log->append(state(second, 2U, 0x22U)).has_value());
-  ASSERT_TRUE(log->append(state(first, 3U, 0x33U)).has_value());
+  ASSERT_TRUE(log->append(state(first, 1U, std::byte{0x11U})).has_value());
+  ASSERT_TRUE(log->append(state(second, 2U, std::byte{0x22U})).has_value());
+  ASSERT_TRUE(log->append(state(first, 3U, std::byte{0x33U})).has_value());
   ASSERT_TRUE(log->synchronize().has_value());
 
-  const std::vector<GroupPersistentState> checkpoint{state(first, 4U, 0x33U),
-                                                     state(second, 5U, 0x22U)};
+  const std::vector<GroupPersistentState> checkpoint{state(first, 4U, std::byte{0x33U}),
+                                                     state(second, 5U, std::byte{0x22U})};
   auto reclaimed = log->checkpoint_and_reclaim(checkpoint);
 
   ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
@@ -132,9 +132,31 @@ TEST(RaftPersistentLogTest, CheckpointsEveryGroupBeforeReclaimingSharedSegmentPr
   ASSERT_EQ(reopened->recovery().latest_group_states.size(), 2U);
   EXPECT_EQ(reopened->recovery().latest_group_states[0], checkpoint[0]);
   EXPECT_EQ(reopened->recovery().latest_group_states[1], checkpoint[1]);
-  auto appended = reopened->append(state(first, 6U, 0x44U));
+  auto appended = reopened->append(state(first, 6U, std::byte{0x44U}));
   ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
   EXPECT_EQ(appended->physical_sequence, 6U);
+}
+
+TEST(RaftPersistentLogTest, RejectsNonconsecutiveCheckpointWithoutAdvancingTheWriter) {
+  TemporaryDirectory directory;
+  const RaftPersistentLogConfig config{.directory_path = directory.path().string()};
+  auto log = RaftPersistentLog::create_new(config);
+  ASSERT_TRUE(log.has_value()) << log.error().to_string();
+  const GroupId group = group_id(std::byte{16U});
+  ASSERT_TRUE(log->append(state(group, 1U, std::byte{0x11U})).has_value());
+  ASSERT_TRUE(log->synchronize().has_value());
+  const RaftPhysicalPosition before = log->written_position();
+
+  auto rejected = log->checkpoint_and_reclaim({state(group, 3U, std::byte{0x22U})});
+
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(log->written_position(), before);
+  EXPECT_EQ(log->durable_physical_sequence(), 1U);
+  auto reclaimed = log->checkpoint_and_reclaim({state(group, 2U, std::byte{0x22U})});
+  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  EXPECT_EQ(reclaimed->checkpoint_first_physical_sequence, 2U);
+  EXPECT_EQ(reclaimed->checkpoint_last_physical_sequence, 2U);
 }
 
 TEST(RaftPersistentLogTest, RecoveryAnchorIgnoresAndCleansInterruptedOldSegmentDeletion) {
@@ -144,14 +166,14 @@ TEST(RaftPersistentLogTest, RecoveryAnchorIgnoresAndCleansInterruptedOldSegmentD
   auto log = RaftPersistentLog::create_new(config);
   ASSERT_TRUE(log.has_value());
   const GroupId group = group_id(std::byte{13U});
-  ASSERT_TRUE(log->append(state(group, 1U, 0x11U)).has_value());
+  ASSERT_TRUE(log->append(state(group, 1U, std::byte{0x11U})).has_value());
   ASSERT_TRUE(log->synchronize().has_value());
   const std::filesystem::path old_segment = directory.path() / "raft-00000000000000000001.rlog";
   std::ifstream old_input(old_segment, std::ios::binary);
   const std::vector<char> old_bytes{std::istreambuf_iterator<char>{old_input},
                                     std::istreambuf_iterator<char>{}};
   ASSERT_FALSE(old_bytes.empty());
-  auto reclaimed = log->checkpoint_and_reclaim({state(group, 2U, 0x11U)});
+  auto reclaimed = log->checkpoint_and_reclaim({state(group, 2U, std::byte{0x11U})});
   ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
   ASSERT_TRUE(log->close().is_ok());
 
@@ -166,7 +188,7 @@ TEST(RaftPersistentLogTest, RecoveryAnchorIgnoresAndCleansInterruptedOldSegmentD
   EXPECT_EQ(reopened->recovery().base_segment_number, reclaimed->base_segment_number);
   EXPECT_FALSE(std::filesystem::exists(old_segment));
   ASSERT_EQ(reopened->recovery().latest_group_states.size(), 1U);
-  EXPECT_EQ(reopened->recovery().latest_group_states.front(), state(group, 2U, 0x11U));
+  EXPECT_EQ(reopened->recovery().latest_group_states.front(), state(group, 2U, std::byte{0x11U}));
 }
 
 TEST(RaftPersistentLogTest, CorruptRecoveryAnchorNeverFallsBackToReclaimedHistory) {
@@ -175,9 +197,9 @@ TEST(RaftPersistentLogTest, CorruptRecoveryAnchorNeverFallsBackToReclaimedHistor
   auto log = RaftPersistentLog::create_new(config);
   ASSERT_TRUE(log.has_value());
   const GroupId group = group_id(std::byte{14U});
-  ASSERT_TRUE(log->append(state(group, 1U, 0x14U)).has_value());
+  ASSERT_TRUE(log->append(state(group, 1U, std::byte{0x14U})).has_value());
   ASSERT_TRUE(log->synchronize().has_value());
-  ASSERT_TRUE(log->checkpoint_and_reclaim({state(group, 2U, 0x14U)}).has_value());
+  ASSERT_TRUE(log->checkpoint_and_reclaim({state(group, 2U, std::byte{0x14U})}).has_value());
   ASSERT_TRUE(log->close().is_ok());
   const std::filesystem::path anchor = recovery_anchor(directory.path());
   ASSERT_FALSE(anchor.empty());
@@ -203,9 +225,9 @@ TEST(RaftPersistentLogTest, AnchoredCheckpointIsNeverTreatedAsRepairableTail) {
   auto log = RaftPersistentLog::create_new(config);
   ASSERT_TRUE(log.has_value());
   const GroupId group = group_id(std::byte{15U});
-  ASSERT_TRUE(log->append(state(group, 1U, 0x15U)).has_value());
+  ASSERT_TRUE(log->append(state(group, 1U, std::byte{0x15U})).has_value());
   ASSERT_TRUE(log->synchronize().has_value());
-  ASSERT_TRUE(log->checkpoint_and_reclaim({state(group, 2U, 0x15U)}).has_value());
+  ASSERT_TRUE(log->checkpoint_and_reclaim({state(group, 2U, std::byte{0x15U})}).has_value());
   ASSERT_TRUE(log->close().is_ok());
   const std::filesystem::path segment = highest_segment(directory.path());
   const std::uintmax_t complete_size = std::filesystem::file_size(segment);
@@ -237,9 +259,9 @@ TEST(RaftPersistentLogTest, ExplicitRepairRemovesOnlyIncompleteFinalRecord) {
   auto log = RaftPersistentLog::create_new(config);
   ASSERT_TRUE(log.has_value());
   const GroupId group = group_id(std::byte{3U});
-  ASSERT_TRUE(log->append(state(group, 1U, 0x11U)).has_value());
+  ASSERT_TRUE(log->append(state(group, 1U, std::byte{0x11U})).has_value());
   ASSERT_TRUE(log->synchronize().has_value());
-  ASSERT_TRUE(log->append(state(group, 2U, 0x22U)).has_value());
+  ASSERT_TRUE(log->append(state(group, 2U, std::byte{0x22U})).has_value());
   ASSERT_TRUE(log->close().is_ok());
   const std::filesystem::path segment = highest_segment(directory.path());
   const std::uintmax_t complete_size = std::filesystem::file_size(segment);
@@ -257,7 +279,7 @@ TEST(RaftPersistentLogTest, ExplicitRepairRemovesOnlyIncompleteFinalRecord) {
   EXPECT_EQ(repaired->recovery().repaired_bytes,
             complete_size - 8U - repaired->recovery().written_position.end_offset);
   ASSERT_EQ(repaired->recovery().latest_group_states.size(), 1U);
-  EXPECT_EQ(repaired->recovery().latest_group_states.front(), state(group, 1U, 0x11U));
+  EXPECT_EQ(repaired->recovery().latest_group_states.front(), state(group, 1U, std::byte{0x11U}));
 }
 
 TEST(RaftPersistentLogTest, CompleteRecordCorruptionIsNeverTailRepaired) {
@@ -265,7 +287,7 @@ TEST(RaftPersistentLogTest, CompleteRecordCorruptionIsNeverTailRepaired) {
   const RaftPersistentLogConfig config{.directory_path = directory.path().string()};
   auto log = RaftPersistentLog::create_new(config);
   ASSERT_TRUE(log.has_value());
-  ASSERT_TRUE(log->append(state(group_id(std::byte{4U}), 1U, 0x44U)).has_value());
+  ASSERT_TRUE(log->append(state(group_id(std::byte{4U}), 1U, std::byte{0x44U})).has_value());
   ASSERT_TRUE(log->synchronize().has_value());
   ASSERT_TRUE(log->close().is_ok());
   const std::filesystem::path segment = highest_segment(directory.path());
