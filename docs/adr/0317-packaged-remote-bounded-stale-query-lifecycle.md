@@ -44,8 +44,13 @@ uses the configured catalog only when its applied index covers the newly acquire
 
 A focused service test runs two real mutual-TLS observation servers, acquires one leader/follower
 pair exactly once, binds a metadata-barrier-covered Manifest snapshot, transitions to an executing
-TCP query owner, exposes both phase metrics, and proves execution-phase cancellation is sticky. The
-test requires approved host execution where sandbox policy forbids loopback bind.
+TCP query owner, and exposes both phase metrics. Cancellation coverage now interrupts an active
+authority acquisition and an active scalar TCP attempt, proves both children report zero active
+work, and requires the exact service-level status to remain sticky through later poll, result, and
+cancel calls. A whole-query deadline is also projected as the same terminal cancellation before any
+query attempt starts, while cancellation after successful aggregate publication is rejected without
+changing the retained result. The test requires approved host execution where sandbox policy
+forbids loopback bind.
 
 A deterministic allocation sweep now covers both lifecycle construction and the complete
 mutual-TLS authority-to-scalar-execution transition. Every selected allocation failure is returned
@@ -61,8 +66,9 @@ injected failure is sticky `RESOURCE_EXHAUSTED`, closes the attempt, exposes no 
 the exact pin; the no-fault boundary publishes the expected count and sum.
 
 The test response comes from a synthetic scalar worker, not a real remote CSEG scan. Real
-three-process SQL/data-plane execution, process loss/failover, remote CSEG reads, broader fault
-matrices, and measurement evidence remain incomplete.
+three-process SQL/data-plane execution, process loss/failover, remote CSEG reads, concurrent
+cross-thread cancellation scheduling, broader multi-tablet fault matrices, and measurement evidence
+remain incomplete.
 
 Invariants 4–6, 10, 11, 14, 15, and 18 apply.
 

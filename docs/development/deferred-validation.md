@@ -455,9 +455,13 @@
   installed-CSEG aggregate. Deterministic allocation sweeps now cover scalar follower lifecycle
   construction, the real mutual-TLS authority-to-execution transition, and response decode through
   aggregate installation, including exact Manifest-pin rollback and sticky resource exhaustion.
-  Broader scalar cancellation faults remain. A focused learner-first movement gate now carries the
-  exact checksummed CSEG bytes, reopens them under a distinct target database root, and reads the
-  identical grouped state from the promoted target through the production mTLS service. Add
+  Scalar cancellation coverage now interrupts active authority and query transports, projects the
+  whole-query deadline before attempt creation, proves terminal stickiness and zero active work, and
+  rejects post-publication cancellation without changing the result. Concurrent cross-thread
+  cancellation scheduling and broader multi-tablet fault matrices remain. A focused learner-first
+  movement gate now carries the exact checksummed CSEG bytes, reopens them under a distinct target
+  database root, and reads the identical grouped state from the promoted target through the
+  production mTLS service. Add
   alternate-follower policy, broader cancellation/allocation faults, multi-tablet remote CSEG gates,
   and real multi-process validation.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed

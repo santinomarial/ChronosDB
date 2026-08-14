@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -629,6 +630,40 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
   const std::array observation_tls_contexts{
       cluster::RaftObservationNodeTlsContext{11U, std::addressof(*tls_context)},
       cluster::RaftObservationNodeTlsContext{12U, std::addressof(*tls_context)}};
+
+  auto acquiring_cancel_snapshot = publisher->snapshot();
+  ASSERT_TRUE(acquiring_cancel_snapshot.has_value());
+  auto acquiring_cancel = ReplicatedFollowerDistributedAggregateQuery::create(
+      make_follower_plan(tablet_id, applied_position), std::move(*acquiring_cancel_snapshot),
+      {.source_node_id = 1U,
+       .first_correlation_id = 61U,
+       .tls_contexts = observation_tls_contexts,
+       .authenticator = &authenticator,
+       .node_authorizer = &authorizer,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000}},
+       .connect_timeout = std::chrono::milliseconds{1000},
+       .retry = {.maximum_attempts = 1U,
+                 .initial_backoff = std::chrono::milliseconds{1},
+                 .maximum_backoff = std::chrono::milliseconds{1}},
+       .maximum_pairs = 1U},
+      lifecycle_query_config);
+  ASSERT_TRUE(acquiring_cancel.has_value()) << acquiring_cancel.error().to_string();
+  ASSERT_TRUE(acquiring_cancel->poll_once(std::chrono::milliseconds{0}).is_ok());
+  EXPECT_EQ(acquiring_cancel->state(),
+            ReplicatedFollowerDistributedAggregateQueryState::kAcquiringAuthority);
+  EXPECT_EQ(acquiring_cancel->metrics().authority.active_pairs, 1U);
+  EXPECT_FALSE(acquiring_cancel->metrics().execution.has_value());
+  const common::Status authority_cancelled = acquiring_cancel->cancel();
+  EXPECT_EQ(authority_cancelled.code(), common::StatusCode::kCancelled);
+  EXPECT_EQ(acquiring_cancel->state(),
+            ReplicatedFollowerDistributedAggregateQueryState::kCancelled);
+  EXPECT_EQ(acquiring_cancel->metrics().authority.active_pairs, 0U);
+  EXPECT_FALSE(acquiring_cancel->metrics().execution.has_value());
+  EXPECT_EQ(acquiring_cancel->result().error(), authority_cancelled);
+  EXPECT_EQ(acquiring_cancel->poll_once(std::chrono::milliseconds{0}), authority_cancelled);
+  EXPECT_EQ(acquiring_cancel->cancel(), authority_cancelled);
+
   auto lifecycle_snapshot = publisher->snapshot();
   ASSERT_TRUE(lifecycle_snapshot.has_value());
   auto lifecycle = ReplicatedFollowerDistributedAggregateQuery::create(
@@ -664,10 +699,68 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
   EXPECT_EQ(follower_service.calls, 1U);
   EXPECT_EQ(lifecycle->metrics().authority.completed_pairs, 1U);
   EXPECT_TRUE(lifecycle->metrics().execution.has_value());
+  ASSERT_TRUE(lifecycle->poll_once(std::chrono::milliseconds{0}).is_ok());
+  ASSERT_TRUE(lifecycle->metrics().execution.has_value());
+  // Guarded by the execution-metrics assertion above.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  EXPECT_EQ(lifecycle->metrics().execution->active_attempts, 1U);
   const common::Status lifecycle_cancelled = lifecycle->cancel();
   EXPECT_EQ(lifecycle_cancelled.code(), common::StatusCode::kCancelled);
   EXPECT_EQ(lifecycle->state(), ReplicatedFollowerDistributedAggregateQueryState::kCancelled);
+  ASSERT_TRUE(lifecycle->metrics().execution.has_value());
+  // Guarded by the execution-metrics assertion above.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  EXPECT_EQ(lifecycle->metrics().execution->active_attempts, 0U);
   EXPECT_EQ(lifecycle->result().error(), lifecycle_cancelled);
+  EXPECT_EQ(lifecycle->poll_once(std::chrono::milliseconds{0}), lifecycle_cancelled);
+  EXPECT_EQ(lifecycle->cancel(), lifecycle_cancelled);
+
+  ReplicatedDistributedAggregateQueryConfig deadline_query_config = lifecycle_query_config;
+  deadline_query_config.execution_deadline = std::chrono::steady_clock::time_point{};
+  auto deadline_snapshot = publisher->snapshot();
+  ASSERT_TRUE(deadline_snapshot.has_value());
+  auto deadline_lifecycle = ReplicatedFollowerDistributedAggregateQuery::create(
+      make_follower_plan(tablet_id, applied_position), std::move(*deadline_snapshot),
+      {.source_node_id = 1U,
+       .first_correlation_id = 75U,
+       .tls_contexts = observation_tls_contexts,
+       .authenticator = &authenticator,
+       .node_authorizer = &authorizer,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000}},
+       .connect_timeout = std::chrono::milliseconds{1000},
+       .retry = {.maximum_attempts = 1U,
+                 .initial_backoff = std::chrono::milliseconds{1},
+                 .maximum_backoff = std::chrono::milliseconds{1}},
+       .maximum_pairs = 1U},
+      deadline_query_config);
+  ASSERT_TRUE(deadline_lifecycle.has_value()) << deadline_lifecycle.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       deadline_lifecycle->state() ==
+           ReplicatedFollowerDistributedAggregateQueryState::kAcquiringAuthority;
+       ++iteration) {
+    ASSERT_TRUE(deadline_lifecycle->poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(leader_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(follower_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(deadline_lifecycle->state(),
+            ReplicatedFollowerDistributedAggregateQueryState::kExecuting)
+      << deadline_lifecycle->failure().to_string();
+  EXPECT_EQ(leader_service.calls, 2U);
+  EXPECT_EQ(follower_service.calls, 2U);
+  const common::Status deadline_cancelled =
+      deadline_lifecycle->poll_once(std::chrono::milliseconds{0});
+  EXPECT_EQ(deadline_cancelled.code(), common::StatusCode::kCancelled);
+  EXPECT_EQ(deadline_lifecycle->state(),
+            ReplicatedFollowerDistributedAggregateQueryState::kCancelled);
+  ASSERT_TRUE(deadline_lifecycle->metrics().execution.has_value());
+  // Guarded by the execution-metrics assertion above.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  EXPECT_EQ(deadline_lifecycle->metrics().execution->attempts_started, 0U);
+  EXPECT_EQ(deadline_lifecycle->result().error(), deadline_cancelled);
+  EXPECT_EQ(deadline_lifecycle->poll_once(std::chrono::milliseconds{0}), deadline_cancelled);
+  EXPECT_EQ(deadline_lifecycle->cancel(), deadline_cancelled);
 
   ReplicatedDistributedVectorAggregateQueryConfigV2 vector_lifecycle_query_config =
       follower_vector_config;
@@ -708,8 +801,8 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
   ASSERT_EQ(vector_lifecycle->state(),
             ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting)
       << vector_lifecycle->failure().to_string();
-  EXPECT_EQ(leader_service.calls, 2U);
-  EXPECT_EQ(follower_service.calls, 2U);
+  EXPECT_EQ(leader_service.calls, 3U);
+  EXPECT_EQ(follower_service.calls, 3U);
   EXPECT_EQ(vector_lifecycle->metrics().authority.completed_pairs, 1U);
   EXPECT_TRUE(vector_lifecycle->metrics().execution.has_value());
   const common::Status vector_lifecycle_cancelled = vector_lifecycle->cancel();
@@ -718,11 +811,11 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
             ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kCancelled);
   EXPECT_EQ(vector_lifecycle->result().error(), vector_lifecycle_cancelled);
 
-  auto acquiring_cancel_snapshot = publisher->snapshot();
-  ASSERT_TRUE(acquiring_cancel_snapshot.has_value());
-  auto acquiring_cancel = ReplicatedFollowerDistributedVectorAggregateQueryV2::create(
+  auto vector_acquiring_cancel_snapshot = publisher->snapshot();
+  ASSERT_TRUE(vector_acquiring_cancel_snapshot.has_value());
+  auto vector_acquiring_cancel = ReplicatedFollowerDistributedVectorAggregateQueryV2::create(
       make_follower_vector_aggregate_plan(tablet_id, applied_position),
-      std::move(*acquiring_cancel_snapshot),
+      std::move(*vector_acquiring_cancel_snapshot),
       query::DistributedVectorResultSchema{
           .columns = {{"average", schema_value.columns()[1].type(), true}}},
       {.source_node_id = 1U,
@@ -732,11 +825,11 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
        .node_authorizer = &authorizer,
        .maximum_pairs = 1U},
       vector_lifecycle_query_config);
-  ASSERT_TRUE(acquiring_cancel.has_value()) << acquiring_cancel.error().to_string();
-  EXPECT_EQ(acquiring_cancel->cancel().code(), common::StatusCode::kCancelled);
-  EXPECT_EQ(acquiring_cancel->state(),
+  ASSERT_TRUE(vector_acquiring_cancel.has_value()) << vector_acquiring_cancel.error().to_string();
+  EXPECT_EQ(vector_acquiring_cancel->cancel().code(), common::StatusCode::kCancelled);
+  EXPECT_EQ(vector_acquiring_cancel->state(),
             ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kCancelled);
-  EXPECT_EQ(acquiring_cancel->metrics().authority.active_pairs, 0U);
+  EXPECT_EQ(vector_acquiring_cancel->metrics().authority.active_pairs, 0U);
 
   auto invalid_schema_snapshot = publisher->snapshot();
   ASSERT_TRUE(invalid_schema_snapshot.has_value());
@@ -790,8 +883,8 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
   ASSERT_EQ(grouped_lifecycle->state(),
             ReplicatedFollowerDistributedGroupedFloat64QueryState::kExecuting)
       << grouped_lifecycle->failure().to_string();
-  EXPECT_EQ(leader_service.calls, 3U);
-  EXPECT_EQ(follower_service.calls, 3U);
+  EXPECT_EQ(leader_service.calls, 4U);
+  EXPECT_EQ(follower_service.calls, 4U);
   EXPECT_EQ(grouped_lifecycle->metrics().authority.completed_pairs, 1U);
   EXPECT_TRUE(grouped_lifecycle->metrics().execution.has_value());
   const common::Status grouped_lifecycle_cancelled = grouped_lifecycle->cancel();
@@ -834,8 +927,8 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
   ASSERT_EQ(successful_lifecycle->state(),
             ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting)
       << successful_lifecycle->failure().to_string();
-  EXPECT_EQ(leader_service.calls, 4U);
-  EXPECT_EQ(follower_service.calls, 4U);
+  EXPECT_EQ(leader_service.calls, 5U);
+  EXPECT_EQ(follower_service.calls, 5U);
 
   const network::Ipv4Endpoint follower_query_endpoint = follower_server->bound_endpoint();
   ASSERT_TRUE(follower_server->shutdown().is_ok());

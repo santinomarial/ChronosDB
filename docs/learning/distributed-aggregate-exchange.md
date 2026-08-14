@@ -522,6 +522,11 @@ and releases the pinned Manifest generation instead of terminating the process.
 Pre-acquired scalar owners now continue that sweep through a real mutual-TLS response, client decode
 and retention, sender/coordinator completion, and aggregate installation. Each selected allocation
 fails the whole lifecycle atomically; the first no-fault boundary exposes the exact count and sum.
+The same packaged scalar owner has phase-specific cancellation evidence: cancellation during active
+observation acquisition or an active query attempt synchronously reduces child work to zero and
+stays exact across subsequent API calls. An already-expired whole-query deadline reaches the same
+cancelled state before opening an attempt, while a completed aggregate remains immutable when a late
+cancel is rejected.
 The grouped bounded-stale owner now has equivalent construction and real mutual-TLS
 authority-to-scheduler transition evidence. Its service and grouped scheduler implementations also
 allow allocating diagnostics to propagate to their existing resource-exhaustion boundary; every

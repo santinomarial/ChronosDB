@@ -1307,6 +1307,12 @@ TEST(ReplicatedDistributedQueryAllocationFailureTest,
         // Guarded by the execution-metrics assertion above.
         // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
         EXPECT_EQ(lifecycle.metrics().execution->active_attempts, 0U);
+        EXPECT_EQ(lifecycle.cancel().code(), common::StatusCode::kInvalidArgument);
+        EXPECT_EQ(lifecycle.state(), ReplicatedFollowerDistributedAggregateQueryState::kComplete);
+        auto retained_result = lifecycle.result();
+        ASSERT_TRUE(retained_result.has_value()) << retained_result.error().to_string();
+        EXPECT_EQ(retained_result->count, 1U);
+        EXPECT_EQ(retained_result->sum, 2.5);
       }
     }
     EXPECT_EQ(selected_manifest.use_count(), pin_count_before - 1L);
