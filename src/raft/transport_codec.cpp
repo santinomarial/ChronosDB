@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <limits>
 #include <new>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <stdexcept>
@@ -120,27 +121,24 @@ void store_u32(const std::span<std::byte> bytes, const std::size_t offset,
   return common::crc32c(copy);
 }
 
-[[nodiscard]] MessageKind message_kind(const Message& message) noexcept {
-  return std::visit(
-      [](const auto& value) {
-        using T = std::remove_cvref_t<decltype(value)>;
-        if constexpr (std::is_same_v<T, RequestVoteRequest>)
-          return MessageKind::kRequestVoteRequest;
-        if constexpr (std::is_same_v<T, RequestVoteResponse>)
-          return MessageKind::kRequestVoteResponse;
-        if constexpr (std::is_same_v<T, AppendEntriesRequest>)
-          return MessageKind::kAppendEntriesRequest;
-        if constexpr (std::is_same_v<T, AppendEntriesResponse>)
-          return MessageKind::kAppendEntriesResponse;
-        if constexpr (std::is_same_v<T, InstallSnapshotRequest>)
-          return MessageKind::kInstallSnapshotRequest;
-        if constexpr (std::is_same_v<T, InstallSnapshotResponse>)
-          return MessageKind::kInstallSnapshotResponse;
-        if constexpr (std::is_same_v<T, ReadBarrierRequest>)
-          return MessageKind::kReadBarrierRequest;
-        return MessageKind::kReadBarrierResponse;
-      },
-      message);
+[[nodiscard]] std::optional<MessageKind> message_kind(const Message& message) noexcept {
+  if (std::holds_alternative<RequestVoteRequest>(message))
+    return MessageKind::kRequestVoteRequest;
+  if (std::holds_alternative<RequestVoteResponse>(message))
+    return MessageKind::kRequestVoteResponse;
+  if (std::holds_alternative<AppendEntriesRequest>(message))
+    return MessageKind::kAppendEntriesRequest;
+  if (std::holds_alternative<AppendEntriesResponse>(message))
+    return MessageKind::kAppendEntriesResponse;
+  if (std::holds_alternative<InstallSnapshotRequest>(message))
+    return MessageKind::kInstallSnapshotRequest;
+  if (std::holds_alternative<InstallSnapshotResponse>(message))
+    return MessageKind::kInstallSnapshotResponse;
+  if (std::holds_alternative<ReadBarrierRequest>(message))
+    return MessageKind::kReadBarrierRequest;
+  if (std::holds_alternative<ReadBarrierResponse>(message))
+    return MessageKind::kReadBarrierResponse;
+  return std::nullopt;
 }
 
 [[nodiscard]] common::Status validate_snapshot(const SnapshotMetadata& snapshot,
@@ -159,6 +157,8 @@ void store_u32(const std::span<std::byte> bytes, const std::size_t offset,
   if (envelope.group_id.is_nil() || envelope.source == 0U || envelope.destination == 0U ||
       envelope.source == envelope.destination)
     return invalid("Raft transport route identity is invalid");
+  if (!message_kind(envelope.message).has_value())
+    return invalid("Raft transport message is valueless");
   return std::visit(
       [&](const auto& value) -> common::Status {
         using T = std::remove_cvref_t<decltype(value)>;
@@ -239,11 +239,9 @@ message_payload_size(const Message& message, const RaftTransportCodecLimits& lim
           return 40U;
         } else if constexpr (std::is_same_v<T, InstallSnapshotRequest>) {
           return 16U + snapshot_payload_size(value.snapshot);
-        } else if constexpr (std::is_same_v<T, InstallSnapshotResponse>) {
-          return 24U;
-        } else if constexpr (std::is_same_v<T, ReadBarrierRequest>) {
-          return 24U;
-        } else {
+        } else if constexpr (std::is_same_v<T, InstallSnapshotResponse> ||
+                             std::is_same_v<T, ReadBarrierRequest> ||
+                             std::is_same_v<T, ReadBarrierResponse>) {
           return 24U;
         }
       },
@@ -539,6 +537,9 @@ encode_raft_transport_envelope_v1(const RaftTransportEnvelope& envelope,
     auto payload = encode_payload(envelope.message, payload_size);
     if (!payload.has_value())
       return common::make_unexpected(payload.error());
+    const std::optional<MessageKind> kind = message_kind(envelope.message);
+    if (!kind.has_value())
+      return common::make_unexpected(invalid("Raft transport message is valueless"));
     std::vector<std::byte> frame(*total_size, std::byte{0U});
     common::ByteWriter writer{frame};
     common::Status status = common::Status::ok();
@@ -550,7 +551,7 @@ encode_raft_transport_envelope_v1(const RaftTransportEnvelope& envelope,
     advance(status, writer.write_exact(envelope.group_id.bytes()));
     advance(status, writer.write_u64_le(envelope.source));
     advance(status, writer.write_u64_le(envelope.destination));
-    advance(status, writer.write_u8(static_cast<std::uint8_t>(message_kind(envelope.message))));
+    advance(status, writer.write_u8(static_cast<std::uint8_t>(kind.value())));
     advance(status, writer.write_u8(0U));
     advance(status, writer.zero_fill(6U));
     advance(status, writer.write_u64_le(payload->size()));

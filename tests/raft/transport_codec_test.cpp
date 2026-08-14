@@ -68,14 +68,14 @@ TEST(RaftTransportCodecTest, RoundTripsEveryCurrentMessageWithExactRouteIdentity
   messages.emplace_back(ReadBarrierRequest{4U, 1U, 19U});
   messages.emplace_back(ReadBarrierResponse{4U, 19U, true});
 
-  for (Message& message : messages) {
+  for (std::size_t ordinal = 0U; ordinal < messages.size(); ++ordinal) {
+    Message& message = messages[ordinal];
     const RaftTransportEnvelope expected = envelope(std::move(message));
     auto encoded = encode_raft_transport_envelope_v1(expected);
     ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
     ASSERT_GE(encoded->size(), kRaftTransportHeaderSize + kRaftTransportTrailerSize);
     EXPECT_EQ((*encoded)[0], std::byte{'C'});
-    EXPECT_EQ((*encoded)[56],
-              static_cast<std::byte>(static_cast<std::uint8_t>(expected.message.index() + 1U)));
+    EXPECT_EQ((*encoded)[56], static_cast<std::byte>(ordinal + 1U));
     auto decoded = decode_raft_transport_envelope_v1(*encoded);
     ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
     EXPECT_EQ(*decoded, expected);
@@ -149,7 +149,7 @@ TEST(RaftTransportCodecTest, ReadsFragmentedAndCoalescedFramesWithBoundedState) 
       received = std::move(step->envelope);
   }
   ASSERT_TRUE(received.has_value());
-  EXPECT_EQ(*received, first);
+  EXPECT_EQ(received, first);
   EXPECT_EQ(fragmented->buffered_bytes(), 0U);
   EXPECT_FALSE(fragmented->expected_frame_bytes().has_value());
 
@@ -160,12 +160,12 @@ TEST(RaftTransportCodecTest, ReadsFragmentedAndCoalescedFramesWithBoundedState) 
   auto one = reader->consume(coalesced);
   ASSERT_TRUE(one.has_value()) << one.error().to_string();
   ASSERT_TRUE(one->envelope.has_value());
-  EXPECT_EQ(*one->envelope, first);
+  EXPECT_EQ(one->envelope, first);
   EXPECT_EQ(one->consumed_bytes, first_bytes.size());
   auto two = reader->consume(common::ByteView{coalesced}.subspan(one->consumed_bytes));
   ASSERT_TRUE(two.has_value()) << two.error().to_string();
   ASSERT_TRUE(two->envelope.has_value());
-  EXPECT_EQ(*two->envelope, second);
+  EXPECT_EQ(two->envelope, second);
 
   std::vector<std::byte> damaged = first_bytes;
   damaged[24U] ^= std::byte{1U};
