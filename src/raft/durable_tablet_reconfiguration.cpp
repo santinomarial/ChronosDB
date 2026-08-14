@@ -94,8 +94,7 @@ reconcile_impl(RecoveredTabletMovementGeneration& recovered, GroupId tablet_grou
   if (!candidate_movement.has_value())
     return common::make_unexpected(candidate_movement.error());
   auto candidate = TabletReconfigurationCoordinator::create(
-      std::move(tablet_group_id), std::move(metadata_group_id), table_id,
-      std::move(*candidate_movement), leader_hint);
+      tablet_group_id, metadata_group_id, table_id, std::move(*candidate_movement), leader_hint);
   if (!candidate.has_value())
     return common::make_unexpected(candidate.error());
   auto action = candidate->reconcile(tablet_group, metadata);
@@ -145,17 +144,19 @@ prepare_dispatch(common::Result<DurableTabletReconfigurationResult> reconciled,
                  TabletReconfigurationActionLedger& action_ledger) {
   if (!reconciled.has_value())
     return common::make_unexpected(std::move(reconciled).error());
-  if (!reconciled->action.has_value()) {
+  std::optional<TabletReconfigurationAction> action = std::move(reconciled->action);
+  if (!action.has_value()) {
     return PreparedDurableTabletReconfigurationResult{
         .dispatch = std::nullopt,
         .installed_checkpoint = std::move(reconciled->installed_checkpoint)};
   }
-  auto prepared = action_ledger.prepare(*reconciled->action);
+  TabletReconfigurationAction owned_action = std::move(action).value();
+  auto prepared = action_ledger.prepare(owned_action);
   if (!prepared.has_value())
     return common::make_unexpected(std::move(prepared).error());
   return PreparedDurableTabletReconfigurationResult{
       .dispatch = detail::PreparedTabletReconfigurationDispatchFactory::create(
-          std::move(*reconciled->action), std::move(*prepared)),
+          std::move(owned_action), std::move(*prepared)),
       .installed_checkpoint = std::move(reconciled->installed_checkpoint)};
 }
 
@@ -217,9 +218,8 @@ common::Result<DurableTabletReconfigurationResult> reconcile_durable_tablet_reco
     const MetadataStateMachine& metadata, TabletMovementCheckpointStorage& checkpoint_storage,
     const std::optional<NodeId> leader_hint, const TabletMovementLimits limits) {
   try {
-    return reconcile_impl(recovered, std::move(tablet_group_id), std::move(metadata_group_id),
-                          table_id, tablet_group, metadata, checkpoint_storage, nullptr,
-                          leader_hint, limits);
+    return reconcile_impl(recovered, tablet_group_id, metadata_group_id, table_id, tablet_group,
+                          metadata, checkpoint_storage, nullptr, leader_hint, limits);
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("durable reconfiguration allocation failed"));
   } catch (const std::length_error&) {
@@ -234,9 +234,8 @@ common::Result<DurableTabletReconfigurationResult> reconcile_durable_tablet_reco
     const TabletMovementSnapshotChunkStorage& chunk_storage,
     const std::optional<NodeId> leader_hint, const TabletMovementLimits limits) {
   try {
-    return reconcile_impl(recovered, std::move(tablet_group_id), std::move(metadata_group_id),
-                          table_id, tablet_group, metadata, checkpoint_storage, &chunk_storage,
-                          leader_hint, limits);
+    return reconcile_impl(recovered, tablet_group_id, metadata_group_id, table_id, tablet_group,
+                          metadata, checkpoint_storage, &chunk_storage, leader_hint, limits);
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("durable reconfiguration allocation failed"));
   } catch (const std::length_error&) {
@@ -251,11 +250,10 @@ reconcile_and_prepare_durable_tablet_reconfiguration(
     const MetadataStateMachine& metadata, TabletMovementCheckpointStorage& checkpoint_storage,
     TabletReconfigurationActionLedger& action_ledger, const std::optional<NodeId> leader_hint,
     const TabletMovementLimits limits) {
-  return prepare_dispatch(
-      reconcile_durable_tablet_reconfiguration(recovered, std::move(tablet_group_id),
-                                               std::move(metadata_group_id), table_id, tablet_group,
-                                               metadata, checkpoint_storage, leader_hint, limits),
-      action_ledger);
+  return prepare_dispatch(reconcile_durable_tablet_reconfiguration(
+                              recovered, tablet_group_id, metadata_group_id, table_id, tablet_group,
+                              metadata, checkpoint_storage, leader_hint, limits),
+                          action_ledger);
 }
 
 common::Result<PreparedDurableTabletReconfigurationResult>
@@ -267,10 +265,9 @@ reconcile_and_prepare_durable_tablet_reconfiguration(
     TabletReconfigurationActionLedger& action_ledger, const std::optional<NodeId> leader_hint,
     const TabletMovementLimits limits) {
   try {
-    return prepare_dispatch(reconcile_impl(recovered, std::move(tablet_group_id),
-                                           std::move(metadata_group_id), table_id, tablet_group,
-                                           metadata, checkpoint_storage, nullptr, leader_hint,
-                                           limits),
+    return prepare_dispatch(reconcile_impl(recovered, tablet_group_id, metadata_group_id, table_id,
+                                           tablet_group, metadata, checkpoint_storage, nullptr,
+                                           leader_hint, limits),
                             action_ledger);
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("durable reconfiguration allocation failed"));
@@ -288,9 +285,8 @@ reconcile_and_prepare_durable_tablet_reconfiguration(
     TabletReconfigurationActionLedger& action_ledger, const std::optional<NodeId> leader_hint,
     const TabletMovementLimits limits) {
   return prepare_dispatch(reconcile_durable_tablet_reconfiguration(
-                              recovered, std::move(tablet_group_id), std::move(metadata_group_id),
-                              table_id, tablet_group, metadata, checkpoint_storage, chunk_storage,
-                              leader_hint, limits),
+                              recovered, tablet_group_id, metadata_group_id, table_id, tablet_group,
+                              metadata, checkpoint_storage, chunk_storage, leader_hint, limits),
                           action_ledger);
 }
 
@@ -304,10 +300,9 @@ reconcile_and_prepare_durable_tablet_reconfiguration(
     TabletReconfigurationActionLedger& action_ledger, const std::optional<NodeId> leader_hint,
     const TabletMovementLimits limits) {
   try {
-    return prepare_dispatch(reconcile_impl(recovered, std::move(tablet_group_id),
-                                           std::move(metadata_group_id), table_id, tablet_group,
-                                           metadata, checkpoint_storage, &chunk_storage,
-                                           leader_hint, limits),
+    return prepare_dispatch(reconcile_impl(recovered, tablet_group_id, metadata_group_id, table_id,
+                                           tablet_group, metadata, checkpoint_storage,
+                                           &chunk_storage, leader_hint, limits),
                             action_ledger);
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("durable reconfiguration allocation failed"));
