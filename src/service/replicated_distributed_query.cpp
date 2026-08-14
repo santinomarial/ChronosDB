@@ -529,7 +529,7 @@ public:
        manifest::TemporalDatabaseStorageSnapshot owned_snapshot,
        query::DistributedVectorResultSchema&& owned_result_schema,
        ReplicatedDistributedVectorAggregateQueryConfigV2 configured,
-       cluster::RaftObservationTcpBatchAcquisition acquisition) noexcept
+       cluster::RaftObservationTcpBatchAcquisition acquisition)
       : plan(std::move(owned_plan)), snapshot(std::move(owned_snapshot)),
         result_schema(std::move(owned_result_schema)), config(configured),
         authority(std::move(acquisition)) {}

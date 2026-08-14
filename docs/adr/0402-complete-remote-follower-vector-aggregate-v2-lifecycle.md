@@ -121,8 +121,18 @@ provider epoch after definition binding but before real-CSEG execution. The work
 fresh authority acquisition rejects the stale dispatch as `UNAVAILABLE`; with one configured query
 attempt, the composite preserves that correlated failure, releases both transports, and exposes
 neither the first tablet's successful state nor a final result. Multi-process, real
-movement-transfer, post-movement rebinding, allocation-fault, and broader
+movement-transfer, post-movement rebinding, phase-transition/execution allocation-fault, and broader
 timeout/retry/packet-level network campaigns remain.
+
+A dedicated construction-failure executable now injects `std::bad_alloc` at every owned allocation
+from placement-backed batch construction through nested observation acquisition and final composite
+owner installation. Every injected failure returns `RESOURCE_EXHAUSTED`, releases the acquire-pinned
+Manifest owner back to its exact baseline reference count, and exposes no lifecycle. The first
+successful construction starts exactly one authority pair; cancellation returns that count to zero.
+The sweep found and removed incorrect `noexcept` specifications on four nested implementations whose
+diagnostic `Status` members can allocate, restoring the surrounding status-returning catch boundaries.
+Allocation injection during authority-to-query phase transition, aggregate execution, and final
+publication remains deferred with the broader fault campaign.
 
 ## Migration or rollback considerations
 

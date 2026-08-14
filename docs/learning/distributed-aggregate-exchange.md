@@ -481,6 +481,13 @@ failure, clears the client table, and retains no externally visible result. The 
 companion advances the delayed provider's epoch only after definitions bind. Its independent
 execution acquisition rejects the stale dispatch, returns correlated `UNAVAILABLE`, and proves the
 remote composite cannot reuse binding authority or publish the other tablet's retained state.
+A dedicated allocation executable sweeps construction from placement selection through the nested
+observation owners and composite installation. Each injected failure is a returned
+`RESOURCE_EXHAUSTED` with exact Manifest-pin rollback; the first successful owner is cancelled and
+reports zero active authority pairs. The sweep also caught incorrect `noexcept` constructors around
+allocating diagnostic state, which would otherwise have terminated the process instead of reaching
+the API's error boundary. Phase-transition, execution, and final-publication allocation injection
+remain to be qualified.
 Moved or multi-process real-CSEG responses, remote worker-interrupt delivery, pooled
 multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node
 fault handling remain work.

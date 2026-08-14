@@ -340,8 +340,12 @@
   zero active clients, and no partial result. A focused movement gate changes the second follower's
   provider epoch between definition binding and execution, then proves fresh production-worker
   revalidation returns correlated `UNAVAILABLE`, clears both transports, and cannot publish the
-  already successful tablet. Real movement-transfer interleavings, post-movement rebinding,
-  allocation-fault, broader timeout/retry/packet-level network campaigns, and multi-process
+  already successful tablet. A deterministic construction allocation sweep now covers every owned
+  placement-batch, observation-owner, and composite-owner allocation through the first successful
+  construction, requires `RESOURCE_EXHAUSTED` plus exact Manifest-pin rollback on every failure,
+  and cancels the successful authority batch back to zero active pairs. Allocation faults during
+  phase transition, execution, and final publication; real movement-transfer interleavings;
+  post-movement rebinding; broader timeout/retry/packet-level network campaigns; and multi-process
   qualification remain.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,

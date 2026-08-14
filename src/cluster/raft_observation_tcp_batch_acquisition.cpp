@@ -208,8 +208,7 @@ construct_raft_observation_tcp_batch(const query::DistributedVectorQueryPlan& pl
 
 class RaftObservationTcpBatchAcquisition::Impl {
 public:
-  Impl(std::vector<RaftObservationTcpPairAcquisition> owned_pairs,
-       std::vector<pollfd> descriptors) noexcept
+  Impl(std::vector<RaftObservationTcpPairAcquisition> owned_pairs, std::vector<pollfd> descriptors)
       : pairs(std::move(owned_pairs)), poll_descriptors(std::move(descriptors)) {
     batch_metrics.total_pairs = pairs.size();
     batch_metrics.active_pairs = pairs.size();

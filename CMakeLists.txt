@@ -983,6 +983,30 @@ if(CHRONOS_BUILD_TESTS)
   gtest_discover_tests(chronos_service_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
+    chronos_service_allocation_failure_tests
+    tests/service/replicated_distributed_query_allocation_failure_test.cpp
+    tests/support/failing_allocator.cpp
+  )
+  set_target_properties(
+    chronos_service_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF
+  )
+  target_compile_features(chronos_service_allocation_failure_tests PRIVATE cxx_std_23)
+  target_include_directories(
+    chronos_service_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
+  target_compile_definitions(
+    chronos_service_allocation_failure_tests
+    PRIVATE CHRONOS_NETWORK_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network"
+  )
+  target_link_libraries(
+    chronos_service_allocation_failure_tests PRIVATE chronos::service GTest::gtest_main
+  )
+  chronos_set_project_warnings(chronos_service_allocation_failure_tests)
+  chronos_enable_sanitizers(chronos_service_allocation_failure_tests)
+  chronos_enable_static_analysis(chronos_service_allocation_failure_tests)
+  gtest_discover_tests(chronos_service_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
     chronos_network_allocation_failure_tests
     tests/network/protocol_allocation_failure_test.cpp
     tests/support/failing_allocator.cpp

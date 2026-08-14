@@ -208,3 +208,6 @@ composite closes every attempt without exposing the retained state prefix. A liv
 variant reaches the same fail-closed publication gate through terminal transport I/O rather than an
 application response. A placement-drift variant changes fresh execution authority after definitions
 bind and proves the correlated `UNAVAILABLE` response also remains whole-query terminal.
+Construction allocation injection additionally proves that every failure before the owner becomes
+observable is classified as `RESOURCE_EXHAUSTED`, releases the Manifest pin, and leaves no active
+authority pair. This is lifecycle evidence only and changes no bytes in this format.

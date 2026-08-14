@@ -38,8 +38,7 @@ using TimePoint = RaftObservationTcpClient::TimePoint;
 
 class RaftObservationTcpPairAcquisition::Impl {
 public:
-  Impl(RaftObservationTcpAcquisition leader_owner,
-       RaftObservationTcpAcquisition follower_owner) noexcept
+  Impl(RaftObservationTcpAcquisition leader_owner, RaftObservationTcpAcquisition follower_owner)
       : leader(std::move(leader_owner)), follower(std::move(follower_owner)) {}
 
   [[nodiscard]] common::Status fail(common::Status failure) {

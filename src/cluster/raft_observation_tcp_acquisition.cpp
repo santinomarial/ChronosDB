@@ -142,7 +142,7 @@ class RaftObservationTcpAcquisition::Impl {
 public:
   using TimePoint = RaftObservationTcpClient::TimePoint;
 
-  explicit Impl(RaftObservationTcpAcquisitionConfig configured) noexcept
+  explicit Impl(RaftObservationTcpAcquisitionConfig configured)
       : config(std::move(configured)), next_backoff(config.retry.initial_backoff) {}
 
   [[nodiscard]] common::Status fail(common::Status failure) {
