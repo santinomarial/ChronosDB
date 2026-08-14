@@ -113,8 +113,11 @@ evidence. The same production composition then reacquires both authority pairs, 
 tablet's successful terminal vector, and injects a nonretryable context-acquisition failure while
 the second follower executes. The correlated failure response poisons the whole lifecycle, releases
 both client attempts, remains sticky through result access, polling, and cancellation, and never
-publishes the retained prefix. Multi-process, movement-interleaved, allocation-fault, and
-network-fault campaigns remain.
+publishes the retained prefix. A third run accepts the delayed follower connection, completes the
+other production CSEG fragment, and then shuts down the delayed follower with its mTLS session
+active. The default five-attempt query policy exhausts as `IO_ERROR`, closes every client, preserves
+the sticky failure, and exposes no partial result. Multi-process, movement-interleaved,
+allocation-fault, and broader timeout/retry/packet-level network campaigns remain.
 
 ## Migration or rollback considerations
 

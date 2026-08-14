@@ -1576,6 +1576,17 @@ TEST(ReplicatedDistributedQueryWorkerTest,
                                    observation_servers[1].bound_endpoint()};
   ASSERT_TRUE(observation_servers[0].shutdown().is_ok());
   ASSERT_TRUE(observation_servers[1].shutdown().is_ok());
+  const auto start_follower_observation = [&](const std::size_t index) {
+    return cluster::RaftObservationTcpServer::start(
+        {.listener = {.bind_endpoint = query_endpoints[index]},
+         .tls = tls_server_config(),
+         .authenticator = &inbound_authenticator,
+         .receiver = &observation_receivers[index],
+         .session_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                            .exchange_timeout = std::chrono::milliseconds{1000}},
+         .maximum_connections = 4U,
+         .maximum_accepts_per_poll = 4U});
+  };
   const auto start_query_server = [&](const raft::NodeId local_node_id,
                                       const network::Ipv4Endpoint endpoint,
                                       ContextProvider& provider) {
@@ -1655,24 +1666,8 @@ TEST(ReplicatedDistributedQueryWorkerTest,
   EXPECT_TRUE(first_query_server->shutdown().is_ok());
   EXPECT_TRUE(second_query_server->shutdown().is_ok());
 
-  auto first_restarted_observation = cluster::RaftObservationTcpServer::start(
-      {.listener = {.bind_endpoint = query_endpoints[0]},
-       .tls = tls_server_config(),
-       .authenticator = &inbound_authenticator,
-       .receiver = &observation_receivers[0],
-       .session_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
-                          .exchange_timeout = std::chrono::milliseconds{1000}},
-       .maximum_connections = 4U,
-       .maximum_accepts_per_poll = 4U});
-  auto second_restarted_observation = cluster::RaftObservationTcpServer::start(
-      {.listener = {.bind_endpoint = query_endpoints[1]},
-       .tls = tls_server_config(),
-       .authenticator = &inbound_authenticator,
-       .receiver = &observation_receivers[1],
-       .session_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
-                          .exchange_timeout = std::chrono::milliseconds{1000}},
-       .maximum_connections = 4U,
-       .maximum_accepts_per_poll = 4U});
+  auto first_restarted_observation = start_follower_observation(0U);
+  auto second_restarted_observation = start_follower_observation(1U);
   ASSERT_TRUE(first_restarted_observation.has_value())
       << first_restarted_observation.error().to_string();
   ASSERT_TRUE(second_restarted_observation.has_value())
@@ -1757,6 +1752,97 @@ TEST(ReplicatedDistributedQueryWorkerTest,
   EXPECT_EQ(failing_second_query_server->metrics().completed_connections, 1U);
   EXPECT_TRUE(failing_first_query_server->shutdown().is_ok());
   EXPECT_TRUE(failing_second_query_server->shutdown().is_ok());
+
+  auto first_network_observation = start_follower_observation(0U);
+  auto second_network_observation = start_follower_observation(1U);
+  ASSERT_TRUE(first_network_observation.has_value())
+      << first_network_observation.error().to_string();
+  ASSERT_TRUE(second_network_observation.has_value())
+      << second_network_observation.error().to_string();
+  observation_servers[0] = std::move(*first_network_observation);
+  observation_servers[1] = std::move(*second_network_observation);
+
+  auto network_snapshot = publisher->snapshot();
+  ASSERT_TRUE(network_snapshot.has_value()) << network_snapshot.error().to_string();
+  auto network_plan = plan;
+  network_plan.query_id = uuid(33U);
+  auto network_lifecycle = make_lifecycle(network_plan, *network_snapshot, 501U);
+  ASSERT_TRUE(network_lifecycle.has_value()) << network_lifecycle.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       network_lifecycle->state() ==
+           ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kAcquiringAuthority;
+       ++iteration) {
+    ASSERT_TRUE(network_lifecycle->poll_once(std::chrono::milliseconds{1}).is_ok())
+        << network_lifecycle->failure().to_string();
+    for (cluster::RaftObservationTcpServer& observation_server : observation_servers)
+      ASSERT_TRUE(observation_server.poll_once(std::chrono::milliseconds{0}).is_ok());
+  }
+  ASSERT_EQ(network_lifecycle->state(),
+            ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting)
+      << network_lifecycle->failure().to_string();
+  for (const LifecycleObservationService& observation_service : observation_services)
+    EXPECT_EQ(observation_service.calls, 3U);
+
+  ASSERT_TRUE(observation_servers[0].shutdown().is_ok());
+  ASSERT_TRUE(observation_servers[1].shutdown().is_ok());
+  auto network_first_query_server = start_query_server(11U, query_endpoints[0], first_provider);
+  auto network_second_query_server = start_query_server(12U, query_endpoints[1], second_provider);
+  ASSERT_TRUE(network_first_query_server.has_value())
+      << network_first_query_server.error().to_string();
+  ASSERT_TRUE(network_second_query_server.has_value())
+      << network_second_query_server.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 256U && network_second_query_server->metrics().active_connections == 0U;
+       ++iteration) {
+    ASSERT_TRUE(network_lifecycle->poll_once(std::chrono::milliseconds{0}).is_ok())
+        << network_lifecycle->failure().to_string();
+    ASSERT_TRUE(network_second_query_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(network_second_query_server->metrics().active_connections, 1U);
+  for (std::size_t iteration = 0U;
+       iteration < 256U && network_first_query_server->metrics().completed_connections == 0U;
+       ++iteration) {
+    ASSERT_TRUE(network_lifecycle->poll_once(std::chrono::milliseconds{0}).is_ok())
+        << network_lifecycle->failure().to_string();
+    ASSERT_TRUE(network_first_query_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(network_first_query_server->metrics().completed_connections, 1U);
+  EXPECT_EQ(network_lifecycle->state(),
+            ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting);
+  EXPECT_EQ(network_lifecycle->result().error().code(), common::StatusCode::kInvalidArgument);
+  ASSERT_TRUE(network_second_query_server->shutdown().is_ok());
+  EXPECT_EQ(network_second_query_server->metrics().active_connections, 0U);
+
+  common::Status network_failure = common::Status::ok();
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       network_lifecycle->state() ==
+           ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting;
+       ++iteration) {
+    network_failure = network_lifecycle->poll_once(std::chrono::milliseconds{1});
+    ASSERT_TRUE(network_first_query_server->poll_once(std::chrono::milliseconds{0}).is_ok());
+  }
+  ASSERT_EQ(network_lifecycle->state(),
+            ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kFailed);
+  EXPECT_EQ(network_failure.code(), common::StatusCode::kIoError);
+  EXPECT_EQ(network_lifecycle->failure(), network_failure);
+  EXPECT_EQ(network_lifecycle->result().error(), network_failure);
+  EXPECT_EQ(network_lifecycle->poll_once(std::chrono::milliseconds{0}), network_failure);
+  EXPECT_EQ(network_lifecycle->cancel(), network_failure);
+  EXPECT_EQ(first_provider.vector_calls, 6U);
+  EXPECT_EQ(second_provider.vector_calls, 4U);
+  const auto network_metrics = network_lifecycle->metrics();
+  EXPECT_EQ(network_metrics.authority.completed_pairs, 2U);
+  ASSERT_TRUE(network_metrics.execution.has_value());
+  // Guarded by the execution-metrics assertion above.
+  // NOLINTBEGIN(bugprone-unchecked-optional-access)
+  EXPECT_EQ(network_metrics.execution->attempts_started, 6U);
+  EXPECT_EQ(network_metrics.execution->transport_completed_attempts, 1U);
+  EXPECT_EQ(network_metrics.execution->transport_failed_attempts, 5U);
+  EXPECT_EQ(network_metrics.execution->active_attempts, 0U);
+  // NOLINTEND(bugprone-unchecked-optional-access)
+  EXPECT_TRUE(network_first_query_server->shutdown().is_ok());
   EXPECT_TRUE(observation_servers[2].shutdown().is_ok());
   EXPECT_TRUE(observation_servers[3].shutdown().is_ok());
   EXPECT_TRUE(metadata_barrier->shutdown().is_ok());

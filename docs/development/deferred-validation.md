@@ -334,8 +334,11 @@
   withholds one terminal stream to prove no partial publication, and validates the exact global
   count/sum result. Its failure companion retains the first successful tablet privately, injects a
   nonretryable execution-authority failure at the second production follower, and proves sticky
-  whole-query failure, zero active attempts, and no result publication. Multi-process,
-  movement-interleaved, allocation-fault, and network-fault campaigns remain.
+  whole-query failure, zero active attempts, and no result publication. A network companion closes
+  the delayed follower around an accepted live mTLS session after the other tablet succeeds, then
+  proves terminal I/O classification, exact exhaustion of the default five-attempt query budget,
+  zero active clients, and no partial result. Multi-process, movement-interleaved,
+  allocation-fault, and broader timeout/retry/packet-level network campaigns remain.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

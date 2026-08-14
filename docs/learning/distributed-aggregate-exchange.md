@@ -474,7 +474,10 @@ stalls one follower after the other completes to show that global output remains
 both terminal vectors can merge atomically. A companion run makes the delayed production worker
 fail only after definition binding, so the authenticated transport returns a correlated terminal
 error. The composite drops every live client, preserves that error as its sticky terminal state,
-and never converts the already retained tablet vector into a partial Native result.
+and never converts the already retained tablet vector into a partial Native result. The network
+companion accepts the delayed follower session, completes the other real-CSEG fragment, then closes
+the delayed service. Finite retry exhaustion turns that disconnect into sticky whole-query I/O
+failure, clears the client table, and retains no externally visible result.
 Moved or multi-process real-CSEG responses, remote worker-interrupt delivery, pooled
 multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node
 fault handling remain work.
