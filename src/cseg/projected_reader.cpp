@@ -506,7 +506,7 @@ CsegProjectedReaderView::execute_granule_plan(const CsegProjectedGranuleReadPlan
         return common::make_unexpected(page.error());
       decoded_pages.push_back(std::move(*page));
     }
-    const common::Status system =
+    auto system =
         metadata_.format_major() == temporal_format::kFormatMajor
             ? detail::validate_cseg_v2_temporal_system_rows(
                   {.commit_source = decoded_pages[system_page_start].physical(),

@@ -353,6 +353,7 @@ TEST(TemporalProjectedReaderTest, EmptyProjectionStillRejectsInvalidTemporalSyst
   const auto granule = reader->read_granule(0U, empty);
   ASSERT_FALSE(granule.has_value());
   EXPECT_EQ(granule.error().code(), common::StatusCode::kCorruption);
+  EXPECT_EQ(granule.error().message(), "CSEG v2 temporal COMMIT_SOURCE is zero or malformed");
 }
 
 } // namespace
