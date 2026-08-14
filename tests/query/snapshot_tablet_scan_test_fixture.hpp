@@ -128,7 +128,9 @@ public:
         throw std::runtime_error{"snapshot tablet scan fixture WAL transition failed"};
       tablet_snapshot = prepared.publish({.wal_id = wal, .record_sequence = 1U}).value().snapshot;
     }
-    std::vector<manifest::DatabaseStorageTabletInput> input{{.snapshot = tablet_snapshot}};
+    std::vector<ingest::TabletSnapshot> tablet_snapshots;
+    tablet_snapshots.reserve(second_tablet_rows.has_value() ? 2U : 1U);
+    tablet_snapshots.push_back(std::move(tablet_snapshot));
     if (second_tablet_rows.has_value()) {
       second_state_ = std::make_unique<ingest::TabletState>(
           ingest::TabletState::create(
@@ -159,8 +161,12 @@ public:
           throw std::runtime_error{"second snapshot tablet WAL transition failed"};
         second_snapshot = prepared.publish({.wal_id = wal, .record_sequence = 1U}).value().snapshot;
       }
-      input.push_back({.snapshot = second_snapshot});
+      tablet_snapshots.push_back(std::move(second_snapshot));
     }
+    std::vector<manifest::DatabaseStorageTabletInput> input;
+    input.reserve(tablet_snapshots.size());
+    for (const ingest::TabletSnapshot& snapshot : tablet_snapshots)
+      input.push_back({.snapshot = snapshot});
     publisher_ = std::make_unique<manifest::DatabaseStoragePublisher>(
         manifest::DatabaseStoragePublisher::create(std::move(selected), input).value());
     snapshot_ = std::make_unique<manifest::DatabaseStorageSnapshot>(publisher_->snapshot().value());
