@@ -125,7 +125,7 @@ struct Fixture {
     return std::move(*encoded);
   }
 
-  [[nodiscard]] raft::SnapshotMetadata metadata(const ingest::Sha256Digest& checksum) const {
+  [[nodiscard]] static raft::SnapshotMetadata metadata(const ingest::Sha256Digest& checksum) {
     return {.last_included_index = 9U,
             .last_included_term = 3U,
             .manifest_generation = 7U,
@@ -188,7 +188,7 @@ TEST(RaftTabletPhysicalSnapshotTest, ProjectsOneRaftTabletAndBindsCanonicalPartS
 
   const auto report = validate_raft_tablet_physical_snapshot(
       projected->bytes(), fixture.group_id, fixture.table_id, fixture.tablet_id,
-      fixture.metadata(projected->part_set_checksum()));
+      Fixture::metadata(projected->part_set_checksum()));
   ASSERT_TRUE(report.has_value()) << report.error().to_string();
   EXPECT_EQ(report->database_id, fixture.database_id);
   EXPECT_EQ(report->manifest_generation, 7U);
@@ -217,7 +217,7 @@ TEST(RaftTabletPhysicalSnapshotTest, RejectsWrongSourceBoundaryAndAggregateCheck
   auto projected =
       build_raft_tablet_physical_snapshot(*selected, fixture.group_id, fixture.tablet_id, 9U);
   ASSERT_TRUE(projected.has_value()) << projected.error().to_string();
-  raft::SnapshotMetadata wrong = fixture.metadata(projected->part_set_checksum());
+  raft::SnapshotMetadata wrong = Fixture::metadata(projected->part_set_checksum());
   wrong.part_set_checksum.back() ^= std::byte{0x01U};
   EXPECT_EQ(validate_raft_tablet_physical_snapshot(projected->bytes(), fixture.group_id,
                                                    fixture.table_id, fixture.tablet_id, wrong)
@@ -234,7 +234,7 @@ TEST(RaftTabletPhysicalSnapshotTest, RejectsFullDatabaseManifestAndCorruptedByte
   auto projected =
       build_raft_tablet_physical_snapshot(*selected, fixture.group_id, fixture.tablet_id, 9U);
   ASSERT_TRUE(projected.has_value()) << projected.error().to_string();
-  const raft::SnapshotMetadata metadata = fixture.metadata(projected->part_set_checksum());
+  const raft::SnapshotMetadata metadata = Fixture::metadata(projected->part_set_checksum());
 
   EXPECT_EQ(validate_raft_tablet_physical_snapshot(full.bytes(), fixture.group_id, fixture.table_id,
                                                    fixture.tablet_id, metadata)
@@ -258,7 +258,7 @@ TEST(RaftTabletPhysicalSnapshotTest, BuildsCanonicalDestinationSuccessorForNewTa
   auto projected =
       build_raft_tablet_physical_snapshot(*source, fixture.group_id, fixture.tablet_id, 9U);
   ASSERT_TRUE(projected.has_value());
-  const raft::SnapshotMetadata metadata = fixture.metadata(projected->part_set_checksum());
+  const raft::SnapshotMetadata metadata = Fixture::metadata(projected->part_set_checksum());
 
   TemporalTabletDescriptor retained_tablet = fixture.tablets[1U];
   retained_tablet.first_part_index = 0U;
@@ -310,7 +310,7 @@ TEST(RaftTabletPhysicalSnapshotTest, RejectsExistingTabletAndForeignDatabaseDest
   auto projected =
       build_raft_tablet_physical_snapshot(*source, fixture.group_id, fixture.tablet_id, 9U);
   ASSERT_TRUE(projected.has_value());
-  const raft::SnapshotMetadata metadata = fixture.metadata(projected->part_set_checksum());
+  const raft::SnapshotMetadata metadata = Fixture::metadata(projected->part_set_checksum());
   const schema::SchemaLineage schemas = lineage(fixture);
   const std::array bindings{
       TabletSchemaBinding{.tablet_id = fixture.tablet_id, .lineage = std::cref(schemas)},
@@ -374,8 +374,9 @@ TEST(RaftTabletPhysicalSnapshotTest, BuildsSourceRetirementAfterCommittedReplica
   ASSERT_TRUE(decoded.has_value());
   EXPECT_EQ(decoded->generation(), 8U);
   ASSERT_EQ(decoded->tablets().size(), 1U);
-  EXPECT_EQ(decoded->tablets().front().tablet_id, fixture.other_tablet_id);
-  EXPECT_EQ(decoded->tablets().front().first_part_index, 0U);
+  TemporalTabletDescriptor expected_retained_tablet = fixture.tablets.back();
+  expected_retained_tablet.first_part_index = 0U;
+  EXPECT_EQ(decoded->tablets().front(), expected_retained_tablet);
   ASSERT_EQ(decoded->parts().size(), 1U);
   EXPECT_EQ(decoded->parts().front(), fixture.parts.back());
   ASSERT_EQ(decoded->retries().size(), 1U);

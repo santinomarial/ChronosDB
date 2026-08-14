@@ -330,7 +330,7 @@ build_raft_tablet_source_retirement_manifest(const DecodedTemporalManifestView& 
       const auto count = static_cast<std::size_t>(current.part_count);
       parts.insert(parts.end(), source.parts().begin() + static_cast<std::ptrdiff_t>(first),
                    source.parts().begin() + static_cast<std::ptrdiff_t>(first + count));
-      tablets.push_back(std::move(retained));
+      tablets.push_back(retained);
     }
     std::vector<TemporalRetryDescriptor> retries;
     retries.reserve(source.retries().size());
