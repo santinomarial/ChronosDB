@@ -14,12 +14,12 @@ namespace chronos::raft {
 inline constexpr std::size_t kMetadataSnapshotHeaderSize = 128U;
 inline constexpr std::size_t kMetadataSnapshotEntryHeaderSize = 32U;
 inline constexpr std::size_t kMetadataSnapshotTrailerSize = 4U;
-inline constexpr std::size_t kMaximumMetadataSnapshotSize = 1024U * 1024U * 1024U;
+inline constexpr std::size_t kMaximumMetadataSnapshotSize = std::size_t{1024U} * 1024U * 1024U;
 
 struct MetadataSnapshotCodecLimits {
-  std::size_t maximum_snapshot_bytes{256U * 1024U * 1024U};
+  std::size_t maximum_snapshot_bytes{std::size_t{256U} * 1024U * 1024U};
   std::size_t maximum_entries{65'536U};
-  std::size_t maximum_entry_payload_bytes{16U * 1024U * 1024U};
+  std::size_t maximum_entry_payload_bytes{std::size_t{16U} * 1024U * 1024U};
   std::size_t maximum_voters{9U};
 };
 

@@ -13,7 +13,7 @@ namespace chronos::raft {
 
 inline constexpr std::size_t kSchemaDefinitionHeaderSize = 48U;
 inline constexpr std::size_t kSchemaDefinitionTrailerSize = 4U;
-inline constexpr std::size_t kMaximumSchemaDefinitionSize = 16U * 1024U * 1024U;
+inline constexpr std::size_t kMaximumSchemaDefinitionSize = std::size_t{16U} * 1024U * 1024U;
 inline constexpr std::uint8_t kRaftSchemaDefinitionEntryType = 3U;
 
 struct SchemaDefinitionCodecLimits {

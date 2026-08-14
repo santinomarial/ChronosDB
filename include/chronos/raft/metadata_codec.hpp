@@ -12,7 +12,7 @@ namespace chronos::raft {
 
 inline constexpr std::size_t kMetadataCommandHeaderSize = 48U;
 inline constexpr std::size_t kMetadataCommandTrailerSize = 4U;
-inline constexpr std::size_t kMaximumMetadataCommandSize = 64U * 1024U;
+inline constexpr std::size_t kMaximumMetadataCommandSize = std::size_t{64U} * 1024U;
 inline constexpr std::uint8_t kRaftMetadataCommandEntryType = 2U;
 
 struct MetadataCommandCodecLimits {
