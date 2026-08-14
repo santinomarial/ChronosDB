@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <utility>
 #include <vector>
@@ -19,6 +20,13 @@ struct Envelope {
   NodeId source{};
   OutboundMessage outbound;
 };
+
+[[nodiscard]] const ReadBarrier* completed_read_barrier(const Transition& transition) {
+  const std::optional<ReadBarrier>& barrier = transition.read_barrier_ready;
+  if (!barrier.has_value())
+    return nullptr;
+  return &barrier.value();
+}
 
 class Cluster {
 public:
@@ -450,12 +458,14 @@ TEST(RaftNodeTest, CompactsAppliedPrefixAndInstallsSnapshotBeforeAcknowledgingLe
   EXPECT_TRUE(pending->outbound.empty());
   EXPECT_EQ(follower->persistent_state().snapshot.last_included_index, 0U);
 
-  auto installed = follower->complete_snapshot_install(pending->snapshot_install->source,
-                                                       pending->snapshot_install->snapshot, true);
+  auto installed = follower->complete_snapshot_install(request->leader_id, request->snapshot, true);
   ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
   ASSERT_TRUE(installed->persistent_state.has_value());
   EXPECT_EQ(follower->commit_index(), 2U);
   EXPECT_EQ(follower->applied_index(), 2U);
+  auto duplicate_install = follower->complete_snapshot_install(1U, request->snapshot, true);
+  ASSERT_FALSE(duplicate_install.has_value());
+  EXPECT_EQ(duplicate_install.error().code(), common::StatusCode::kInvalidArgument);
   ASSERT_EQ(installed->outbound.size(), 1U);
   const Message response = installed->outbound.front().message;
   auto caught_up = leader->receive(2U, response);
@@ -500,12 +510,16 @@ TEST(RaftNodeTest, ConfirmsLinearizableReadAtCommittedIndexBeforeApplicationVisi
   EXPECT_FALSE(wrong->read_barrier_ready.has_value());
   auto confirmed = leader->receive(2U, ReadBarrierResponse{1U, request->context, true});
   ASSERT_TRUE(confirmed.has_value()) << confirmed.error().to_string();
-  ASSERT_TRUE(confirmed->read_barrier_ready.has_value());
-  EXPECT_EQ(*confirmed->read_barrier_ready,
+  const ReadBarrier* confirmed_barrier = completed_read_barrier(*confirmed);
+  ASSERT_NE(confirmed_barrier, nullptr);
+  EXPECT_EQ(*confirmed_barrier,
             (ReadBarrier{.term = 1U, .context = request->context, .read_index = 1U}));
-  EXPECT_LT(leader->applied_index(), confirmed->read_barrier_ready->read_index);
-  ASSERT_TRUE(leader->mark_applied(confirmed->read_barrier_ready->read_index).has_value());
-  EXPECT_EQ(leader->applied_index(), confirmed->read_barrier_ready->read_index);
+  auto duplicate = leader->receive(2U, ReadBarrierResponse{1U, request->context, true});
+  ASSERT_TRUE(duplicate.has_value());
+  EXPECT_FALSE(duplicate->read_barrier_ready.has_value());
+  EXPECT_LT(leader->applied_index(), confirmed_barrier->read_index);
+  ASSERT_TRUE(leader->mark_applied(confirmed_barrier->read_index).has_value());
+  EXPECT_EQ(leader->applied_index(), confirmed_barrier->read_index);
 }
 
 TEST(RaftNodeTest, ReadBarrierUsesFrozenJointConsensusQuorums) {
@@ -531,8 +545,9 @@ TEST(RaftNodeTest, ReadBarrierUsesFrozenJointConsensusQuorums) {
   EXPECT_FALSE(new_only->read_barrier_ready.has_value());
   auto both = leader->receive(3U, ReadBarrierResponse{1U, context, true});
   ASSERT_TRUE(both.has_value());
-  ASSERT_TRUE(both->read_barrier_ready.has_value());
-  EXPECT_EQ(both->read_barrier_ready->read_index, 1U);
+  const ReadBarrier* completed = completed_read_barrier(*both);
+  ASSERT_NE(completed, nullptr);
+  EXPECT_EQ(completed->read_index, 1U);
 }
 
 TEST(RaftNodeTest, LeadershipChangeAbandonsPendingReadBarrier) {
@@ -566,9 +581,10 @@ TEST(RaftNodeTest, LeadershipChangeAbandonsPendingReadBarrier) {
   EXPECT_FALSE(stale->read_barrier_ready.has_value());
   auto current = leader->receive(2U, ReadBarrierResponse{3U, new_context, true});
   ASSERT_TRUE(current.has_value());
-  ASSERT_TRUE(current->read_barrier_ready.has_value());
-  EXPECT_EQ(current->read_barrier_ready->term, 3U);
-  EXPECT_EQ(current->read_barrier_ready->read_index, 2U);
+  const ReadBarrier* completed = completed_read_barrier(*current);
+  ASSERT_NE(completed, nullptr);
+  EXPECT_EQ(completed->term, 3U);
+  EXPECT_EQ(completed->read_index, 2U);
 }
 
 TEST(RaftNodeTest, ReadBarrierProbeStepsDownReceiverAndSingleVoterCompletesLocally) {
@@ -590,8 +606,9 @@ TEST(RaftNodeTest, ReadBarrierProbeStepsDownReceiverAndSingleVoterCompletesLocal
   auto barrier = single->begin_read_barrier();
   ASSERT_TRUE(barrier.has_value());
   EXPECT_TRUE(barrier->outbound.empty());
-  ASSERT_TRUE(barrier->read_barrier_ready.has_value());
-  EXPECT_EQ(barrier->read_barrier_ready->read_index, 1U);
+  const ReadBarrier* completed = completed_read_barrier(*barrier);
+  ASSERT_NE(completed, nullptr);
+  EXPECT_EQ(completed->read_index, 1U);
 }
 
 } // namespace

@@ -10,6 +10,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <set>
 #include <type_traits>
 #include <utility>
@@ -73,12 +74,12 @@ struct PendingReadBarrier {
 
 [[nodiscard]] common::Result<DerivedMembership>
 derive_membership(const std::vector<NodeId>& base_voters, const std::span<const LogEntry> log,
-                  const LogIndex commit_index, const std::size_t maximum_voters) {
+                  const LogIndex commit_index, const RaftLimits& limits) {
   DerivedMembership derived{.committed_voters = base_voters, .active_voters = base_voters};
   for (const LogEntry& entry : log) {
     if (!is_membership_entry_type(entry.type))
       continue;
-    auto decoded = decode_membership_command_v1(entry.payload, maximum_voters);
+    auto decoded = decode_membership_command_v1(entry.payload, limits.maximum_voters);
     if (!decoded.has_value())
       return common::make_unexpected(decoded.error());
     if (entry.type == kJointMembershipEntryType) {
@@ -89,7 +90,7 @@ derive_membership(const std::vector<NodeId>& base_voters, const std::span<const 
             corruption("Raft log has an invalid joint-membership transition"));
       }
       std::vector<NodeId> active = voter_union(joint->old_voters, joint->new_voters);
-      if (active.size() > maximum_voters) {
+      if (active.size() > limits.maximum_voters) {
         return common::make_unexpected(
             invalid("Raft joint membership exceeds configured voter capacity"));
       }
@@ -185,23 +186,21 @@ public:
                              : has_majority(committed_voters, replicated);
   }
 
-  [[nodiscard]] bool read_barrier_quorum() const {
-    if (!pending_read_barrier.has_value())
-      return false;
+  [[nodiscard]] static bool read_barrier_quorum(const PendingReadBarrier& pending) {
     const auto acknowledged = [&](const NodeId node) {
-      return pending_read_barrier->acknowledgements.contains(node);
+      return pending.acknowledgements.contains(node);
     };
-    return has_majority(pending_read_barrier->old_voters, acknowledged) &&
-           (pending_read_barrier->new_voters.empty() ||
-            has_majority(pending_read_barrier->new_voters, acknowledged));
+    return has_majority(pending.old_voters, acknowledged) &&
+           (pending.new_voters.empty() || has_majority(pending.new_voters, acknowledged));
   }
 
   void finish_read_barrier(Transition& transition) {
-    if (!read_barrier_quorum())
+    if (!pending_read_barrier.has_value())
       return;
-    transition.read_barrier_ready =
-        ReadBarrier{pending_read_barrier->term, pending_read_barrier->context,
-                    pending_read_barrier->read_index};
+    const PendingReadBarrier& pending = pending_read_barrier.value();
+    if (!read_barrier_quorum(pending))
+      return;
+    transition.read_barrier_ready = ReadBarrier{pending.term, pending.context, pending.read_index};
     pending_read_barrier.reset();
   }
 
@@ -294,8 +293,7 @@ public:
         continue;
       }
       if (replication_quorum(candidate)) {
-        auto membership =
-            derive_membership(base_voters, state.log, candidate, limits.maximum_voters);
+        auto membership = derive_membership(base_voters, state.log, candidate, limits);
         if (!membership.has_value())
           return common::make_unexpected(membership.error());
         state.commit_index = candidate;
@@ -382,8 +380,7 @@ common::Result<RaftNode> RaftNode::create(const NodeId node_id, std::vector<Node
       return common::make_unexpected(invalid("Raft snapshot membership checkpoint is invalid"));
     }
   }
-  auto membership = derive_membership(base_voters, persistent.log, persistent.commit_index,
-                                      limits.maximum_voters);
+  auto membership = derive_membership(base_voters, persistent.log, persistent.commit_index, limits);
   if (!membership.has_value()) {
     return common::make_unexpected(membership.error());
   }
@@ -532,7 +529,7 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
           const LogIndex prospective_commit =
               std::max(impl_->state.commit_index, std::min(value.leader_commit, candidate_last));
           auto membership = derive_membership(impl_->base_voters, candidate_log, prospective_commit,
-                                              impl_->limits.maximum_voters);
+                                              impl_->limits);
           if (!membership.has_value())
             return membership.error();
           validated_membership = std::move(*membership);
@@ -616,7 +613,7 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
             std::optional<Term> conflict_term;
             LogIndex conflict_index = impl_->last_index() + 1U;
             if (previous_term.has_value()) {
-              conflict_term = *previous_term;
+              conflict_term = previous_term;
               conflict_index = value.previous_log_index;
               while (conflict_index > impl_->state.snapshot.last_included_index + 1U &&
                      impl_->term_at(conflict_index - 1U) == conflict_term) {
@@ -679,10 +676,9 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
           } else {
             LogIndex next = value.conflict_index == 0U ? 1U : value.conflict_index;
             if (value.conflict_term.has_value()) {
-              for (auto iterator = impl_->state.log.rbegin(); iterator != impl_->state.log.rend();
-                   ++iterator) {
-                if (iterator->term == *value.conflict_term) {
-                  next = iterator->index + 1U;
+              for (const LogEntry& entry : impl_->state.log | std::views::reverse) {
+                if (entry.term == *value.conflict_term) {
+                  next = entry.index + 1U;
                   break;
                 }
               }
@@ -837,16 +833,21 @@ common::Result<Transition> RaftNode::begin_membership_change(std::vector<NodeId>
                        "membership change cannot start while a Raft read barrier is pending"});
   }
   std::ranges::sort(new_voters);
-  if (impl_->joint.has_value() && impl_->joint->old_voters == impl_->committed_voters &&
-      impl_->joint->new_voters == new_voters) {
-    const auto term = impl_->term_at(impl_->joint->joint_index);
-    if (impl_->joint->joint_index <= impl_->state.commit_index ||
-        (term.has_value() && *term == impl_->state.current_term)) {
-      return Transition{};
+  const std::optional<JointConfiguration>& joint_state = impl_->joint;
+  if (joint_state.has_value()) {
+    const JointConfiguration& joint = *joint_state;
+    if (joint.old_voters == impl_->committed_voters && joint.new_voters == new_voters) {
+      const auto term = impl_->term_at(joint.joint_index);
+      if (joint.joint_index <= impl_->state.commit_index ||
+          (term.has_value() && *term == impl_->state.current_term)) {
+        return Transition{};
+      }
+      return commit_current_term();
     }
-    return commit_current_term();
+    return common::make_unexpected(
+        invalid("Raft membership change is invalid or another change is active"));
   }
-  if (impl_->joint.has_value() || !valid_voters(new_voters, impl_->limits.maximum_voters) ||
+  if (!valid_voters(new_voters, impl_->limits.maximum_voters) ||
       new_voters == impl_->committed_voters ||
       voter_union(impl_->committed_voters, new_voters).size() > impl_->limits.maximum_voters ||
       impl_->state.log.size() >= impl_->limits.maximum_log_entries ||
@@ -866,7 +867,7 @@ common::Result<Transition> RaftNode::begin_membership_change(std::vector<NodeId>
   impl_->state.log.push_back(
       LogEntry{index, impl_->state.current_term, kJointMembershipEntryType, std::move(*payload)});
   auto membership = derive_membership(impl_->base_voters, impl_->state.log,
-                                      impl_->state.commit_index, impl_->limits.maximum_voters);
+                                      impl_->state.commit_index, impl_->limits);
   if (!membership.has_value())
     return common::make_unexpected(membership.error());
   impl_->install_membership(std::move(*membership));
@@ -893,7 +894,13 @@ common::Result<Transition> RaftNode::finalize_membership_change() {
         common::Status{common::StatusCode::kUnavailable,
                        "membership change cannot finalize while a Raft read barrier is pending"});
   }
-  if (impl_->joint.has_value() && impl_->joint->final_pending) {
+  const std::optional<JointConfiguration>& joint_state = impl_->joint;
+  if (!joint_state.has_value()) {
+    return common::make_unexpected(
+        invalid("joint membership must commit before it can be finalized"));
+  }
+  const JointConfiguration& joint = *joint_state;
+  if (joint.final_pending) {
     const auto final = std::ranges::find_if(
         impl_->state.log.rbegin(), impl_->state.log.rend(),
         [](const LogEntry& entry) { return entry.type == kFinalMembershipEntryType; });
@@ -903,16 +910,14 @@ common::Result<Transition> RaftNode::finalize_membership_change() {
     }
     return commit_current_term();
   }
-  if (!impl_->joint.has_value() || impl_->joint->final_pending ||
-      impl_->joint->joint_index > impl_->state.commit_index ||
+  if (joint.joint_index > impl_->state.commit_index ||
       impl_->state.log.size() >= impl_->limits.maximum_log_entries ||
       impl_->last_index() >= std::numeric_limits<LogIndex>::max() - 1U) {
     return common::make_unexpected(
         invalid("joint membership must commit before it can be finalized"));
   }
   auto payload = encode_membership_command_v1(
-      FinalMembershipCommand{impl_->joint->joint_index, impl_->joint->new_voters},
-      impl_->limits.maximum_voters);
+      FinalMembershipCommand{joint.joint_index, joint.new_voters}, impl_->limits.maximum_voters);
   if (!payload.has_value())
     return common::make_unexpected(payload.error());
   if (payload->size() > impl_->limits.maximum_entry_bytes)
@@ -922,7 +927,7 @@ common::Result<Transition> RaftNode::finalize_membership_change() {
   impl_->state.log.push_back(
       LogEntry{index, impl_->state.current_term, kFinalMembershipEntryType, std::move(*payload)});
   auto membership = derive_membership(impl_->base_voters, impl_->state.log,
-                                      impl_->state.commit_index, impl_->limits.maximum_voters);
+                                      impl_->state.commit_index, impl_->limits);
   if (!membership.has_value())
     return common::make_unexpected(membership.error());
   impl_->install_membership(std::move(*membership));
@@ -942,11 +947,15 @@ common::Result<Transition> RaftNode::finalize_membership_change() {
 common::Result<Transition> RaftNode::complete_snapshot_install(const NodeId source,
                                                                SnapshotMetadata snapshot,
                                                                const bool installed) {
-  if (!impl_->pending_snapshot.has_value() || source != impl_->pending_snapshot->leader_id ||
-      snapshot != impl_->pending_snapshot->snapshot) {
+  const std::optional<InstallSnapshotRequest>& pending_state = impl_->pending_snapshot;
+  if (!pending_state.has_value()) {
     return common::make_unexpected(invalid("snapshot completion does not match pending install"));
   }
-  const Term request_term = impl_->pending_snapshot->term;
+  const InstallSnapshotRequest& pending = *pending_state;
+  if (source != pending.leader_id || snapshot != pending.snapshot) {
+    return common::make_unexpected(invalid("snapshot completion does not match pending install"));
+  }
+  const Term request_term = pending.term;
   impl_->pending_snapshot.reset();
   Transition transition;
   if (!installed || request_term != impl_->state.current_term) {
@@ -970,8 +979,7 @@ common::Result<Transition> RaftNode::complete_snapshot_install(const NodeId sour
                     impl_->state.log.end());
   }
   const LogIndex new_commit = std::max(impl_->state.commit_index, snapshot.last_included_index);
-  auto membership =
-      derive_membership(snapshot.voters, retained, new_commit, impl_->limits.maximum_voters);
+  auto membership = derive_membership(snapshot.voters, retained, new_commit, impl_->limits);
   if (!membership.has_value())
     return common::make_unexpected(membership.error());
 
@@ -1054,9 +1062,11 @@ common::Result<Transition> RaftNode::begin_read_barrier() {
       context == std::numeric_limits<std::uint64_t>::max() ? 0U : context + 1U;
   std::vector<NodeId> new_voters;
   std::vector<NodeId> old_voters = impl_->committed_voters;
-  if (impl_->joint.has_value()) {
-    old_voters = impl_->joint->old_voters;
-    new_voters = impl_->joint->new_voters;
+  const std::optional<JointConfiguration>& joint_state = impl_->joint;
+  if (joint_state.has_value()) {
+    const JointConfiguration& joint = *joint_state;
+    old_voters = joint.old_voters;
+    new_voters = joint.new_voters;
   }
   impl_->pending_read_barrier = PendingReadBarrier{impl_->state.current_term, context,
                                                    impl_->state.commit_index, std::move(old_voters),
@@ -1125,22 +1135,29 @@ std::span<const NodeId> RaftNode::committed_voters() const noexcept {
   return impl_->committed_voters;
 }
 std::span<const NodeId> RaftNode::joint_old_voters() const noexcept {
-  return impl_->joint.has_value() ? std::span<const NodeId>{impl_->joint->old_voters}
-                                  : std::span<const NodeId>{};
+  const std::optional<JointConfiguration>& joint = impl_->joint;
+  if (!joint.has_value())
+    return {};
+  return joint->old_voters;
 }
 std::span<const NodeId> RaftNode::joint_new_voters() const noexcept {
-  return impl_->joint.has_value() ? std::span<const NodeId>{impl_->joint->new_voters}
-                                  : std::span<const NodeId>{};
+  const std::optional<JointConfiguration>& joint = impl_->joint;
+  if (!joint.has_value())
+    return {};
+  return joint->new_voters;
 }
 bool RaftNode::joint_membership_active() const noexcept {
   return impl_->joint.has_value();
 }
 bool RaftNode::joint_membership_can_finalize() const noexcept {
-  return impl_->joint.has_value() && !impl_->joint->final_pending &&
-         impl_->joint->joint_index <= impl_->state.commit_index;
+  const std::optional<JointConfiguration>& joint = impl_->joint;
+  if (!joint.has_value())
+    return false;
+  return !joint->final_pending && joint->joint_index <= impl_->state.commit_index;
 }
 bool RaftNode::final_membership_pending() const noexcept {
-  return impl_->joint.has_value() && impl_->joint->final_pending;
+  const std::optional<JointConfiguration>& joint = impl_->joint;
+  return joint.has_value() && joint->final_pending;
 }
 const PersistentState& RaftNode::persistent_state() const noexcept {
   return impl_->state;
