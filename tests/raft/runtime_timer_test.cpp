@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <gtest/gtest.h>
+#include <optional>
 #include <variant>
 
 namespace chronos::raft {
@@ -23,8 +24,7 @@ TEST(RaftTimerRuntimeTest, EmitsRetriesAndRearmsElectionAndHeartbeatActions) {
       {.maximum_groups = 2U, .maximum_actions_per_poll = 1U, .heartbeat_interval = 5ms});
   ASSERT_TRUE(timers.has_value()) << timers.error().to_string();
   ASSERT_TRUE(timers->add_group(observation(Role::kFollower), start, start + 10ms).is_ok());
-  ASSERT_TRUE(timers->next_deadline().has_value());
-  EXPECT_EQ(*timers->next_deadline(), start + 10ms);
+  EXPECT_EQ(timers->next_deadline(), std::optional{start + 10ms});
   EXPECT_TRUE(timers->poll(start + 9ms)->empty());
   auto due = timers->poll(start + 10ms);
   ASSERT_EQ(due->size(), 1U);
@@ -39,8 +39,7 @@ TEST(RaftTimerRuntimeTest, EmitsRetriesAndRearmsElectionAndHeartbeatActions) {
   ASSERT_TRUE(
       timers->complete(retry->front(), observation(Role::kLeader, 2U), start + 10ms, start + 20ms)
           .is_ok());
-  ASSERT_TRUE(timers->next_deadline().has_value());
-  EXPECT_EQ(*timers->next_deadline(), start + 15ms);
+  EXPECT_EQ(timers->next_deadline(), std::optional{start + 15ms});
   EXPECT_TRUE(timers->poll(start + 14ms)->empty());
   auto heartbeat = timers->poll(start + 15ms);
   ASSERT_EQ(heartbeat->size(), 1U);
@@ -72,6 +71,23 @@ TEST(RaftTimerRuntimeTest, NewerActivityInvalidatesStaleCompletionAndBoundsGroup
             common::StatusCode::kResourceExhausted);
   EXPECT_EQ(timers->note_activity(observation(Role::kFollower), start, start).code(),
             common::StatusCode::kInvalidArgument);
+}
+
+TEST(RaftTimerRuntimeTest, SaturatesLeaderHeartbeatDeadlineAtMaximumTime) {
+  using namespace std::chrono_literals;
+  auto timers = RaftTimerRuntime::create({.heartbeat_interval = 5ms});
+  ASSERT_TRUE(timers.has_value()) << timers.error().to_string();
+  const RaftTimerRuntime::TimePoint maximum = RaftTimerRuntime::TimePoint::max();
+  const RaftTimerRuntime::TimePoint near_maximum = maximum - 1ms;
+
+  ASSERT_TRUE(timers->add_group(observation(Role::kLeader), near_maximum, maximum).is_ok());
+
+  EXPECT_EQ(timers->next_deadline(), std::optional{maximum});
+  EXPECT_TRUE(timers->poll(maximum - RaftTimerRuntime::TimePoint::duration{1})->empty());
+  auto due = timers->poll(maximum);
+  ASSERT_TRUE(due.has_value()) << due.error().to_string();
+  ASSERT_EQ(due->size(), 1U);
+  EXPECT_EQ(due->front().kind, RaftTimerActionKind::kHeartbeat);
 }
 
 } // namespace

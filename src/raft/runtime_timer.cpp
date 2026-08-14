@@ -29,7 +29,7 @@ public:
     NodeId node_id{};
     Role role{Role::kFollower};
     Term term{};
-    TimePoint deadline{};
+    TimePoint deadline;
     std::uint64_t generation{1U};
     bool in_flight{};
   };
@@ -41,7 +41,7 @@ public:
     return nullptr;
   }
   [[nodiscard]] common::Status arm(Timer& timer, const RaftGroupObservation& observation,
-                                   TimePoint now, TimePoint election_deadline, bool advance) {
+                                   TimePoint now, TimePoint election_deadline, bool advance) const {
     if (!valid_observation(observation) ||
         (observation.role != Role::kLeader && election_deadline <= now))
       return status(common::StatusCode::kInvalidArgument, "Raft timer observation is invalid");
@@ -103,7 +103,7 @@ common::Status RaftTimerRuntime::add_group(const RaftGroupObservation& observati
   common::Status armed = implementation_->arm(timer, observation, now, election_deadline, false);
   if (!armed.is_ok())
     return armed;
-  implementation_->groups_.push_back(std::move(timer));
+  implementation_->groups_.push_back(timer);
   return common::Status::ok();
 }
 common::Status RaftTimerRuntime::remove_group(const GroupId& group_id) {
