@@ -371,7 +371,7 @@ common::Result<DistributedVectorFragmentDispatch> decode_distributed_vector_frag
       !tablet_id.has_value() || !schema_id.has_value() || common::Uuid{identities[5U]}.is_nil()) {
     return common::make_unexpected(corruption("distributed vector fragment identity is invalid"));
   }
-  DistributedReadConsistency decoded_consistency;
+  DistributedReadConsistency decoded_consistency{DistributedReadConsistency::kLeaderLinearizable};
   switch (*consistency) {
   case static_cast<std::uint8_t>(DistributedReadConsistency::kLeaderLinearizable):
     decoded_consistency = DistributedReadConsistency::kLeaderLinearizable;
@@ -396,7 +396,7 @@ common::Result<DistributedVectorFragmentDispatch> decode_distributed_vector_frag
             corruption("distributed vector fragment projection is truncated"));
       projection.push_back(*ordinal);
     }
-    const auto plan = decode_distributed_vector_plan_intent_exact(
+    auto plan = decode_distributed_vector_plan_intent_exact(
         bytes.subspan(reader.offset(), *plan_length), limits.plan);
     if (!plan.has_value())
       return common::make_unexpected(plan.error());
@@ -438,7 +438,7 @@ common::Result<DistributedVectorFragmentDispatch> decode_distributed_vector_frag
                                           *barrier_term, *barrier_context, *barrier_index}}
                                     : std::nullopt,
         .destination_column_ordinals = std::move(projection),
-        .event_time_predicate = std::move(predicate),
+        .event_time_predicate = predicate,
         .plan = std::move(*plan)};
     const common::Status validation = validate_dispatch(dispatch);
     if (!validation.is_ok())

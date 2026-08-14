@@ -115,6 +115,11 @@ TEST(DistributedVectorFragmentTest, RejectsDamageLimitsAndContradictoryAuthority
   rewrite_checksums(unsupported);
   EXPECT_EQ(decode_distributed_vector_fragment_dispatch_exact(unsupported).error().code(),
             common::StatusCode::kNotSupported);
+  std::vector<std::byte> unknown_consistency = bytes;
+  unknown_consistency[200U] = std::byte{0xffU};
+  rewrite_checksums(unknown_consistency);
+  EXPECT_EQ(decode_distributed_vector_fragment_dispatch_exact(unknown_consistency).error().code(),
+            common::StatusCode::kCorruption);
 
   std::vector<std::byte> damaged_plan = bytes;
   damaged_plan[232U + expected.destination_column_ordinals.size() * 4U] ^= std::byte{1U};
@@ -203,9 +208,7 @@ TEST(DistributedVectorFragmentTest, OwnsBoundedPartialReadsAndShortWriteProgress
     ASSERT_TRUE(suffix.has_value()) << "split=" << split;
     EXPECT_EQ(suffix->consumed_bytes, encoded->bytes().size() - split) << "split=" << split;
     ASSERT_TRUE(prefix->dispatch.has_value() || suffix->dispatch.has_value()) << "split=" << split;
-    const DistributedVectorFragmentDispatch* decoded =
-        prefix->dispatch.has_value() ? &*prefix->dispatch : &*suffix->dispatch;
-    EXPECT_EQ(*decoded, expected) << "split=" << split;
+    EXPECT_TRUE(prefix->dispatch == expected || suffix->dispatch == expected) << "split=" << split;
     EXPECT_EQ(reader.buffered_bytes(), 0U) << "split=" << split;
   }
 
@@ -272,9 +275,7 @@ TEST(DistributedVectorFragmentTest, V2OwnsBoundedPartialReadsAndShortWriteProgre
     ASSERT_TRUE(suffix.has_value()) << "split=" << split;
     EXPECT_EQ(suffix->consumed_bytes, encoded->bytes().size() - split) << "split=" << split;
     ASSERT_TRUE(prefix->dispatch.has_value() || suffix->dispatch.has_value()) << "split=" << split;
-    const DistributedVectorFragmentDispatchV2* decoded =
-        prefix->dispatch.has_value() ? &*prefix->dispatch : &*suffix->dispatch;
-    EXPECT_EQ(*decoded, expected) << "split=" << split;
+    EXPECT_TRUE(prefix->dispatch == expected || suffix->dispatch == expected) << "split=" << split;
     EXPECT_EQ(reader.buffered_bytes(), 0U) << "split=" << split;
   }
 
