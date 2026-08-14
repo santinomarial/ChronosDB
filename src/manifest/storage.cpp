@@ -257,9 +257,8 @@ void saturating_add(std::uint64_t& target, const std::uint64_t value) noexcept {
 
 [[nodiscard]] common::Status
 validate_initialization(const EmptyManifestStorageInitialization& initialization) {
-  const common::Status storage =
-      validate_config({.database_root = initialization.database_root,
-                       .file_permissions = initialization.file_permissions});
+  common::Status storage = validate_config({.database_root = initialization.database_root,
+                                            .file_permissions = initialization.file_permissions});
   if (!storage.is_ok())
     return storage;
   if (!initialization.wal_id.is_valid())
@@ -2468,7 +2467,7 @@ common::Result<LoadedTemporalManifestGeneration> ManifestStorage::load_temporal_
 }
 
 common::Result<std::vector<LoadedTemporalPartImage>> ManifestStorage::load_temporal_part_images(
-    std::shared_ptr<const LoadedTemporalManifestGeneration> selected,
+    const std::shared_ptr<const LoadedTemporalManifestGeneration>& selected,
     const std::span<const cseg::PartId> part_ids,
     const std::span<const TabletSchemaBinding> schema_bindings,
     const TemporalPartValidationLimits limits) const {

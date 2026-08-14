@@ -1137,10 +1137,12 @@ TEST(TemporalManifestStorageTest, LoadsHighestValidatedGenerationAndReportsNames
 
   auto selected_owner =
       std::make_shared<const LoadedTemporalManifestGeneration>(std::move(*loaded));
+  EXPECT_EQ(selected_owner.use_count(), 1L);
   const std::array part_ids{fixture.part_id};
   const auto images = owner.load_temporal_part_images(selected_owner, part_ids, bindings, {});
   ASSERT_TRUE(images.has_value()) << images.error().to_string();
   ASSERT_EQ(images->size(), 1U);
+  EXPECT_EQ(selected_owner.use_count(), 2L);
   EXPECT_EQ(images->front().generation(), 1U);
   EXPECT_EQ(images->front().descriptor(), fixture.descriptor);
   EXPECT_TRUE(std::ranges::equal(images->front().bytes(), fixture.encoded.bytes()));

@@ -582,7 +582,7 @@ public:
   // Loads exact strictly sorted temporal parts from one held v2 generation. Each result pins that
   // generation owner and independently owns its fully revalidated CSEG bytes.
   [[nodiscard]] common::Result<std::vector<LoadedTemporalPartImage>>
-  load_temporal_part_images(std::shared_ptr<const LoadedTemporalManifestGeneration> selected,
+  load_temporal_part_images(const std::shared_ptr<const LoadedTemporalManifestGeneration>& selected,
                             std::span<const cseg::PartId> part_ids,
                             std::span<const TabletSchemaBinding> schema_bindings,
                             TemporalPartValidationLimits limits) const;
