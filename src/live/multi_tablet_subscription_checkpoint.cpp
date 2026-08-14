@@ -196,9 +196,8 @@ common::Result<std::vector<std::byte>> encode_multi_tablet_subscription_checkpoi
     if (status.is_ok())
       status = writer.write_u16_le(kMajor);
     if (status.is_ok())
-      status = writer.write_u16_le(checkpoint.plan_schema_compatible
-                                       ? kCheckpointMinorInitial
-                                       : kCheckpointMinorSchemaState);
+      status = writer.write_u16_le(checkpoint.plan_schema_compatible ? kCheckpointMinorInitial
+                                                                     : kCheckpointMinorSchemaState);
     if (status.is_ok())
       status = writer.write_u32_le(kMultiTabletSubscriptionCheckpointHeaderSize);
     if (status.is_ok())

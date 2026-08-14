@@ -156,11 +156,11 @@ TEST(SubscriptionTest, SchemaChangeTerminatesPlanAndRejectsResumePrecisely) {
             common::StatusCode::kNotSupported);
   EXPECT_FALSE(manager->acknowledge(fixture.subscription_id, 1U).has_value());
   EXPECT_FALSE(terminate_subscription(*manager, fixture.subscription_id,
-                                     network::SubscriptionEndReason::kOverflowed)
+                                      network::SubscriptionEndReason::kOverflowed)
                    .has_value());
 
-  const auto terminal = terminate_subscription(
-      *manager, fixture.subscription_id, network::SubscriptionEndReason::kSchemaChanged);
+  const auto terminal = terminate_subscription(*manager, fixture.subscription_id,
+                                               network::SubscriptionEndReason::kSchemaChanged);
   ASSERT_TRUE(terminal.has_value());
   const auto decoded = network::decode_subscription_end(*terminal);
   ASSERT_TRUE(decoded.has_value());

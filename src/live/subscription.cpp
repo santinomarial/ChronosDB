@@ -142,8 +142,8 @@ SubscriptionManager::register_subscription(const SubscriptionRequest& request) {
         invalid("subscription request does not match the manager plan and schema"));
   }
   if (!impl_->plan_schema_compatible) {
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kNotSupported, "subscription plan schema has changed"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotSupported, "subscription plan schema has changed"});
   }
   if (impl_->subscriptions.contains(request.subscription_id)) {
     return common::make_unexpected(common::Status{common::StatusCode::kAlreadyExists,
@@ -188,8 +188,8 @@ SubscriptionManager::resume_subscription(const common::ByteView encoded_token) {
                        "resume token belongs to another source, plan, or schema lineage"});
   }
   if (!impl_->plan_schema_compatible) {
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kNotSupported, "resume token plan schema has changed"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotSupported, "resume token plan schema has changed"});
   }
   const auto existing_subscription = impl_->subscriptions.find(token->subscription_id);
   if (existing_subscription != impl_->subscriptions.end()) {
@@ -335,8 +335,8 @@ SubscriptionManager::poll(const common::Uuid& subscription_id,
         common::StatusCode::kResourceExhausted, "subscription buffer overflowed; resume required"});
   }
   if (state.phase == SubscriptionPhase::kSchemaChanged) {
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kNotSupported, "subscription plan schema has changed"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotSupported, "subscription plan schema has changed"});
   }
   if (state.phase == SubscriptionPhase::kCancelled) {
     return common::make_unexpected(
@@ -368,8 +368,7 @@ SubscriptionManager::acknowledge(const common::Uuid& subscription_id,
   if (state.phase != SubscriptionPhase::kLive ||
       delivery_sequence < state.last_acknowledged_sequence ||
       delivery_sequence > state.last_polled_sequence) {
-    return common::make_unexpected(
-        invalid("acknowledgment is outside live delivered state"));
+    return common::make_unexpected(invalid("acknowledgment is outside live delivered state"));
   }
   while (!state.buffered.empty() && state.buffered.front().delivery_sequence <= delivery_sequence) {
     state.safe_position = state.buffered.front().change->position;

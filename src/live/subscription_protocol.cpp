@@ -21,8 +21,8 @@ wire_operation(const LogicalChangeOperation operation) {
   return common::make_unexpected(invalid("logical subscription operation is unassigned"));
 }
 
-[[nodiscard]] common::Status validate_terminal_reason(
-    const SubscriptionPhase phase, const network::SubscriptionEndReason reason) {
+[[nodiscard]] common::Status validate_terminal_reason(const SubscriptionPhase phase,
+                                                      const network::SubscriptionEndReason reason) {
   if (phase == SubscriptionPhase::kSchemaChanged &&
       reason != network::SubscriptionEndReason::kSchemaChanged)
     return invalid("schema-changed subscription requires SCHEMA_CHANGED termination");
