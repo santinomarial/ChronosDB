@@ -8,6 +8,8 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <gtest/gtest.h>
+#include <optional>
+#include <poll.h>
 #include <string>
 #include <sys/socket.h>
 #include <system_error>
@@ -136,7 +138,8 @@ void finish_handshake(network::TlsSocket& client, RaftTransportTlsServer& server
 }
 
 void send_frame(network::TlsSocket& client, RaftTransportTlsServer& server,
-                const common::ByteView frame, const RaftTransportTlsServer::TimePoint now) {
+                raft::AsyncDurableMultiRaftRuntime& runtime, const common::ByteView frame,
+                const RaftTransportTlsServer::TimePoint now) {
   std::size_t written = 0U;
   for (std::size_t iteration = 0U; iteration < 4096U; ++iteration) {
     if (written < frame.size()) {
@@ -147,10 +150,23 @@ void send_frame(network::TlsSocket& client, RaftTransportTlsServer& server,
         written += progress->bytes_transferred;
     }
     ASSERT_TRUE(server.on_ready(true, true, now).is_ok()) << server.failure().to_string();
-    if (written == frame.size() && server.state() == RaftTransportTlsServerState::kResultReady)
-      return;
+    if (written == frame.size() &&
+        (server.state() == RaftTransportTlsServerState::kAwaitingDurableResult ||
+         server.state() == RaftTransportTlsServerState::kResultReady))
+      break;
   }
-  FAIL() << "Raft TLS frame did not reach a durable result";
+  ASSERT_EQ(written, frame.size()) << "Raft TLS frame was not fully admitted";
+  ASSERT_TRUE(server.state() == RaftTransportTlsServerState::kAwaitingDurableResult ||
+              server.state() == RaftTransportTlsServerState::kResultReady);
+
+  pollfd descriptor{.fd = runtime.completion_descriptor(), .events = POLLIN};
+  ASSERT_GE(descriptor.fd, 0);
+  ASSERT_EQ(::poll(&descriptor, 1U, 1000), 1);
+  ASSERT_NE(descriptor.revents & POLLIN, 0);
+  ASSERT_TRUE(runtime.drain_completion_notifications().is_ok());
+  if (server.state() == RaftTransportTlsServerState::kAwaitingDurableResult)
+    ASSERT_TRUE(server.on_ready(false, false, now).is_ok()) << server.failure().to_string();
+  ASSERT_EQ(server.state(), RaftTransportTlsServerState::kResultReady);
 }
 
 TEST(RaftTransportTlsServerTest, AuthenticatesFragmentsAndServesPersistentFrames) {
@@ -176,39 +192,53 @@ TEST(RaftTransportTlsServerTest, AuthenticatesFragmentsAndServesPersistentFrames
   auto server = RaftTransportTlsServer::create(std::move(*server_socket),
                                                server_config(authenticator, *receiver), now);
   ASSERT_TRUE(server.has_value()) << server.error().to_string();
-  ASSERT_TRUE(server->next_deadline().has_value());
-  EXPECT_EQ(*server->next_deadline(), now + std::chrono::milliseconds{100});
+  EXPECT_EQ(server->next_deadline(), std::optional{now + std::chrono::milliseconds{100}});
   finish_handshake(*client_socket, *server, now + std::chrono::milliseconds{1});
   EXPECT_TRUE(authenticator.saw_fingerprint);
 
   const auto first = vote_request(1U);
-  send_frame(*client_socket, *server, first, now + std::chrono::milliseconds{2});
+  send_frame(*client_socket, *server, *runtime, first, now + std::chrono::milliseconds{2});
   EXPECT_FALSE(server->next_deadline().has_value());
-  ASSERT_TRUE(server->completed_submission_sequence().has_value());
-  EXPECT_EQ(*server->completed_submission_sequence(), 1U);
+  EXPECT_EQ(server->completed_submission_sequence(), std::optional<std::uint64_t>{1U});
   auto completed = server->take_completed(now + std::chrono::milliseconds{3});
   ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
   EXPECT_EQ(completed->submission_sequence, 1U);
   EXPECT_EQ(completed->group_id, group());
   EXPECT_EQ(completed->source_node_id, 1U);
   ASSERT_TRUE(completed->result.status.is_ok()) << completed->result.status.to_string();
-  ASSERT_TRUE(completed->result.transition.has_value());
-  EXPECT_TRUE(completed->result.transition->persistence.has_value());
-  ASSERT_TRUE(completed->observation.has_value());
-  EXPECT_EQ(completed->observation->group_id, group());
-  EXPECT_EQ(completed->observation->current_term, 1U);
+  const auto& first_transition_value = completed->result.transition;
+  const auto* first_transition =
+      first_transition_value.has_value() ? &first_transition_value.value() : nullptr;
+  ASSERT_NE(first_transition, nullptr);
+  EXPECT_TRUE(first_transition->persistence.has_value());
+  const auto& first_observation_value = completed->observation;
+  const auto* first_observation =
+      first_observation_value.has_value() ? &first_observation_value.value() : nullptr;
+  ASSERT_NE(first_observation, nullptr);
+  EXPECT_EQ(first_observation->group_id, group());
+  EXPECT_EQ(first_observation->current_term, 1U);
   EXPECT_EQ(server->state(), RaftTransportTlsServerState::kReadingFrame);
-  ASSERT_TRUE(server->next_deadline().has_value());
-  EXPECT_EQ(*server->next_deadline(), now + std::chrono::milliseconds{103});
+  EXPECT_EQ(server->next_deadline(), std::optional{now + std::chrono::milliseconds{103}});
 
   const auto second = vote_request(2U);
-  send_frame(*client_socket, *server, second, now + std::chrono::milliseconds{4});
+  send_frame(*client_socket, *server, *runtime, second, now + std::chrono::milliseconds{4});
   auto second_completed = server->take_completed(now + std::chrono::milliseconds{5});
   ASSERT_TRUE(second_completed.has_value()) << second_completed.error().to_string();
   EXPECT_EQ(second_completed->submission_sequence, 2U);
-  EXPECT_EQ(second_completed->result.transition->persistence->state.current_term, 2U);
-  ASSERT_TRUE(second_completed->observation.has_value());
-  EXPECT_EQ(second_completed->observation->current_term, 2U);
+  const auto& second_transition_value = second_completed->result.transition;
+  const auto* second_transition =
+      second_transition_value.has_value() ? &second_transition_value.value() : nullptr;
+  ASSERT_NE(second_transition, nullptr);
+  const auto* second_persistence = second_transition->persistence.has_value()
+                                       ? &second_transition->persistence.value()
+                                       : nullptr;
+  ASSERT_NE(second_persistence, nullptr);
+  EXPECT_EQ(second_persistence->state.current_term, 2U);
+  const auto& second_observation_value = second_completed->observation;
+  const auto* second_observation =
+      second_observation_value.has_value() ? &second_observation_value.value() : nullptr;
+  ASSERT_NE(second_observation, nullptr);
+  EXPECT_EQ(second_observation->current_term, 2U);
   ASSERT_TRUE(runtime->shutdown().is_ok());
 }
 
@@ -245,8 +275,10 @@ TEST(RaftTransportTlsServerTest, RejectsPrincipalAndExactHandshakeDeadline) {
   ASSERT_TRUE(denied.has_value());
   common::Status progress = common::Status::ok();
   for (std::size_t iteration = 0U; iteration < 1024U && progress.is_ok(); ++iteration) {
-    if (!client_socket->handshake_complete())
-      (void)client_socket->handshake();
+    if (!client_socket->handshake_complete()) {
+      const auto client_progress = client_socket->handshake();
+      ASSERT_TRUE(client_progress.has_value()) << client_progress.error().to_string();
+    }
     progress = denied->on_ready(true, true, start + std::chrono::milliseconds{1});
   }
   EXPECT_EQ(progress.code(), common::StatusCode::kUnauthenticated);
