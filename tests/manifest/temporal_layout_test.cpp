@@ -24,6 +24,18 @@ TEST(TemporalManifestLayoutTest, PlansExpandedCanonicalDescriptorTables) {
   EXPECT_EQ(layout->total_length % format::kAlignment, 0U);
 }
 
+TEST(TemporalManifestLayoutTest, MapsEachCountToItsCanonicalDescriptorLength) {
+  const auto tablets = plan_manifest_v2_temporal_layout({.tablet_count = 1U});
+  const auto parts = plan_manifest_v2_temporal_layout({.part_count = 1U});
+  const auto retries = plan_manifest_v2_temporal_layout({.retry_count = 1U});
+  ASSERT_TRUE(tablets.has_value());
+  ASSERT_TRUE(parts.has_value());
+  ASSERT_TRUE(retries.has_value());
+  EXPECT_EQ(tablets->total_length, 392U);
+  EXPECT_EQ(parts->total_length, 488U);
+  EXPECT_EQ(retries->total_length, 408U);
+}
+
 TEST(TemporalManifestLayoutTest, RejectsCountsAndCombinedBytesOutsideBounds) {
   const auto count =
       plan_manifest_v2_temporal_layout({.tablet_count = format::kMaximumDescriptorCount + 1U});

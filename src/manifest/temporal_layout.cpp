@@ -9,12 +9,17 @@
 namespace chronos::manifest {
 namespace {
 
-[[nodiscard]] common::Result<std::uint64_t> table_end(const std::uint64_t offset,
-                                                      const std::uint64_t count,
-                                                      const std::uint64_t descriptor_length) {
-  const std::optional<std::uint64_t> length = common::checked_multiply(count, descriptor_length);
+struct DescriptorTableSpan {
+  std::uint64_t offset{};
+  std::uint64_t count{};
+  std::uint64_t descriptor_length{};
+};
+
+[[nodiscard]] common::Result<std::uint64_t> table_end(const DescriptorTableSpan table) {
+  const std::optional<std::uint64_t> length =
+      common::checked_multiply(table.count, table.descriptor_length);
   const std::optional<std::uint64_t> end =
-      length.has_value() ? common::checked_add(offset, *length) : std::nullopt;
+      length.has_value() ? common::checked_add(table.offset, *length) : std::nullopt;
   return end.has_value()
              ? common::Result<std::uint64_t>{*end}
              : common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
@@ -33,17 +38,23 @@ common::Result<ManifestLayout> plan_manifest_v2_temporal_layout(const ManifestLa
   }
   const std::uint64_t tablets_offset = format::kTabletsOffset;
   const common::Result<std::uint64_t> parts_offset =
-      table_end(tablets_offset, input.tablet_count, temporal_format::kTabletDescriptorLength);
+      table_end({.offset = tablets_offset,
+                 .count = input.tablet_count,
+                 .descriptor_length = temporal_format::kTabletDescriptorLength});
   if (!parts_offset.has_value()) {
     return common::make_unexpected(parts_offset.error());
   }
   const common::Result<std::uint64_t> retries_offset =
-      table_end(*parts_offset, input.part_count, temporal_format::kPartDescriptorLength);
+      table_end({.offset = *parts_offset,
+                 .count = input.part_count,
+                 .descriptor_length = temporal_format::kPartDescriptorLength});
   if (!retries_offset.has_value()) {
     return common::make_unexpected(retries_offset.error());
   }
   const common::Result<std::uint64_t> trailer_offset =
-      table_end(*retries_offset, input.retry_count, temporal_format::kRetryDescriptorLength);
+      table_end({.offset = *retries_offset,
+                 .count = input.retry_count,
+                 .descriptor_length = temporal_format::kRetryDescriptorLength});
   if (!trailer_offset.has_value()) {
     return common::make_unexpected(trailer_offset.error());
   }
