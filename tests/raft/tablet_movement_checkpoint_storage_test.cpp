@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <unistd.h>
@@ -53,6 +54,28 @@ config(const std::filesystem::path& directory, const schema::TabletId owner_tabl
   return {.directory_path = directory.string(), .tablet_id = owner_tablet};
 }
 
+template <typename T> [[nodiscard]] const T* value_if_present(const std::optional<T>& value) {
+  if (!value.has_value())
+    return nullptr;
+  return &value.value();
+}
+
+TEST(TabletMovementCheckpointStorageTest, EmptyStorageHasNoLatestGeneration) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  auto storage = TabletMovementCheckpointStorage::create(config(directory.path()));
+  ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+
+  auto legacy = storage->load_latest();
+  ASSERT_TRUE(legacy.has_value()) << legacy.error().to_string();
+  if (legacy.has_value())
+    EXPECT_FALSE(legacy.value().has_value());
+  auto any = storage->load_latest_any();
+  ASSERT_TRUE(any.has_value()) << any.error().to_string();
+  if (any.has_value())
+    EXPECT_FALSE(any.value().has_value());
+}
+
 TEST(TabletMovementCheckpointStorageTest, InstallsSelectsAndReopensExactGenerations) {
   TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
@@ -90,18 +113,20 @@ TEST(TabletMovementCheckpointStorageTest, InstallsSelectsAndReopensExactGenerati
     EXPECT_EQ(installed->file_name, "generation-00000000000000000002.movc");
     auto latest = storage->load_latest();
     ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
-    ASSERT_TRUE(latest->has_value());
-    EXPECT_EQ((*latest)->generation, second);
+    const LoadedTabletMovementCheckpoint* selected = value_if_present(latest.value());
+    ASSERT_NE(selected, nullptr);
+    EXPECT_EQ(selected->generation, second);
   }
 
   auto reopened = TabletMovementCheckpointStorage::open_existing(config(directory.path()));
   ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
   auto latest = reopened->load_latest();
   ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
-  ASSERT_TRUE(latest->has_value());
-  EXPECT_EQ((*latest)->generation.checkpoint_generation, 2U);
-  auto recovered = TabletMovement::recover((*latest)->generation.checkpoint.record,
-                                           (*latest)->generation.checkpoint.received_snapshot);
+  const LoadedTabletMovementCheckpoint* selected = value_if_present(latest.value());
+  ASSERT_NE(selected, nullptr);
+  EXPECT_EQ(selected->generation.checkpoint_generation, 2U);
+  auto recovered = TabletMovement::recover(selected->generation.checkpoint.record,
+                                           selected->generation.checkpoint.received_snapshot);
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   EXPECT_EQ(recovered->record().phase, TabletMovementPhase::kCatchingUp);
 }
@@ -212,9 +237,10 @@ TEST(TabletMovementCheckpointStorageTest, DispatchesMixedEnvelopesAndReopensRefe
         std::holds_alternative<TabletMovementCheckpointGeneration>(loaded_first->generation));
     auto latest = storage->load_latest_any();
     ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
-    ASSERT_TRUE(latest->has_value());
+    const LoadedTabletMovementCheckpointGeneration* selected = value_if_present(latest.value());
+    ASSERT_NE(selected, nullptr);
     EXPECT_TRUE(
-        std::holds_alternative<TabletMovementCheckpointReferenceGeneration>((*latest)->generation));
+        std::holds_alternative<TabletMovementCheckpointReferenceGeneration>(selected->generation));
     auto legacy_latest = storage->load_latest();
     ASSERT_FALSE(legacy_latest.has_value());
     EXPECT_EQ(legacy_latest.error().code(), common::StatusCode::kNotSupported);
@@ -231,9 +257,10 @@ TEST(TabletMovementCheckpointStorageTest, DispatchesMixedEnvelopesAndReopensRefe
     ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
     auto latest = reopened->load_latest_any();
     ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
-    ASSERT_TRUE(latest->has_value());
+    const LoadedTabletMovementCheckpointGeneration* selected = value_if_present(latest.value());
+    ASSERT_NE(selected, nullptr);
     const auto* reference =
-        std::get_if<TabletMovementCheckpointReferenceGeneration>(&(*latest)->generation);
+        std::get_if<TabletMovementCheckpointReferenceGeneration>(&selected->generation);
     ASSERT_NE(reference, nullptr);
     EXPECT_EQ(*reference, second);
     auto repeated = reopened->install_reference(second);

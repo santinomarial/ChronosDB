@@ -159,7 +159,7 @@ public:
                : unavailable("movement checkpoint storage is poisoned: " + poison_.message());
   }
 
-  [[nodiscard]] common::Status cleanup_temporaries() {
+  [[nodiscard]] common::Status cleanup_temporaries() const {
     auto entries = directory_.list_entries();
     if (!entries.has_value())
       return entries.error();
@@ -199,18 +199,18 @@ public:
       if (!checkpoint.has_value())
         return common::make_unexpected(checkpoint.error());
       return validate(TabletMovementCheckpointGenerationValue{std::move(*checkpoint)});
-    } else if (std::ranges::equal(bytes.first(kReferenceGenerationMagic.size()),
-                                  kReferenceGenerationMagic)) {
+    }
+    if (std::ranges::equal(bytes.first(kReferenceGenerationMagic.size()),
+                           kReferenceGenerationMagic)) {
       auto reference = decode_tablet_movement_checkpoint_reference_generation_v1(
           bytes, config_.reference_codec_limits);
       if (!reference.has_value())
         return common::make_unexpected(reference.error());
       return validate(TabletMovementCheckpointGenerationValue{std::move(*reference)});
-    } else {
-      return common::make_unexpected(
-          common::Status{common::StatusCode::kNotSupported,
-                         "installed movement checkpoint envelope is unsupported"});
     }
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotSupported,
+                       "installed movement checkpoint envelope is unsupported"});
   }
 
   [[nodiscard]] common::Result<LoadedTabletMovementCheckpointGeneration>
@@ -321,9 +321,14 @@ public:
     auto latest = latest_generation();
     if (!latest.has_value())
       return common::make_unexpected(latest.error());
-    if (latest->has_value() && **latest == std::numeric_limits<std::uint64_t>::max())
-      return common::make_unexpected(exhausted("movement checkpoint generation is exhausted"));
-    const std::uint64_t next = latest->has_value() ? **latest + 1U : 1U;
+    const std::optional<std::uint64_t>& latest_value = latest.value();
+    std::uint64_t next = 1U;
+    if (latest_value.has_value()) {
+      if (latest_value.value() == std::numeric_limits<std::uint64_t>::max()) {
+        return common::make_unexpected(exhausted("movement checkpoint generation is exhausted"));
+      }
+      next = latest_value.value() + 1U;
+    }
     if (checkpoint_generation != next)
       return common::make_unexpected(invalid("movement checkpoint is not the next generation"));
 
@@ -527,16 +532,18 @@ TabletMovementCheckpointStorage::load_latest() const {
   auto loaded = load_latest_any();
   if (!loaded.has_value())
     return common::make_unexpected(loaded.error());
-  if (!loaded->has_value())
+  std::optional<LoadedTabletMovementCheckpointGeneration>& loaded_value = loaded.value();
+  if (!loaded_value.has_value())
     return std::optional<LoadedTabletMovementCheckpoint>{};
-  auto* checkpoint = std::get_if<TabletMovementCheckpointGeneration>(&(*loaded)->generation);
+  LoadedTabletMovementCheckpointGeneration& latest = loaded_value.value();
+  auto* checkpoint = std::get_if<TabletMovementCheckpointGeneration>(&latest.generation);
   if (checkpoint == nullptr) {
     return common::make_unexpected(
         common::Status{common::StatusCode::kNotSupported,
                        "latest movement checkpoint uses external prefix storage"});
   }
   return std::optional<LoadedTabletMovementCheckpoint>{LoadedTabletMovementCheckpoint{
-      (*loaded)->file_name, std::move(*checkpoint), std::move((*loaded)->bytes)}};
+      latest.file_name, std::move(*checkpoint), std::move(latest.bytes)}};
 }
 
 common::Result<std::optional<LoadedTabletMovementCheckpointGeneration>>
@@ -546,9 +553,10 @@ TabletMovementCheckpointStorage::load_latest_any() const {
   auto latest = impl_->latest_generation();
   if (!latest.has_value())
     return common::make_unexpected(latest.error());
-  if (!latest->has_value())
+  const std::optional<std::uint64_t>& latest_value = latest.value();
+  if (!latest_value.has_value())
     return std::optional<LoadedTabletMovementCheckpointGeneration>{};
-  auto loaded = load_any_generation(**latest);
+  auto loaded = load_any_generation(latest_value.value());
   if (!loaded.has_value())
     return common::make_unexpected(loaded.error());
   return std::optional<LoadedTabletMovementCheckpointGeneration>{std::move(*loaded)};
