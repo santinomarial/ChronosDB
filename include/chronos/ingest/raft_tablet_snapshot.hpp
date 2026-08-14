@@ -15,10 +15,10 @@ namespace chronos::ingest {
 inline constexpr std::size_t kRaftTabletSnapshotHeaderSize = 160U;
 inline constexpr std::size_t kRaftTabletSnapshotEntryHeaderSize = 24U;
 inline constexpr std::size_t kRaftTabletSnapshotTrailerSize = 4U;
-inline constexpr std::size_t kMaximumRaftTabletSnapshotSize = 1024U * 1024U * 1024U;
+inline constexpr std::size_t kMaximumRaftTabletSnapshotSize = std::size_t{1024U} * 1024U * 1024U;
 
 struct RaftTabletSnapshotCodecLimits {
-  std::size_t maximum_snapshot_bytes{256U * 1024U * 1024U};
+  std::size_t maximum_snapshot_bytes{std::size_t{256U} * 1024U * 1024U};
   std::size_t maximum_entries{65'536U};
   std::size_t maximum_entry_payload_bytes{16'777'168U};
   std::size_t maximum_voters{9U};
