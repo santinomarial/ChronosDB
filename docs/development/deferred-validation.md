@@ -347,9 +347,12 @@
   sweep holds failure injection across real mutual-TLS acquisition and the complete
   authority-to-query transfer, requiring sticky `RESOURCE_EXHAUSTED`, zero active authority work,
   no retained execution/result, and exact Manifest-pin rollback at every allocation before the
-  first successful transition. Allocation faults during execution and final publication; real
-  movement-transfer interleavings; post-movement rebinding; broader timeout/retry/packet-level
-  network campaigns; and multi-process qualification remain.
+  first successful transition. A third sweep begins only after that transition and covers first-poll
+  attempt/request-definition/socket/TLS-owner allocation: local resource failure bypasses transport
+  retry, fails atomically with zero active attempts and exact pin rollback, while the first successful
+  start owns one attempt and cancels it cleanly. Allocation faults during the in-flight response and
+  final-publication phases; real movement-transfer interleavings; post-movement rebinding; broader
+  timeout/retry/packet-level network campaigns; and multi-process qualification remain.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

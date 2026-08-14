@@ -36,6 +36,10 @@ namespace {
               std::error_code(error, std::generic_category()).message()};
 }
 
+[[nodiscard]] bool retryable_connect_failure(const common::StatusCode code) noexcept {
+  return code == common::StatusCode::kUnavailable || code == common::StatusCode::kIoError;
+}
+
 [[nodiscard]] bool zero_address(const std::array<std::uint8_t, 4>& address) noexcept {
   return std::ranges::all_of(address, [](const std::uint8_t byte) { return byte == 0U; });
 }
@@ -199,6 +203,8 @@ public:
         if (retry)
           ++execution_metrics.retries_started;
         if (!client.has_value()) {
+          if (!retryable_connect_failure(client.error().code()))
+            return client.error();
           ++execution_metrics.transport_failed_attempts;
           const common::Status recorded =
               execution.record_transport_failure(slot.tablet_id, client.error().code(), now);

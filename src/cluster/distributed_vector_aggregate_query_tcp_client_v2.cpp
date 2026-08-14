@@ -71,8 +71,7 @@ public:
   Impl(network::TcpSocket owned_socket, DistributedVectorAggregateQueryAttemptV2 owned_attempt,
        std::vector<query::VectorAggregateDefinition>&& owned_definitions,
        query::QueryResourceContext owned_resources,
-       const DistributedVectorAggregateQueryTcpClientConfigV2 configured,
-       const TimePoint now) noexcept
+       const DistributedVectorAggregateQueryTcpClientConfigV2 configured, const TimePoint now)
       : socket(std::move(owned_socket)), attempt(std::move(owned_attempt)),
         definitions(std::move(owned_definitions)), resources(std::move(owned_resources)),
         config(configured), connect_deadline(deadline_after(now, config.connect_timeout)) {}

@@ -491,8 +491,14 @@ acquisition transfers through follower binding, route construction, shared query
 senders, coordinator, and aggregate TCP scheduler installation. Every allocation before the first
 successful transition fails the composite atomically with `RESOURCE_EXHAUSTED`, zero active
 authority work, no retained execution/result, and exact pin rollback. It also removed the same
-incorrect `noexcept` pattern from the observation TCP/TLS and aggregate TCP owners. Execution and
-final-publication allocation injection remain to be qualified.
+incorrect `noexcept` pattern from the observation TCP/TLS and aggregate TCP owners. A third
+phase-specific sweep now starts after authority is complete and covers the first execution poll
+through attempt construction, definition copying, socket creation, TCP ownership, and immediate
+TLS-carrier installation. It found that local `RESOURCE_EXHAUSTED` was incorrectly entering transport
+backoff and that the outbound TCP owner's allocating diagnostic status was hidden behind `noexcept`.
+Both are fail-closed now: every injected start failure is sticky with zero active attempts and exact
+pin rollback, while the first successful start owns one attempt that cancellation closes. In-flight
+response and final-publication allocation injection remain to be qualified.
 Moved or multi-process real-CSEG responses, remote worker-interrupt delivery, pooled
 multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node
 fault handling remain work.

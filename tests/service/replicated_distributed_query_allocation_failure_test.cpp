@@ -375,7 +375,7 @@ TEST(ReplicatedDistributedQueryAllocationFailureTest,
 }
 
 TEST(ReplicatedDistributedQueryAllocationFailureTest,
-     ClassifiesEveryFollowerVectorAuthorityTransitionAllocationAndFailsAtomically) {
+     ClassifiesFollowerVectorTransitionAndExecutionStartAllocationsAtomically) {
   TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   ASSERT_TRUE(std::filesystem::create_directory(directory.path() / "raft"));
@@ -596,6 +596,81 @@ TEST(ReplicatedDistributedQueryAllocationFailureTest,
   }
   EXPECT_TRUE(saw_failure);
   EXPECT_TRUE(saw_success);
+
+  bool saw_execution_failure = false;
+  bool saw_execution_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
+    SCOPED_TRACE(testing::Message{} << "execution fail_after=" << fail_after);
+    {
+      auto snapshot = publisher->snapshot();
+      ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+      auto lifecycle = ReplicatedFollowerDistributedVectorAggregateQueryV2::create(
+          make_plan(tablet_id, applied_position), std::move(*snapshot),
+          query::DistributedVectorResultSchema{
+              .columns = {{"average", schema_value.columns()[1].type(), true}}},
+          authority_config, query_config);
+      ASSERT_TRUE(lifecycle.has_value()) << lifecycle.error().to_string();
+      for (std::size_t poll = 0U;
+           poll < 8192U &&
+           lifecycle->state() ==
+               ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kAcquiringAuthority;
+           ++poll) {
+        ASSERT_TRUE(lifecycle->poll_once(std::chrono::milliseconds{1}).is_ok())
+            << lifecycle->failure().to_string();
+      }
+      ASSERT_EQ(lifecycle->state(),
+                ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting)
+          << lifecycle->failure().to_string();
+
+      common::Status progress;
+      {
+        test::ScopedAllocationFailure failure{fail_after};
+        try {
+          progress = lifecycle->poll_once(std::chrono::milliseconds{0});
+        } catch (...) {
+          failure.disable();
+          throw;
+        }
+        failure.disable();
+      }
+      const auto metrics = lifecycle->metrics();
+      EXPECT_EQ(metrics.authority.completed_pairs, 1U);
+      ASSERT_TRUE(metrics.execution.has_value());
+      if (!progress.is_ok()) {
+        saw_execution_failure = true;
+        EXPECT_EQ(progress.code(), common::StatusCode::kResourceExhausted) << progress.to_string();
+        EXPECT_EQ(lifecycle->state(),
+                  ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kFailed);
+        EXPECT_EQ(lifecycle->failure(), progress);
+        // Guarded by the execution-metrics assertion above.
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+        EXPECT_EQ(metrics.execution->active_attempts, 0U);
+        EXPECT_EQ(lifecycle->result().error(), progress);
+        EXPECT_EQ(lifecycle->poll_once(std::chrono::milliseconds{0}), progress);
+      } else {
+        saw_execution_success = true;
+        EXPECT_EQ(lifecycle->state(),
+                  ReplicatedFollowerDistributedVectorAggregateQueryStateV2::kExecuting);
+        // Guarded by the execution-metrics assertion above.
+        // NOLINTBEGIN(bugprone-unchecked-optional-access)
+        EXPECT_EQ(metrics.execution->attempts_started, 1U);
+        EXPECT_EQ(metrics.execution->active_attempts, 1U);
+        // NOLINTEND(bugprone-unchecked-optional-access)
+        EXPECT_EQ(lifecycle->result().error().code(), common::StatusCode::kInvalidArgument);
+        EXPECT_EQ(lifecycle->cancel().code(), common::StatusCode::kCancelled);
+        ASSERT_TRUE(lifecycle->metrics().execution.has_value());
+        // Guarded by the execution-metrics assertion above.
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+        EXPECT_EQ(lifecycle->metrics().execution->active_attempts, 0U);
+      }
+    }
+    EXPECT_EQ(selected_manifest.use_count(), baseline_use_count) << "fail_after=" << fail_after;
+    ASSERT_FALSE(server_failed.load());
+    if (saw_execution_success)
+      break;
+  }
+  EXPECT_TRUE(saw_execution_failure);
+  EXPECT_TRUE(saw_execution_success);
 
   server_thread_guard.stop_and_join();
   EXPECT_FALSE(server_failed.load());

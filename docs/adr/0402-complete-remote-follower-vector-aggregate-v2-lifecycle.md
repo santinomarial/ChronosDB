@@ -121,8 +121,8 @@ provider epoch after definition binding but before real-CSEG execution. The work
 fresh authority acquisition rejects the stale dispatch as `UNAVAILABLE`; with one configured query
 attempt, the composite preserves that correlated failure, releases both transports, and exposes
 neither the first tablet's successful state nor a final result. Multi-process, real
-movement-transfer, post-movement rebinding, execution/final-publication allocation-fault, and
-broader timeout/retry/packet-level network campaigns remain.
+movement-transfer, post-movement rebinding, in-flight response/final-publication allocation-fault,
+and broader timeout/retry/packet-level network campaigns remain.
 
 A dedicated construction-failure executable now injects `std::bad_alloc` at every owned allocation
 from placement-backed batch construction through nested observation acquisition and final composite
@@ -131,8 +131,8 @@ Manifest owner back to its exact baseline reference count, and exposes no lifecy
 successful construction starts exactly one authority pair; cancellation returns that count to zero.
 The sweep found and removed incorrect `noexcept` specifications on four nested implementations whose
 diagnostic `Status` members can allocate, restoring the surrounding status-returning catch boundaries.
-Allocation injection during aggregate execution and final publication remains deferred with the
-broader fault campaign.
+Allocation injection after an aggregate attempt has entered its in-flight TLS exchange remains
+deferred with final publication and the broader fault campaign.
 
 The phase-transition follow-up holds allocation failure armed across live mutual-TLS authority
 acquisition and the complete transfer into follower snapshot binding, route resolution, query
@@ -144,6 +144,15 @@ attempt and cancels cleanly. This sweep removed incorrect `noexcept` specificati
 observation TCP/TLS and aggregate TCP owner constructors, plus the TLS failure publisher, so their
 allocating diagnostic state now reaches the surrounding status boundary instead of terminating the
 process.
+
+The execution-start follow-up acquires authority without injection, then arms failure only for the
+first aggregate execution poll. It sweeps attempt creation, definition transfer, nonblocking socket
+creation, outbound TCP ownership, and immediate TLS-carrier installation. Local allocation failure
+now bypasses transport retry, fails the composite immediately as sticky `RESOURCE_EXHAUSTED`, leaves
+zero active attempts, and releases the Manifest pin at destruction. The successful boundary owns
+exactly one active attempt and cancels it back to zero. This sweep removed an incorrect `noexcept`
+from the outbound aggregate TCP client owner; its allocating diagnostic status can now reach the
+client's existing catch boundary instead of terminating the process.
 
 ## Migration or rollback considerations
 

@@ -215,3 +215,7 @@ The transition sweep extends that classification across real mutual-TLS observat
 follower binding, resource/sender/coordinator creation, route packaging, and aggregate TCP scheduler
 installation. Failure remains whole-query terminal with no retained execution or result; the first
 successful transition has not yet opened a query attempt. These checks also change no wire bytes.
+The next lifecycle-only sweep begins at that execution boundary and classifies every allocation in
+the first attempt-start poll. Local allocation failure is terminal rather than a retryable transport
+outcome, owns no active client, and releases the pinned snapshot when the failed owner is destroyed;
+the first successful poll owns exactly one cancellable attempt. No frame or status encoding changes.
