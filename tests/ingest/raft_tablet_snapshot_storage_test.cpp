@@ -106,7 +106,10 @@ TEST(RaftTabletSnapshotStorageTest, InstallsIdempotentlyAndSelectsHighestAfterRe
     auto latest = storage->load_latest();
     ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
     ASSERT_TRUE(latest->has_value());
-    EXPECT_EQ((*latest)->snapshot.raft_snapshot.last_included_index, 10U);
+    EXPECT_EQ(latest->transform([](const LoadedRaftTabletSnapshot& loaded) {
+      return loaded.snapshot.raft_snapshot.last_included_index;
+    }),
+              raft::LogIndex{10U});
   }
 
   auto reopened = RaftTabletSnapshotStorage::open_existing(config(directory));
@@ -114,7 +117,9 @@ TEST(RaftTabletSnapshotStorageTest, InstallsIdempotentlyAndSelectsHighestAfterRe
   auto latest = reopened->load_latest();
   ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
   ASSERT_TRUE(latest->has_value());
-  EXPECT_EQ((*latest)->snapshot, snapshot(10U));
+  EXPECT_EQ(
+      latest->transform([](const LoadedRaftTabletSnapshot& loaded) { return loaded.snapshot; }),
+      snapshot(10U));
 }
 
 TEST(RaftTabletSnapshotStorageTest, CleansInterruptedTemporaryAndRejectsCorruptInstalledBytes) {
@@ -139,6 +144,9 @@ TEST(RaftTabletSnapshotStorageTest, CleansInterruptedTemporaryAndRejectsCorruptI
     auto reopened = RaftTabletSnapshotStorage::open_existing(config(directory));
     ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
     EXPECT_FALSE(std::filesystem::exists(temporary));
+    const auto installed = reopened->load(9U);
+    ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+    EXPECT_EQ(installed->snapshot, snapshot());
   }
 
   {
