@@ -17,14 +17,15 @@ inline constexpr std::size_t kMultiTabletSubscriptionCheckpointChangeEnvelopeSiz
 inline constexpr std::size_t kMultiTabletSubscriptionCheckpointTrailerSize = 4U;
 inline constexpr std::size_t kBoundMultiTabletSubscriptionCheckpointHeaderSize = 64U;
 inline constexpr std::size_t kBoundMultiTabletSubscriptionCheckpointTrailerSize = 4U;
-inline constexpr std::size_t kMaximumMultiTabletSubscriptionCheckpointSize = 1024U * 1024U * 1024U;
+inline constexpr std::size_t kMaximumMultiTabletSubscriptionCheckpointSize =
+    std::size_t{1024U} * 1024U * 1024U;
 
 struct MultiTabletSubscriptionCheckpointCodecLimits {
-  std::size_t maximum_checkpoint_bytes{128U * 1024U * 1024U};
+  std::size_t maximum_checkpoint_bytes{std::size_t{128U} * 1024U * 1024U};
   std::size_t maximum_sources{kMaximumResumeTokenSources};
   std::size_t maximum_retained_changes{65'536U};
-  std::size_t maximum_result_key_bytes{1024U * 1024U};
-  std::size_t maximum_payload_bytes{16U * 1024U * 1024U};
+  std::size_t maximum_result_key_bytes{std::size_t{1024U} * 1024U};
+  std::size_t maximum_payload_bytes{std::size_t{16U} * 1024U * 1024U};
 };
 
 struct BoundMultiTabletSubscriptionCheckpoint {

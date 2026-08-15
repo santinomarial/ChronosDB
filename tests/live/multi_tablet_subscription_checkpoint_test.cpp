@@ -89,6 +89,28 @@ TEST(MultiTabletSubscriptionCheckpointTest, RejectsCorruptionAndDiscontinuousSta
   EXPECT_FALSE(encode_multi_tablet_subscription_checkpoint_v1(checkpoint).has_value());
 }
 
+TEST(MultiTabletSubscriptionCheckpointTest, HonorsExactEncodedSizeLimit) {
+  MultiTabletSubscriptionCheckpointCodecLimits limits;
+  limits.maximum_checkpoint_bytes = 474U;
+  EXPECT_TRUE(encode_multi_tablet_subscription_checkpoint_v1(fixture(), limits).has_value());
+  limits.maximum_checkpoint_bytes = 473U;
+  const auto rejected = encode_multi_tablet_subscription_checkpoint_v1(fixture(), limits);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kResourceExhausted);
+
+  MultiTabletSubscriptionCheckpoint terminal = fixture();
+  terminal.retained_changes.clear();
+  for (auto& source : terminal.sources)
+    source.expired_through_sequence = source.latest_position.record_sequence;
+  terminal.plan_schema_compatible = false;
+  limits.maximum_checkpoint_bytes = 228U;
+  EXPECT_TRUE(encode_multi_tablet_subscription_checkpoint_v1(terminal, limits).has_value());
+  limits.maximum_checkpoint_bytes = 227U;
+  const auto terminal_rejected = encode_multi_tablet_subscription_checkpoint_v1(terminal, limits);
+  ASSERT_FALSE(terminal_rejected.has_value());
+  EXPECT_EQ(terminal_rejected.error().code(), common::StatusCode::kResourceExhausted);
+}
+
 TEST(MultiTabletSubscriptionCheckpointTest, BindsDurableGenerationAroundNestedState) {
   const BoundMultiTabletSubscriptionCheckpoint checkpoint{3U, fixture()};
   auto encoded = encode_bound_multi_tablet_subscription_checkpoint_v1(checkpoint);

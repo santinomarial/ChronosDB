@@ -51,6 +51,22 @@ constexpr std::array<std::byte, 8U> kBoundMagic{std::byte{'C'}, std::byte{'H'}, 
   return {common::StatusCode::kNotSupported, std::move(message)};
 }
 
+[[nodiscard]] common::Result<std::size_t> add_size(const std::size_t left,
+                                                   const std::size_t right) {
+  const auto result = common::checked_add(left, right);
+  if (!result.has_value())
+    return common::make_unexpected(exhausted("subscription checkpoint size overflows"));
+  return result.value();
+}
+
+[[nodiscard]] common::Result<std::size_t> multiply_size(const std::size_t left,
+                                                        const std::size_t right) {
+  const auto result = common::checked_multiply(left, right);
+  if (!result.has_value())
+    return common::make_unexpected(exhausted("subscription checkpoint size overflows"));
+  return result.value();
+}
+
 [[nodiscard]] bool valid_limits(const MultiTabletSubscriptionCheckpointCodecLimits& limits) {
   return limits.maximum_checkpoint_bytes >= kMultiTabletSubscriptionCheckpointHeaderSize +
                                                 kMultiTabletSubscriptionCheckpointTrailerSize &&
@@ -101,13 +117,20 @@ validate_and_size(const MultiTabletSubscriptionCheckpoint& checkpoint,
       expected.push_back(source.expired_through_sequence);
     }
 
-    auto total = common::checked_add(kMultiTabletSubscriptionCheckpointHeaderSize,
-                                     kMultiTabletSubscriptionCheckpointTrailerSize);
-    const auto source_bytes = common::checked_multiply(
-        checkpoint.sources.size(), kMultiTabletSubscriptionCheckpointSourceSize);
-    if (!total.has_value() || !source_bytes.has_value())
-      return common::make_unexpected(exhausted("subscription checkpoint size overflows"));
-    total = common::checked_add(*total, *source_bytes);
+    auto total = add_size(kMultiTabletSubscriptionCheckpointHeaderSize,
+                          kMultiTabletSubscriptionCheckpointTrailerSize);
+    auto source_bytes =
+        multiply_size(checkpoint.sources.size(), kMultiTabletSubscriptionCheckpointSourceSize);
+    if (!total.has_value())
+      return common::make_unexpected(total.error());
+    if (!source_bytes.has_value())
+      return common::make_unexpected(source_bytes.error());
+    total = add_size(*total, *source_bytes);
+    if (!total.has_value())
+      return common::make_unexpected(total.error());
+    std::size_t total_bytes = *total;
+    if (total_bytes > limits.maximum_checkpoint_bytes)
+      return common::make_unexpected(exhausted("subscription checkpoint exceeds size limit"));
     for (const CommittedChange& change : checkpoint.retained_changes) {
       const auto found = indexes.find(change.position.tablet_id);
       if (found == indexes.end())
@@ -127,15 +150,18 @@ validate_and_size(const MultiTabletSubscriptionCheckpoint& checkpoint,
           (change.operation == LogicalChangeOperation::kDelete && !change.payload.empty()))
         return common::make_unexpected(
             invalid("subscription checkpoint retained change is noncanonical"));
-      auto change_size = common::checked_add(kMultiTabletSubscriptionCheckpointChangeEnvelopeSize,
-                                             change.result_key.size());
-      change_size = change_size.has_value()
-                        ? common::checked_add(*change_size, change.payload.size())
-                        : std::nullopt;
-      total = total.has_value() && change_size.has_value()
-                  ? common::checked_add(*total, *change_size)
-                  : std::nullopt;
-      if (!total.has_value() || *total > limits.maximum_checkpoint_bytes)
+      auto change_size =
+          add_size(kMultiTabletSubscriptionCheckpointChangeEnvelopeSize, change.result_key.size());
+      if (!change_size.has_value())
+        return common::make_unexpected(change_size.error());
+      change_size = add_size(*change_size, change.payload.size());
+      if (!change_size.has_value())
+        return common::make_unexpected(change_size.error());
+      auto next_total = add_size(total_bytes, *change_size);
+      if (!next_total.has_value())
+        return common::make_unexpected(next_total.error());
+      total_bytes = *next_total;
+      if (total_bytes > limits.maximum_checkpoint_bytes)
         return common::make_unexpected(exhausted("subscription checkpoint exceeds size limit"));
       expected[index] = change.position.record_sequence;
     }
@@ -144,7 +170,7 @@ validate_and_size(const MultiTabletSubscriptionCheckpoint& checkpoint,
         return common::make_unexpected(
             invalid("subscription checkpoint omits a retained source suffix"));
     }
-    return *total;
+    return total_bytes;
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(
         exhausted("subscription checkpoint validation allocation failed"));
