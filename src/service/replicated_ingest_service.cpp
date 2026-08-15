@@ -58,8 +58,7 @@ void increment(std::uint64_t& value) noexcept {
 
 class ReplicatedIngestService::Impl {
 public:
-  explicit Impl(ReplicatedIngestServiceConfig configured) noexcept
-      : config(std::move(configured)) {}
+  explicit Impl(ReplicatedIngestServiceConfig configured) noexcept : config(configured) {}
 
   [[nodiscard]] common::Result<ReplicatedIngestServicePoll> publish(network::NetworkTask response) {
     if (pending_response.has_value())
@@ -177,7 +176,11 @@ public:
       return common::make_unexpected(completed.error());
     if (!completed->has_value())
       return ReplicatedIngestServicePoll{};
-    return publish(std::move(**completed));
+    auto& response = *completed;
+    if (!response.has_value())
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInternal, "replicated ingest completion is absent"});
+    return publish(std::move(*response));
   }
 
   ReplicatedIngestServiceConfig config;
@@ -202,7 +205,7 @@ ReplicatedIngestService::create(ReplicatedIngestServiceConfig config) {
       config.requests == config.responses || config.protocol.maximum_payload_size == 0U)
     return common::make_unexpected(invalid("replicated ingest service configuration is invalid"));
   try {
-    return ReplicatedIngestService{std::make_unique<Impl>(std::move(config))};
+    return ReplicatedIngestService{std::make_unique<Impl>(config)};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("replicated ingest service allocation failed"));
   }
@@ -210,24 +213,31 @@ ReplicatedIngestService::create(ReplicatedIngestServiceConfig config) {
 
 common::Result<ReplicatedIngestServicePoll>
 ReplicatedIngestService::poll_once(const std::chrono::steady_clock::time_point now) {
+  if (!impl_)
+    return common::make_unexpected(invalid("replicated ingest service was moved from"));
   return impl_->poll_once(now);
 }
 
 void ReplicatedIngestService::begin_shutdown() noexcept {
-  impl_->accepting = false;
+  if (impl_)
+    impl_->accepting = false;
 }
 
 bool ReplicatedIngestService::drained() const noexcept {
+  if (!impl_)
+    return true;
   return impl_->config.requests->empty() && !impl_->pending_response.has_value() &&
          impl_->pending_sequence.empty() &&
          impl_->config.coordinator->metrics().pending_requests == 0U;
 }
 
 bool ReplicatedIngestService::accepting() const noexcept {
-  return impl_->accepting;
+  return impl_ && impl_->accepting;
 }
 
 ReplicatedIngestServiceMetrics ReplicatedIngestService::metrics() const noexcept {
+  if (!impl_)
+    return {};
   ReplicatedIngestServiceMetrics value = impl_->stats;
   value.accepting = impl_->accepting;
   value.response_retained = impl_->pending_response.has_value() || !impl_->pending_sequence.empty();

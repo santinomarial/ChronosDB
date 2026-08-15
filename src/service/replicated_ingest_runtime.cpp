@@ -80,8 +80,12 @@ ReplicatedIngestRuntime::ReplicatedIngestRuntime(std::unique_ptr<Impl> impl) noe
     : impl_(std::move(impl)) {}
 
 ReplicatedIngestRuntime::~ReplicatedIngestRuntime() {
-  if (impl_ != nullptr)
-    static_cast<void>(shutdown());
+  try {
+    if (impl_ != nullptr)
+      static_cast<void>(shutdown());
+  } catch (...) { // NOLINT(bugprone-empty-catch)
+    // Explicit shutdown reports failures; destruction is necessarily best-effort.
+  }
 }
 
 ReplicatedIngestRuntime::ReplicatedIngestRuntime(ReplicatedIngestRuntime&&) noexcept = default;
@@ -140,10 +144,13 @@ ReplicatedIngestRuntime::start(ReplicatedIngestRuntimeConfig config,
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("replicated ingest runtime allocation failed"));
   }
+  auto& installed_runtime = impl->runtime;
+  if (!installed_runtime.has_value())
+    return common::make_unexpected(invalid("replicated ingest runtime owner is absent"));
   auto coordinator = ReplicatedIngestCoordinator::create(
-      *impl->runtime, *impl->tablets, *impl->metadata, config.coordinator_limits);
+      *installed_runtime, *impl->tablets, *impl->metadata, config.coordinator_limits);
   if (!coordinator.has_value()) {
-    const common::Status stopped = impl->runtime->shutdown();
+    const common::Status stopped = installed_runtime->shutdown();
     return common::make_unexpected(stopped.is_ok() ? coordinator.error() : stopped);
   }
   impl->coordinator.emplace(std::move(*coordinator));
@@ -151,7 +158,10 @@ ReplicatedIngestRuntime::start(ReplicatedIngestRuntimeConfig config,
 }
 
 raft::AsyncDurableMultiRaftRuntime* ReplicatedIngestRuntime::runtime() noexcept {
-  return is_running() ? std::addressof(*impl_->runtime) : nullptr;
+  if (!is_running())
+    return nullptr;
+  auto& runtime = impl_->runtime;
+  return runtime.has_value() ? std::addressof(*runtime) : nullptr;
 }
 
 ingest::AsyncRaftTabletApplication* ReplicatedIngestRuntime::tablet_application() noexcept {
@@ -163,7 +173,10 @@ raft::AsyncRaftMetadataApplication* ReplicatedIngestRuntime::metadata_applicatio
 }
 
 ReplicatedIngestCoordinator* ReplicatedIngestRuntime::coordinator() noexcept {
-  return is_running() ? std::addressof(*impl_->coordinator) : nullptr;
+  if (!is_running())
+    return nullptr;
+  auto& coordinator = impl_->coordinator;
+  return coordinator.has_value() ? std::addressof(*coordinator) : nullptr;
 }
 
 bool ReplicatedIngestRuntime::is_running() const noexcept {
@@ -177,8 +190,13 @@ common::Status ReplicatedIngestRuntime::shutdown() {
   if (impl_->shutdown_complete)
     return impl_->shutdown_status;
   impl_->coordinator.reset();
-  impl_->shutdown_status = impl_->runtime->shutdown();
-  impl_->runtime.reset();
+  auto& runtime = impl_->runtime;
+  if (runtime.has_value()) {
+    impl_->shutdown_status = runtime->shutdown();
+    runtime.reset();
+  } else {
+    impl_->shutdown_status = invalid("replicated ingest runtime owner is absent");
+  }
   impl_->shutdown_complete = true;
   return impl_->shutdown_status;
 }

@@ -155,8 +155,9 @@ void elect_and_publish_route(ReplicatedIngestRuntime& owner) {
     auto response = owner.coordinator()->poll();
     if (!response.has_value())
       return common::make_unexpected(response.error());
-    if (response->has_value())
-      return std::move(**response);
+    auto& available = *response;
+    if (available.has_value())
+      return std::move(*available);
     std::this_thread::yield();
   }
   return common::make_unexpected(
@@ -170,14 +171,19 @@ TEST(ReplicatedIngestRuntimeTest, OwnsCreateShutdownAndExactRecoveryComposition)
     ASSERT_TRUE(configured.has_value());
     auto owner = ReplicatedIngestRuntime::create_new(std::move(*configured));
     ASSERT_TRUE(owner.has_value()) << owner.error().to_string();
-    EXPECT_TRUE(owner->is_running());
-    ASSERT_NE(owner->runtime(), nullptr);
-    ASSERT_NE(owner->tablet_application(), nullptr);
-    ASSERT_NE(owner->metadata_application(), nullptr);
-    ASSERT_NE(owner->coordinator(), nullptr);
-    elect_and_publish_route(*owner);
-    EXPECT_TRUE(owner->coordinator()->admit(request()).is_ok());
-    auto response = await_response(*owner);
+    auto moved_owner = std::move(*owner);
+    EXPECT_FALSE(owner->is_running());
+    EXPECT_EQ(owner->runtime(), nullptr);
+    EXPECT_EQ(owner->coordinator(), nullptr);
+    EXPECT_EQ(owner->shutdown().code(), common::StatusCode::kInvalidArgument);
+    EXPECT_TRUE(moved_owner.is_running());
+    ASSERT_NE(moved_owner.runtime(), nullptr);
+    ASSERT_NE(moved_owner.tablet_application(), nullptr);
+    ASSERT_NE(moved_owner.metadata_application(), nullptr);
+    ASSERT_NE(moved_owner.coordinator(), nullptr);
+    elect_and_publish_route(moved_owner);
+    EXPECT_TRUE(moved_owner.coordinator()->admit(request()).is_ok());
+    auto response = await_response(moved_owner);
     ASSERT_TRUE(response.has_value()) << response.error().to_string();
     ASSERT_EQ(response->frame.header.message_type,
               network::MessageType::kQuorumSyncIngestAcknowledgement);
@@ -186,11 +192,11 @@ TEST(ReplicatedIngestRuntimeTest, OwnsCreateShutdownAndExactRecoveryComposition)
     ASSERT_TRUE(acknowledgement.has_value());
     EXPECT_EQ(acknowledgement->outcome, network::IngestOutcome::kApplied);
     EXPECT_EQ(acknowledgement->log_index, 1U);
-    EXPECT_TRUE(owner->shutdown().is_ok());
-    EXPECT_TRUE(owner->shutdown().is_ok());
-    EXPECT_FALSE(owner->is_running());
-    EXPECT_EQ(owner->runtime(), nullptr);
-    EXPECT_EQ(owner->coordinator(), nullptr);
+    EXPECT_TRUE(moved_owner.shutdown().is_ok());
+    EXPECT_TRUE(moved_owner.shutdown().is_ok());
+    EXPECT_FALSE(moved_owner.is_running());
+    EXPECT_EQ(moved_owner.runtime(), nullptr);
+    EXPECT_EQ(moved_owner.coordinator(), nullptr);
   }
 
   auto configured = config(directory.path());

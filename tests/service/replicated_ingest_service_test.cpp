@@ -178,7 +178,10 @@ TEST(ReplicatedIngestServiceTest, RetainsOneAppliedResponseAcrossQueueBackpressu
   ASSERT_TRUE(released.has_value());
   EXPECT_TRUE(released->response_enqueued);
   auto response = responses.try_pop();
-  ASSERT_TRUE(response.has_value());
+  if (!response.has_value()) {
+    ADD_FAILURE() << "expected the retained ingest response";
+    return;
+  }
   ASSERT_EQ(response->frame.header.message_type,
             network::MessageType::kQuorumSyncIngestAcknowledgement);
   auto acknowledgement =
@@ -189,6 +192,13 @@ TEST(ReplicatedIngestServiceTest, RetainsOneAppliedResponseAcrossQueueBackpressu
   service->begin_shutdown();
   EXPECT_FALSE(service->accepting());
   EXPECT_TRUE(service->drained());
+  auto moved_service = std::move(*service);
+  EXPECT_FALSE(service->accepting());
+  EXPECT_TRUE(service->drained());
+  EXPECT_EQ(service->poll_once().error().code(), common::StatusCode::kInvalidArgument);
+  service->begin_shutdown();
+  EXPECT_FALSE(moved_service.accepting());
+  EXPECT_TRUE(moved_service.drained());
   EXPECT_TRUE(owner.shutdown().is_ok());
 }
 
@@ -217,7 +227,10 @@ TEST(ReplicatedIngestServiceTest, CancelsExactlyAndRejectsNewWorkDuringDrain) {
   ASSERT_TRUE(rejected.has_value());
   EXPECT_TRUE(rejected->response_enqueued);
   auto response = responses.try_pop();
-  ASSERT_TRUE(response.has_value());
+  if (!response.has_value()) {
+    ADD_FAILURE() << "expected the shutdown rejection response";
+    return;
+  }
   ASSERT_EQ(response->frame.header.message_type, network::MessageType::kError);
   auto error = network::decode_error_message(response->frame.payload);
   ASSERT_TRUE(error.has_value());

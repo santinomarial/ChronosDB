@@ -320,8 +320,12 @@ ReplicatedIngestDatabase::ReplicatedIngestDatabase(std::unique_ptr<Impl> impl) n
     : impl_(std::move(impl)) {}
 
 ReplicatedIngestDatabase::~ReplicatedIngestDatabase() {
-  if (impl_ != nullptr)
-    static_cast<void>(shutdown());
+  try {
+    if (impl_ != nullptr)
+      static_cast<void>(shutdown());
+  } catch (...) { // NOLINT(bugprone-empty-catch)
+    // Explicit shutdown reports failures; destruction is necessarily best-effort.
+  }
 }
 
 ReplicatedIngestDatabase::ReplicatedIngestDatabase(ReplicatedIngestDatabase&&) noexcept = default;

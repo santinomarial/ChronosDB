@@ -86,10 +86,9 @@ public:
       : runtime(&configured_runtime), application(&configured_application),
         metadata(&configured_metadata), limits(configured_limits) {}
 
-  [[nodiscard]] common::Result<const schema::TableSchema*>
+  [[nodiscard]] static common::Result<const schema::TableSchema*>
   active_schema(const raft::MetadataCatalogSnapshot& catalog, const schema::TableId& table_id,
-                const schema::SchemaId& schema_id,
-                const schema::SchemaVersion schema_version) const {
+                const schema::SchemaId& schema_id, const schema::SchemaVersion schema_version) {
     const auto active = std::ranges::lower_bound(catalog.active_schemas, table_id, {},
                                                  &raft::ActiveSchemaMetadata::table_id);
     if (active == catalog.active_schemas.end() || active->table_id != table_id)
@@ -275,6 +274,7 @@ public:
             continue;
           }
           auto result = route->observation.wait();
+          raft::Term observed_term{};
           if (!result.has_value())
             failure = result.error();
           else if (result->size() != 1U)
@@ -288,8 +288,12 @@ public:
               failure = observed.status;
             else if (!observed.observation.has_value())
               failure = corruption("replicated ingest route observation is missing");
-            else
-              failure = validate_route(*route, *observed.observation, redirect);
+            else {
+              const auto& observation = observed.observation;
+              failure = validate_route(*route, *observation, redirect);
+              if (failure.is_ok())
+                observed_term = observation->current_term;
+            }
           }
           if (failure.is_ok() && redirect.has_value() &&
               (item.protocol.feature_bits & network::kProtocolV2LeaderRedirectFeature) == 0U) {
@@ -298,8 +302,8 @@ public:
           }
           if (failure.is_ok() && !redirect.has_value()) {
             auto operation = ReplicatedIngestOperation::submit(
-                route->group_id, result->front().observation->current_term,
-                std::move(route->command), *runtime, *application, limits.columnar_append);
+                route->group_id, observed_term, std::move(route->command), *runtime, *application,
+                limits.columnar_append);
             if (!operation.has_value())
               failure = operation.error();
             else {
@@ -312,11 +316,14 @@ public:
           auto result = std::get<ReplicatedIngestOperation>(item.work).poll();
           if (!result.has_value())
             failure = result.error();
-          else if (result->has_value())
-            completed = std::move(**result);
           else {
-            ++cursor;
-            continue;
+            const auto& operation_result = *result;
+            if (operation_result.has_value())
+              completed = *operation_result;
+            else {
+              ++cursor;
+              continue;
+            }
           }
         }
       }

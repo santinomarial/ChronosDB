@@ -32,7 +32,7 @@ namespace {
 
 class ReplicatedIngestOperation::Impl {
 public:
-  enum class Phase { kProposal, kReceipt, kComplete };
+  enum class Phase : std::uint8_t { kProposal, kReceipt, kComplete };
 
   Impl(raft::GroupId group, const raft::Term term, ingest::RetryIdentity retry,
        ingest::ColumnarAppendMutationIdentity mutation,
@@ -84,6 +84,8 @@ public:
       receipt.emplace(std::move(*waiting));
       phase = Phase::kReceipt;
     }
+    if (!receipt.has_value())
+      return common::make_unexpected(corruption("replicated ingest receipt owner is absent"));
     if (!receipt->is_ready())
       return std::optional<ReplicatedIngestResult>{};
     auto proved = receipt->wait();
