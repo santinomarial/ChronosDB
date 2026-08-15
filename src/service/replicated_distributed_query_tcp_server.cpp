@@ -51,12 +51,12 @@ ReplicatedDistributedQueryTcpServer::start(ReplicatedDistributedQueryTcpServerCo
          .leader_hint_provider = config.leader_hint_provider});
     if (!receiver.has_value())
       return common::make_unexpected(receiver.error());
-    implementation->receiver.emplace(std::move(*receiver));
+    auto& installed_receiver = implementation->receiver.emplace(*receiver);
     auto server = cluster::DistributedQueryTcpServer::start(
         {.listener = config.listener,
          .tls = std::move(config.tls),
          .authenticator = config.authenticator,
-         .receiver = std::addressof(*implementation->receiver),
+         .receiver = std::addressof(installed_receiver),
          .carrier_limits = config.carrier_limits,
          .maximum_connections = config.maximum_connections,
          .maximum_accepts_per_poll = config.maximum_accepts_per_poll});
@@ -73,25 +73,39 @@ ReplicatedDistributedQueryTcpServer::start(ReplicatedDistributedQueryTcpServerCo
 
 common::Status
 ReplicatedDistributedQueryTcpServer::poll_once(const std::chrono::milliseconds maximum_wait) {
-  return implementation_ ? implementation_->server->poll_once(maximum_wait) : empty_server();
+  if (!implementation_)
+    return empty_server();
+  auto& server = implementation_->server;
+  return server.has_value() ? server->poll_once(maximum_wait) : empty_server();
 }
 
 common::Status ReplicatedDistributedQueryTcpServer::shutdown() {
-  return implementation_ ? implementation_->server->shutdown() : empty_server();
+  if (!implementation_)
+    return empty_server();
+  auto& server = implementation_->server;
+  return server.has_value() ? server->shutdown() : empty_server();
 }
 
 network::Ipv4Endpoint ReplicatedDistributedQueryTcpServer::bound_endpoint() const noexcept {
-  return implementation_ ? implementation_->server->bound_endpoint() : network::Ipv4Endpoint{};
+  if (!implementation_)
+    return {};
+  const auto& server = implementation_->server;
+  return server.has_value() ? server->bound_endpoint() : network::Ipv4Endpoint{};
 }
 
 cluster::DistributedQueryTcpServerMetrics
 ReplicatedDistributedQueryTcpServer::metrics() const noexcept {
-  return implementation_ ? implementation_->server->metrics()
-                         : cluster::DistributedQueryTcpServerMetrics{};
+  if (!implementation_)
+    return {};
+  const auto& server = implementation_->server;
+  return server.has_value() ? server->metrics() : cluster::DistributedQueryTcpServerMetrics{};
 }
 
 bool ReplicatedDistributedQueryTcpServer::is_running() const noexcept {
-  return implementation_ && implementation_->server->is_running();
+  if (!implementation_)
+    return false;
+  const auto& server = implementation_->server;
+  return server.has_value() && server->is_running();
 }
 
 } // namespace chronos::service

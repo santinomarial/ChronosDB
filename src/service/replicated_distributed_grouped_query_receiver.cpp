@@ -46,7 +46,7 @@ ReplicatedDistributedGroupedQueryReceiver::create(
          .maximum_response_frames = config.maximum_response_frames});
     if (!receiver.has_value())
       return common::make_unexpected(receiver.error());
-    implementation->receiver.emplace(std::move(*receiver));
+    implementation->receiver.emplace(*receiver);
     return ReplicatedDistributedGroupedQueryReceiver{std::move(implementation)};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(
@@ -63,7 +63,12 @@ ReplicatedDistributedGroupedQueryReceiver::receive(
     return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
                                                   "replicated grouped query receiver is empty"});
   }
-  return implementation_->receiver->receive(request_bytes, authenticated_peer);
+  auto& receiver = implementation_->receiver;
+  if (!receiver.has_value()) {
+    return common::make_unexpected(common::Status{common::StatusCode::kInternal,
+                                                  "replicated grouped query receiver is absent"});
+  }
+  return receiver->receive(request_bytes, authenticated_peer);
 }
 
 } // namespace chronos::service

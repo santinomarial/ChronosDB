@@ -742,8 +742,13 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
   const auto grouped_request = cluster::encode_distributed_grouped_query_request_v1(
       {.source_node_id = 1U, .target_node_id = 11U, .dispatch = grouped_dispatch});
   ASSERT_TRUE(grouped_request.has_value()) << grouped_request.error().to_string();
-  const auto grouped_frames =
+  auto moved_grouped_receiver = std::move(*grouped_receiver);
+  auto empty_grouped_frames =
       grouped_receiver->receive(*grouped_request, {.authorized = true, .principal_id = 91U});
+  ASSERT_FALSE(empty_grouped_frames.has_value());
+  EXPECT_EQ(empty_grouped_frames.error().code(), common::StatusCode::kInvalidArgument);
+  const auto grouped_frames =
+      moved_grouped_receiver.receive(*grouped_request, {.authorized = true, .principal_id = 91U});
   ASSERT_TRUE(grouped_frames.has_value()) << grouped_frames.error().to_string();
   ASSERT_EQ(grouped_frames->size(), 1U);
   const auto grouped_response =
@@ -776,11 +781,17 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
        .maximum_connections = 4U,
        .maximum_accepts_per_poll = 4U});
   ASSERT_TRUE(grouped_server.has_value()) << grouped_server.error().to_string();
+  auto moved_grouped_server = std::move(*grouped_server);
+  EXPECT_FALSE(grouped_server->is_running());
+  EXPECT_EQ(grouped_server->poll_once(std::chrono::milliseconds{0}).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(grouped_server->shutdown().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(moved_grouped_server.is_running());
   auto grouped_tls_context = network::TlsClientContext::create(tls_client_config());
   ASSERT_TRUE(grouped_tls_context.has_value()) << grouped_tls_context.error().to_string();
   auto grouped_client = cluster::DistributedGroupedQueryTcpClient::begin(
       {1U, 11U, *grouped_request},
-      {.remote_endpoint = grouped_server->bound_endpoint(),
+      {.remote_endpoint = moved_grouped_server.bound_endpoint(),
        .tls_context = std::addressof(*grouped_tls_context),
        .carrier = {.authenticator = &grouped_tcp_server_authenticator,
                    .node_authorizer = &grouped_authorizer,
@@ -806,7 +817,7 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
                                cluster::DistributedGroupedQueryTcpClient::TimePoint::clock::now())
                     .is_ok())
         << grouped_client->failure().to_string();
-    ASSERT_TRUE(grouped_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(moved_grouped_server.poll_once(std::chrono::milliseconds{1}).is_ok());
   }
   ASSERT_EQ(grouped_client->state(), cluster::DistributedGroupedQueryTcpClientState::kComplete)
       << grouped_client->failure().to_string();
@@ -826,8 +837,8 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
   EXPECT_EQ(provider.grouped_calls, 3U);
   EXPECT_TRUE(grouped_tcp_client_authenticator.saw_fingerprint);
   EXPECT_TRUE(grouped_tcp_server_authenticator.saw_fingerprint);
-  EXPECT_EQ(grouped_server->metrics().completed_connections, 1U);
-  EXPECT_TRUE(grouped_server->shutdown().is_ok());
+  EXPECT_EQ(moved_grouped_server.metrics().completed_connections, 1U);
+  EXPECT_TRUE(moved_grouped_server.shutdown().is_ok());
 
   auto movement = raft::TabletMovement::begin(tablet_id, 12U, 11U, 13U, {11U, 12U});
   ASSERT_TRUE(movement.has_value()) << movement.error().to_string();
@@ -980,6 +991,12 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
        .maximum_connections = 4U,
        .maximum_accepts_per_poll = 4U});
   ASSERT_TRUE(server.has_value()) << server.error().to_string();
+  auto moved_server = std::move(*server);
+  EXPECT_FALSE(server->is_running());
+  EXPECT_EQ(server->poll_once(std::chrono::milliseconds{0}).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(server->shutdown().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(moved_server.is_running());
   auto tls_context = network::TlsClientContext::create(tls_client_config());
   ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
   auto sender = cluster::DistributedQuerySender::create(1U, dispatch);
@@ -989,7 +1006,7 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
   ASSERT_TRUE(attempt.has_value()) << attempt.error().to_string();
   auto client = cluster::DistributedQueryTcpClient::begin(
       std::move(*attempt),
-      {.remote_endpoint = server->bound_endpoint(),
+      {.remote_endpoint = moved_server.bound_endpoint(),
        .tls_context = std::addressof(*tls_context),
        .carrier = {.authenticator = &server_authenticator,
                    .node_authorizer = &node_authorizer,
@@ -1013,7 +1030,7 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
                                cluster::DistributedQuerySender::TimePoint::clock::now())
                     .is_ok())
         << client->failure().to_string();
-    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(moved_server.poll_once(std::chrono::milliseconds{1}).is_ok());
   }
   ASSERT_EQ(client->state(), cluster::DistributedQueryTcpClientState::kComplete)
       << client->failure().to_string();
@@ -1036,8 +1053,8 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
   EXPECT_EQ(provider.calls, 2U);
   EXPECT_TRUE(client_authenticator.saw_fingerprint);
   EXPECT_TRUE(server_authenticator.saw_fingerprint);
-  EXPECT_EQ(server->metrics().completed_connections, 1U);
-  EXPECT_TRUE(server->shutdown().is_ok());
+  EXPECT_EQ(moved_server.metrics().completed_connections, 1U);
+  EXPECT_TRUE(moved_server.shutdown().is_ok());
 
   const raft::GroupId metadata_group = uuid(30U);
   ASSERT_TRUE(std::filesystem::create_directory(directory.path() / "metadata-raft"));
