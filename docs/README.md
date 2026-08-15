@@ -1,6 +1,9 @@
 # ChronosDB Documentation
 
-ChronosDB is pre-alpha and in its architecture phase. These documents define intended contracts and implementation constraints; they do not imply that the described engine exists.
+ChronosDB is pre-alpha and in its architecture phase. The repository contains implemented and
+tested subsystem slices, but later roadmap phases and production qualification remain incomplete.
+Use each document's explicit implementation status and the evidence-based roadmap gates; the
+existence of a design document alone is not implementation evidence.
 
 ## Product
 
@@ -52,11 +55,13 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [CSEG v2](formats/cseg-v2.md): accepted temporal-history system registry for WAL/Raft source,
   logical identity, correction/tombstone semantics, receive/system time, and checked canonical
   layout; strict metadata/full-part codecs, bounded complete semantic validation, and schema-aware
-  projected granule reading are implemented together with bounded single-lineage current/as-of
-  winner resolution, while Manifest v2 and multi-part/vector integration remain in progress.
+  projected granule reading are implemented together with bounded current/as-of winner resolution
+  and Manifest v2 validation, installation, and publication paths. Raft/mixed-source recovery, v1
+  migration, direct vector winner resolution, and authorized compaction/retention remain incomplete.
 - [Manifest v1](formats/manifest-v1.md): accepted immutable database-wide generation bytes,
   installed-name grammar, tablet/part/retry recovery state, and checkpoint-aware WAL suffix contract;
-  implementation is pending.
+  its strict codec, storage, transition validation, flush/checkpoint, publication, startup recovery,
+  append-only compaction, and proven reclamation paths are implemented.
 - [Manifest v2](formats/manifest-v2.md): accepted source-neutral WAL/Raft tablet boundaries, exact
   CSEG format/source/content binding, generalized retries, optional global WAL reclamation, and
   checked canonical layout with a strict checksummed codec; transition validation, exact CSEG

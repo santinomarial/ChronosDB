@@ -1,14 +1,12 @@
 # Building ChronosDB
 
-ChronosDB currently implements the Phase 1 foundations; WAL v1 codec, segmented writer, recovery,
-operator and benchmark tools; logical schemas and columnar ingestion; bounded mutable heads; CSEG
-v1; Manifest installation, flush/checkpoint, publication and recovery; append-only compaction,
-pruning and reclamation; the Phase 8 pure in-memory SQL scalar oracle; and the first Phase 9 bounded
-vector-chunk, query-resource-control, and Boolean-filter pipeline foundations. Persistent
-catalog/service activation, vectorized plan execution and scheduling, networking, replication, and
-later roadmap phases remain unimplemented. The reference production platform is Linux x86-64;
-implemented portable and POSIX targets also support modern macOS, including Apple silicon. macOS
-correctness support is not a power-loss durability claim.
+ChronosDB remains pre-alpha, but the repository now builds implemented storage, vector-query,
+network, live-query, Raft, distributed-query, tiering, runtime, and service slices plus operator and
+benchmark tools. Phase 9 and Phase 10 have accepted exit evidence; Phase 11 onward retain explicit
+feature and qualification gaps in the [roadmap](../roadmap.md) and
+[feature-completion review](../reviews/feature-completion-pass.md). The reference production
+platform is Linux x86-64; implemented portable and POSIX targets also support modern macOS,
+including Apple silicon. macOS correctness support is not a power-loss durability claim.
 
 ## Prerequisites
 
@@ -59,8 +57,8 @@ Homebrew's versioned LLVM tools may not be on `PATH`. `scripts/format.sh` search
 `CLANG_TIDY=$(brew --prefix llvm@18)/bin/clang-tidy` when the versioned executable is not on `PATH`.
 AppleClang builds the implemented portable targets plus the macOS POSIX I/O backend. The backend uses
 `fsync` where Linux uses `fdatasync`; this does not advertise a macOS power-loss envelope. Future
-server, direct-I/O, and reactor components may require Linux and will be guarded by explicit platform
-checks rather than weakened portable interfaces.
+direct-I/O work and Linux-only reactor capabilities such as epoll/io_uring execution remain guarded
+by explicit platform checks rather than weakened portable interfaces.
 
 Arrow IPC and Parquet file import/export are built explicitly and keep third-party types out of
 public headers:
@@ -108,12 +106,15 @@ build/dev/chronosctl version --json
 build/dev/chronosd --help
 ```
 
-`chronosd` packages the Linux loopback native-protocol lifecycle. With no data directory its startup
-banner says `data_plane=unconfigured` and data-plane requests fail explicitly. Supplying
-`--data-dir PATH` opens or creates a recoverable single-node database and reports
+`chronosd` packages the Linux-authoritative loopback native-protocol lifecycle. With no data
+directory its startup banner says `data_plane=unconfigured` and data-plane requests fail explicitly.
+Supplying `--data-dir PATH` opens or creates a recoverable single-node database and reports
 `data_plane=configured`; native CREATE TABLE, single-local-tablet SQL INSERT VALUES, canonical
-ingest, and the supported vector SELECT subset are dispatched. Subscriptions remain explicitly
-unavailable.
+ingest, and the supported vector SELECT subset are dispatched. Paired `--subscription-sql` and
+`--subscription-key-file` options serve one durable row-preserving plan. An already provisioned
+replicated root can instead use `--replicated-groups`; multi-voter operation also requires the
+complete authenticated peer/TLS bundle. See the exact supported modes and fail-closed gaps in the
+[native server operations baseline](../operations/native-server.md).
 
 The read-only WAL inspector acquires the existing writer lock, verifies the complete physical log,
 preflights every record, and then prints record metadata in deterministic order without dumping
@@ -140,10 +141,11 @@ durable value, `1` for corruption, resource-limit, or I/O failure, and `2` for i
 use. Catalog schema binding requires the separate schema-aware library API.
 
 Install to a staging prefix with `cmake --install build/release --prefix <directory>`. This installs
-the operator and benchmark tools, all public headers, the implemented common, schema, columnar,
-CSEG, POSIX I/O, WAL, head, ingest, Manifest, and query libraries, and a CMake package exporting their
-`chronos::` targets. The test suite builds and runs an external project against every installed
-public target, including the SQL query surface.
+the operator and benchmark tools, all public headers, the common, schema, columnar, CSEG, POSIX I/O,
+WAL, head, ingest, Manifest, query, network, runtime, live, Raft, cluster, tiering, and service
+libraries, and a CMake package exporting their `chronos::` targets. Optional Arrow interoperability
+is installed when enabled. The test suite builds and runs an external project against every
+installed public target.
 
 ## Sanitizers
 
