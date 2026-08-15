@@ -552,7 +552,7 @@ try_finish_remote_tablet_reconfiguration_admission(
   auto response =
       encode_remote_tablet_reconfiguration_response_v1(RemoteTabletReconfigurationResponse{
           admission.target_node_id, admission.source_node_id, admission.required_leader_term,
-          admission.action_id, response_code, admission.already_prepared, std::move(leader_hint)});
+          admission.action_id, response_code, admission.already_prepared, leader_hint});
   if (!response.has_value())
     return common::make_unexpected(std::move(response).error());
   return std::optional<std::vector<std::byte>>{std::move(*response)};

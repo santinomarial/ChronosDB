@@ -76,8 +76,9 @@ public:
     auto response = try_finish_remote_tablet_reconfiguration_admission(admission, leader_hint);
     if (!response.has_value())
       return common::make_unexpected(std::move(response).error());
-    if (response->has_value())
-      return std::move(**response);
+    std::optional<std::vector<std::byte>>& ready_response = response.value();
+    if (ready_response.has_value())
+      return std::move(ready_response.value());
     std::this_thread::yield();
   }
   return common::make_unexpected(
@@ -213,8 +214,10 @@ TEST(RemoteTabletReconfigurationReceiverTest,
   ASSERT_TRUE(observation.has_value());
   auto observed = observation->wait();
   ASSERT_TRUE(observed.has_value());
-  ASSERT_TRUE(observed->front().observation.has_value());
-  EXPECT_EQ(observed->front().observation->last_log_index, 1U);
+  const auto& group_observation = observed->front().observation;
+  if (!group_observation.has_value())
+    FAIL() << "Raft observation did not contain group state";
+  EXPECT_EQ(group_observation.value().last_log_index, 1U);
 
   auto duplicate = receiver->try_receive(
       *encoded, network::PeerAuthenticationResult{.authorized = true, .principal_id = 700U});
@@ -240,14 +243,17 @@ TEST(RemoteTabletReconfigurationReceiverTest,
   auto stale_response = decode_remote_tablet_reconfiguration_response_v1(*stale_response_bytes);
   ASSERT_TRUE(stale_response.has_value());
   EXPECT_EQ(stale_response->status_code, common::StatusCode::kUnavailable);
-  EXPECT_EQ(stale_response->leader_hint, leader_hint);
+  EXPECT_EQ(stale_response->leader_hint,
+            std::optional<RemoteTabletReconfigurationLeaderHint>{leader_hint});
 
   auto final_observation = runtime->try_observe_group(tablet_group);
   ASSERT_TRUE(final_observation.has_value());
   auto final_observed = final_observation->wait();
   ASSERT_TRUE(final_observed.has_value());
-  ASSERT_TRUE(final_observed->front().observation.has_value());
-  EXPECT_EQ(final_observed->front().observation->last_log_index, 1U);
+  const auto& final_group_observation = final_observed->front().observation;
+  if (!final_group_observation.has_value())
+    FAIL() << "final Raft observation did not contain group state";
+  EXPECT_EQ(final_group_observation.value().last_log_index, 1U);
   EXPECT_TRUE(runtime->shutdown().is_ok());
 }
 
