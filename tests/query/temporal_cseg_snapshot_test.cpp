@@ -146,11 +146,13 @@ struct Fixture {
       append_le(event_times, value);
     }
     for (std::uint32_t row = 0U; row < 4U; ++row) {
+      const auto commit_position = static_cast<std::uint64_t>(row) + 1U;
+      const auto time_offset = static_cast<std::int64_t>(row) * 10;
       source_ids.insert(source_ids.end(), source_id.bytes().begin(), source_id.bytes().end());
-      append_le(positions, static_cast<std::uint64_t>(row + 1U));
+      append_le(positions, commit_position);
       append_le(ordinals, std::uint32_t{0U});
-      append_le(receive_times, static_cast<std::int64_t>(90 + row * 10U));
-      append_le(commit_times, static_cast<std::int64_t>(100 + row * 10U));
+      append_le(receive_times, std::int64_t{90} + time_offset);
+      append_le(commit_times, std::int64_t{100} + time_offset);
       append_le(identity_offsets, row);
     }
     append_le(identity_offsets, std::uint32_t{4U});
