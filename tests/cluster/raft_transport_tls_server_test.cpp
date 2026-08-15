@@ -217,6 +217,9 @@ TEST(RaftTransportTlsServerTest, AuthenticatesFragmentsAndServesPersistentFrames
   ASSERT_NE(first_observation, nullptr);
   EXPECT_EQ(first_observation->group_id, group());
   EXPECT_EQ(first_observation->current_term, 1U);
+  EXPECT_FALSE(server->completed_submission_sequence().has_value());
+  EXPECT_EQ(server->take_completed(now + std::chrono::milliseconds{3}).error().code(),
+            common::StatusCode::kUnavailable);
   EXPECT_EQ(server->state(), RaftTransportTlsServerState::kReadingFrame);
   EXPECT_EQ(server->next_deadline(), std::optional{now + std::chrono::milliseconds{103}});
 
@@ -239,6 +242,7 @@ TEST(RaftTransportTlsServerTest, AuthenticatesFragmentsAndServesPersistentFrames
       second_observation_value.has_value() ? &second_observation_value.value() : nullptr;
   ASSERT_NE(second_observation, nullptr);
   EXPECT_EQ(second_observation->current_term, 2U);
+  EXPECT_FALSE(server->completed_submission_sequence().has_value());
   ASSERT_TRUE(runtime->shutdown().is_ok());
 }
 

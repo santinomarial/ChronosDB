@@ -11,7 +11,7 @@
 namespace chronos::cluster {
 namespace {
 
-inline constexpr std::size_t kReadScratchBytes = 16U * 1024U;
+inline constexpr std::size_t kReadScratchBytes = std::size_t{16U} * 1024U;
 
 [[nodiscard]] common::Status invalid(const char* message) {
   return {common::StatusCode::kInvalidArgument, message};
@@ -58,7 +58,7 @@ public:
       : socket_(std::move(socket)), config_(config), reader_(std::move(reader)),
         deadline_(deadline_after(now, config.limits.handshake_timeout)) {}
 
-  [[nodiscard]] common::Status fail(common::Status status) noexcept {
+  [[nodiscard]] common::Status fail(common::Status status) {
     if (state_ != RaftTransportTlsServerState::kFailed) {
       failure_ = std::move(status);
       state_ = RaftTransportTlsServerState::kFailed;
@@ -111,10 +111,9 @@ public:
 
   [[nodiscard]] std::size_t next_read_limit() const noexcept {
     const std::size_t buffered = reader_.buffered_bytes();
-    const std::size_t remaining = reader_.expected_frame_bytes().has_value()
-                                      ? *reader_.expected_frame_bytes() - buffered
-                                      : raft::kRaftTransportHeaderSize - buffered;
-    return std::min(remaining, read_scratch_.size());
+    const std::size_t expected =
+        reader_.expected_frame_bytes().value_or(raft::kRaftTransportHeaderSize);
+    return buffered < expected ? std::min(expected - buffered, read_scratch_.size()) : 0U;
   }
 
   [[nodiscard]] common::Status advance_read(const bool readable, const bool writable) {
@@ -144,12 +143,15 @@ public:
       return fail(step.error());
     if (step->consumed_bytes != progress->bytes_transferred)
       return fail(corruption("Raft TLS input crossed its exact frame boundary"));
-    if (!step->envelope.has_value()) {
+    std::optional<raft::RaftTransportEnvelope>& envelope = step->envelope;
+    if (!envelope.has_value()) {
       interest_ = {.want_read = true};
       return common::Status::ok();
     }
-    auto admission =
-        config_.receiver->try_receive_decoded(std::move(*step->envelope), *authenticated_peer_);
+    if (!authenticated_peer_.has_value())
+      return fail(corruption("Raft TLS input lost its authenticated peer"));
+    auto admission = config_.receiver->try_receive_decoded(std::move(envelope.value()),
+                                                           authenticated_peer_.value());
     if (!admission.has_value())
       return fail(admission.error());
     admission_.emplace(std::move(*admission));
@@ -159,24 +161,29 @@ public:
   }
 
   [[nodiscard]] common::Status advance_completion() {
-    if (!admission_->completion.is_ready())
+    if (!admission_.has_value())
+      return fail(corruption("Raft TLS input lost its durable admission"));
+    RaftTransportAdmission& admission = admission_.value();
+    if (!admission.completion.is_ready())
       return common::Status::ok();
-    auto result = admission_->completion.wait();
+    auto result = admission.completion.wait();
     if (!result.has_value())
       return fail(result.error());
     if (result->size() != 2U)
       return fail(corruption("Raft TLS receive completion has an invalid result count"));
     raft::DurableRaftResult& received = (*result)[0];
     raft::DurableRaftResult& observed = (*result)[1];
+    std::optional<raft::RaftGroupObservation>& observation = observed.observation;
+    const raft::RaftGroupObservation* group_observation =
+        observation.has_value() ? &observation.value() : nullptr;
     if (observed.transition.has_value() ||
-        (observed.status.is_ok() != observed.observation.has_value()) ||
-        (observed.observation.has_value() &&
-         observed.observation->group_id != admission_->group_id) ||
+        (observed.status.is_ok() != (group_observation != nullptr)) ||
+        (group_observation != nullptr && group_observation->group_id != admission.group_id) ||
         (!observed.status.is_ok() && received.status.is_ok()))
       return fail(corruption("Raft TLS receive completion has an invalid group observation"));
-    completed_.emplace(RaftTransportCompletedReceive{
-        admission_->completion.submission_sequence(), admission_->group_id,
-        admission_->source_node_id, std::move(received), std::move(observed.observation)});
+    completed_.emplace(RaftTransportCompletedReceive{admission.completion.submission_sequence(),
+                                                     admission.group_id, admission.source_node_id,
+                                                     std::move(received), std::move(observation)});
     admission_.reset();
     state_ = RaftTransportTlsServerState::kResultReady;
     return common::Status::ok();
@@ -186,7 +193,7 @@ public:
   RaftTransportTlsServerConfig config_;
   raft::RaftTransportFrameReader reader_;
   std::array<std::byte, kReadScratchBytes> read_scratch_{};
-  TimePoint deadline_{};
+  TimePoint deadline_;
   RaftTransportTlsServerState state_{RaftTransportTlsServerState::kHandshaking};
   RaftTransportTlsServerInterest interest_{.want_read = true};
   std::optional<network::PeerAuthenticationResult> authenticated_peer_;
@@ -275,9 +282,9 @@ RaftTransportTlsServer::next_deadline() const noexcept {
 
 std::optional<std::uint64_t>
 RaftTransportTlsServer::completed_submission_sequence() const noexcept {
-  return implementation_ && implementation_->completed_.has_value()
-             ? std::optional<std::uint64_t>{implementation_->completed_->submission_sequence}
-             : std::nullopt;
+  if (!implementation_ || !implementation_->completed_.has_value())
+    return std::nullopt;
+  return implementation_->completed_.operator*().submission_sequence;
 }
 
 const common::Status& RaftTransportTlsServer::failure() const noexcept {
