@@ -75,8 +75,9 @@ public:
   [[nodiscard]] common::Status erase(std::uint64_t row_identity);
   [[nodiscard]] AggregateSnapshot snapshot() const;
   [[nodiscard]] common::Result<IncrementalAggregateCheckpoint> checkpoint() const;
+  // Borrows the canonical checkpoint while rebuilding independently owned indexes and row state.
   [[nodiscard]] static common::Result<IncrementalAggregateSet>
-  restore(IncrementalAggregateCheckpoint checkpoint);
+  restore(const IncrementalAggregateCheckpoint& checkpoint);
   [[nodiscard]] std::size_t retained_rows() const noexcept;
 
 private:

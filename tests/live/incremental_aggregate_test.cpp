@@ -2,7 +2,6 @@
 
 #include <gtest/gtest.h>
 #include <limits>
-#include <utility>
 
 namespace chronos::live {
 namespace {
@@ -44,8 +43,10 @@ TEST(IncrementalAggregateTest, MaintainsCountSumExtremaVwapOhlcAndWelfordState) 
 
   auto checkpoint = state.checkpoint();
   ASSERT_TRUE(checkpoint.has_value()) << checkpoint.error().to_string();
-  auto restored = IncrementalAggregateSet::restore(std::move(*checkpoint));
+  const IncrementalAggregateCheckpoint original_checkpoint = *checkpoint;
+  auto restored = IncrementalAggregateSet::restore(*checkpoint);
   ASSERT_TRUE(restored.has_value()) << restored.error().to_string();
+  EXPECT_EQ(*checkpoint, original_checkpoint);
   EXPECT_EQ(restored->snapshot(), state.snapshot());
   ASSERT_TRUE(restored->upsert(AggregateInput{3U, 300, 30U, 40.0, 1.0}).is_ok());
   ASSERT_TRUE(state.upsert(AggregateInput{3U, 300, 30U, 40.0, 1.0}).is_ok());
@@ -73,7 +74,7 @@ TEST(IncrementalAggregateTest, RejectsNonFiniteInputAndNonCanonicalCheckpoint) {
                                          .weight_sum = 2.0,
                                          .mean = 1.5,
                                          .m2 = 0.5};
-  EXPECT_EQ(IncrementalAggregateSet::restore(std::move(corrupt)).error().code(),
+  EXPECT_EQ(IncrementalAggregateSet::restore(corrupt).error().code(),
             common::StatusCode::kCorruption);
 }
 

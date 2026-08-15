@@ -167,7 +167,7 @@ WindowedMaterializedView::restore(WindowedMaterializedViewCheckpoint checkpoint)
     }
 
     std::optional<WindowKey> prior_window;
-    for (MaterializedWindowCheckpoint& window : checkpoint.windows) {
+    for (const MaterializedWindowCheckpoint& window : checkpoint.windows) {
       const auto expected_end = add_nonnegative(window.window.start, checkpoint.definition.width);
       if ((prior_window.has_value() && window.window <= *prior_window) ||
           !expected_end.has_value() || *expected_end != window.window.end ||
@@ -190,7 +190,7 @@ WindowedMaterializedView::restore(WindowedMaterializedViewCheckpoint checkpoint)
             common::Status{common::StatusCode::kCorruption,
                            "materialized-view checkpoint window rows disagree with visible rows"});
       }
-      auto aggregate = IncrementalAggregateSet::restore(std::move(window.aggregate));
+      auto aggregate = IncrementalAggregateSet::restore(window.aggregate);
       if (!aggregate.has_value()) {
         return common::make_unexpected(aggregate.error());
       }

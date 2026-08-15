@@ -261,7 +261,7 @@ common::Result<IncrementalAggregateCheckpoint> IncrementalAggregateSet::checkpoi
 }
 
 common::Result<IncrementalAggregateSet>
-IncrementalAggregateSet::restore(IncrementalAggregateCheckpoint checkpoint) {
+IncrementalAggregateSet::restore(const IncrementalAggregateCheckpoint& checkpoint) {
   if (checkpoint.count != checkpoint.rows.size() ||
       !Impl::finite(Impl::NumericState{checkpoint.count, checkpoint.sum, checkpoint.weighted_sum,
                                        checkpoint.weight_sum, checkpoint.mean, checkpoint.m2})) {
