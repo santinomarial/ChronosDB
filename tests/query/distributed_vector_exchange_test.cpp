@@ -335,6 +335,10 @@ TEST(DistributedVectorExchangeTest, BoundsCoordinatorRetentionAndOwnsFirstFailur
   ASSERT_TRUE(failed.has_value());
   const common::Status first_failure{common::StatusCode::kUnavailable, "first"};
   ASSERT_TRUE(failed->worker_failed(first_tablet, first_failure).is_ok());
+  EXPECT_EQ(
+      failed->accept(
+          {.query_id = query_id, .tablet_id = second_tablet, .sequence = 1U, .terminal = true}),
+      first_failure);
   EXPECT_EQ(failed->worker_failed(second_tablet, {common::StatusCode::kInternal, "second"}),
             first_failure);
   EXPECT_EQ(std::move(*failed).finish().error(), first_failure);

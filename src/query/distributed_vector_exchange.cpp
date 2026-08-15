@@ -32,6 +32,11 @@ inline constexpr std::uint32_t kTerminalFlag = 1U;
   return {common::StatusCode::kCorruption, message};
 }
 
+[[nodiscard]] common::Status retained_failure(const std::optional<common::Status>& failure) {
+  return failure.value_or(common::Status{common::StatusCode::kInternal,
+                                         "distributed vector coordinator failure is missing"});
+}
+
 [[nodiscard]] common::Status validate_message(const DistributedVectorExchangeMessage& message) {
   if (message.query_id.is_nil() || message.tablet_id.uuid().is_nil() || message.sequence == 0U)
     return invalid("distributed vector exchange identity or sequence is invalid");
@@ -428,8 +433,8 @@ DistributedVectorCoordinator::accept(const DistributedVectorExchangeMessage& mes
   if (impl_->finished)
     return invalid("distributed vector coordinator is already finished");
   if (impl_->failure.has_value())
-    return *impl_->failure;
-  const common::Status validation = validate_message(message);
+    return retained_failure(impl_->failure);
+  common::Status validation = validate_message(message);
   if (!validation.is_ok())
     return validation;
   auto fragment = impl_->fragments.find(message.tablet_id);
@@ -481,7 +486,7 @@ common::Status DistributedVectorCoordinator::worker_failed(const schema::TabletI
   if (fragment->second.terminal)
     return common::Status::ok();
   if (impl_->failure.has_value())
-    return *impl_->failure;
+    return retained_failure(impl_->failure);
   impl_->failure = std::move(failure);
   return common::Status::ok();
 }
@@ -491,7 +496,7 @@ DistributedVectorCoordinator::finish() && {
   if (impl_->finished)
     return common::make_unexpected(invalid("distributed vector coordinator is already finished"));
   if (impl_->failure.has_value())
-    return common::make_unexpected(*impl_->failure);
+    return common::make_unexpected(retained_failure(impl_->failure));
   for (const schema::TabletId& tablet_id : impl_->tablet_order) {
     if (!impl_->fragments.at(tablet_id).terminal) {
       return common::make_unexpected(common::Status{
