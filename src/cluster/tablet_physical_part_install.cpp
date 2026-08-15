@@ -129,8 +129,7 @@ install_tablet_physical_part(const TabletPhysicalPartChunkStorage& transfer,
   if (!installed.has_value())
     return common::make_unexpected(
         with_context("install received temporal CSEG", installed.error()));
-  return InstalledTabletPhysicalPart{.transfer = std::move(*completed),
-                                     .part = std::move(*installed)};
+  return InstalledTabletPhysicalPart{.transfer = *completed, .part = std::move(*installed)};
 }
 
 } // namespace chronos::cluster

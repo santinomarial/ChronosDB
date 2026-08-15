@@ -13,12 +13,14 @@
 namespace chronos::cluster {
 
 inline constexpr std::size_t kMaximumTabletPhysicalPartChunkFiles = std::size_t{1U} << 20U;
+inline constexpr std::size_t kDefaultMaximumTabletPhysicalPartChunkFiles =
+    std::size_t{256U} * 1024U;
 
 struct TabletPhysicalPartChunkStorageConfig {
   std::string directory_path;
   TabletPhysicalPartTransferSession session;
   TabletPhysicalPartChunkCodecLimits codec_limits;
-  std::size_t maximum_chunks{256U * 1024U};
+  std::size_t maximum_chunks{kDefaultMaximumTabletPhysicalPartChunkFiles};
   std::uint16_t file_permissions{0600U};
 };
 

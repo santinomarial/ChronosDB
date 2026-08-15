@@ -12,7 +12,8 @@
 
 namespace chronos::cluster {
 
-inline constexpr std::uint64_t kDefaultMaximumPhysicalPartMaterializedBytes = 256U * 1024U * 1024U;
+inline constexpr std::uint64_t kDefaultMaximumPhysicalPartMaterializedBytes =
+    std::uint64_t{256U} * 1024U * 1024U;
 
 struct TabletPhysicalPartInstallRequest {
   std::uint64_t expected_manifest_generation{};

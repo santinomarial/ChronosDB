@@ -17,7 +17,7 @@ namespace chronos::cluster {
 
 inline constexpr std::size_t kTabletPhysicalPartChunkHeaderSize = 192U;
 inline constexpr std::size_t kTabletPhysicalPartChunkTrailerSize = 4U;
-inline constexpr std::size_t kMaximumTabletPhysicalPartChunkSize = 16U * 1024U * 1024U;
+inline constexpr std::size_t kMaximumTabletPhysicalPartChunkSize = std::size_t{16U} * 1024U * 1024U;
 
 struct TabletPhysicalPartTransferSession {
   schema::TableId table_id;
@@ -45,7 +45,7 @@ struct TabletPhysicalPartChunk {
 
 struct TabletPhysicalPartChunkCodecLimits {
   std::uint64_t maximum_object_bytes{cseg::format::kMaximumFileLength};
-  std::size_t maximum_chunk_bytes{4U * 1024U * 1024U};
+  std::size_t maximum_chunk_bytes{std::size_t{4U} * 1024U * 1024U};
   std::size_t maximum_encoded_bytes{kMaximumTabletPhysicalPartChunkSize};
 };
 
