@@ -644,8 +644,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   storage/Raft safety with every durable plan frontier and rejects placement drift before invoking a
   physical source reclaimer. WAL-backed sources now exact-map complete logical batches to verified
   record-end checkpoints, conservatively merge tablets sharing one WAL, and reclaim only after
-  all-WAL prevalidation. Raft prefix mapping and the full exit evidence remain deferred; the phase
-  exit gate is not claimed.
+  all-WAL prevalidation. A deterministic Release microbenchmark suite now covers logical handoff,
+  fan-out, slow-consumer overflow, resume replay, late aggregate correction, and logical aggregate
+  recovery scaling without publishing unreviewed numbers. Raft prefix mapping and the remaining
+  exit evidence remain deferred; the phase exit gate is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.

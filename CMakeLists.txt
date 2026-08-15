@@ -2123,6 +2123,19 @@ if(CHRONOS_BUILD_BENCHMARKS)
   chronos_enable_static_analysis(chronos_query_benchmarks)
 
   add_executable(
+    chronos_live_benchmarks
+    benchmarks/live/subscription_benchmark.cpp
+  )
+  set_target_properties(chronos_live_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_live_benchmarks PRIVATE cxx_std_23)
+  target_link_libraries(
+    chronos_live_benchmarks PRIVATE chronos::live benchmark::benchmark_main
+  )
+  chronos_set_project_warnings(chronos_live_benchmarks)
+  chronos_enable_sanitizers(chronos_live_benchmarks)
+  chronos_enable_static_analysis(chronos_live_benchmarks)
+
+  add_executable(
     chronos_network_benchmarks
     benchmarks/network/network_benchmark.cpp
     benchmarks/support/counting_allocator.cpp

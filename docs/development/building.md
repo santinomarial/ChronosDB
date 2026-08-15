@@ -186,6 +186,7 @@ cmake --preset benchmark
 cmake --build --preset benchmark
 build/benchmark/chronos_common_benchmarks
 build/benchmark/chronos_cseg_benchmarks
+build/benchmark/chronos_live_benchmarks
 ```
 
 The executable labels results as local measurements only. Record the command, compiler, host,
