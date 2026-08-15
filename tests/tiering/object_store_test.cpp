@@ -141,13 +141,16 @@ public:
 
   ~LocalS3Server() {
     stop_.store(true);
-    if (listener_ >= 0) {
+    if (listener_ >= 0)
       static_cast<void>(::shutdown(listener_, SHUT_RDWR));
+    if (worker_.joinable())
+      worker_.join();
+    // The worker is the only concurrent reader of listener_. Joining before closing and
+    // mutating it makes descriptor ownership explicit; shutdown only wakes its poll/accept.
+    if (listener_ >= 0) {
       ::close(listener_);
       listener_ = -1;
     }
-    if (worker_.joinable())
-      worker_.join();
   }
 
   LocalS3Server(const LocalS3Server&) = delete;
@@ -591,7 +594,7 @@ private:
   mutable std::mutex mutex_;
   int listener_{-1};
   std::uint16_t port_{};
-  std::atomic_bool stop_;
+  std::atomic_bool stop_{false};
   std::thread worker_;
   std::vector<RecordedRequest> requests_;
   std::string failure_;
