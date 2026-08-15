@@ -144,13 +144,18 @@ TEST(DistributedVectorQueryTransportTest, RoundTripsCorrelatedTerminalAndFailure
   EXPECT_EQ(decode_distributed_grouped_query_response_v1(*encoded_success).error().code(),
             common::StatusCode::kCorruption);
   ASSERT_TRUE(decoded_success->payload.has_value());
+  const auto& success_payload = decoded_success->payload;
+  if (!success_payload.has_value()) {
+    ADD_FAILURE() << "expected a successful vector response payload";
+    return;
+  }
   EXPECT_EQ(decoded_success->source_node_id, 2U);
   EXPECT_EQ(decoded_success->target_node_id, 1U);
-  EXPECT_EQ(decoded_success->payload->query_id, terminal.query_id);
-  EXPECT_EQ(decoded_success->payload->tablet_id, terminal.tablet_id);
-  EXPECT_EQ(decoded_success->payload->sequence, 1U);
-  EXPECT_TRUE(decoded_success->payload->terminal);
-  EXPECT_TRUE(decoded_success->payload->encoded_batch.empty());
+  EXPECT_EQ(success_payload->query_id, terminal.query_id);
+  EXPECT_EQ(success_payload->tablet_id, terminal.tablet_id);
+  EXPECT_EQ(success_payload->sequence, 1U);
+  EXPECT_TRUE(success_payload->terminal);
+  EXPECT_TRUE(success_payload->encoded_batch.empty());
 
   const DistributedVectorQueryResponse failure{.source_node_id = 2U,
                                                .target_node_id = 1U,

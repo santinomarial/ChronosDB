@@ -229,11 +229,21 @@ TEST(DistributedVectorAggregateQueryTransportV2Test,
   EXPECT_EQ(decoded->source_node_id, 2U);
   EXPECT_EQ(decoded->target_node_id, 1U);
   ASSERT_TRUE(decoded->payload.has_value());
-  auto result = std::move(decoded->payload->state).take_result();
+  auto& decoded_payload = decoded->payload;
+  if (!decoded_payload.has_value()) {
+    ADD_FAILURE() << "expected a definition-bound aggregate payload";
+    return;
+  }
+  auto result = std::move(decoded_payload->state).take_result();
   ASSERT_TRUE(result.has_value());
   EXPECT_EQ(std::get<std::int64_t>(result->storage()), 2);
   ASSERT_TRUE(decoded->leader_hint.has_value());
-  EXPECT_EQ(decoded->leader_hint->node_id, 3U);
+  const auto& leader_hint = decoded->leader_hint;
+  if (!leader_hint.has_value()) {
+    ADD_FAILURE() << "expected an aggregate leader hint";
+    return;
+  }
+  EXPECT_EQ(leader_hint->node_id, 3U);
 
   const DistributedVectorAggregateQueryResponseV2 failure{
       .source_node_id = 2U,
@@ -399,10 +409,15 @@ TEST(DistributedVectorAggregateQueryReceiverV2Test,
     ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
     EXPECT_EQ(decoded->status_code, common::StatusCode::kOk);
     ASSERT_TRUE(decoded->payload.has_value());
-    EXPECT_EQ(decoded->payload->sequence, ordinal + 1U);
-    EXPECT_EQ(decoded->payload->aggregate_ordinal, ordinal);
-    EXPECT_EQ(decoded->payload->terminal, ordinal + 1U == result->size());
-    auto scalar = std::move(decoded->payload->state).take_result();
+    auto& decoded_payload = decoded->payload;
+    if (!decoded_payload.has_value()) {
+      ADD_FAILURE() << "expected aggregate payload " << ordinal;
+      return;
+    }
+    EXPECT_EQ(decoded_payload->sequence, ordinal + 1U);
+    EXPECT_EQ(decoded_payload->aggregate_ordinal, ordinal);
+    EXPECT_EQ(decoded_payload->terminal, ordinal + 1U == result->size());
+    auto scalar = std::move(decoded_payload->state).take_result();
     ASSERT_TRUE(scalar.has_value());
     EXPECT_EQ(std::get<std::int64_t>(scalar->storage()), static_cast<std::int64_t>(ordinal + 1U));
   }
@@ -494,7 +509,12 @@ TEST(DistributedVectorAggregateQueryReceiverV2Test,
   ASSERT_TRUE(decoded.has_value());
   EXPECT_EQ(decoded->status_code, common::StatusCode::kUnavailable);
   ASSERT_TRUE(decoded->leader_hint.has_value());
-  EXPECT_EQ(decoded->leader_hint->node_id, 3U);
+  const auto& leader_hint = decoded->leader_hint;
+  if (!leader_hint.has_value()) {
+    ADD_FAILURE() << "expected an unavailable leader hint";
+    return;
+  }
+  EXPECT_EQ(leader_hint->node_id, 3U);
   EXPECT_EQ(hint_provider.last_tablet, tablet(14U));
   EXPECT_EQ(hint_provider.last_group, uuid(16U));
 

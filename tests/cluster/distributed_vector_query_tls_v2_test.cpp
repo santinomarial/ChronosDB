@@ -221,10 +221,20 @@ TEST(DistributedVectorQueryTlsV2Test, CarriesCompleteAuthenticatedSchemaBoundRes
   ASSERT_EQ(responses->size(), 2U);
   ASSERT_TRUE((*responses)[0].payload.has_value());
   ASSERT_TRUE((*responses)[1].payload.has_value());
-  EXPECT_EQ((*responses)[0].payload->sequence, 1U);
-  EXPECT_FALSE((*responses)[0].payload->terminal);
-  EXPECT_EQ((*responses)[1].payload->sequence, 2U);
-  EXPECT_TRUE((*responses)[1].payload->terminal);
+  const auto& first_payload = (*responses)[0].payload;
+  if (!first_payload.has_value()) {
+    ADD_FAILURE() << "expected the first vector response payload";
+    return;
+  }
+  const auto& terminal_payload = (*responses)[1].payload;
+  if (!terminal_payload.has_value()) {
+    ADD_FAILURE() << "expected the terminal vector response payload";
+    return;
+  }
+  EXPECT_EQ(first_payload->sequence, 1U);
+  EXPECT_FALSE(first_payload->terminal);
+  EXPECT_EQ(terminal_payload->sequence, 2U);
+  EXPECT_TRUE(terminal_payload->terminal);
 }
 
 TEST(DistributedVectorQueryTlsV2Test, RejectsInvalidBoundsTargetAndExpiresExactly) {
