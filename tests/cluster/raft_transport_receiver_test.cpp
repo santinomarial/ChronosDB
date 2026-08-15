@@ -85,11 +85,21 @@ TEST(RaftTransportReceiverTest, AuthenticatesRoutesPersistsAndEncodesResponse) {
   ASSERT_EQ(completed->size(), 2U);
   ASSERT_TRUE(completed->front().status.is_ok()) << completed->front().status.to_string();
   ASSERT_TRUE(completed->front().transition.has_value());
-  EXPECT_TRUE(completed->front().transition->persistence.has_value());
+  const auto& transition = completed->front().transition;
+  if (!transition.has_value()) {
+    ADD_FAILURE() << "expected the durable receive transition";
+    return;
+  }
+  EXPECT_TRUE(transition->persistence.has_value());
   ASSERT_TRUE((*completed)[1].status.is_ok());
   ASSERT_TRUE((*completed)[1].observation.has_value());
-  EXPECT_EQ((*completed)[1].observation->group_id, group());
-  EXPECT_EQ((*completed)[1].observation->current_term, 1U);
+  const auto& observation = (*completed)[1].observation;
+  if (!observation.has_value()) {
+    ADD_FAILURE() << "expected the ordered group observation";
+    return;
+  }
+  EXPECT_EQ(observation->group_id, group());
+  EXPECT_EQ(observation->current_term, 1U);
   auto frames = encode_durable_raft_outbound_v1(group(), 2U, completed->front());
   ASSERT_TRUE(frames.has_value()) << frames.error().to_string();
   ASSERT_EQ(frames->size(), 1U);
