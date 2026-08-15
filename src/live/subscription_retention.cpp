@@ -130,17 +130,19 @@ common::Result<SubscriptionRetentionReport> SubscriptionRetentionCoordinator::ad
         return common::make_unexpected(durable.error());
       if (!durable->has_value())
         return SubscriptionRetentionReport{metadata_index, true, false, impl_->frontiers};
-      if ((*durable)->size() != candidate.size())
+      std::vector<SourcePosition> durable_frontiers =
+          std::move(*durable).value_or(std::vector<SourcePosition>{});
+      if (durable_frontiers.size() != candidate.size())
         return common::make_unexpected(common::Status{
             common::StatusCode::kCorruption, "durable subscription frontier source count changed"});
       for (std::size_t index = 0U; index < candidate.size(); ++index) {
-        if ((**durable)[index].tablet_id != candidate[index].tablet_id ||
-            (**durable)[index].wal_id != candidate[index].wal_id)
+        if (durable_frontiers[index].tablet_id != candidate[index].tablet_id ||
+            durable_frontiers[index].wal_id != candidate[index].wal_id)
           return common::make_unexpected(
               common::Status{common::StatusCode::kCorruption,
                              "durable subscription frontier source lineage changed"});
         candidate[index].record_sequence =
-            std::min(candidate[index].record_sequence, (**durable)[index].record_sequence);
+            std::min(candidate[index].record_sequence, durable_frontiers[index].record_sequence);
       }
     }
 

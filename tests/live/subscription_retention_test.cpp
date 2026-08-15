@@ -103,11 +103,6 @@ TEST(SubscriptionRetentionTest, IntersectsDurablePlansAndRejectsPlacementDriftBe
                            .result_key = {std::byte{1}},
                            .payload = {std::byte{2}}};
   };
-  ASSERT_TRUE(owner->publish_committed(change(tablet_a, wal_a, 1U)).is_ok());
-  ASSERT_TRUE(owner->publish_committed(change(tablet_b, wal_b, 1U)).is_ok());
-  ASSERT_TRUE(owner->publish_committed(change(tablet_a, wal_a, 2U)).is_ok());
-  ASSERT_TRUE(owner->checkpoint().has_value());
-
   auto metadata = raft::MetadataStateMachine::create();
   ASSERT_TRUE(metadata.has_value());
   ASSERT_TRUE(
@@ -127,6 +122,16 @@ TEST(SubscriptionRetentionTest, IntersectsDurablePlansAndRejectsPlacementDriftBe
   ASSERT_TRUE(retention.has_value()) << retention.error().to_string();
   const std::vector<SourcePosition> storage_safe{{tablet_a, wal_a, 2U}, {tablet_b, wal_b, 1U}};
   CapturingReclaimer reclaimer;
+  const auto blocked = retention->advance(*metadata, storage_safe, reclaimer);
+  ASSERT_TRUE(blocked.has_value()) << blocked.error().to_string();
+  EXPECT_TRUE(blocked->blocked_on_subscription_checkpoint);
+  EXPECT_FALSE(blocked->advanced);
+  EXPECT_EQ(reclaimer.calls, 0U);
+
+  ASSERT_TRUE(owner->publish_committed(change(tablet_a, wal_a, 1U)).is_ok());
+  ASSERT_TRUE(owner->publish_committed(change(tablet_b, wal_b, 1U)).is_ok());
+  ASSERT_TRUE(owner->publish_committed(change(tablet_a, wal_a, 2U)).is_ok());
+  ASSERT_TRUE(owner->checkpoint().has_value());
   const auto advanced = retention->advance(*metadata, storage_safe, reclaimer);
   ASSERT_TRUE(advanced.has_value()) << advanced.error().to_string();
   EXPECT_TRUE(advanced->advanced);
