@@ -166,12 +166,15 @@ TEST(DistributedQueryTlsClientTest, AuthenticatesWritesReadsAndFeedsExactSenderR
         auto step = request_reader.consume(
             common::ByteView{request_scratch}.first(read->bytes_transferred));
         ASSERT_TRUE(step.has_value()) << step.error().message();
-        if (step->request.has_value()) {
+        const DistributedQueryRequest* const request =
+            step->request.transform([](const DistributedQueryRequest& value) { return &value; })
+                .value_or(nullptr);
+        if (request != nullptr) {
           auto encoded = encode_distributed_query_response_v1(
               {.source_node_id = 2U,
                .target_node_id = 1U,
-               .query_id = step->request->dispatch.fragment.query_id,
-               .tablet_id = step->request->dispatch.fragment.tablet_id,
+               .query_id = request->dispatch.fragment.query_id,
+               .tablet_id = request->dispatch.fragment.tablet_id,
                .status_code = common::StatusCode::kOk,
                .message = message()});
           ASSERT_TRUE(encoded.has_value());
@@ -197,7 +200,9 @@ TEST(DistributedQueryTlsClientTest, AuthenticatesWritesReadsAndFeedsExactSenderR
   ASSERT_TRUE(sender->accept_response(*response, start + std::chrono::milliseconds{2}).is_ok());
   EXPECT_EQ(sender->state(), DistributedQuerySenderState::kSucceeded);
   ASSERT_TRUE(sender->result().has_value());
-  EXPECT_EQ(sender->result()->partial.sum, 2.5);
+  EXPECT_EQ(sender->result().transform(
+                [](const query::ExchangeMessage& result) { return result.partial.sum; }),
+            std::optional{2.5});
 }
 
 TEST(DistributedQueryTlsClientTest, RejectsServerPrincipalBeforeWritingRequest) {
@@ -225,8 +230,10 @@ TEST(DistributedQueryTlsClientTest, RejectsServerPrincipalBeforeWritingRequest) 
   common::Status progress = common::Status::ok();
   for (std::size_t iteration = 0U; iteration < 1024U && progress.is_ok(); ++iteration) {
     progress = carrier->on_ready(true, true, start + std::chrono::milliseconds{1});
-    if (!server->handshake_complete())
-      (void)server->handshake();
+    if (!server->handshake_complete()) {
+      const auto handshake_progress = server->handshake();
+      ASSERT_TRUE(handshake_progress.has_value()) << handshake_progress.error().to_string();
+    }
   }
   EXPECT_EQ(progress.code(), common::StatusCode::kUnauthenticated);
   EXPECT_EQ(carrier->state(), DistributedQueryTlsClientState::kFailed);
@@ -254,11 +261,15 @@ TEST(DistributedQueryTlsClientTest, DeadlinesAndAttemptBindingFailClosed) {
   auto carrier =
       DistributedQueryTlsClient::create(network::TlsSocket{}, std::move(*attempt), config, start);
   ASSERT_TRUE(carrier.has_value());
+  EXPECT_FALSE(carrier->interest().want_read);
+  EXPECT_TRUE(carrier->interest().want_write);
   EXPECT_TRUE(carrier->on_ready(false, false, start + std::chrono::milliseconds{4}).is_ok());
   const common::Status timed_out =
       carrier->on_ready(false, false, start + std::chrono::milliseconds{5});
   EXPECT_EQ(timed_out.code(), common::StatusCode::kUnavailable);
   EXPECT_EQ(carrier->state(), DistributedQueryTlsClientState::kFailed);
+  EXPECT_FALSE(carrier->interest().want_read);
+  EXPECT_FALSE(carrier->interest().want_write);
   EXPECT_EQ(carrier->on_ready(true, true, start + std::chrono::milliseconds{6}), timed_out);
 }
 

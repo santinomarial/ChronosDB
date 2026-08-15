@@ -184,7 +184,7 @@ public:
   DistributedQueryFrameWriteCursor request_;
   raft::NodeId target_node_id_{};
   DistributedQueryTlsClientConfig config_;
-  TimePoint deadline_{};
+  TimePoint deadline_;
   DistributedQueryTlsClientState state_{DistributedQueryTlsClientState::kHandshaking};
   DistributedQueryTlsInterest interest_{.want_write = true};
   DistributedQueryResponseReader response_reader_;

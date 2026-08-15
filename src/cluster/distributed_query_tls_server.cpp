@@ -30,6 +30,10 @@ namespace {
   return {common::StatusCode::kCorruption, message};
 }
 
+[[nodiscard]] common::Status internal(const char* message) {
+  return {common::StatusCode::kInternal, message};
+}
+
 [[nodiscard]] bool valid_timeout(const std::chrono::milliseconds timeout) noexcept {
   const auto maximum = std::chrono::duration_cast<std::chrono::milliseconds>(
       DistributedQueryTlsServer::TimePoint::duration::max());
@@ -54,7 +58,7 @@ public:
       : socket_(std::move(socket)), config_(config),
         deadline_(deadline_after(now, config.limits.handshake_timeout)) {}
 
-  [[nodiscard]] common::Status fail(common::Status status) noexcept {
+  [[nodiscard]] common::Status fail(common::Status status) {
     if (state_ != DistributedQueryTlsServerState::kFailed) {
       failure_ = std::move(status);
       state_ = DistributedQueryTlsServerState::kFailed;
@@ -155,7 +159,12 @@ public:
   [[nodiscard]] common::Status advance_write(const bool readable, const bool writable) {
     if ((!interest_.want_read || !readable) && (!interest_.want_write || !writable))
       return common::Status::ok();
-    auto progress = socket_.write(response_writer_->pending_write());
+    DistributedQueryFrameWriteCursor* const response_writer =
+        response_writer_.transform([](DistributedQueryFrameWriteCursor& writer) { return &writer; })
+            .value_or(nullptr);
+    if (response_writer == nullptr)
+      return fail(internal("distributed query TLS response writer is missing"));
+    auto progress = socket_.write(response_writer->pending_write());
     if (!progress.has_value())
       return fail(progress.error());
     if (progress->state == network::TlsIoState::kClosed)
@@ -170,10 +179,10 @@ public:
     }
     if (progress->bytes_transferred == 0U)
       return fail(unavailable("distributed query response write made no progress"));
-    const common::Status consumed = response_writer_->consume_written(progress->bytes_transferred);
+    const common::Status consumed = response_writer->consume_written(progress->bytes_transferred);
     if (!consumed.is_ok())
       return fail(consumed);
-    if (response_writer_->complete()) {
+    if (response_writer->complete()) {
       state_ = DistributedQueryTlsServerState::kComplete;
       interest_ = {};
     } else {
@@ -184,7 +193,7 @@ public:
 
   network::TlsSocket socket_;
   DistributedQueryTlsServerConfig config_;
-  TimePoint deadline_{};
+  TimePoint deadline_;
   DistributedQueryTlsServerState state_{DistributedQueryTlsServerState::kHandshaking};
   DistributedQueryTlsServerInterest interest_{.want_read = true};
   std::optional<network::PeerAuthenticationResult> authenticated_peer_;

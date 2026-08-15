@@ -201,7 +201,9 @@ TEST(DistributedQueryTlsServerTest, ServesOneAuthenticatedEndToEndQueryAttempt) 
   ASSERT_TRUE(response.has_value());
   ASSERT_TRUE(sender->accept_response(*response, start + std::chrono::milliseconds{2}).is_ok());
   ASSERT_TRUE(sender->result().has_value());
-  EXPECT_EQ(sender->result()->partial.sum, 7.5);
+  EXPECT_EQ(sender->result().transform(
+                [](const query::ExchangeMessage& result) { return result.partial.sum; }),
+            std::optional{7.5});
 }
 
 TEST(DistributedQueryTlsServerTest, RejectsClientPrincipalBeforeRequestDispatch) {
@@ -260,12 +262,16 @@ TEST(DistributedQueryTlsServerTest, ConfigurationAndExactHandshakeDeadlineFailCl
   config.limits.handshake_timeout = std::chrono::milliseconds{5};
   auto server = DistributedQueryTlsServer::create(network::TlsSocket{}, config, {});
   ASSERT_TRUE(server.has_value());
+  EXPECT_TRUE(server->interest().want_read);
+  EXPECT_FALSE(server->interest().want_write);
   const auto start = DistributedQueryTlsServer::TimePoint{};
   EXPECT_TRUE(server->on_ready(false, false, start + std::chrono::milliseconds{4}).is_ok());
   const common::Status timed_out =
       server->on_ready(false, false, start + std::chrono::milliseconds{5});
   EXPECT_EQ(timed_out.code(), common::StatusCode::kUnavailable);
   EXPECT_EQ(server->state(), DistributedQueryTlsServerState::kFailed);
+  EXPECT_FALSE(server->interest().want_read);
+  EXPECT_FALSE(server->interest().want_write);
   EXPECT_EQ(server->on_ready(true, true, start + std::chrono::milliseconds{6}), timed_out);
 }
 
