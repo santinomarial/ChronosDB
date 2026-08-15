@@ -125,6 +125,71 @@ TEST(WalReclamationTest, RemovesOnlyCoveredClosedSegmentsAndConvergesIdempotentl
   EXPECT_TRUE(reopened->close().is_ok());
 }
 
+TEST(WalReclamationTest, ResolvesDurableLogicalSequenceToVerifiedPhysicalBoundary) {
+  test::TemporaryDirectory temporary{"chronos-wal-resolve-prefix"};
+  ASSERT_TRUE(temporary.valid());
+  test::create_wal(temporary.path(),
+                   {.record_count = 5U, .target_segment_size = kSegmentHeaderSize + 64U});
+  test::CollectingReplaySink sink;
+  common::Result<WalWriter> writer =
+      WalWriter::open_existing({.directory_path = temporary.path().string()}, {}, sink);
+  ASSERT_TRUE(writer.has_value()) << writer.error().to_string();
+
+  const auto resolved = writer->resolve_replay_checkpoint(3U);
+
+  ASSERT_TRUE(resolved.has_value()) << resolved.error().to_string();
+  ASSERT_TRUE(resolved->has_value());
+  EXPECT_EQ(**resolved, (WalReplayCheckpoint{.wal_id = test::make_wal_id(),
+                                             .record_sequence = 3U,
+                                             .segment_number = 3U,
+                                             .byte_offset = kSegmentHeaderSize + 64U}));
+  EXPECT_TRUE(writer->close().is_ok());
+}
+
+TEST(WalReclamationTest, ResolutionRecognizesARequestedPrefixOlderThanRetainedFiles) {
+  test::TemporaryDirectory temporary{"chronos-wal-resolve-absent-prefix"};
+  ASSERT_TRUE(temporary.valid());
+  test::create_wal(temporary.path(),
+                   {.record_count = 5U, .target_segment_size = kSegmentHeaderSize + 64U});
+  test::CollectingReplaySink sink;
+  common::Result<WalWriter> writer =
+      WalWriter::open_existing({.directory_path = temporary.path().string()}, {}, sink);
+  ASSERT_TRUE(writer.has_value()) << writer.error().to_string();
+  const auto checkpoint = writer->resolve_replay_checkpoint(3U);
+  ASSERT_TRUE(checkpoint.has_value());
+  ASSERT_TRUE(checkpoint->has_value());
+  ASSERT_TRUE(writer->reclaim_checkpointed_segments(**checkpoint).has_value());
+
+  const auto absent = writer->resolve_replay_checkpoint(1U);
+  const auto retained_boundary = writer->resolve_replay_checkpoint(3U);
+
+  ASSERT_TRUE(absent.has_value()) << absent.error().to_string();
+  EXPECT_FALSE(absent->has_value());
+  ASSERT_TRUE(retained_boundary.has_value()) << retained_boundary.error().to_string();
+  ASSERT_TRUE(retained_boundary->has_value());
+  EXPECT_EQ((**retained_boundary).record_sequence, 3U);
+  EXPECT_EQ((**retained_boundary).segment_number, 3U);
+  EXPECT_TRUE(writer->close().is_ok());
+}
+
+TEST(WalReclamationTest, ResolutionRejectsAnUnflushedLogicalBoundary) {
+  test::TemporaryDirectory temporary{"chronos-wal-resolve-undurable"};
+  ASSERT_TRUE(temporary.valid());
+  test::FixedWalIdGenerator generator{test::make_wal_id()};
+  common::Result<WalWriter> writer =
+      WalWriter::create_new({.directory_path = temporary.path().string()}, generator);
+  ASSERT_TRUE(writer.has_value()) << writer.error().to_string();
+  const auto appended = writer->append_application_entry(test::make_application_payload());
+  ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
+
+  const auto rejected = writer->resolve_replay_checkpoint(1U);
+
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_FALSE(writer->is_failed());
+  EXPECT_TRUE(writer->close().is_ok());
+}
+
 TEST(WalReclamationTest, RetainsPartiallyCoveredAndActiveSegments) {
   test::TemporaryDirectory temporary{"chronos-wal-reclaim-partial"};
   ASSERT_TRUE(temporary.valid());

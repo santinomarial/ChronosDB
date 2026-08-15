@@ -30,6 +30,9 @@ writing:
 - `WalWriter::reclaim_checkpointed_segments(checkpoint)` revalidates the live namespace and exact
   suffix, fully scans every candidate closed segment, removes only the covered increasing prefix,
   and synchronizes the directory once. The active highest segment is never removed.
+- `WalWriter::resolve_replay_checkpoint(sequence)` maps one durable logical sequence to its exact
+  verified record-end coordinate after scanning the complete retained namespace. It returns no
+  coordinate when that logical prefix is older than every retained file.
 - `chronos-waldump` composes `inspect_wal` with a sink that accepts every structurally decoded
   physical type and prints metadata, not payload bytes.
 
@@ -61,6 +64,13 @@ coordinate. Every present covered-prefix segment still has its size, header chec
 number, and WAL identity verified. The required suffix starts with either the coordinate segment or
 its immediate successor, remains consecutive through the active highest segment, and must use the
 checkpoint WAL identity. Missing required suffix state is corruption.
+
+The writer's logical-prefix resolver derives its scan checkpoint from the first retained segment.
+For segment 1 this is the canonical empty boundary. For a later first segment it is the immediately
+preceding segment/sequence required by suffix recovery. A requested sequence before that boundary
+is already physically absent; an equal boundary is directly reusable; a later sequence must be
+observed at an exact decoded record end. In every case the complete retained suffix is scanned and
+must match the live writer before resolution succeeds.
 
 ## Physical verification
 
@@ -180,6 +190,11 @@ the first unlink, advances removal metrics only after directory sync, and poison
 mutation failure. A crash may retain any covered subset; repeating recovery and reclamation
 converges. Recovery does not add preallocation, mmap, asynchronous I/O, compression, encryption, or
 speculative filesystem abstractions.
+
+Logical-to-physical resolution is also read-only and does not replace the reclamation revalidation.
+It costs `O(retained WAL bytes)` and intentionally retains no per-record index: reclamation is
+infrequent, memory stays bounded by one record plus directory state, and a complete suffix scan
+detects corruption beyond the requested boundary before any higher-level batch begins deletion.
 
 ## Likely interview questions
 

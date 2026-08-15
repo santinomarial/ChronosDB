@@ -439,3 +439,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0402](0402-complete-remote-follower-vector-aggregate-v2-lifecycle.md) | Complete remote follower vector aggregate v2 lifecycle | accepted |
 | [0403](0403-injectable-common-time-source.md) | Injectable common time source | accepted |
 | [0404](0404-injectable-system-uuid-entropy.md) | Injectable system UUID entropy | accepted |
+| [0405](0405-verified-logical-to-physical-wal-prefix-resolution.md) | Verified logical-to-physical WAL prefix resolution | accepted |

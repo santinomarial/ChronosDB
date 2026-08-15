@@ -96,6 +96,12 @@ keeps payload bytes alive through the append call. Any attempted record-write er
 rotation lifecycle error retains the first failure and permanently rejects later append/sync calls.
 Validation errors before I/O do not poison the writer. `close` adds no implicit synchronization.
 
+`resolve_replay_checkpoint` is the reclamation-path bridge from a durable logical record sequence
+to a physical segment/end offset. It scans the complete retained namespace under the writer lock,
+requires agreement with the live writer frontier, and returns no coordinate when an older prefix is
+already absent. It never deletes; `reclaim_checkpointed_segments` independently revalidates before
+removing fully covered closed segments and synchronizing the directory.
+
 `WalCommitCoordinator` is the current multi-producer boundary above this interface. Starting it
 transfers the writer to one worker thread; producers can only copy a request into bounded FIFO
 admission and wait on an owning completion. The admission mutex assigns a monotonic sequence, which
@@ -138,9 +144,9 @@ preflight.
 ## Why segmentation helps
 
 Segmentation bounds individual files, gives rotation an auditable installation protocol, and creates
-a future unit for checkpoint-based reclamation. It does not by itself bound total WAL usage: WAL v1
-does not delete old segments, so a later checkpoint must prove another durable representation covers
-their records before reclamation is legal.
+a unit for checkpoint-based reclamation. It does not by itself bound total WAL usage: an external
+durable checkpoint must prove another representation covers the records before the writer may
+delete any fully covered closed segment.
 
 A record never crosses a segment. That can waste some trailing capacity, but it means every record's
 framing and checksum live in one file, every incomplete append is local to the active segment, and a
@@ -257,7 +263,8 @@ tail. Treating all three as “truncate and continue” would be data loss.
 
 Physical encoding and validation are `O(record_length)` time with bounded arithmetic before access.
 Appending performs `O(record_length)` copying/checksum work plus operating-system writes. A complete
-startup verification and replay is `O(total WAL bytes)` because old-segment checkpoints are deferred.
+startup verification and replay is `O(retained WAL bytes)`. Logical-prefix resolution has the same
+linear retained-byte cost and holds only one bounded record at a time.
 Memory can remain `O(maximum record length)` plus bounded descriptors by using two verified passes;
 an implementation need not retain the entire WAL.
 

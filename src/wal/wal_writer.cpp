@@ -210,6 +210,65 @@ validate_closed_segment_for_reclamation(io::PosixDirectory& directory,
   return report;
 }
 
+[[nodiscard]] common::Result<SegmentHeader>
+read_retained_prefix_header(io::PosixDirectory& directory,
+                            const detail::DiscoveredWalSegment& segment) {
+  common::Result<io::PosixFile> file =
+      directory.open_regular_file(segment.file_name, io::FileOpenMode::kReadOnly);
+  if (!file.has_value()) {
+    return common::make_unexpected(with_context("open first retained WAL segment", file.error()));
+  }
+  EncodedSegmentHeader encoded{};
+  const common::Result<std::size_t> count = file->read_at(0U, encoded);
+  if (!count.has_value()) {
+    return common::make_unexpected(
+        with_context("read first retained WAL segment header", count.error()));
+  }
+  if (*count != encoded.size()) {
+    return common::make_unexpected(
+        corruption("first retained WAL segment has an incomplete header"));
+  }
+  common::Result<SegmentHeader> header = decode_segment_header(encoded);
+  if (!header.has_value()) {
+    return common::make_unexpected(
+        with_context("decode first retained WAL segment header", header.error()));
+  }
+  if (header->segment_number != segment.number) {
+    return common::make_unexpected(
+        corruption("first retained WAL segment name disagrees with its header"));
+  }
+  return header;
+}
+
+class CheckpointResolutionSink final : public WalReplaySink {
+public:
+  explicit CheckpointResolutionSink(const std::uint64_t target_sequence) noexcept
+      : target_sequence_(target_sequence) {}
+
+  common::Status preflight(const WalReplayRecord& record) override {
+    if (record.header.record_sequence == target_sequence_) {
+      checkpoint_ = WalReplayCheckpoint{.wal_id = record.record_end.wal_id,
+                                        .record_sequence = record.header.record_sequence,
+                                        .segment_number = record.record_end.segment_number,
+                                        .byte_offset = record.record_end.byte_offset};
+    }
+    return common::Status::ok();
+  }
+
+  common::Status replay(const WalReplayRecord&) override {
+    return common::Status{common::StatusCode::kInternal,
+                          "WAL checkpoint resolver does not replay records"};
+  }
+
+  [[nodiscard]] const std::optional<WalReplayCheckpoint>& checkpoint() const noexcept {
+    return checkpoint_;
+  }
+
+private:
+  std::uint64_t target_sequence_{};
+  std::optional<WalReplayCheckpoint> checkpoint_;
+};
+
 } // namespace
 
 class WalWriter::Impl {
@@ -676,6 +735,96 @@ WalWriter::reclaim_checkpointed_segments(const WalReplayCheckpoint& checkpoint) 
   implementation_->reclamation_metrics_.removed_physical_bytes += report.removed_physical_bytes;
   ++implementation_->reclamation_metrics_.directory_sync_count;
   return report;
+}
+
+common::Result<std::optional<WalReplayCheckpoint>>
+WalWriter::resolve_replay_checkpoint(const std::uint64_t record_sequence) {
+  if (implementation_ == nullptr || !implementation_->active_segment_.file.is_open()) {
+    return common::make_unexpected(invalid_writer("resolve_replay_checkpoint"));
+  }
+  if (!implementation_->failure_.is_ok()) {
+    return common::make_unexpected(implementation_->failure_);
+  }
+  if (record_sequence > implementation_->durable_record_sequence_) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInvalidArgument,
+                       "WAL checkpoint resolution exceeds the writer's durable record sequence"});
+  }
+  const auto fail =
+      [this](common::Status status) -> common::Result<std::optional<WalReplayCheckpoint>> {
+    if (status.code() != common::StatusCode::kInvalidArgument &&
+        status.code() != common::StatusCode::kOutOfRange &&
+        status.code() != common::StatusCode::kResourceExhausted) {
+      status = implementation_->poison(std::move(status));
+    }
+    return common::make_unexpected(std::move(status));
+  };
+
+  common::Result<detail::WalDiscovery> discovered =
+      detail::discover_wal_directory(implementation_->directory_, false);
+  if (!discovered.has_value()) {
+    return fail(discovered.error());
+  }
+  if (discovered->segments.empty() ||
+      discovered->segments.back().number !=
+          implementation_->active_segment_.metadata.header.segment_number ||
+      discovered->segments.back().file_name !=
+          implementation_->active_segment_.metadata.file_name) {
+    return fail(corruption("active WAL segment is not the highest installed final segment"));
+  }
+
+  common::Result<SegmentHeader> first =
+      read_retained_prefix_header(implementation_->directory_, discovered->segments.front());
+  if (!first.has_value()) {
+    return fail(first.error());
+  }
+  if (first->wal_id != implementation_->active_segment_.metadata.header.wal_id ||
+      first->first_record_sequence == 0U ||
+      (first->segment_number == kFirstSegmentNumber &&
+       first->first_record_sequence != kFirstRecordSequence) ||
+      (first->segment_number != kFirstSegmentNumber &&
+       first->first_record_sequence == kFirstRecordSequence)) {
+    return fail(corruption("first retained WAL segment has an invalid history boundary"));
+  }
+
+  const WalReplayCheckpoint retained_prefix =
+      first->segment_number == kFirstSegmentNumber
+          ? WalReplayCheckpoint{.wal_id = first->wal_id,
+                                .record_sequence = 0U,
+                                .segment_number = kFirstSegmentNumber,
+                                .byte_offset = kSegmentHeaderSize}
+          : WalReplayCheckpoint{.wal_id = first->wal_id,
+                                .record_sequence = first->first_record_sequence - 1U,
+                                .segment_number = first->segment_number - 1U,
+                                .byte_offset = kSegmentHeaderSize};
+  common::Status status = detail::prepare_discovery_for_checkpoint(implementation_->directory_,
+                                                                   *discovered, retained_prefix);
+  if (!status.is_ok()) {
+    return fail(std::move(status));
+  }
+  CheckpointResolutionSink sink{record_sequence};
+  common::Result<WalRecoveryReport> verified =
+      detail::scan_discovered_wal(implementation_->directory_, *discovered,
+                                  detail::ScanPass::kPreflight, &sink, retained_prefix);
+  if (!verified.has_value()) {
+    return fail(verified.error());
+  }
+  if (verified->classification != WalScanClassification::kClean ||
+      verified->wal_id != implementation_->active_segment_.metadata.header.wal_id ||
+      verified->valid_end != implementation_->written_position_ ||
+      verified->last_record_sequence != implementation_->written_record_sequence_) {
+    return fail(corruption("WAL namespace changed or disagrees with the live writer"));
+  }
+  if (record_sequence < retained_prefix.record_sequence) {
+    return std::optional<WalReplayCheckpoint>{};
+  }
+  if (record_sequence == retained_prefix.record_sequence) {
+    return std::optional<WalReplayCheckpoint>{retained_prefix};
+  }
+  if (!sink.checkpoint().has_value()) {
+    return fail(corruption("durable WAL record sequence has no physical record boundary"));
+  }
+  return sink.checkpoint();
 }
 
 bool WalWriter::is_open() const noexcept {

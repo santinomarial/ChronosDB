@@ -87,6 +87,14 @@ public:
   [[nodiscard]] common::Result<WalSegmentReclamationReport>
   reclaim_checkpointed_segments(const WalReplayCheckpoint& checkpoint);
 
+  // Resolves a durable logical record sequence to its verified physical record-end coordinate.
+  // The complete current namespace is checked against the live writer before success. A null
+  // checkpoint means the requested prefix is older than the first retained segment and therefore
+  // has no remaining physical file to reclaim. This method is read-only and thread-affine with all
+  // other writer operations.
+  [[nodiscard]] common::Result<std::optional<WalReplayCheckpoint>>
+  resolve_replay_checkpoint(std::uint64_t record_sequence);
+
   [[nodiscard]] bool is_open() const noexcept;
   [[nodiscard]] bool is_failed() const noexcept;
   [[nodiscard]] common::Status failure_status() const;
