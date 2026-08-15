@@ -21,6 +21,9 @@ namespace {
 [[nodiscard]] common::Status exhausted(const char* message) {
   return {common::StatusCode::kResourceExhausted, message};
 }
+[[nodiscard]] common::Status corruption(const char* message) {
+  return {common::StatusCode::kCorruption, message};
+}
 
 [[nodiscard]] bool valid_timeout(const std::chrono::milliseconds timeout) noexcept {
   const auto maximum = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -52,7 +55,7 @@ public:
       : socket_(std::move(socket)), config_(config), slots_(std::move(slots)),
         deadline_(deadline_after(now, config.limits.handshake_timeout)) {}
 
-  [[nodiscard]] common::Status fail(common::Status status) noexcept {
+  [[nodiscard]] common::Status fail(common::Status status) {
     if (state_ != RaftTransportTlsClientState::kFailed) {
       failure_ = std::move(status);
       state_ = RaftTransportTlsClientState::kFailed;
@@ -61,12 +64,13 @@ public:
     return failure_;
   }
 
-  [[nodiscard]] PendingFrame& front() noexcept {
-    return *slots_[head_];
+  [[nodiscard]] PendingFrame* front() {
+    std::optional<PendingFrame>& slot = slots_[head_];
+    return slot.has_value() ? &slot.value() : nullptr;
   }
 
-  void pop_front(const TimePoint now) noexcept {
-    queued_bytes_ -= front().bytes.size();
+  void pop_front(const std::size_t completed_frame_bytes, const TimePoint now) noexcept {
+    queued_bytes_ -= completed_frame_bytes;
     slots_[head_].reset();
     head_ = (head_ + 1U) % slots_.size();
     --count_;
@@ -135,8 +139,10 @@ public:
       return common::Status::ok();
     if ((!interest_.want_read || !readable) && (!interest_.want_write || !writable))
       return common::Status::ok();
-    PendingFrame& pending = front();
-    auto progress = socket_.write(common::ByteView{pending.bytes}.subspan(pending.written_bytes));
+    PendingFrame* pending = front();
+    if (pending == nullptr)
+      return fail(corruption("Raft TLS output queue accounting is inconsistent"));
+    auto progress = socket_.write(common::ByteView{pending->bytes}.subspan(pending->written_bytes));
     if (!progress.has_value())
       return fail(progress.error());
     if (progress->state == network::TlsIoState::kClosed)
@@ -150,11 +156,11 @@ public:
       return common::Status::ok();
     }
     if (progress->bytes_transferred == 0U ||
-        progress->bytes_transferred > pending.bytes.size() - pending.written_bytes)
+        progress->bytes_transferred > pending->bytes.size() - pending->written_bytes)
       return fail(unavailable("Raft TLS output write made invalid progress"));
-    pending.written_bytes += progress->bytes_transferred;
-    if (pending.written_bytes == pending.bytes.size())
-      pop_front(now);
+    pending->written_bytes += progress->bytes_transferred;
+    if (pending->written_bytes == pending->bytes.size())
+      pop_front(pending->bytes.size(), now);
     else
       interest_ = {.want_write = true};
     return common::Status::ok();
@@ -167,7 +173,7 @@ public:
   std::size_t tail_{};
   std::size_t count_{};
   std::size_t queued_bytes_{};
-  TimePoint deadline_{};
+  TimePoint deadline_;
   RaftTransportTlsClientState state_{RaftTransportTlsClientState::kHandshaking};
   // A TLS client must initiate the handshake by producing ClientHello bytes.
   RaftTransportTlsClientInterest interest_{.want_write = true};
@@ -288,6 +294,11 @@ common::Result<std::vector<std::vector<std::byte>>> RaftTransportTlsClient::drai
   if (!implementation_)
     return common::make_unexpected(invalid("Raft TLS client is empty"));
   Impl& impl = *implementation_;
+  for (std::size_t offset = 0U; offset < impl.count_; ++offset) {
+    const std::size_t index = (impl.head_ + offset) % impl.slots_.size();
+    if (!impl.slots_[index].has_value())
+      return common::make_unexpected(corruption("Raft TLS retry queue accounting is inconsistent"));
+  }
   try {
     frames.reserve(impl.count_);
   } catch (const std::bad_alloc&) {
@@ -296,7 +307,11 @@ common::Result<std::vector<std::vector<std::byte>>> RaftTransportTlsClient::drai
     return common::make_unexpected(exhausted("Raft TLS retry drain exceeds container limits"));
   }
   while (impl.count_ != 0U) {
-    frames.push_back(std::move(impl.front().bytes));
+    Impl::PendingFrame* pending = impl.front();
+    if (pending == nullptr)
+      return common::make_unexpected(
+          corruption("Raft TLS retry queue changed during single-threaded drain"));
+    frames.push_back(std::move(pending->bytes));
     impl.slots_[impl.head_].reset();
     impl.head_ = (impl.head_ + 1U) % impl.slots_.size();
     --impl.count_;

@@ -118,8 +118,7 @@ TEST(RaftTransportTlsClientTest, AuthenticatesQueuesAndWritesPersistentFrames) {
   ASSERT_TRUE(client.has_value());
   EXPECT_FALSE(client->interest().want_read);
   EXPECT_TRUE(client->interest().want_write);
-  ASSERT_TRUE(client->next_deadline().has_value());
-  EXPECT_EQ(*client->next_deadline(), now + std::chrono::milliseconds{100});
+  EXPECT_EQ(client->next_deadline(), std::optional{now + std::chrono::milliseconds{100}});
   auto first = frame(1U);
   auto second = frame(2U);
   auto overflow = frame(3U);
@@ -147,8 +146,9 @@ TEST(RaftTransportTlsClientTest, AuthenticatesQueuesAndWritesPersistentFrames) {
       if (progress->state == network::TlsIoState::kComplete && progress->bytes_transferred == 1U) {
         auto step = reader->consume(byte);
         ASSERT_TRUE(step.has_value()) << step.error().to_string();
-        if (step->envelope.has_value())
-          received.push_back(std::move(*step->envelope));
+        std::optional<raft::RaftTransportEnvelope>& envelope = step->envelope;
+        if (envelope.has_value())
+          received.push_back(std::move(envelope.value()));
       }
     }
   }
@@ -170,8 +170,7 @@ TEST(RaftTransportTlsClientTest, RetainsWholeFramesAcrossFailureForReconnectRetr
   const auto start = RaftTransportTlsClient::TimePoint{};
   auto client = RaftTransportTlsClient::create(network::TlsSocket{}, config, start);
   ASSERT_TRUE(client.has_value());
-  ASSERT_TRUE(client->next_deadline().has_value());
-  EXPECT_EQ(*client->next_deadline(), start + std::chrono::milliseconds{5});
+  EXPECT_EQ(client->next_deadline(), std::optional{start + std::chrono::milliseconds{5}});
   auto queued = frame(1U);
   const auto expected = queued;
   ASSERT_TRUE(client->try_enqueue(queued, start).is_ok());
@@ -183,6 +182,9 @@ TEST(RaftTransportTlsClientTest, RetainsWholeFramesAcrossFailureForReconnectRetr
   EXPECT_EQ(retry->front(), expected);
   EXPECT_EQ(client->queued_frames(), 0U);
   EXPECT_FALSE(client->next_deadline().has_value());
+  auto empty_retry = client->drain_retry_frames();
+  ASSERT_TRUE(empty_retry.has_value());
+  EXPECT_TRUE(empty_retry->empty());
 
   auto wrong_route =
       raft::encode_raft_transport_envelope_v1({.group_id = group(),
@@ -219,8 +221,10 @@ TEST(RaftTransportTlsClientTest, RejectsServerPrincipalBeforeWritingQueuedFrame)
 
   common::Status progress = common::Status::ok();
   for (std::size_t iteration = 0U; iteration < 1024U && progress.is_ok(); ++iteration) {
-    if (!server->handshake_complete())
-      (void)server->handshake();
+    if (!server->handshake_complete()) {
+      auto server_progress = server->handshake();
+      ASSERT_TRUE(server_progress.has_value()) << server_progress.error().to_string();
+    }
     progress = client->on_ready(true, true, now + std::chrono::milliseconds{1});
   }
   EXPECT_EQ(progress.code(), common::StatusCode::kUnauthenticated);
