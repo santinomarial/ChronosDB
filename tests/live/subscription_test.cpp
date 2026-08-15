@@ -131,7 +131,9 @@ TEST(SubscriptionTest, SlowSubscriberOverflowDoesNotRejectCommittedChange) {
   const auto status = manager->status(fixture.subscription_id);
   ASSERT_TRUE(status.has_value());
   EXPECT_EQ(status->phase, SubscriptionPhase::kOverflowed);
+  EXPECT_EQ(status->last_assigned_sequence, 1U);
   EXPECT_EQ(status->buffered_changes, 0U);
+  EXPECT_EQ(status->buffered_bytes, 0U);
 }
 
 TEST(SubscriptionTest, SchemaChangeTerminatesPlanAndRejectsResumePrecisely) {

@@ -42,7 +42,7 @@ public:
   };
 
   Impl(SubscriptionSource source_value, SubscriptionLimits limits_value)
-      : source(std::move(source_value)), limits(limits_value),
+      : source(source_value), limits(limits_value),
         latest_position{source.tablet_id, source.wal_id, 0U} {}
 
   [[nodiscard]] ResumeToken token_for(const State& state) const {
@@ -64,7 +64,7 @@ public:
            bytes <= limits.maximum_buffered_bytes_per_subscription - state.buffered_bytes;
   }
 
-  void overflow(State& state) const noexcept {
+  static void overflow(State& state) noexcept {
     state.phase = SubscriptionPhase::kOverflowed;
     state.buffered.clear();
     state.buffered_bytes = 0U;
@@ -129,7 +129,7 @@ common::Result<SubscriptionManager> SubscriptionManager::create(SubscriptionSour
       limits.maximum_change_bytes > limits.maximum_retained_bytes) {
     return common::make_unexpected(invalid("subscription limits are inconsistent or zero"));
   }
-  return SubscriptionManager{std::make_unique<Impl>(std::move(source), limits)};
+  return SubscriptionManager{std::make_unique<Impl>(source, limits)};
 }
 
 common::Result<SubscriptionRegistration>
