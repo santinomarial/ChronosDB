@@ -1508,6 +1508,7 @@ TEST(DistributedGroupedQueryTcpExecutionTest, SchedulesAllTabletsAndRotatesAddre
                           .maximum_response_frames = 4U},
        .connect_timeout = std::chrono::milliseconds{1000}});
   ASSERT_TRUE(scheduled.has_value()) << scheduled.error().to_string();
+  EXPECT_EQ(scheduled->result().error().code(), common::StatusCode::kUnavailable);
 
   for (std::size_t iteration = 0U;
        iteration < 4096U &&
