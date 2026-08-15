@@ -36,6 +36,12 @@
 namespace chronos::tiering {
 namespace {
 
+template <typename T> [[nodiscard]] T* optional_value_pointer(std::optional<T>& value) noexcept {
+  if (!value.has_value())
+    return nullptr;
+  return std::addressof(*value);
+}
+
 class TemporaryDirectory {
 public:
   TemporaryDirectory() {
@@ -302,17 +308,20 @@ struct LiveFixture {
     EXPECT_TRUE(selected_cold.has_value() && selected_cold->has_value());
     if (!selected_cold.has_value() || !selected_cold->has_value())
       return nullptr;
+    LoadedColdLocationManifest* selected_cold_value = optional_value_pointer(*selected_cold);
+    if (selected_cold_value == nullptr)
+      return nullptr;
     auto cold_owner =
-        std::make_shared<const LoadedColdLocationManifest>(std::move(**selected_cold));
+        std::make_shared<const LoadedColdLocationManifest>(std::move(*selected_cold_value));
     auto tiered_publisher = TieredDatabaseStoragePublisher::create(*base, cold_owner);
     EXPECT_TRUE(tiered_publisher.has_value());
     if (!tiered_publisher.has_value())
       return nullptr;
 
-    fixture = std::unique_ptr<LiveFixture>(
-        new LiveFixture(std::move(directory), std::move(part), std::move(*storage),
-                        std::make_unique<ColdLocationManifestStorage>(std::move(*cold)), cold_owner,
-                        std::move(*tiered_publisher)));
+    fixture = std::make_unique<LiveFixture>(
+        std::move(directory), std::move(part), std::move(*storage),
+        std::make_unique<ColdLocationManifestStorage>(std::move(*cold)), cold_owner,
+        std::move(*tiered_publisher));
     auto uploaded =
         fixture->object_store.put_if_absent(fixture->part.object_key, fixture->part.encoded.bytes(),
                                             fixture->part.descriptor.content_sha256);
@@ -543,13 +552,15 @@ TEST(TieredPairRecoveryTest, ReconstructsCommittedSnapshotFromRemoteOnlyPart) {
       pair_storage->recover(fixture->manifest_storage, *fixture->cold_storage, recovery);
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   ASSERT_TRUE(recovered->has_value());
-  EXPECT_EQ((*recovered)->record.generation, 1U);
-  EXPECT_EQ((*recovered)->manifest_snapshot.generation(), 1U);
-  ASSERT_NE((*recovered)->cold_manifest, nullptr);
-  EXPECT_EQ((*recovered)->cold_manifest->manifest().generation(), 1U);
+  RecoveredTieredPair* recovered_pair = optional_value_pointer(*recovered);
+  ASSERT_NE(recovered_pair, nullptr);
+  EXPECT_EQ(recovered_pair->record.generation, 1U);
+  EXPECT_EQ(recovered_pair->manifest_snapshot.generation(), 1U);
+  ASSERT_NE(recovered_pair->cold_manifest, nullptr);
+  EXPECT_EQ(recovered_pair->cold_manifest->manifest().generation(), 1U);
 
-  auto recovered_publisher = TieredDatabaseStoragePublisher::create((*recovered)->manifest_snapshot,
-                                                                    (*recovered)->cold_manifest);
+  auto recovered_publisher = TieredDatabaseStoragePublisher::create(
+      recovered_pair->manifest_snapshot, recovered_pair->cold_manifest);
   ASSERT_TRUE(recovered_publisher.has_value());
   auto recovered_snapshot = recovered_publisher->snapshot();
   ASSERT_TRUE(recovered_snapshot.has_value());
@@ -615,6 +626,19 @@ TEST(TieredLocalPartReclamationTest, WaitsForUnsafeReaderThenUnlinksAndRetriesId
 
   ASSERT_TRUE(proof.has_value());
   EXPECT_FALSE(proof->is_pinned());
+  ASSERT_TRUE(std::filesystem::create_directory(fixture->directory.path() / "uncommitted-pair"));
+  auto uncommitted_pair_storage = TieredPairCommitStorage::create(
+      {.directory_path = (fixture->directory.path() / "uncommitted-pair").string(),
+       .expected_database_id = fixture->part.database_id,
+       .expected_object_store_id = fixture->part.object_store_id});
+  ASSERT_TRUE(uncommitted_pair_storage.has_value());
+  auto unselected = TieredLocalPartReclamationCoordinator::reclaim(
+      *proof, *uncommitted_pair_storage, fixture->manifest_storage, fixture->object_store,
+      schema_bindings);
+  ASSERT_FALSE(unselected.has_value());
+  EXPECT_EQ(unselected.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(std::filesystem::exists(fixture->local_part_path()));
+
   MemoryObjectStore wrong_store;
   const std::array wrong_bytes{std::byte{0x01U}};
   auto wrong_digest = ingest::sha256(wrong_bytes);
@@ -683,8 +707,11 @@ TEST(TieredLocalPartReclamationTest, WaitsForUnsafeReaderThenUnlinksAndRetriesId
   auto loaded_cold_successor = fixture->cold_storage->load_selected(*decoded_base);
   ASSERT_TRUE(loaded_cold_successor.has_value());
   ASSERT_TRUE(loaded_cold_successor->has_value());
+  LoadedColdLocationManifest* loaded_cold_successor_value =
+      optional_value_pointer(*loaded_cold_successor);
+  ASSERT_NE(loaded_cold_successor_value, nullptr);
   auto cold_successor =
-      std::make_shared<const LoadedColdLocationManifest>(std::move(**loaded_cold_successor));
+      std::make_shared<const LoadedColdLocationManifest>(std::move(*loaded_cold_successor_value));
   auto published_successor = publisher->publish({.manifest_snapshot = current->manifest_snapshot(),
                                                  .cold_manifest = cold_successor,
                                                  .schema_bindings = schema_bindings,
@@ -740,8 +767,10 @@ TEST(TieredLocalPartReclamationTest, ReclaimsWalOwnedPartAndRecoversItRemotelyAf
       pair_storage->recover(fixture->manifest_storage, *fixture->cold_storage, recovery);
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   ASSERT_TRUE(recovered->has_value());
-  auto restarted_publisher = TieredDatabaseStoragePublisher::create((*recovered)->manifest_snapshot,
-                                                                    (*recovered)->cold_manifest);
+  RecoveredTieredPair* recovered_pair = optional_value_pointer(*recovered);
+  ASSERT_NE(recovered_pair, nullptr);
+  auto restarted_publisher = TieredDatabaseStoragePublisher::create(
+      recovered_pair->manifest_snapshot, recovered_pair->cold_manifest);
   ASSERT_TRUE(restarted_publisher.has_value()) << restarted_publisher.error().to_string();
   auto restarted = restarted_publisher->snapshot();
   ASSERT_TRUE(restarted.has_value());
@@ -833,7 +862,14 @@ TEST(TieredRemoteObjectReclamationTest,
         fixture->cold_storage->install(std::cref(*encoded_cold), *successor_decoded).has_value());
     auto selected_cold = fixture->cold_storage->load_selected(*successor_decoded);
     EXPECT_TRUE(selected_cold.has_value() && selected_cold->has_value());
-    cold_successor = std::make_shared<const LoadedColdLocationManifest>(std::move(**selected_cold));
+    if (!selected_cold.has_value())
+      return predecessor->manifest_snapshot();
+    LoadedColdLocationManifest* selected_cold_value = optional_value_pointer(*selected_cold);
+    EXPECT_NE(selected_cold_value, nullptr);
+    if (selected_cold_value == nullptr)
+      return predecessor->manifest_snapshot();
+    cold_successor =
+        std::make_shared<const LoadedColdLocationManifest>(std::move(*selected_cold_value));
     auto published_pair =
         fixture->publisher.publish({.manifest_snapshot = published_manifest->snapshot,
                                     .cold_manifest = cold_successor,
@@ -860,15 +896,17 @@ TEST(TieredRemoteObjectReclamationTest,
   }();
 
   ASSERT_TRUE(proof.has_value());
-  EXPECT_FALSE(proof->is_pinned());
+  TieredRemoteObjectReclamationProof* reclamation_proof = optional_value_pointer(proof);
+  ASSERT_NE(reclamation_proof, nullptr);
+  EXPECT_FALSE(reclamation_proof->is_pinned());
   MemoryObjectStore wrong_store;
   const std::array wrong_bytes{std::byte{0x01U}};
   auto wrong_digest = ingest::sha256(wrong_bytes);
   ASSERT_TRUE(wrong_digest.has_value());
   ASSERT_TRUE(
       wrong_store.put_if_absent(fixture->part.object_key, wrong_bytes, *wrong_digest).has_value());
-  auto mismatch =
-      TieredRemoteObjectReclamationCoordinator::reclaim(*proof, *pair_storage, wrong_store);
+  auto mismatch = TieredRemoteObjectReclamationCoordinator::reclaim(*reclamation_proof,
+                                                                    *pair_storage, wrong_store);
   ASSERT_FALSE(mismatch.has_value());
   EXPECT_EQ(mismatch.error().code(), common::StatusCode::kCorruption);
   EXPECT_EQ(wrong_store.object_count(), 1U);
@@ -893,6 +931,8 @@ TEST(TieredRemoteObjectReclamationTest,
       {.manifest_request = recovery_manifest_request, .remote_store = &restart_store});
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   ASSERT_TRUE(recovered->has_value());
+  RecoveredTieredPair* recovered_pair = optional_value_pointer(*recovered);
+  ASSERT_NE(recovered_pair, nullptr);
   const std::array historical_bindings{
       TieredRestartManifestBinding{.manifest_generation = 1U,
                                    .schema_bindings = restart_schema_bindings,
@@ -901,25 +941,25 @@ TEST(TieredRemoteObjectReclamationTest,
                                    .schema_bindings = no_schema_bindings,
                                    .source_bindings = no_source_bindings}};
   auto bounded = TieredRestartRemoteGarbageCoordinator::reclaim_unreachable(
-      **recovered, *pair_storage, fixture->manifest_storage, *fixture->cold_storage,
+      *recovered_pair, *pair_storage, fixture->manifest_storage, *fixture->cold_storage,
       historical_bindings, restart_store, {.maximum_cold_generations = 1U, .maximum_objects = 1U});
   ASSERT_FALSE(bounded.has_value());
   EXPECT_EQ(bounded.error().code(), common::StatusCode::kResourceExhausted);
   EXPECT_EQ(restart_store.object_count(), 1U);
   auto missing_binding = TieredRestartRemoteGarbageCoordinator::reclaim_unreachable(
-      **recovered, *pair_storage, fixture->manifest_storage, *fixture->cold_storage,
+      *recovered_pair, *pair_storage, fixture->manifest_storage, *fixture->cold_storage,
       std::span{historical_bindings}.subspan(1U), restart_store);
   ASSERT_FALSE(missing_binding.has_value());
   EXPECT_EQ(missing_binding.error().code(), common::StatusCode::kInvalidArgument);
   EXPECT_EQ(restart_store.object_count(), 1U);
   auto restart_mismatch = TieredRestartRemoteGarbageCoordinator::reclaim_unreachable(
-      **recovered, *pair_storage, fixture->manifest_storage, *fixture->cold_storage,
+      *recovered_pair, *pair_storage, fixture->manifest_storage, *fixture->cold_storage,
       historical_bindings, wrong_store);
   ASSERT_FALSE(restart_mismatch.has_value());
   EXPECT_EQ(restart_mismatch.error().code(), common::StatusCode::kCorruption);
   EXPECT_EQ(wrong_store.object_count(), 1U);
   auto restart_reclaimed = TieredRestartRemoteGarbageCoordinator::reclaim_unreachable(
-      **recovered, *pair_storage, fixture->manifest_storage, *fixture->cold_storage,
+      *recovered_pair, *pair_storage, fixture->manifest_storage, *fixture->cold_storage,
       historical_bindings, restart_store);
   ASSERT_TRUE(restart_reclaimed.has_value()) << restart_reclaimed.error().to_string();
   EXPECT_EQ(restart_reclaimed->pair_generation, 2U);
@@ -931,14 +971,14 @@ TEST(TieredRemoteObjectReclamationTest,
   EXPECT_EQ(restart_reclaimed->already_absent_objects, 0U);
   EXPECT_EQ(restart_store.object_count(), 0U);
   auto restart_retry = TieredRestartRemoteGarbageCoordinator::reclaim_unreachable(
-      **recovered, *pair_storage, fixture->manifest_storage, *fixture->cold_storage,
+      *recovered_pair, *pair_storage, fixture->manifest_storage, *fixture->cold_storage,
       historical_bindings, restart_store);
   ASSERT_TRUE(restart_retry.has_value());
   EXPECT_EQ(restart_retry->removed_objects, 0U);
   EXPECT_EQ(restart_retry->already_absent_objects, 1U);
 
-  auto reclaimed = TieredRemoteObjectReclamationCoordinator::reclaim(*proof, *pair_storage,
-                                                                     fixture->object_store);
+  auto reclaimed = TieredRemoteObjectReclamationCoordinator::reclaim(
+      *reclamation_proof, *pair_storage, fixture->object_store);
   ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
   EXPECT_EQ(reclaimed->outcome, manifest::PartReclamationOutcome::kReclaimed);
   EXPECT_EQ(reclaimed->candidate_objects, 1U);
@@ -947,7 +987,7 @@ TEST(TieredRemoteObjectReclamationTest,
   EXPECT_EQ(reclaimed->already_absent_objects, 0U);
   EXPECT_EQ(fixture->object_store.object_count(), 0U);
 
-  auto retry = TieredRemoteObjectReclamationCoordinator::reclaim(*proof, *pair_storage,
+  auto retry = TieredRemoteObjectReclamationCoordinator::reclaim(*reclamation_proof, *pair_storage,
                                                                  fixture->object_store);
   ASSERT_TRUE(retry.has_value());
   EXPECT_EQ(retry->removed_objects, 0U);
@@ -968,7 +1008,9 @@ TEST(TieredRemoteObjectReclamationTest,
       fixture->cold_storage->install(std::cref(*encoded_cold3), *successor_decoded).has_value());
   auto loaded_cold3 = fixture->cold_storage->load_selected(*successor_decoded);
   ASSERT_TRUE(loaded_cold3.has_value() && loaded_cold3->has_value());
-  auto cold3 = std::make_shared<const LoadedColdLocationManifest>(std::move(**loaded_cold3));
+  LoadedColdLocationManifest* loaded_cold3_value = optional_value_pointer(*loaded_cold3);
+  ASSERT_NE(loaded_cold3_value, nullptr);
+  auto cold3 = std::make_shared<const LoadedColdLocationManifest>(std::move(*loaded_cold3_value));
   auto published3 = fixture->publisher.publish({.manifest_snapshot = retired_manifest_snapshot,
                                                 .cold_manifest = cold3,
                                                 .schema_bindings = {},
@@ -976,7 +1018,7 @@ TEST(TieredRemoteObjectReclamationTest,
                                                 .cold_decode_limits = {}});
   ASSERT_TRUE(published3.has_value());
   ASSERT_TRUE(pair_storage->commit(published3->manifest_snapshot(), cold3).has_value());
-  auto stale = TieredRemoteObjectReclamationCoordinator::reclaim(*proof, *pair_storage,
+  auto stale = TieredRemoteObjectReclamationCoordinator::reclaim(*reclamation_proof, *pair_storage,
                                                                  fixture->object_store);
   ASSERT_FALSE(stale.has_value());
   EXPECT_EQ(stale.error().code(), common::StatusCode::kInvalidArgument);

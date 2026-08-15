@@ -112,8 +112,8 @@ struct S3ObjectStoreConfig {
   // exceeding maximum_retry_backoff. A fixed seed is intended only for deterministic testing.
   std::chrono::milliseconds maximum_retry_jitter{50};
   std::optional<std::uint64_t> retry_jitter_seed;
-  std::size_t multipart_threshold_bytes{64U * 1024U * 1024U};
-  std::size_t multipart_part_bytes{16U * 1024U * 1024U};
+  std::size_t multipart_threshold_bytes{std::size_t{64U} * 1024U * 1024U};
+  std::size_t multipart_part_bytes{std::size_t{16U} * 1024U * 1024U};
   // Bounds simultaneously active UploadPart requests for one object. All workers are joined before
   // completion or abort, and completion retains ascending part-number order.
   std::size_t multipart_maximum_concurrency{4U};
@@ -208,7 +208,7 @@ struct S3ContainerCredentialProviderConfig {
   std::chrono::milliseconds connect_timeout{1'000};
   std::chrono::milliseconds request_timeout{2'000};
   std::chrono::seconds refresh_before_expiration{300};
-  std::size_t maximum_response_bytes{64U * 1024U};
+  std::size_t maximum_response_bytes{std::size_t{64U} * 1024U};
   bool require_tls{true};
 };
 
@@ -240,7 +240,7 @@ struct S3InstanceCredentialProviderConfig {
   std::chrono::milliseconds request_timeout{1'000};
   std::chrono::seconds token_lifetime{21'600};
   std::chrono::seconds refresh_before_expiration{300};
-  std::size_t maximum_response_bytes{64U * 1024U};
+  std::size_t maximum_response_bytes{std::size_t{64U} * 1024U};
   // Production keeps this true. The false setting exists for isolated loopback-compatible tests
   // and explicitly reviewed metadata proxies.
   bool require_link_local_endpoint{true};

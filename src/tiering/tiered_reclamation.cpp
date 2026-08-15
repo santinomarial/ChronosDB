@@ -59,7 +59,7 @@ TieredLocalPartReclamationProof::TieredLocalPartReclamationProof(
     TieredPairCommitRecord record, TieredDatabaseStorageSnapshot snapshot,
     std::vector<manifest::TemporalPartDescriptor> parts,
     std::vector<std::weak_ptr<const detail::TieredDatabaseStorageEpoch>> reader_pins) noexcept
-    : record_(std::move(record)), snapshot_(std::move(snapshot)), parts_(std::move(parts)),
+    : record_(record), snapshot_(std::move(snapshot)), parts_(std::move(parts)),
       reader_pins_(std::move(reader_pins)) {}
 
 std::uint64_t TieredLocalPartReclamationProof::pair_generation() const noexcept {
@@ -83,7 +83,7 @@ TieredRemoteObjectReclamationProof::TieredRemoteObjectReclamationProof(
     TieredPairCommitRecord record, TieredDatabaseStorageSnapshot snapshot,
     std::vector<ColdPartLocationDescriptor> locations,
     std::vector<std::weak_ptr<const detail::TieredDatabaseStorageEpoch>> reader_pins) noexcept
-    : record_(std::move(record)), snapshot_(std::move(snapshot)), locations_(std::move(locations)),
+    : record_(record), snapshot_(std::move(snapshot)), locations_(std::move(locations)),
       reader_pins_(std::move(reader_pins)) {}
 
 std::uint64_t TieredRemoteObjectReclamationProof::pair_generation() const noexcept {
@@ -122,7 +122,7 @@ common::Result<TieredLocalPartReclamationReport> TieredLocalPartReclamationCoord
   auto selected_pair = pair_storage.load_selected_record();
   if (!selected_pair.has_value())
     return common::make_unexpected(selected_pair.error());
-  if (!selected_pair->has_value() || **selected_pair != proof.record_) {
+  if (*selected_pair != proof.record_) {
     return common::make_unexpected(
         invalid("tiered local reclamation pair is no longer the selected durable authority"));
   }
@@ -182,7 +182,7 @@ TieredRemoteObjectReclamationCoordinator::reclaim(const TieredRemoteObjectReclam
   auto selected_pair = pair_storage.load_selected_record();
   if (!selected_pair.has_value())
     return common::make_unexpected(selected_pair.error());
-  if (!selected_pair->has_value() || **selected_pair != proof.record_) {
+  if (*selected_pair != proof.record_) {
     return common::make_unexpected(
         invalid("tiered remote reclamation pair is no longer the selected durable authority"));
   }
