@@ -155,6 +155,8 @@ TEST(RaftObservationTlsClientTest, AuthenticatesAndAcquiresExactCorrelatedObserv
   }
   ASSERT_EQ(client->state(), RaftObservationTlsClientState::kComplete);
   EXPECT_TRUE(authenticator.saw_fingerprint);
+  EXPECT_FALSE(client->interest().want_read);
+  EXPECT_FALSE(client->interest().want_write);
   auto acquired = client->result();
   ASSERT_TRUE(acquired.has_value()) << acquired.error().to_string();
   EXPECT_EQ(*acquired, observation());
@@ -168,9 +170,14 @@ TEST(RaftObservationTlsClientTest, DeadlineIsExactAndSticky) {
   const auto start = RaftObservationTlsClient::TimePoint{};
   auto client = RaftObservationTlsClient::create(network::TlsSocket{}, value, start);
   ASSERT_TRUE(client.has_value());
+  EXPECT_EQ(client->result().error().code(), common::StatusCode::kInvalidArgument);
   EXPECT_TRUE(client->on_ready(false, false, start + std::chrono::milliseconds{4}).is_ok());
   const auto failure = client->on_ready(false, false, start + std::chrono::milliseconds{5});
   EXPECT_EQ(failure.code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(client->state(), RaftObservationTlsClientState::kFailed);
+  EXPECT_FALSE(client->interest().want_read);
+  EXPECT_FALSE(client->interest().want_write);
+  EXPECT_EQ(client->result().error().code(), common::StatusCode::kInvalidArgument);
   EXPECT_EQ(client->on_ready(true, true, start + std::chrono::milliseconds{6}), failure);
 }
 
@@ -194,13 +201,16 @@ TEST(RaftObservationTlsClientTest, RejectsServerPrincipalBeforeRequestWrite) {
   common::Status progress = common::Status::ok();
   for (std::size_t iteration = 0U; iteration < 1024U && progress.is_ok(); ++iteration) {
     progress = client->on_ready(true, true, start + std::chrono::milliseconds{1});
-    if (!server->handshake_complete())
-      (void)server->handshake();
+    if (!server->handshake_complete()) {
+      auto handshake = server->handshake();
+      ASSERT_TRUE(handshake.has_value()) << handshake.error().to_string();
+    }
   }
   EXPECT_EQ(progress.code(), common::StatusCode::kUnauthenticated);
   EXPECT_EQ(client->state(), RaftObservationTlsClientState::kFailed);
   EXPECT_TRUE(authenticator.saw_fingerprint);
   EXPECT_EQ(server->pending_plaintext_bytes(), 0U);
+  EXPECT_EQ(client->result().error().code(), common::StatusCode::kInvalidArgument);
 }
 
 } // namespace

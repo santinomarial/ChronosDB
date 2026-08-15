@@ -159,18 +159,19 @@ public:
     if (step->consumed_bytes != progress->bytes_transferred)
       return fail(status(common::StatusCode::kCorruption,
                          "Raft observation response has a coalesced suffix"));
-    if (!step->response.has_value()) {
+    auto* response = step->response.transform([](auto& value) { return &value; }).value_or(nullptr);
+    if (response == nullptr) {
       interest_ = {.want_read = true};
       return common::Status::ok();
     }
-    if (step->response->source_node_id != config_.request.target_node_id ||
-        step->response->target_node_id != config_.request.source_node_id ||
-        step->response->group_id != config_.request.group_id ||
-        step->response->correlation_id != config_.request.correlation_id) {
+    if (response->source_node_id != config_.request.target_node_id ||
+        response->target_node_id != config_.request.source_node_id ||
+        response->group_id != config_.request.group_id ||
+        response->correlation_id != config_.request.correlation_id) {
       return fail(
           status(common::StatusCode::kCorruption, "Raft observation response correlation differs"));
     }
-    response_ = std::move(*step->response);
+    response_ = std::move(*response);
     state_ = RaftObservationTlsClientState::kComplete;
     interest_ = {};
     return common::Status::ok();
@@ -180,7 +181,7 @@ public:
   RaftObservationFrameWriteCursor request_;
   RaftObservationResponseReader response_reader_;
   RaftObservationTlsClientConfig config_;
-  TimePoint deadline_{};
+  TimePoint deadline_;
   RaftObservationTlsClientState state_{RaftObservationTlsClientState::kHandshaking};
   RaftObservationTlsInterest interest_{.want_write = true};
   std::array<std::byte, 4096U> scratch_{};
@@ -258,17 +259,26 @@ RaftObservationTlsClient::TimePoint RaftObservationTlsClient::deadline() const n
 }
 
 common::Result<raft::RaftGroupObservation> RaftObservationTlsClient::result() const {
-  if (!implementation_ || implementation_->state_ != RaftObservationTlsClientState::kComplete ||
-      !implementation_->response_.has_value()) {
+  if (!implementation_ || implementation_->state_ != RaftObservationTlsClientState::kComplete) {
     return common::make_unexpected(
         status(common::StatusCode::kInvalidArgument, "Raft observation result is unavailable"));
   }
-  if (implementation_->response_->status_code != common::StatusCode::kOk) {
+  const auto* response =
+      implementation_->response_.transform([](const auto& value) { return &value; })
+          .value_or(nullptr);
+  if (response == nullptr)
     return common::make_unexpected(
-        status(implementation_->response_->status_code, "Remote Raft observation failed"));
+        status(common::StatusCode::kInternal, "Raft observation response is unavailable"));
+  if (response->status_code != common::StatusCode::kOk) {
+    return common::make_unexpected(status(response->status_code, "Remote Raft observation failed"));
   }
+  const auto* observation =
+      response->observation.transform([](const auto& value) { return &value; }).value_or(nullptr);
+  if (observation == nullptr)
+    return common::make_unexpected(status(common::StatusCode::kCorruption,
+                                          "Successful Raft observation response has no payload"));
   try {
-    return *implementation_->response_->observation;
+    return *observation;
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
                                           "Raft observation result allocation failed"));
