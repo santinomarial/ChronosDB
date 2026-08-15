@@ -13,12 +13,18 @@ namespace chronos::live {
 
 inline constexpr std::size_t kSubscriptionPlanDefinitionHeaderSize = 128U;
 inline constexpr std::size_t kSubscriptionPlanDefinitionTrailerSize = 4U;
-inline constexpr std::size_t kMaximumSubscriptionPlanDefinitionSize = 16U * 1024U * 1024U;
+inline constexpr std::size_t kMaximumSubscriptionPlanDefinitionSize =
+    std::size_t{16U} * 1024U * 1024U;
 
 struct SubscriptionPlanDefinitionLimits {
-  std::size_t maximum_definition_bytes{1024U * 1024U};
-  std::size_t maximum_sql_bytes{256U * 1024U};
+  std::size_t maximum_definition_bytes{std::size_t{1024U} * 1024U};
+  std::size_t maximum_sql_bytes{std::size_t{256U} * 1024U};
 };
+
+static_assert(kMaximumSubscriptionPlanDefinitionSize == std::size_t{16'777'216U});
+static_assert(SubscriptionPlanDefinitionLimits{}.maximum_definition_bytes ==
+              std::size_t{1'048'576U});
+static_assert(SubscriptionPlanDefinitionLimits{}.maximum_sql_bytes == std::size_t{262'144U});
 
 struct SubscriptionPlanDefinition {
   common::Uuid database_id;

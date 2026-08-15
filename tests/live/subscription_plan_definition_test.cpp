@@ -45,6 +45,8 @@ TEST(SubscriptionPlanDefinitionTest, RejectsCorruptionAndFiniteSqlLimit) {
   ASSERT_FALSE(corrupt.has_value());
   EXPECT_EQ(corrupt.error().code(), common::StatusCode::kCorruption);
   SubscriptionPlanDefinitionLimits limits;
+  EXPECT_EQ(limits.maximum_definition_bytes, std::size_t{1'048'576U});
+  EXPECT_EQ(limits.maximum_sql_bytes, std::size_t{262'144U});
   limits.maximum_sql_bytes = 4U;
   EXPECT_EQ(encode_subscription_plan_definition_v1(definition(), limits).error().code(),
             common::StatusCode::kResourceExhausted);
