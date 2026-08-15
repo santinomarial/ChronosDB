@@ -45,7 +45,9 @@ inferring it from the first physical row would be unsafe when identities have di
 Earlier as-of requests return `NOT_FOUND` rather than inventing an empty table.
 
 `verify_retained_commit` is the read-only proof boundary for a WAL command already covered by a
-selected durable tablet position. At or after the explicit retained-system-time boundary, it
+selected durable tablet position. Its `TemporalCommitCoordinate` binds the authoritative position
+and system time as one named input so recovery code cannot exchange the two integer fields. At or
+after the explicit retained-system-time boundary, it
 requires the complete row set at that source position to match the restored commit timestamp,
 logical identities, source coordinates, operation metadata, and scalar storage exactly (including
 floating-point bit patterns). Before that boundary, retained predecessor rows still match exactly,

@@ -123,8 +123,10 @@ common::Result<CommittedTemporalCommandResult> verify_retained_temporal_command(
   if (!mutations.has_value()) {
     return common::make_unexpected(mutations.error());
   }
-  common::Status verified = provider.verify_retained_commit(
-      system_commit_position, command.system_commit_time_ns(), *mutations);
+  common::Status verified =
+      provider.verify_retained_commit({.system_commit_position = system_commit_position,
+                                       .system_commit_time_ns = command.system_commit_time_ns()},
+                                      *mutations);
   if (!verified.is_ok()) {
     return common::make_unexpected(std::move(verified));
   }

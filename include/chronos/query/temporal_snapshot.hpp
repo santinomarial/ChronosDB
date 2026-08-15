@@ -44,6 +44,13 @@ struct RetainedTemporalVersion {
   TemporalMutation mutation;
 };
 
+struct TemporalCommitCoordinate {
+  std::uint64_t system_commit_position{};
+  std::int64_t system_commit_time_ns{};
+  friend bool operator==(const TemporalCommitCoordinate&,
+                         const TemporalCommitCoordinate&) = default;
+};
+
 struct TemporalHistoryCompactionReport {
   std::optional<std::uint64_t> previous_oldest_observable_commit_position;
   std::optional<std::int64_t> previous_retained_system_time_ns;
@@ -89,7 +96,7 @@ public:
   // as reclaimed; at or after it the complete per-position row set must remain. The caller first
   // performs structural/schema validation. This method never mutates provider state.
   [[nodiscard]] common::Status
-  verify_retained_commit(std::uint64_t system_commit_position, std::int64_t system_commit_time_ns,
+  verify_retained_commit(TemporalCommitCoordinate coordinate,
                          std::span<const TemporalMutation> mutations) const;
 
   // Single-writer pre-WAL validation for the next commit. Source WAL fields are deliberately

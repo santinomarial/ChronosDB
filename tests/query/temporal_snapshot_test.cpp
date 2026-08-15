@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -77,6 +78,16 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
   };
 }
 
+[[nodiscard]] TemporalMutation mutation_for_identity(TemporalMutation output,
+                                                     const std::uint8_t identity, std::string key,
+                                                     const std::uint32_t row_ordinal) {
+  output.logical_identity = {std::byte{identity}};
+  output.columns[2] =
+      ScalarValue::text(type(schema::LogicalTypeKind::kString), std::move(key)).value();
+  output.row_ordinal = row_ordinal;
+  return output;
+}
+
 [[nodiscard]] std::int64_t visible_value(const ScalarTableSnapshot& snapshot) {
   EXPECT_EQ(snapshot.rows().size(), 1U);
   return std::get<std::int64_t>(snapshot.rows().front().columns[1].storage());
@@ -110,6 +121,39 @@ TEST(TemporalSnapshotTest, ResolvesOriginalCorrectionAndTombstoneAtSystemTime) {
   before = (*provider)->resolve(schema, 2500);
   ASSERT_TRUE(before.has_value());
   EXPECT_EQ(visible_value(**before), 20);
+}
+
+TEST(TemporalSnapshotTest, PreservesEveryIdentityWhileInstallingMovedCommitRows) {
+  const auto schema = table_schema();
+  auto provider = TemporalSnapshotProvider::create(schema);
+  ASSERT_TRUE(provider.has_value());
+  std::vector<TemporalMutation> live;
+  live.push_back(
+      mutation_for_identity(mutation(10, TemporalMutationKind::kOriginal, 1U), 1U, "a", 0U));
+  live.push_back(
+      mutation_for_identity(mutation(20, TemporalMutationKind::kOriginal, 1U), 2U, "b", 1U));
+  ASSERT_TRUE((*provider)->apply_committed(1U, 1000, std::move(live)).is_ok());
+  EXPECT_EQ((*provider)->logical_row_count(), 2U);
+  const auto live_snapshot = (*provider)->resolve(schema, std::nullopt);
+  ASSERT_TRUE(live_snapshot.has_value()) << live_snapshot.error().to_string();
+  EXPECT_EQ((*live_snapshot)->rows().size(), 2U);
+
+  auto restored_provider = TemporalSnapshotProvider::create(schema);
+  ASSERT_TRUE(restored_provider.has_value());
+  std::vector<RetainedTemporalVersion> retained;
+  retained.push_back({.system_commit_position = 7U,
+                      .system_commit_time_ns = 7000,
+                      .mutation = mutation_for_identity(
+                          mutation(70, TemporalMutationKind::kOriginal, 7U), 1U, "a", 0U)});
+  retained.push_back({.system_commit_position = 7U,
+                      .system_commit_time_ns = 7000,
+                      .mutation = mutation_for_identity(
+                          mutation(80, TemporalMutationKind::kOriginal, 7U), 2U, "b", 1U)});
+  ASSERT_TRUE((*restored_provider)->restore_retained_history(7000, std::move(retained)).is_ok());
+  EXPECT_EQ((*restored_provider)->logical_row_count(), 2U);
+  const auto restored_snapshot = (*restored_provider)->resolve(schema, std::nullopt);
+  ASSERT_TRUE(restored_snapshot.has_value()) << restored_snapshot.error().to_string();
+  EXPECT_EQ((*restored_snapshot)->rows().size(), 2U);
 }
 
 TEST(TemporalSnapshotTest, RetentionFailsClosedForExpiredHistory) {
@@ -191,20 +235,36 @@ TEST(TemporalSnapshotTest, AtomicallyRestoresCanonicalCompactedHistory) {
   EXPECT_EQ(visible_value(**current), 90);
 
   const std::array exact{mutation(90, TemporalMutationKind::kReplacement, 9U)};
-  EXPECT_TRUE((*provider)->verify_retained_commit(9U, 9000, exact).is_ok());
+  EXPECT_TRUE((*provider)
+                  ->verify_retained_commit(
+                      {.system_commit_position = 9U, .system_commit_time_ns = 9000}, exact)
+                  .is_ok());
   const std::array changed{mutation(91, TemporalMutationKind::kReplacement, 9U)};
-  EXPECT_EQ((*provider)->verify_retained_commit(9U, 9000, changed).code(),
+  EXPECT_EQ((*provider)
+                ->verify_retained_commit(
+                    {.system_commit_position = 9U, .system_commit_time_ns = 9000}, changed)
+                .code(),
             common::StatusCode::kCorruption);
   auto extra = mutation(92, TemporalMutationKind::kOriginal, 9U);
   extra.logical_identity = {std::byte{2U}};
   const std::array expanded{exact.front(), std::move(extra)};
-  EXPECT_EQ((*provider)->verify_retained_commit(9U, 9000, expanded).code(),
+  EXPECT_EQ((*provider)
+                ->verify_retained_commit(
+                    {.system_commit_position = 9U, .system_commit_time_ns = 9000}, expanded)
+                .code(),
             common::StatusCode::kCorruption);
   const std::array changed_predecessor{mutation(999, TemporalMutationKind::kCorrection, 7U)};
-  EXPECT_EQ((*provider)->verify_retained_commit(7U, 7000, changed_predecessor).code(),
-            common::StatusCode::kCorruption);
+  EXPECT_EQ(
+      (*provider)
+          ->verify_retained_commit({.system_commit_position = 7U, .system_commit_time_ns = 7000},
+                                   changed_predecessor)
+          .code(),
+      common::StatusCode::kCorruption);
   const std::array reclaimed{mutation(60, TemporalMutationKind::kOriginal, 6U)};
-  EXPECT_TRUE((*provider)->verify_retained_commit(6U, 6000, reclaimed).is_ok());
+  EXPECT_TRUE((*provider)
+                  ->verify_retained_commit(
+                      {.system_commit_position = 6U, .system_commit_time_ns = 6000}, reclaimed)
+                  .is_ok());
 
   EXPECT_TRUE(
       (*provider)

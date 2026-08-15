@@ -40,6 +40,11 @@ struct ByteVectorLess {
   return common::Status{common::StatusCode::kCorruption, message};
 }
 
+template <typename Value>
+[[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
 [[nodiscard]] bool equal_scalar(const ScalarValue& left, const ScalarValue& right) {
   if (left.type() != right.type() || left.storage().index() != right.storage().index()) {
     return false;
@@ -180,7 +185,7 @@ common::Status TemporalSnapshotProvider::apply_committed(const std::uint64_t sys
                                                          std::vector<TemporalMutation> mutations) {
   try {
     std::scoped_lock lock{impl_->mutex};
-    const common::Status validation =
+    common::Status validation =
         impl_->validate(system_commit_position, system_commit_time_ns, mutations, true);
     if (!validation.is_ok()) {
       return validation;
@@ -192,7 +197,8 @@ common::Status TemporalSnapshotProvider::apply_committed(const std::uint64_t sys
     auto staged_histories = impl_->histories;
     auto staged_time_to_position = impl_->time_to_position;
     for (TemporalMutation& mutation : mutations) {
-      staged_histories[mutation.logical_identity].push_back(
+      auto& staged_history = staged_histories[mutation.logical_identity];
+      staged_history.push_back(
           Impl::Version{std::move(mutation), system_commit_position, system_commit_time_ns});
     }
     staged_time_to_position.insert_or_assign(system_commit_time_ns, system_commit_position);
@@ -259,8 +265,8 @@ TemporalSnapshotProvider::restore_retained_history(const std::int64_t retained_s
         return validation;
       }
       for (TemporalMutation& mutation : mutations) {
-        staged.histories[mutation.logical_identity].push_back(
-            Impl::Version{std::move(mutation), position, commit_time});
+        auto& staged_history = staged.histories[mutation.logical_identity];
+        staged_history.push_back(Impl::Version{std::move(mutation), position, commit_time});
       }
       staged.time_to_position.insert_or_assign(commit_time, position);
       staged.versions += end - begin;
@@ -289,9 +295,9 @@ TemporalSnapshotProvider::restore_retained_history(const std::int64_t retained_s
 }
 
 common::Status TemporalSnapshotProvider::verify_retained_commit(
-    const std::uint64_t system_commit_position, const std::int64_t system_commit_time_ns,
+    const TemporalCommitCoordinate coordinate,
     const std::span<const TemporalMutation> mutations) const {
-  if (system_commit_position == 0U || mutations.empty()) {
+  if (coordinate.system_commit_position == 0U || mutations.empty()) {
     return invalid("retained temporal verification input is invalid");
   }
   try {
@@ -303,25 +309,31 @@ common::Status TemporalSnapshotProvider::verify_retained_commit(
     std::size_t stored_count = 0U;
     for (const auto& [identity, history] : impl_->histories) {
       static_cast<void>(identity);
-      stored_count += static_cast<std::size_t>(
-          std::ranges::count(history, system_commit_position, &Impl::Version::commit_position));
+      stored_count += static_cast<std::size_t>(std::ranges::count(
+          history, coordinate.system_commit_position, &Impl::Version::commit_position));
     }
-    const bool may_be_partially_reclaimed = impl_->earliest_retained_time.has_value() &&
-                                            system_commit_time_ns < *impl_->earliest_retained_time;
+    const std::int64_t* earliest_retained_time = optional_pointer(impl_->earliest_retained_time);
+    const bool may_be_partially_reclaimed =
+        earliest_retained_time != nullptr &&
+        coordinate.system_commit_time_ns < *earliest_retained_time;
     if ((!may_be_partially_reclaimed && stored_count != mutations.size()) ||
         stored_count > mutations.size()) {
       return corruption("checkpoint-covered temporal commit has different retained row coverage");
     }
     for (const auto& [identity, history] : impl_->histories) {
-      const auto version =
-          std::ranges::find(history, system_commit_position, &Impl::Version::commit_position);
+      const auto version = std::ranges::find(history, coordinate.system_commit_position,
+                                             &Impl::Version::commit_position);
       if (version == history.end()) {
         continue;
       }
-      const auto mutation = std::ranges::find_if(mutations, [&identity](const auto& candidate) {
-        return candidate.logical_identity == identity;
-      });
-      if (mutation == mutations.end() || version->commit_time_ns != system_commit_time_ns ||
+      const TemporalMutation* mutation = nullptr;
+      for (const TemporalMutation& candidate : mutations) {
+        if (candidate.logical_identity == identity) {
+          mutation = std::addressof(candidate);
+          break;
+        }
+      }
+      if (mutation == nullptr || version->commit_time_ns != coordinate.system_commit_time_ns ||
           !equal_mutation(version->mutation, *mutation)) {
         return corruption("checkpoint-covered temporal version disagrees with retained history");
       }
@@ -384,15 +396,17 @@ TemporalSnapshotProvider::resolve(const std::shared_ptr<const schema::TableSchem
     return common::make_unexpected(common::Status{
         common::StatusCode::kUnavailable, "temporal provider failed closed and requires recovery"});
   }
-  if (as_of_system_time_ns.has_value() && impl_->earliest_retained_time.has_value() &&
-      *as_of_system_time_ns < *impl_->earliest_retained_time) {
+  const std::int64_t* requested_system_time = optional_pointer(as_of_system_time_ns);
+  const std::int64_t* earliest_retained_time = optional_pointer(impl_->earliest_retained_time);
+  if (requested_system_time != nullptr && earliest_retained_time != nullptr &&
+      *requested_system_time < *earliest_retained_time) {
     return common::make_unexpected(
         common::Status{common::StatusCode::kNotFound, "requested system history has expired"});
   }
 
   std::uint64_t boundary = impl_->latest_position;
-  if (as_of_system_time_ns.has_value()) {
-    const auto later = impl_->time_to_position.upper_bound(*as_of_system_time_ns);
+  if (requested_system_time != nullptr) {
+    const auto later = impl_->time_to_position.upper_bound(*requested_system_time);
     boundary = later == impl_->time_to_position.begin() ? 0U : std::prev(later)->second;
   }
   std::vector<ScalarInputRow> visible;
@@ -438,10 +452,14 @@ TemporalSnapshotProvider::compact_history(const std::uint64_t oldest_observable_
     return common::make_unexpected(
         invalid("temporal retention boundary is ahead of committed state"));
   }
-  if ((impl_->oldest_observable_position.has_value() &&
-       oldest_observable_commit_position < *impl_->oldest_observable_position) ||
-      (impl_->earliest_retained_time.has_value() &&
-       retained_system_time_ns < *impl_->earliest_retained_time)) {
+  const std::uint64_t* previous_oldest_observable_position =
+      optional_pointer(impl_->oldest_observable_position);
+  const std::int64_t* previous_earliest_retained_time =
+      optional_pointer(impl_->earliest_retained_time);
+  if ((previous_oldest_observable_position != nullptr &&
+       oldest_observable_commit_position < *previous_oldest_observable_position) ||
+      (previous_earliest_retained_time != nullptr &&
+       retained_system_time_ns < *previous_earliest_retained_time)) {
     return common::make_unexpected(invalid("temporal retention boundaries cannot regress"));
   }
   const std::optional<std::uint64_t> previous_position = impl_->oldest_observable_position;
