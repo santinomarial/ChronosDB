@@ -440,3 +440,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0403](0403-injectable-common-time-source.md) | Injectable common time source | accepted |
 | [0404](0404-injectable-system-uuid-entropy.md) | Injectable system UUID entropy | accepted |
 | [0405](0405-verified-logical-to-physical-wal-prefix-resolution.md) | Verified logical-to-physical WAL prefix resolution | accepted |
+| [0406](0406-prevalidated-subscription-wal-prefix-reclamation.md) | Prevalidated subscription WAL prefix reclamation | accepted |

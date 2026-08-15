@@ -98,10 +98,12 @@ A resume token is opaque, versioned, integrity-protected, and scoped to database
 - **Cancellation:** idempotently stop new output, release buffers/pins, and return the last safe token if available. It does not roll back committed source writes.
 - **Schema change:** v1 terminates an affected subscription at a committed boundary with `SCHEMA_CHANGED`. The old token cannot bind to a different plan; the client registers a new plan/snapshot. A future compatibility analysis may allow provably irrelevant additive changes.
 
-Durable fingerprint-to-plan lookup, multi-tablet snapshot execution, durable coordinator checkpoint
-installation, topology transitions, state-retention defaults, window trigger cadence,
-spill, and the exact eligible incremental SQL subset remain deferred. Single-source SQL planning,
+Topology transitions, state-retention defaults, window trigger cadence, spill, and the complete
+eligible incremental SQL subset remain deferred. Durable fingerprint-to-plan lookup, multi-tablet
+snapshot execution, durable coordinator checkpoint installation, single-source SQL planning,
 single-tablet plan-bound snapshot execution, multi-tablet delivery ordering, Resume Token v1 bytes,
 the Protocol 1.1 acknowledgement/checkpoint lifecycle, exact logical coordinator restoration, and
-versioned coordinator checkpoint bytes are implemented. Every later choice must preserve
+versioned coordinator checkpoint bytes are implemented. Topology-bound subscription retention and
+verified physical WAL-prefix reclamation are implemented for fixed WAL-backed source sets; Raft
+mapping and dynamic plan-owner retirement remain deferred. Every later choice must preserve
 [invariant 17](../architecture/invariants.md).

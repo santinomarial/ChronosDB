@@ -555,6 +555,7 @@ add_library(
   src/live/subscription_protocol.cpp
   src/live/subscription_retention.cpp
   src/live/subscription_service.cpp
+  src/live/wal_subscription_reclaimer.cpp
 )
 add_library(chronos::live ALIAS chronos_live)
 set_target_properties(chronos_live PROPERTIES EXPORT_NAME live CXX_EXTENSIONS OFF)
@@ -1072,6 +1073,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/live/subscription_service_header_self_contained.cpp
     tests/live/subscription_service_test.cpp
     tests/live/subscription_test.cpp
+    tests/live/wal_subscription_reclaimer_header_self_contained.cpp
+    tests/live/wal_subscription_reclaimer_test.cpp
   )
   set_target_properties(chronos_live_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_live_tests PRIVATE cxx_std_23)

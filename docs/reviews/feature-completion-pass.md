@@ -49,7 +49,9 @@ their full roadmap exit gates or that ChronosDB is a production three-node datab
 The source-retention boundary now component-wise intersects storage/Raft safety with every durable
 plan frontier and validates committed placement epochs and local replica membership before invoking
 a source-specific batch reclaimer. Logical subscription positions are not fabricated into physical
-WAL offsets.
+WAL offsets. The WAL-backed implementation now validates the complete topology-bound batch, maps
+each distinct durable writer frontier through a full retained-namespace scan, uses the minimum for
+tablets sharing a WAL, and only then performs idempotent whole-segment cleanup.
 
 Node-wide Raft physical prefix reclamation is now implemented after a complete all-group checkpoint.
 Mapping a particular durable subscription frontier into that node-wide scheduling policy and dynamic

@@ -77,6 +77,13 @@ storage/Raft-safe vector with every registered plan owner's durably installed ex
 the committed metadata placement epoch and local replica membership before invoking the physical
 source reclaimer. The logical subscription coordinate is never guessed into a WAL byte offset.
 
+For WAL-backed sources, `WalSubscriptionSourceReclaimer` binds the canonical tablet/epoch set to
+borrowed open writers. It validates and resolves the complete request batch before deletion. When
+several tablets share a writer, their minimum sequence is the only conservative physical prefix;
+choosing the maximum could delete a global WAL record still required by the slower tablet. Every
+distinct writer scans its complete retained suffix to obtain an exact record-end checkpoint before
+the first writer unlinks a segment. Cross-WAL cleanup is retry-convergent rather than atomic.
+
 Work is linear in active subscribers per publish, in the retained suffix per resume, and in retained
 state size per checkpoint. Useful review questions are: why are tablet record sequences
 incomparable, what exactly makes replay order authoritative, why does acknowledgement update a
