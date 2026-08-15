@@ -201,6 +201,7 @@ TEST(RaftObservationTcpBatchAcquisitionTest, PublishesOnlyCompleteCanonicalGroup
   EXPECT_EQ(cancelled->metrics().active_pairs, 2U);
   EXPECT_EQ(cancelled->cancel().code(), common::StatusCode::kCancelled);
   EXPECT_EQ(cancelled->metrics().active_pairs, 0U);
+  EXPECT_EQ(cancelled->result().error().code(), common::StatusCode::kCancelled);
 
   auto duplicated = make_config();
   duplicated.pairs[1].leader.request.group_id = group(10U);

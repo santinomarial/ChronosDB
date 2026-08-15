@@ -412,17 +412,20 @@ RaftObservationTcpBatchAcquisition::result() const {
   if (!implementation_)
     return common::make_unexpected(status(common::StatusCode::kInvalidArgument,
                                           "Raft observation batch acquisition is empty"));
-  if (implementation_->batch_state == RaftObservationTcpBatchAcquisitionState::kFailed ||
-      implementation_->batch_state == RaftObservationTcpBatchAcquisitionState::kCancelled) {
-    return common::make_unexpected(implementation_->batch_failure);
+  const Impl& impl = *implementation_;
+  if (impl.batch_state == RaftObservationTcpBatchAcquisitionState::kFailed ||
+      impl.batch_state == RaftObservationTcpBatchAcquisitionState::kCancelled) {
+    return common::make_unexpected(impl.batch_failure);
   }
-  if (implementation_->batch_state != RaftObservationTcpBatchAcquisitionState::kComplete ||
-      !implementation_->batch_result.has_value()) {
+  const std::optional<std::vector<query::DistributedAggregateFollowerReadAuthority>>& batch_result =
+      impl.batch_result;
+  if (impl.batch_state != RaftObservationTcpBatchAcquisitionState::kComplete ||
+      !batch_result.has_value()) {
     return common::make_unexpected(status(common::StatusCode::kInvalidArgument,
                                           "Raft observation batch result is unavailable"));
   }
   try {
-    return *implementation_->batch_result;
+    return batch_result.value();
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
                                           "Raft observation batch result allocation failed"));
