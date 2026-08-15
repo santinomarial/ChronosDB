@@ -136,7 +136,8 @@ DurableMultiTabletSubscription::open_existing(DurableMultiTabletSubscriptionConf
     auto latest = storage->load_latest();
     if (!latest.has_value())
       return common::make_unexpected(latest.error());
-    if (!latest->has_value()) {
+    std::optional<LoadedMultiTabletSubscriptionCheckpoint> recovered = std::move(*latest);
+    if (!recovered.has_value()) {
       auto manager =
           MultiTabletSubscriptionManager::create(std::move(config.source), config.limits);
       if (!manager.has_value())
@@ -145,7 +146,8 @@ DurableMultiTabletSubscription::open_existing(DurableMultiTabletSubscriptionConf
           std::make_unique<Impl>(std::move(*manager), std::move(*storage), 0U, std::nullopt, true)};
     }
 
-    BoundMultiTabletSubscriptionCheckpoint durable = std::move((*latest)->checkpoint);
+    LoadedMultiTabletSubscriptionCheckpoint loaded = std::move(recovered).value();
+    BoundMultiTabletSubscriptionCheckpoint durable = std::move(loaded.checkpoint);
     set_restore_boundaries(config.source, durable.state);
     auto frontiers = retention_frontiers(durable.state);
     auto manager = MultiTabletSubscriptionManager::restore(std::move(config.source), durable.state,

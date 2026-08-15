@@ -109,6 +109,29 @@ struct Fixture {
   }
 };
 
+TEST(DurableMultiTabletSubscriptionTest, OpensEmptyExistingDirectoryAsDirtyNewState) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  Fixture fixture;
+  {
+    auto owner = DurableMultiTabletSubscription::create_new(fixture.config(directory.path()));
+    ASSERT_TRUE(owner.has_value()) << owner.error().to_string();
+  }
+
+  auto reopened = DurableMultiTabletSubscription::open_existing(fixture.config(directory.path()));
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  EXPECT_EQ(reopened->checkpoint_generation(), 0U);
+  EXPECT_TRUE(reopened->has_uncheckpointed_changes());
+  const auto frontiers = reopened->durable_retention_frontiers();
+  ASSERT_TRUE(frontiers.has_value());
+  EXPECT_FALSE(frontiers->has_value());
+  const auto latest = reopened->latest_positions();
+  ASSERT_TRUE(latest.has_value());
+  ASSERT_EQ(latest->size(), 2U);
+  EXPECT_EQ((*latest)[0].record_sequence, 0U);
+  EXPECT_EQ((*latest)[1].record_sequence, 0U);
+}
+
 TEST(DurableMultiTabletSubscriptionTest, RecoversExactGenerationAndPublishesOnlyDurableFrontiers) {
   TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
@@ -146,9 +169,11 @@ TEST(DurableMultiTabletSubscriptionTest, RecoversExactGenerationAndPublishesOnly
     const auto durable = owner->durable_retention_frontiers();
     ASSERT_TRUE(durable.has_value());
     ASSERT_TRUE(durable->has_value());
-    ASSERT_EQ((*durable)->size(), 2U);
-    EXPECT_EQ((**durable)[0].record_sequence, 1U);
-    EXPECT_EQ((**durable)[1].record_sequence, 1U);
+    const std::vector<SourcePosition> durable_values =
+        durable->value_or(std::vector<SourcePosition>{});
+    ASSERT_EQ(durable_values.size(), 2U);
+    EXPECT_EQ(durable_values[0].record_sequence, 1U);
+    EXPECT_EQ(durable_values[1].record_sequence, 1U);
 
     const auto repeated = owner->checkpoint();
     ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
@@ -263,8 +288,11 @@ TEST(DurableMultiTabletSubscriptionTest, RecoversTerminalSchemaInvalidation) {
     const auto frontiers = owner->durable_retention_frontiers();
     ASSERT_TRUE(frontiers.has_value());
     ASSERT_TRUE(frontiers->has_value());
-    EXPECT_EQ((**frontiers)[0].record_sequence, 1U);
-    EXPECT_EQ((**frontiers)[1].record_sequence, 0U);
+    const std::vector<SourcePosition> frontier_values =
+        frontiers->value_or(std::vector<SourcePosition>{});
+    ASSERT_EQ(frontier_values.size(), 2U);
+    EXPECT_EQ(frontier_values[0].record_sequence, 1U);
+    EXPECT_EQ(frontier_values[1].record_sequence, 0U);
   }
 
   auto reopened = DurableMultiTabletSubscription::open_existing(fixture.config(directory.path()));
@@ -316,7 +344,7 @@ TEST(DurableMultiTabletSubscriptionTest, StartsExactSnapshotFromRecoveredExecuta
                  .token_key = key}};
   auto owner = DurableMultiTabletSubscription::create_new(std::move(owner_config));
   ASSERT_TRUE(owner.has_value()) << owner.error().to_string();
-  auto resources = query::QueryResourceContext::create(32U * 1024U * 1024U).value();
+  auto resources = query::QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
   auto subscription =
       owner->start_snapshot(*prepared, uuid(std::byte{14}), resources, snapshot.storage(),
                             snapshot.publisher(), snapshot.lineage());
