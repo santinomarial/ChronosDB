@@ -105,7 +105,7 @@ TEST(SingleNodeSubscriptionRuntimeTest, ComposesSnapshotLiveAckAndShutdownAround
                   .token_key = key}});
   ASSERT_TRUE(coordinator.has_value()) << coordinator.error().to_string();
   query::QueryResourceContext resources =
-      query::QueryResourceContext::create(32U * 1024U * 1024U).value();
+      query::QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
   auto requests = network::SpscNetworkTaskQueue::create(16U).value();
   auto responses = network::SpscNetworkTaskQueue::create(16U).value();
   SingleNodeCommittedAppendRouter router;
@@ -151,9 +151,13 @@ TEST(SingleNodeSubscriptionRuntimeTest, ComposesSnapshotLiveAckAndShutdownAround
   EXPECT_EQ(coordinator->checkpoint_generation(), 1U);
   ASSERT_TRUE(runtime->poll_once().is_ok());
   auto change_task = responses.try_pop();
-  ASSERT_TRUE(change_task.has_value());
-  ASSERT_EQ(change_task->frame.header.message_type, network::MessageType::kSubscriptionChange);
-  auto change = network::decode_subscription_change(change_task->frame.payload);
+  if (!change_task.has_value()) {
+    ADD_FAILURE() << "expected a subscription change";
+    return;
+  }
+  const network::NetworkTask& change_response = *change_task;
+  ASSERT_EQ(change_response.frame.header.message_type, network::MessageType::kSubscriptionChange);
+  auto change = network::decode_subscription_change(change_response.frame.payload);
   ASSERT_TRUE(change.has_value()) << change.error().to_string();
   EXPECT_EQ(change->record_sequence, 2U);
   EXPECT_EQ(change->delivery_sequence, 1U);
@@ -164,15 +168,22 @@ TEST(SingleNodeSubscriptionRuntimeTest, ComposesSnapshotLiveAckAndShutdownAround
       request_task(network::MessageType::kSubscriptionAcknowledge, std::move(*acknowledgement))));
   ASSERT_TRUE(runtime->poll_once().is_ok());
   auto checkpoint = responses.try_pop();
-  ASSERT_TRUE(checkpoint.has_value());
+  if (!checkpoint.has_value()) {
+    ADD_FAILURE() << "expected a subscription checkpoint";
+    return;
+  }
   EXPECT_EQ(checkpoint->frame.header.message_type, network::MessageType::kSubscriptionCheckpoint);
 
   runtime->begin_shutdown();
   ASSERT_TRUE(runtime->poll_once().is_ok());
   auto ended = responses.try_pop();
-  ASSERT_TRUE(ended.has_value());
-  ASSERT_EQ(ended->frame.header.message_type, network::MessageType::kSubscriptionEnd);
-  auto decoded_end = network::decode_subscription_end(ended->frame.payload);
+  if (!ended.has_value()) {
+    ADD_FAILURE() << "expected a subscription end";
+    return;
+  }
+  const network::NetworkTask& end_response = *ended;
+  ASSERT_EQ(end_response.frame.header.message_type, network::MessageType::kSubscriptionEnd);
+  auto decoded_end = network::decode_subscription_end(end_response.frame.payload);
   ASSERT_TRUE(decoded_end.has_value());
   EXPECT_EQ(decoded_end->reason, network::SubscriptionEndReason::kServerShutdown);
   EXPECT_TRUE(runtime->drained());
