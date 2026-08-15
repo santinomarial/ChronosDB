@@ -47,7 +47,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
   now has a typed injectable entropy boundary with bounded nil/error tests; broader durable
   identity allocation/collision policy, logging sinks and rotation/collection, and broader test
   utilities remain incomplete. The phase exit gates below remain unchanged and have not been
-  declared complete.
+  declared complete. A clean-revision local Apple arm64 baseline now records the common benchmark
+  target's build time, artifact sizes, and harness-iteration proxy; Linux x86-64 and cross-toolchain
+  repetition remain separate evidence.
 
 - **Scope:** reproducible C++23 build profiles; foundational error/result, byte, checksum, file-I/O, time, identity, logging, and test utilities; sanitizers and initial Linux CI policy.
 - **Explicit non-scope:** WAL record semantics, storage engines, SQL, networking, custom allocators without a measured user, and production dependencies not covered by policy/ADR.

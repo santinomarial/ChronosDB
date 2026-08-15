@@ -191,6 +191,8 @@ existence of a design document alone is not implementation evidence.
 - [WAL crash harness](testing/wal-crash-harness.md): subprocess protocol, real-syscall crash
   boundaries, durability/recovery oracle, deterministic matrices, and evidence limitations.
 - [Benchmark contract](benchmarks/benchmark-contract.md): mandatory run metadata, metrics, and comparison rules.
+- [Phase 1 foundation baseline](benchmarks/phase-1-foundation-baseline.md): clean common-benchmark
+  target build times, artifact file sizes, and harness-iteration proxy on one Apple arm64 host.
 - [WAL benchmarks](benchmarks/wal-benchmarks.md): production-path WAL measurement harness, safety
   controls, correctness gate, artifact schema, and evidence limitations.
 - [Phase 10 native-network baseline](benchmarks/native-network-phase-10.md): clean-commit portable
