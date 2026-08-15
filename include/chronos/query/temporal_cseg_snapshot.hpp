@@ -48,7 +48,7 @@ struct TemporalManifestCsegResolutionLimits {
 // unrelated WAL/Raft sources are rejected rather than assigned an invented order. The caller must
 // project every schema user column, in schema order, and keep all granules alive through the call.
 [[nodiscard]] common::Result<std::shared_ptr<const ScalarTableSnapshot>>
-resolve_cseg_v2_temporal_snapshot(std::shared_ptr<const schema::TableSchema> schema,
+resolve_cseg_v2_temporal_snapshot(const std::shared_ptr<const schema::TableSchema>& schema,
                                   std::span<const cseg::ProjectedCsegGranule* const> granules,
                                   TemporalCsegSourceLineage lineage,
                                   std::optional<std::int64_t> as_of_system_time_ns,
@@ -59,27 +59,24 @@ resolve_cseg_v2_temporal_snapshot(std::shared_ptr<const schema::TableSchema> sch
 // candidate is schema-projected and page-validated before the exact row-version resolver decides
 // winners. Image owners must outlive this call (generation-pinned storage images satisfy that).
 [[nodiscard]] common::Result<std::shared_ptr<const ScalarTableSnapshot>>
-resolve_manifest_v2_temporal_tablet_snapshot(std::shared_ptr<const schema::TableSchema> schema,
-                                             const schema::SchemaLineage& lineage,
-                                             const manifest::TemporalTabletDescriptor& tablet,
-                                             std::span<const TemporalManifestCsegPartView> parts,
-                                             TemporalCsegSourceLineage source,
-                                             std::optional<std::int64_t> as_of_system_time_ns,
-                                             TemporalManifestCsegResolutionLimits limits = {});
+resolve_manifest_v2_temporal_tablet_snapshot(
+    const std::shared_ptr<const schema::TableSchema>& schema, const schema::SchemaLineage& lineage,
+    const manifest::TemporalTabletDescriptor& tablet,
+    std::span<const TemporalManifestCsegPartView> parts, TemporalCsegSourceLineage source,
+    std::optional<std::int64_t> as_of_system_time_ns,
+    TemporalManifestCsegResolutionLimits limits = {});
 
 // Reconstructs one fresh provider from the complete retained history in generation-pinned v2 part
 // images. retained_system_time_ns is a caller-proven tablet-wide boundary. Cross-part rows are
 // canonicalized by source position/row ordinal and atomically installed only after exact decoding,
 // lineage/schema validation, and retained mutation-transition validation all succeed.
 [[nodiscard]] common::Result<std::unique_ptr<TemporalSnapshotProvider>>
-restore_manifest_v2_temporal_tablet_history(std::shared_ptr<const schema::TableSchema> schema,
-                                            const schema::SchemaLineage& lineage,
-                                            const manifest::TemporalTabletDescriptor& tablet,
-                                            std::span<const TemporalManifestCsegPartView> parts,
-                                            TemporalCsegSourceLineage source,
-                                            std::int64_t retained_system_time_ns,
-                                            TemporalStoreLimits store_limits = {},
-                                            TemporalManifestCsegResolutionLimits limits = {});
+restore_manifest_v2_temporal_tablet_history(
+    const std::shared_ptr<const schema::TableSchema>& schema, const schema::SchemaLineage& lineage,
+    const manifest::TemporalTabletDescriptor& tablet,
+    std::span<const TemporalManifestCsegPartView> parts, TemporalCsegSourceLineage source,
+    std::int64_t retained_system_time_ns, TemporalStoreLimits store_limits = {},
+    TemporalManifestCsegResolutionLimits limits = {});
 
 } // namespace chronos::query
 

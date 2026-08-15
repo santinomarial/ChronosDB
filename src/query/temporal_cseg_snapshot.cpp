@@ -197,7 +197,7 @@ decode_manifest_temporal_parts(const std::shared_ptr<const schema::TableSchema>&
 } // namespace
 
 common::Result<std::shared_ptr<const ScalarTableSnapshot>>
-resolve_cseg_v2_temporal_snapshot(std::shared_ptr<const schema::TableSchema> schema_value,
+resolve_cseg_v2_temporal_snapshot(const std::shared_ptr<const schema::TableSchema>& schema_value,
                                   const std::span<const cseg::ProjectedCsegGranule* const> granules,
                                   const TemporalCsegSourceLineage lineage,
                                   const std::optional<std::int64_t> as_of_system_time_ns,
@@ -353,8 +353,8 @@ resolve_cseg_v2_temporal_snapshot(std::shared_ptr<const schema::TableSchema> sch
 
 common::Result<std::shared_ptr<const ScalarTableSnapshot>>
 resolve_manifest_v2_temporal_tablet_snapshot(
-    std::shared_ptr<const schema::TableSchema> schema_value, const schema::SchemaLineage& lineage,
-    const manifest::TemporalTabletDescriptor& tablet,
+    const std::shared_ptr<const schema::TableSchema>& schema_value,
+    const schema::SchemaLineage& lineage, const manifest::TemporalTabletDescriptor& tablet,
     const std::span<const TemporalManifestCsegPartView> parts,
     const TemporalCsegSourceLineage source, const std::optional<std::int64_t> as_of_system_time_ns,
     const TemporalManifestCsegResolutionLimits limits) {
@@ -382,7 +382,7 @@ resolve_manifest_v2_temporal_tablet_snapshot(
     for (const cseg::ProjectedCsegGranule& granule : *decoded_granules) {
       granule_views.push_back(&granule);
     }
-    return resolve_cseg_v2_temporal_snapshot(std::move(schema_value), granule_views, source,
+    return resolve_cseg_v2_temporal_snapshot(schema_value, granule_views, source,
                                              as_of_system_time_ns, limits.resolution);
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(
@@ -395,8 +395,8 @@ resolve_manifest_v2_temporal_tablet_snapshot(
 
 common::Result<std::unique_ptr<TemporalSnapshotProvider>>
 restore_manifest_v2_temporal_tablet_history(
-    std::shared_ptr<const schema::TableSchema> schema_value, const schema::SchemaLineage& lineage,
-    const manifest::TemporalTabletDescriptor& tablet,
+    const std::shared_ptr<const schema::TableSchema>& schema_value,
+    const schema::SchemaLineage& lineage, const manifest::TemporalTabletDescriptor& tablet,
     const std::span<const TemporalManifestCsegPartView> parts,
     const TemporalCsegSourceLineage source, const std::int64_t retained_system_time_ns,
     const TemporalStoreLimits store_limits, const TemporalManifestCsegResolutionLimits limits) {
