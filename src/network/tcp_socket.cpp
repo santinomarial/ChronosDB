@@ -144,8 +144,9 @@ parse_dns_endpoint(const std::string_view text, const std::size_t maximum_hostna
   socklen_t size = sizeof(address);
   // POSIX requires a generic sockaddr view of this initialized IPv4 value.
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-  const int result = peer ? ::getpeername(descriptor, reinterpret_cast<sockaddr*>(&address), &size)
-                          : ::getsockname(descriptor, reinterpret_cast<sockaddr*>(&address), &size);
+  auto* generic_address = reinterpret_cast<sockaddr*>(&address);
+  const int result = peer ? ::getpeername(descriptor, generic_address, &size)
+                          : ::getsockname(descriptor, generic_address, &size);
   if (result != 0)
     return common::make_unexpected(
         socket_error(peer ? "querying TCP peer" : "querying local TCP endpoint"));
@@ -300,9 +301,10 @@ common::Result<TcpSocket> TcpSocket::begin_connect(const Ipv4Endpoint remote) {
     return common::make_unexpected(configured);
   }
   const sockaddr_in address = socket_address(remote);
+  // POSIX connect accepts the initialized IPv4 address through its generic sockaddr view.
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-  const int result =
-      ::connect(descriptor, reinterpret_cast<const sockaddr*>(&address), sizeof(address));
+  const auto* generic_address = reinterpret_cast<const sockaddr*>(&address);
+  const int result = ::connect(descriptor, generic_address, sizeof(address));
   const int connect_error = errno;
   TcpConnectState state = TcpConnectState::kConnected;
   if (result != 0) {
@@ -430,9 +432,10 @@ common::Result<std::optional<TcpSocket>> TcpListener::accept_one() {
     return common::make_unexpected(invalid("TCP listener is empty"));
   sockaddr_in address{};
   socklen_t size = sizeof(address);
+  // POSIX accept writes an IPv4 peer through its generic sockaddr output view.
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-  const int descriptor =
-      ::accept(implementation_->descriptor_, reinterpret_cast<sockaddr*>(&address), &size);
+  auto* generic_address = reinterpret_cast<sockaddr*>(&address);
+  const int descriptor = ::accept(implementation_->descriptor_, generic_address, &size);
   const int accept_error = errno;
   if (descriptor < 0) {
     if (accept_error == EAGAIN || accept_error == EWOULDBLOCK)
