@@ -7,9 +7,10 @@
 
 The [2026-08-15 local hardening audit](../reviews/phase-18-local-hardening-audit.md) records one
 Apple-silicon macOS revision passing the complete Debug, Release, ASan/UBSan, and TSan suites plus
-the configured repository static analysis. That bounded result does not close the cross-platform,
-leak-detection, sustained-fault, benchmark, security, packaging, or production-deployment work
-below, and no Phase 18 exit is claimed.
+the configured repository static analysis. Its subsequent bounded fuzz-smoke record covers every
+one of the 29 configured fuzz executables for 1,000 deterministic executions at `0730844`. These
+bounded results do not close the cross-platform, leak-detection, sustained-fault/fuzz, benchmark,
+security, packaging, or production-deployment work below, and no Phase 18 exit is claimed.
 
 ## Cross-cutting
 

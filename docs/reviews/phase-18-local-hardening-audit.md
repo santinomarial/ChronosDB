@@ -50,6 +50,25 @@ LeakSanitizer evidence.
 Elapsed times are execution records, not benchmark results. They were not collected under the
 benchmark contract and must not be used for performance comparison.
 
+## Subsequent bounded fuzz smoke
+
+Commit `0730844` (`test: cover every configured fuzz target`) repaired the deterministic smoke gate
+after an audit found that CMake configured 29 fuzz executables while the script invoked only 22. The
+gate now covers all 29 and fails before execution when its declared list differs from the configured
+Ninja graph.
+
+At that revision, the Clang libFuzzer build completed and this command passed every target:
+
+```sh
+ASAN_OPTIONS=detect_leaks=0 FUZZ_RUNS=1000 FUZZ_SEED=424242 FUZZ_MAX_LEN=4096 \
+  scripts/fuzz-smoke.sh build/fuzz
+```
+
+This is 1,000 deterministic executions per target with ASan and non-recovering UBSan on the same
+local macOS host. It is bounded smoke evidence, not a sustained coverage-guided campaign. Leak
+detection remained disabled, no coverage-growth or corpus-minimization criterion was applied, and
+the result does not close the sustained-fuzzing Phase 18 gate.
+
 ## Evidence established
 
 - Every test registered in the four local configurations completed successfully at one reviewed
@@ -61,6 +80,8 @@ benchmark contract and must not be used for performance comparison.
 - The local TSan suite completed with fail-fast reporting enabled after repairing the race it first
   exposed.
 - The configured repository clang-tidy build completed with the pinned local clang-tidy 18 tool.
+- Every fuzz executable configured at `0730844` completed the bounded deterministic smoke run, and
+  the smoke gate now detects future configured-target drift.
 
 ## Evidence not established
 
