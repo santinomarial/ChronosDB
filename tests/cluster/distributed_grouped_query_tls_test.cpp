@@ -205,19 +205,35 @@ TEST(DistributedGroupedQueryTlsTest, CarriesCompleteAuthenticatedMultiResponseSt
   const auto responses = client->responses();
   ASSERT_TRUE(responses.has_value());
   ASSERT_EQ(responses->size(), 2U);
-  const auto& first = std::get<query::GroupedFloat64ExchangeMessage>(*(*responses)[0].payload);
-  const auto& second = std::get<query::GroupedFloat64ExchangeMessage>(*(*responses)[1].payload);
-  EXPECT_EQ(first.sequence, 1U);
-  EXPECT_FALSE(first.terminal);
-  EXPECT_EQ(first.partial.sum, 2.5);
-  EXPECT_EQ(second.sequence, 2U);
-  EXPECT_TRUE(second.terminal);
-  EXPECT_EQ(second.partial.sum, 7.5);
+  const auto* first = (*responses)[0]
+                          .payload
+                          .transform([](const auto& payload) {
+                            return std::get_if<query::GroupedFloat64ExchangeMessage>(&payload);
+                          })
+                          .value_or(nullptr);
+  const auto* second = (*responses)[1]
+                           .payload
+                           .transform([](const auto& payload) {
+                             return std::get_if<query::GroupedFloat64ExchangeMessage>(&payload);
+                           })
+                           .value_or(nullptr);
+  ASSERT_NE(first, nullptr);
+  ASSERT_NE(second, nullptr);
+  EXPECT_EQ(first->sequence, 1U);
+  EXPECT_FALSE(first->terminal);
+  EXPECT_EQ(first->partial.sum, 2.5);
+  EXPECT_EQ(second->sequence, 2U);
+  EXPECT_TRUE(second->terminal);
+  EXPECT_EQ(second->partial.sum, 7.5);
 }
 
 TEST(DistributedGroupedQueryTlsTest, RejectsInvalidLimitsAndExpiresExactly) {
   Authenticator authenticator{92U};
   Authorizer authorizer;
+  Worker worker;
+  auto receiver = DistributedGroupedQueryReceiver::create(
+      {.local_node_id = 2U, .authorizer = &authorizer, .worker = &worker});
+  ASSERT_TRUE(receiver.has_value());
   auto request = encode_distributed_grouped_query_request_v1({1U, 2U, dispatch()}).value();
   DistributedGroupedQueryAttempt attempt{1U, 2U, std::move(request)};
   DistributedGroupedQueryTlsClientConfig config{
@@ -235,6 +251,21 @@ TEST(DistributedGroupedQueryTlsTest, RejectsInvalidLimitsAndExpiresExactly) {
   EXPECT_EQ(expired.code(), common::StatusCode::kUnavailable);
   EXPECT_EQ(client->state(), DistributedGroupedQueryTlsState::kFailed);
   EXPECT_EQ(client->on_ready(true, true, start + std::chrono::milliseconds{6}), expired);
+
+  auto server = DistributedGroupedQueryTlsServer::create(
+      network::TlsSocket{},
+      {.authenticator = &authenticator,
+       .receiver = &*receiver,
+       .limits = {.handshake_timeout = std::chrono::milliseconds{5},
+                  .exchange_timeout = std::chrono::milliseconds{5},
+                  .maximum_response_frames = 2U}},
+      start);
+  ASSERT_TRUE(server.has_value());
+  EXPECT_TRUE(server->on_ready(false, false, start + std::chrono::milliseconds{4}).is_ok());
+  const auto server_expired = server->on_ready(false, false, start + std::chrono::milliseconds{5});
+  EXPECT_EQ(server_expired.code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(server->state(), DistributedGroupedQueryTlsState::kFailed);
+  EXPECT_EQ(server->on_ready(true, true, start + std::chrono::milliseconds{6}), server_expired);
 
   config.limits.maximum_response_frames = 0U;
   auto second = encode_distributed_grouped_query_request_v1({1U, 2U, dispatch()}).value();

@@ -47,14 +47,16 @@ template <typename TimePoint>
   return now > TimePoint::max() - duration ? TimePoint::max() : now + duration;
 }
 
-[[nodiscard]] bool terminal_response(const DistributedGroupedQueryResponse& response) noexcept {
+[[nodiscard]] bool terminal_response(const DistributedGroupedQueryResponse& response) {
   if (response.status_code != common::StatusCode::kOk)
     return true;
   if (!response.payload.has_value())
     return false;
-  if (std::holds_alternative<query::GroupedExchangeTerminalMessage>(*response.payload))
+  const auto& payload = response.payload.value();
+  if (std::holds_alternative<query::GroupedExchangeTerminalMessage>(payload))
     return true;
-  return std::get<query::GroupedFloat64ExchangeMessage>(*response.payload).terminal;
+  const auto* message = std::get_if<query::GroupedFloat64ExchangeMessage>(&payload);
+  return message != nullptr && message->terminal;
 }
 
 } // namespace
@@ -155,7 +157,7 @@ public:
     return common::Status::ok();
   }
 
-  [[nodiscard]] common::Status accept_response(DistributedGroupedQueryResponse response) {
+  [[nodiscard]] common::Status accept_response(const DistributedGroupedQueryResponse& response) {
     const auto& fragment = identity_.dispatch.fragment.aggregate;
     if (response.source_node_id != identity_.target_node_id ||
         response.target_node_id != identity_.source_node_id ||
@@ -181,7 +183,7 @@ public:
     }
     const bool terminal = terminal_response(response);
     try {
-      responses_.push_back(std::move(response));
+      responses_.push_back(response);
     } catch (const std::bad_alloc&) {
       return fail(exhausted("grouped query TLS response allocation failed"));
     }
@@ -223,7 +225,9 @@ public:
         return fail(corruption("grouped query response reader made no progress"));
       offset += step->consumed_bytes;
       if (step->response.has_value()) {
-        const common::Status accepted = accept_response(std::move(*step->response));
+        const auto* response =
+            step->response.transform([](const auto& value) { return &value; }).value_or(nullptr);
+        common::Status accepted = accept_response(*response);
         if (!accepted.is_ok())
           return accepted;
         if (state_ == DistributedGroupedQueryTlsState::kComplete && offset != received.size())
@@ -240,7 +244,7 @@ public:
   DistributedGroupedQueryRequest identity_;
   raft::NodeId target_{};
   DistributedGroupedQueryTlsClientConfig config_;
-  TimePoint deadline_{};
+  TimePoint deadline_;
   DistributedGroupedQueryTlsState state_{DistributedGroupedQueryTlsState::kHandshaking};
   DistributedGroupedQueryTlsInterest interest_{.want_write = true};
   DistributedGroupedQueryResponseReader response_reader_;
@@ -256,7 +260,7 @@ public:
       : socket_(std::move(socket)), config_(config),
         deadline_(deadline_after(now, config.limits.handshake_timeout)) {}
 
-  [[nodiscard]] common::Status fail(common::Status status) noexcept {
+  [[nodiscard]] common::Status fail(common::Status status) {
     if (state_ != DistributedGroupedQueryTlsState::kFailed) {
       failure_ = std::move(status);
       state_ = DistributedGroupedQueryTlsState::kFailed;
@@ -339,7 +343,9 @@ public:
       interest_ = {.want_read = true};
       return common::Status::ok();
     }
-    auto request = encode_distributed_grouped_query_request_v1(*step->request);
+    const auto* decoded_request =
+        step->request.transform([](const auto& value) { return &value; }).value_or(nullptr);
+    auto request = encode_distributed_grouped_query_request_v1(*decoded_request);
     if (!request.has_value())
       return fail(request.error());
     auto responses = config_.receiver->receive(*request, *authenticated_peer_);
@@ -401,7 +407,7 @@ public:
 
   network::TlsSocket socket_;
   DistributedGroupedQueryTlsServerConfig config_;
-  TimePoint deadline_{};
+  TimePoint deadline_;
   DistributedGroupedQueryTlsState state_{DistributedGroupedQueryTlsState::kHandshaking};
   DistributedGroupedQueryTlsInterest interest_{.want_read = true};
   std::optional<network::PeerAuthenticationResult> authenticated_peer_;
