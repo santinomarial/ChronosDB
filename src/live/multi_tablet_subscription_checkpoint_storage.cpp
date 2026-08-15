@@ -143,7 +143,7 @@ public:
                : unavailable("subscription checkpoint storage is poisoned: " + poison_.message());
   }
 
-  [[nodiscard]] common::Status cleanup_temporaries() {
+  [[nodiscard]] common::Status cleanup_temporaries() const {
     auto entries = directory_.list_entries();
     if (!entries.has_value())
       return entries.error();
@@ -306,11 +306,15 @@ MultiTabletSubscriptionCheckpointStorage::install(
   auto latest = load_latest();
   if (!latest.has_value())
     return common::make_unexpected(latest.error());
-  if (latest->has_value() &&
-      (*latest)->checkpoint.checkpoint_generation == std::numeric_limits<std::uint64_t>::max())
+  const std::uint64_t previous_generation =
+      latest
+          ->transform([](const LoadedMultiTabletSubscriptionCheckpoint& loaded) noexcept {
+            return loaded.checkpoint.checkpoint_generation;
+          })
+          .value_or(0U);
+  if (previous_generation == std::numeric_limits<std::uint64_t>::max())
     return common::make_unexpected(exhausted("subscription checkpoint generation is exhausted"));
-  const std::uint64_t expected =
-      latest->has_value() ? (*latest)->checkpoint.checkpoint_generation + 1U : 1U;
+  const std::uint64_t expected = previous_generation + 1U;
   if (checkpoint.checkpoint_generation != expected)
     return common::make_unexpected(invalid("subscription checkpoint is not the next generation"));
 

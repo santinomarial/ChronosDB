@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <unistd.h>
@@ -123,14 +124,19 @@ TEST(MultiTabletSubscriptionCheckpointStorageTest, InstallsSelectsAndReopensExac
     const auto conflict = storage->install(conflicting);
     ASSERT_FALSE(conflict.has_value());
     EXPECT_EQ(conflict.error().code(), common::StatusCode::kCorruption);
-    EXPECT_FALSE(storage->install(fixture.checkpoint(3U)).has_value());
+    const auto skipped = storage->install(fixture.checkpoint(3U));
+    ASSERT_FALSE(skipped.has_value());
+    EXPECT_EQ(skipped.error().code(), common::StatusCode::kInvalidArgument);
     const auto second = storage->install(fixture.checkpoint(2U));
     ASSERT_TRUE(second.has_value()) << second.error().to_string();
     EXPECT_EQ(second->file_name, "generation-00000000000000000002.subc");
     const auto latest = storage->load_latest();
     ASSERT_TRUE(latest.has_value());
     ASSERT_TRUE(latest->has_value());
-    EXPECT_EQ((*latest)->checkpoint, fixture.checkpoint(2U));
+    const auto selected = latest->transform(
+        [](const LoadedMultiTabletSubscriptionCheckpoint& loaded) { return loaded.checkpoint; });
+    EXPECT_EQ(selected,
+              std::optional<BoundMultiTabletSubscriptionCheckpoint>{fixture.checkpoint(2U)});
   }
   auto reopened =
       MultiTabletSubscriptionCheckpointStorage::open_existing(fixture.config(directory.path()));
