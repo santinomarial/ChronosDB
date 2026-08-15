@@ -601,12 +601,15 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   execution, and focused coverage proves a historical aggregate cannot silently return present
   rows. Mixed current/temporal command dispatch, history retention, restart, and protocol-level
   historical result coverage remain deferred.
-- Native CREATE TABLE system-identity entropy failure injection, duplicate/nil generator tests, DDL
+- Native CREATE TABLE process-level entropy failure injection, duplicate/nil generator tests, DDL
   response boundary tests, client retry identities, fully complete duplicate-request behavior,
   concurrent/stale DDL, authorization, ALTER/DROP/rename, crash matrices through protocol dispatch,
   and subprocess restart qualification. The common Linux/macOS system UUID adapter is now shared by
-  WAL, daemon bootstrap, and default native DDL/DML; focused coverage proves nonnil generation,
-  injected identities, canonical durable completion fields, and immediate queryability.
+  WAL, daemon bootstrap, and default native DDL/DML. The common adapter now has a typed injected
+  entropy boundary with focused immediate-failure and bounded-nil coverage; Linux syscall-level
+  partial/`EINTR`/terminal-error injection and outer native CREATE failure composition remain
+  deferred. Focused service coverage proves nonnil generation, injected identities, canonical
+  durable completion fields, and immediate queryability.
 - SQL INSERT columnar materialization allocation-failure sweeps, every logical type and integer
   boundary, hostile maximum-width variable values, exact preflight byte accounting before allocation,
   codec round trips, fuzz/property coverage, and ASan/UBSan. Focused coverage now proves schema-order

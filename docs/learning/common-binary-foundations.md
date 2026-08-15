@@ -101,6 +101,19 @@ borrow an injected source, so it must outlive all retained consumer state. This 
 free deterministic clocks while keeping ownership visible; it does not supply sleeps, event-loop
 timers, time-zone conversion, or a mapping between the two clock domains.
 
+## UUID entropy boundary
+
+`SystemUuidGenerator` obtains fixed 16-byte candidates through `UuidEntropySource`. Its default
+`SystemUuidEntropySource` reads the supported operating system, completing partial Linux
+`getrandom` reads and retrying `EINTR`; macOS `arc4random_buf` fills the candidate. Entropy errors
+propagate immediately. A nil candidate is retried at most eight times, so a broken source cannot
+hang an identity-allocating operation indefinitely.
+
+Injected entropy sources are borrowed and must outlive the generator and overlapping calls; mutable
+sources supply their own synchronization. Successful bytes stay opaque rather than acquiring
+invented RFC version semantics. The owning subsystem remains responsible for the identity domain,
+collision checks against its authority, no-reuse policy, and durable installation.
+
 ## Examples
 
 Encoding and decoding a fixed layout remains explicit:
@@ -162,3 +175,5 @@ throughput; future optimization requires a benchmark and an equivalence test aga
 - What does flushing a structured log line guarantee, and what durability does it not guarantee?
 - Why must elapsed-time decisions use a monotonic source instead of wall time?
 - What lifetime and synchronization obligations accompany an injected `TimeSource`?
+- Why is OS entropy acquisition separate from durable identity-domain and collision policy?
+- Why does the UUID generator bound nil retries instead of promising global uniqueness?

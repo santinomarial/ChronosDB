@@ -50,6 +50,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/columnar/column_vector.hpp>
 #include <chronos/common/log.hpp>
 #include <chronos/common/time_source.hpp>
+#include <chronos/common/uuid_generator.hpp>
 #ifdef CHRONOS_TEST_HAS_INTEROP
 #include <chronos/interop/arrow_parquet.hpp>
 #endif
@@ -222,6 +223,8 @@ int main() {
   const auto installed_monotonic_time =
       chronos::common::system_time_source().monotonic_now();
   static_cast<void>(installed_monotonic_time);
+  chronos::common::SystemUuidGenerator installed_identity_generator;
+  const auto installed_identity = installed_identity_generator.generate();
   const auto encode_distributed_query_request =
       &chronos::cluster::encode_distributed_query_request_v1;
   const auto decode_distributed_query_response =
@@ -1472,7 +1475,8 @@ int main() {
       chronos::schema::LogicalTypeKind::kInt64);
   const chronos::network::NetworkSecurityConfig installed_security;
   const auto installed_client = chronos::network::NativeClientSession::create();
-  return installed_log.has_value() && reclaim_physical_receipt != nullptr &&
+  return installed_log.has_value() && installed_identity.has_value() &&
+                 reclaim_physical_receipt != nullptr &&
                  build_source_retirement != nullptr &&
                  publish_source_retirement != nullptr &&
                  reclaim_source_parts != nullptr &&

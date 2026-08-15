@@ -43,8 +43,10 @@ UUID structs.
 The four schema identifier types are different template specializations and cannot be implicitly
 converted. Their factories reject a nil UUID, so a valid identifier object is always nonzero.
 `SystemUuidGenerator` supplies nonnil uninterpreted UUID bytes from the Linux/macOS operating-system
-entropy source, while `UuidGenerator` preserves deterministic injection. Assigning those bytes to a
-specific catalog/storage identity remains the owning subsystem's responsibility under ADR 0014.
+entropy source, while `UuidGenerator` preserves deterministic whole-identity injection and
+`UuidEntropySource` makes the real generator's bounded nil/error policy testable. Assigning those
+bytes to a specific catalog/storage identity and rejecting collisions visible in that authority
+remain the owning subsystem's responsibility under ADR 0014.
 
 `SchemaVersion` similarly has no zero/default state. Version 1 is the initial value; `next()` checks
 `uint64` exhaustion rather than wrapping.

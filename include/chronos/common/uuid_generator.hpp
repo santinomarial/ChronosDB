@@ -6,6 +6,29 @@
 
 namespace chronos::common {
 
+class UuidEntropySource {
+public:
+  UuidEntropySource() = default;
+  virtual ~UuidEntropySource() = default;
+
+  UuidEntropySource(const UuidEntropySource&) = delete;
+  UuidEntropySource& operator=(const UuidEntropySource&) = delete;
+  UuidEntropySource(UuidEntropySource&&) = delete;
+  UuidEntropySource& operator=(UuidEntropySource&&) = delete;
+
+  [[nodiscard]] virtual Result<Uuid::Bytes> read() = 0;
+};
+
+// Thread-safe operating-system entropy adapter. Linux reads getrandom(2) to completion and macOS
+// uses arc4random_buf(3). The returned bytes have no UUID version/variant interpretation.
+class SystemUuidEntropySource final : public UuidEntropySource {
+public:
+  [[nodiscard]] Result<Uuid::Bytes> read() override;
+};
+
+// Returns the stateless system adapter with process lifetime.
+[[nodiscard]] SystemUuidEntropySource& system_uuid_entropy_source() noexcept;
+
 class UuidGenerator {
 public:
   UuidGenerator() = default;
@@ -19,11 +42,20 @@ public:
   [[nodiscard]] virtual Result<Uuid> generate() = 0;
 };
 
-// Stateless operating-system entropy adapter. Each successful call returns a nonnil UUID; the
-// bytes remain uninterpreted and are suitable for ChronosDB durable identities.
+// OS-backed UUID generator. Each successful call returns a nonnil UUID; the bytes remain
+// uninterpreted and are suitable for ChronosDB durable identities.
 class SystemUuidGenerator final : public UuidGenerator {
 public:
+  SystemUuidGenerator() noexcept;
+
+  // Borrows an entropy source that must outlive this generator and every concurrent generate call.
+  // A mutable injected source supplies its own synchronization when calls can overlap.
+  explicit SystemUuidGenerator(UuidEntropySource& entropy) noexcept;
+
   [[nodiscard]] Result<Uuid> generate() override;
+
+private:
+  UuidEntropySource* entropy_;
 };
 
 } // namespace chronos::common

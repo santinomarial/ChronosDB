@@ -43,9 +43,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
   and a learning document. The minimal durable POSIX file/directory layer adds explicit-offset
   transfer loops, synchronization, no-replace rename, and advisory locking with deterministic
   syscall injection. A typed injectable wall/monotonic time source now replaces the first ad hoc
-  subsystem clock seam and supplies default diagnostic timestamps. Broader identity policy,
-  logging sinks and rotation/collection, and broader test utilities remain incomplete. The phase
-  exit gates below remain unchanged and have not been declared complete.
+  subsystem clock seam and supplies default diagnostic timestamps. The OS-backed UUID generator
+  now has a typed injectable entropy boundary with bounded nil/error tests; broader durable
+  identity allocation/collision policy, logging sinks and rotation/collection, and broader test
+  utilities remain incomplete. The phase exit gates below remain unchanged and have not been
+  declared complete.
 
 - **Scope:** reproducible C++23 build profiles; foundational error/result, byte, checksum, file-I/O, time, identity, logging, and test utilities; sanitizers and initial Linux CI policy.
 - **Explicit non-scope:** WAL record semantics, storage engines, SQL, networking, custom allocators without a measured user, and production dependencies not covered by policy/ADR.
