@@ -2,7 +2,7 @@
 
 #include <cstddef>
 #include <gtest/gtest.h>
-#include <utility>
+#include <limits>
 
 namespace chronos::live {
 namespace {
@@ -44,7 +44,8 @@ TEST(MaterializedViewTest, AppliesCorrectionsAndFinalizesTumblingWindow) {
   ASSERT_TRUE(second.has_value());
   EXPECT_EQ(second->front().status, WindowResultStatus::kCorrected);
   EXPECT_DOUBLE_EQ(second->front().value.sum, 30.0);
-  EXPECT_NEAR(*second->front().value.vwap, 40.0 / 3.0, 1e-12);
+  EXPECT_NEAR(second->front().value.vwap.value_or(std::numeric_limits<double>::quiet_NaN()),
+              40.0 / 3.0, 1e-12);
 
   auto finalized = view->advance_watermark(12);
   ASSERT_TRUE(finalized.has_value());
@@ -60,8 +61,10 @@ TEST(MaterializedViewTest, AppliesCorrectionsAndFinalizesTumblingWindow) {
 
   auto checkpoint = view->checkpoint();
   ASSERT_TRUE(checkpoint.has_value()) << checkpoint.error().to_string();
-  auto restored = WindowedMaterializedView::restore(std::move(*checkpoint));
+  const WindowedMaterializedViewCheckpoint original_checkpoint = *checkpoint;
+  auto restored = WindowedMaterializedView::restore(*checkpoint);
   ASSERT_TRUE(restored.has_value()) << restored.error().to_string();
+  EXPECT_EQ(*checkpoint, original_checkpoint);
   EXPECT_EQ(restored->applied_position(), view->applied_position());
   EXPECT_EQ(restored->watermark(), view->watermark());
   EXPECT_EQ(restored->retained_rows(), view->retained_rows());
@@ -100,7 +103,7 @@ TEST(MaterializedViewTest, RejectsCheckpointWhoseWindowRowsDisagree) {
   auto checkpoint = view->checkpoint();
   ASSERT_TRUE(checkpoint.has_value());
   checkpoint->windows.front().aggregate.rows.clear();
-  EXPECT_EQ(WindowedMaterializedView::restore(std::move(*checkpoint)).error().code(),
+  EXPECT_EQ(WindowedMaterializedView::restore(*checkpoint).error().code(),
             common::StatusCode::kCorruption);
 }
 

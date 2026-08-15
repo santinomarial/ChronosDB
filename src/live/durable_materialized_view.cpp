@@ -114,7 +114,7 @@ DurableWindowedMaterializedView::open_existing(DurableWindowedMaterializedViewCo
     }
     const std::uint64_t durable_sequence = checkpoint.state.position.record_sequence;
     const std::uint64_t generation = checkpoint.checkpoint_generation;
-    auto view = WindowedMaterializedView::restore(std::move(checkpoint.state));
+    auto view = WindowedMaterializedView::restore(checkpoint.state);
     if (!view.has_value()) {
       return common::make_unexpected(view.error());
     }

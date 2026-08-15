@@ -90,7 +90,7 @@ TEST(MaterializedViewCheckpointTest, RoundTripsExactStateAndContinuation) {
   EXPECT_EQ(*decoded, original);
 
   auto before = WindowedMaterializedView::restore(original);
-  auto after = WindowedMaterializedView::restore(std::move(*decoded));
+  auto after = WindowedMaterializedView::restore(*decoded);
   ASSERT_TRUE(before.has_value());
   ASSERT_TRUE(after.has_value());
   const SourcePosition next{tablet_id(), wal_id(), 3U};

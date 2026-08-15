@@ -88,8 +88,9 @@ public:
 
   [[nodiscard]] static common::Result<WindowedMaterializedView>
   create(schema::TabletId tablet_id, wal::WalId wal_id, WindowDefinition definition);
+  // Borrows the canonical checkpoint while reconstructing independently owned view state.
   [[nodiscard]] static common::Result<WindowedMaterializedView>
-  restore(WindowedMaterializedViewCheckpoint checkpoint);
+  restore(const WindowedMaterializedViewCheckpoint& checkpoint);
 
   [[nodiscard]] common::Result<std::vector<MaterializedViewChange>>
   apply_committed(SourcePosition position, MaterializedViewInput input);

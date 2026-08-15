@@ -70,8 +70,8 @@ windows_for(const std::int64_t event_time, const WindowDefinition& definition) {
 }
 
 [[nodiscard]] bool final_at(const WindowKey window, const std::int64_t watermark,
-                            const std::int64_t allowed_lateness) noexcept {
-  const auto final_boundary = add_nonnegative(window.end, allowed_lateness);
+                            const WindowDefinition& definition) noexcept {
+  const auto final_boundary = add_nonnegative(window.end, definition.allowed_lateness);
   return final_boundary.has_value() && watermark >= *final_boundary;
 }
 
@@ -125,7 +125,7 @@ WindowedMaterializedView::create(schema::TabletId tablet_id, wal::WalId wal_id,
 }
 
 common::Result<WindowedMaterializedView>
-WindowedMaterializedView::restore(WindowedMaterializedViewCheckpoint checkpoint) {
+WindowedMaterializedView::restore(const WindowedMaterializedViewCheckpoint& checkpoint) {
   auto restored =
       create(checkpoint.position.tablet_id, checkpoint.position.wal_id, checkpoint.definition);
   if (!restored.has_value()) {
@@ -166,20 +166,24 @@ WindowedMaterializedView::restore(WindowedMaterializedViewCheckpoint checkpoint)
       }
     }
 
-    std::optional<WindowKey> prior_window;
+    const WindowKey* prior_window = nullptr;
     for (const MaterializedWindowCheckpoint& window : checkpoint.windows) {
       const auto expected_end = add_nonnegative(window.window.start, checkpoint.definition.width);
-      if ((prior_window.has_value() && window.window <= *prior_window) ||
-          !expected_end.has_value() || *expected_end != window.window.end ||
-          window.window.start % checkpoint.definition.slide != 0 || window.revision == 0U ||
-          !window.emitted ||
-          window.finalized != final_at(window.window, checkpoint.watermark,
-                                       checkpoint.definition.allowed_lateness)) {
+      if (prior_window != nullptr && window.window <= *prior_window) {
         return common::make_unexpected(
             common::Status{common::StatusCode::kCorruption,
                            "materialized-view checkpoint window metadata is inconsistent"});
       }
-      prior_window = window.window;
+      if (!expected_end.has_value() || *expected_end != window.window.end ||
+          window.window.start % checkpoint.definition.slide != 0 || window.revision == 0U ||
+          !window.emitted ||
+          window.finalized !=
+              final_at(window.window, checkpoint.watermark, checkpoint.definition)) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kCorruption,
+                           "materialized-view checkpoint window metadata is inconsistent"});
+      }
+      prior_window = &window.window;
       const auto expected = expected_window_rows.find(window.window);
       const std::span<const AggregateInput> expected_rows =
           expected == expected_window_rows.end()
@@ -289,8 +293,7 @@ WindowedMaterializedView::apply_committed(const SourcePosition position,
     static_cast<void>(inserted);
     previously_emitted.emplace(window, iterator->second.emitted);
     iterator->second.finalized =
-        iterator->second.finalized ||
-        final_at(window, impl_->current_watermark, impl_->definition.allowed_lateness);
+        iterator->second.finalized || final_at(window, impl_->current_watermark, impl_->definition);
   }
   if (existing != impl_->rows.end()) {
     for (const WindowKey window : old_windows) {
@@ -341,7 +344,7 @@ WindowedMaterializedView::advance_watermark(const std::int64_t watermark) {
   impl_->current_watermark = watermark;
   std::vector<MaterializedViewChange> changes;
   for (auto& [window, state] : impl_->windows) {
-    if (state.finalized || !final_at(window, watermark, impl_->definition.allowed_lateness)) {
+    if (state.finalized || !final_at(window, watermark, impl_->definition)) {
       continue;
     }
     state.finalized = true;
