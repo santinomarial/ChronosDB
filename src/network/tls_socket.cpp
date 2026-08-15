@@ -37,6 +37,11 @@ namespace {
   return {common::StatusCode::kResourceExhausted, std::move(message)};
 }
 
+template <typename Value>
+[[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
 struct SocketBioState {
   int descriptor{-1};
 };
@@ -495,9 +500,13 @@ std::size_t TlsSocket::pending_plaintext_bytes() const noexcept {
 }
 
 common::Result<PeerCertificateSha256> TlsSocket::peer_certificate_sha256() const {
-  if (!handshake_complete())
+  if (!implementation_)
     return common::make_unexpected(invalid("TLS peer identity is unavailable before handshake"));
-  return *implementation_->peer_certificate_sha256_;
+  const PeerCertificateSha256* fingerprint =
+      optional_pointer(implementation_->peer_certificate_sha256_);
+  return fingerprint != nullptr ? common::Result<PeerCertificateSha256>{*fingerprint}
+                                : common::make_unexpected(
+                                      invalid("TLS peer identity is unavailable before handshake"));
 }
 
 } // namespace chronos::network

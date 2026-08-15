@@ -163,6 +163,10 @@ public:
 };
 
 TEST(TlsSocketTest, InvalidCredentialConfigurationFailsClosed) {
+  const auto empty_fingerprint = TlsSocket{}.peer_certificate_sha256();
+  ASSERT_FALSE(empty_fingerprint.has_value());
+  EXPECT_EQ(empty_fingerprint.error().code(), common::StatusCode::kInvalidArgument);
+
   const auto context = TlsServerContext::create({});
   ASSERT_FALSE(context.has_value());
   EXPECT_EQ(context.error().code(), common::StatusCode::kInvalidArgument);
@@ -211,6 +215,9 @@ TEST(TlsSocketTest, MutualHandshakeCarriesVerifiedIdentityAndPlaintext) {
   ASSERT_TRUE(server.has_value()) << server.error().message();
   auto client = TlsSocket::connect(*client_context_owner, sockets.sockets[1]);
   ASSERT_TRUE(client.has_value()) << client.error().message();
+  const auto fingerprint_before_handshake = server->peer_certificate_sha256();
+  ASSERT_FALSE(fingerprint_before_handshake.has_value());
+  EXPECT_EQ(fingerprint_before_handshake.error().code(), common::StatusCode::kInvalidArgument);
 
   complete_handshake(*server, *client);
   auto client_fingerprint = server->peer_certificate_sha256();
@@ -297,14 +304,17 @@ TEST(TlsSocketTest, AbruptPeerCloseNeverRaisesSigpipe) {
   sockets.sockets[1] = -1;
 
   const std::array<std::byte, std::size_t{16U} * 1024U> bytes{};
-  std::optional<common::Status> write_failure;
-  for (std::size_t attempt = 0U; attempt < 1024U && !write_failure.has_value(); ++attempt) {
+  common::Status write_failure;
+  bool write_failed = false;
+  for (std::size_t attempt = 0U; attempt < 1024U && !write_failed; ++attempt) {
     const auto written = server->write(bytes);
-    if (!written.has_value())
+    if (!written.has_value()) {
       write_failure = written.error();
+      write_failed = true;
+    }
   }
-  ASSERT_TRUE(write_failure.has_value());
-  EXPECT_EQ(write_failure->code(), common::StatusCode::kIoError);
+  ASSERT_TRUE(write_failed);
+  EXPECT_EQ(write_failure.code(), common::StatusCode::kIoError);
   EXPECT_EQ(sigpipe_observed, 0);
 }
 
@@ -321,16 +331,21 @@ TEST(TlsSocketTest, ClientRejectsServerCertificateForDifferentIdentity) {
   auto client = TlsSocket::connect(*client_context_owner, sockets.sockets[1]);
   ASSERT_TRUE(client.has_value());
 
-  std::optional<common::Status> client_error;
-  for (std::size_t attempt = 0U; attempt < 1024U && !client_error.has_value(); ++attempt) {
-    if (!server->handshake_complete())
-      (void)server->handshake();
+  common::Status client_error;
+  bool client_failed = false;
+  for (std::size_t attempt = 0U; attempt < 1024U && !client_failed; ++attempt) {
+    if (!server->handshake_complete()) {
+      const auto server_progress = server->handshake();
+      ASSERT_TRUE(server_progress.has_value()) << server_progress.error().message();
+    }
     auto progress = client->handshake();
-    if (!progress.has_value())
+    if (!progress.has_value()) {
       client_error = progress.error();
+      client_failed = true;
+    }
   }
-  ASSERT_TRUE(client_error.has_value());
-  EXPECT_EQ(client_error->code(), common::StatusCode::kUnauthenticated);
+  ASSERT_TRUE(client_failed);
+  EXPECT_EQ(client_error.code(), common::StatusCode::kUnauthenticated);
   EXPECT_FALSE(client->handshake_complete());
 }
 
