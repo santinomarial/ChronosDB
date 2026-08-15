@@ -84,8 +84,7 @@ TEST(RaftTransportPeerManagerTest, ConnectsFixedRoutesRoutesAtomicallyAndRecycle
   ASSERT_TRUE(manager.has_value()) << manager.error().to_string();
   const auto start = RaftTransportPeerManager::TimePoint{};
   ASSERT_TRUE(manager->drive(start).is_ok());
-  ASSERT_TRUE(manager->next_deadline().has_value());
-  EXPECT_EQ(*manager->next_deadline(), start + std::chrono::milliseconds{5});
+  EXPECT_EQ(manager->next_deadline(), std::optional{start + std::chrono::milliseconds{5}});
   auto interests = manager->interests();
   ASSERT_TRUE(interests.has_value());
   ASSERT_EQ(interests->size(), 2U);
@@ -97,8 +96,7 @@ TEST(RaftTransportPeerManagerTest, ConnectsFixedRoutesRoutesAtomicallyAndRecycle
             .is_ok());
   }
   EXPECT_EQ(manager->connected_peer_count(), 2U);
-  ASSERT_TRUE(manager->next_deadline().has_value());
-  EXPECT_EQ(*manager->next_deadline(), start + std::chrono::milliseconds{6});
+  EXPECT_EQ(manager->next_deadline(), std::optional{start + std::chrono::milliseconds{6}});
   auto result = outbound();
   ASSERT_TRUE(manager->route_result(group(), result, start).is_ok());
   interests = manager->interests();
@@ -123,7 +121,7 @@ TEST(RaftTransportPeerManagerTest, ConnectsFixedRoutesRoutesAtomicallyAndRecycle
   ASSERT_EQ(interests->size(), 2U);
 }
 
-TEST(RaftTransportPeerManagerTest, RejectsDuplicateAndForeignRoutes) {
+TEST(RaftTransportPeerManagerTest, RejectsUndercapacityDuplicateAndForeignRoutes) {
   auto tls = network::TlsClientContext::create(tls_config());
   auto listener = network::TcpListener::bind({});
   ASSERT_TRUE(tls.has_value());
@@ -131,6 +129,11 @@ TEST(RaftTransportPeerManagerTest, RejectsDuplicateAndForeignRoutes) {
   Authenticator authenticator;
   Authorizer authorizer;
   const auto peer = route(2U, listener->bound_endpoint(), *tls, authenticator, authorizer);
+  EXPECT_EQ(RaftTransportPeerManager::create(
+                {.local_node_id = 1U, .peers = {peer}, .pool = {.maximum_peers = 0U}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
   EXPECT_EQ(RaftTransportPeerManager::create(
                 {.local_node_id = 1U, .peers = {peer, peer}, .pool = {.maximum_peers = 2U}})
                 .error()

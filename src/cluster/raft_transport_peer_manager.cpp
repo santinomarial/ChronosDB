@@ -70,17 +70,23 @@ RaftTransportPeerManager::create(RaftTransportPeerManagerConfig config) {
   if (!pool.has_value())
     return common::make_unexpected(pool.error());
   try {
-    std::vector<std::optional<Impl::Route>> routes(config.peers.size());
+    std::vector<RaftTransportPeerReconnectConfig> peers = std::move(config.peers);
+    std::vector<std::optional<Impl::Route>> routes(peers.size());
     std::size_t count{};
-    for (const RaftTransportPeerReconnectConfig& peer : config.peers) {
+    for (const RaftTransportPeerReconnectConfig& peer : peers) {
       const raft::NodeId id = peer.connector.carrier.peer_node_id;
       if (peer.connector.carrier.local_node_id != config.local_node_id || id == 0U)
         return common::make_unexpected(status(common::StatusCode::kInvalidArgument,
                                               "Raft peer manager route ownership is invalid"));
-      for (std::size_t index = 0U; index < count; ++index)
-        if (routes[index]->peer == id)
+      for (std::size_t index = 0U; index < count; ++index) {
+        const std::optional<Impl::Route>& existing = routes[index];
+        if (!existing.has_value())
+          return common::make_unexpected(
+              status(common::StatusCode::kCorruption, "Raft peer manager route count is invalid"));
+        if (existing.value().peer == id)
           return common::make_unexpected(
               status(common::StatusCode::kAlreadyExists, "Raft peer manager route is duplicated"));
+      }
       auto reconnect = RaftTransportPeerReconnect::create(peer);
       if (!reconnect.has_value())
         return common::make_unexpected(reconnect.error());
@@ -121,14 +127,14 @@ common::Status RaftTransportPeerManager::on_ready(const raft::NodeId peer, const
   if (route == nullptr)
     return status(common::StatusCode::kNotFound, "Raft peer manager route does not exist");
   if (route->reconnect.state() == RaftTransportPeerReconnectState::kConnecting) {
-    const common::Status progress = route->reconnect.on_ready(writable, now);
+    common::Status progress = route->reconnect.on_ready(writable, now);
     if (!progress.is_ok())
       return common::Status::ok();
     return implementation_->install_ready(*route);
   }
   if (route->reconnect.state() != RaftTransportPeerReconnectState::kConnected)
     return common::Status::ok();
-  const common::Status progress = implementation_->pool.on_ready(peer, readable, writable, now);
+  common::Status progress = implementation_->pool.on_ready(peer, readable, writable, now);
   if (progress.is_ok())
     return progress;
   auto failed = implementation_->pool.take_failed_peer(peer);
@@ -149,7 +155,7 @@ common::Status RaftTransportPeerManager::on_transport_closed(const raft::NodeId 
     return on_ready(peer, false, true, now);
   if (route->reconnect.state() != RaftTransportPeerReconnectState::kConnected)
     return common::Status::ok();
-  const common::Status closed = implementation_->pool.on_transport_closed(peer);
+  common::Status closed = implementation_->pool.on_transport_closed(peer);
   if (!closed.is_ok())
     return closed;
   auto failed = implementation_->pool.take_failed_peer(peer);
