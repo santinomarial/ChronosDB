@@ -139,7 +139,12 @@ TEST(DurableTabletReconfigurationTest, CheckpointsPromotionAndCompletionBeforeLi
   auto first = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(first.has_value());
   ASSERT_TRUE(first->has_value());
-  auto recovered = recover_tablet_movement_generation(**first, *chunk_storage);
+  const auto& first_generation = *first;
+  if (!first_generation.has_value()) {
+    ADD_FAILURE() << "expected the initial checkpoint generation";
+    return;
+  }
+  auto recovered = recover_tablet_movement_generation(*first_generation, *chunk_storage);
   ASSERT_TRUE(recovered.has_value());
 
   auto source_metadata = MetadataStateMachine::create();
@@ -156,7 +161,12 @@ TEST(DurableTabletReconfigurationTest, CheckpointsPromotionAndCompletionBeforeLi
   ASSERT_TRUE(promotion_action.has_value()) << promotion_action.error().to_string();
   EXPECT_FALSE(promotion_action->installed_checkpoint.has_value());
   ASSERT_TRUE(promotion_action->action.has_value());
-  EXPECT_EQ(promotion_action->action->kind, TabletReconfigurationActionKind::kBeginJointMembership);
+  const auto& source_action = promotion_action->action;
+  if (!source_action.has_value()) {
+    ADD_FAILURE() << "expected a source membership action";
+    return;
+  }
+  EXPECT_EQ(source_action->kind, TabletReconfigurationActionKind::kBeginJointMembership);
   EXPECT_EQ(recovered->checkpoint_generation, 1U);
   EXPECT_EQ(recovered->movement.record().phase, TabletMovementPhase::kReady);
 
@@ -181,9 +191,19 @@ TEST(DurableTabletReconfigurationTest, CheckpointsPromotionAndCompletionBeforeLi
       *promoted_metadata, *checkpoint_storage, *chunk_storage, 2U);
   ASSERT_TRUE(promoted.has_value()) << promoted.error().to_string();
   ASSERT_TRUE(promoted->installed_checkpoint.has_value());
-  EXPECT_EQ(promoted->installed_checkpoint->checkpoint_generation, 2U);
+  const auto& promoted_checkpoint = promoted->installed_checkpoint;
+  if (!promoted_checkpoint.has_value()) {
+    ADD_FAILURE() << "expected the promoted checkpoint";
+    return;
+  }
+  EXPECT_EQ(promoted_checkpoint->checkpoint_generation, 2U);
   ASSERT_TRUE(promoted->action.has_value());
-  EXPECT_EQ(promoted->action->kind, TabletReconfigurationActionKind::kBeginJointMembership);
+  const auto& promoted_action = promoted->action;
+  if (!promoted_action.has_value()) {
+    ADD_FAILURE() << "expected a promoted membership action";
+    return;
+  }
+  EXPECT_EQ(promoted_action->kind, TabletReconfigurationActionKind::kBeginJointMembership);
   EXPECT_EQ(recovered->movement.record().phase, TabletMovementPhase::kTargetPromoted);
   EXPECT_EQ(recovered->checkpoint_generation, 2U);
 
@@ -200,14 +220,24 @@ TEST(DurableTabletReconfigurationTest, CheckpointsPromotionAndCompletionBeforeLi
       *complete_metadata, *checkpoint_storage, *chunk_storage, 2U);
   ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
   ASSERT_TRUE(completed->installed_checkpoint.has_value());
-  EXPECT_EQ(completed->installed_checkpoint->checkpoint_generation, 3U);
+  const auto& completed_checkpoint = completed->installed_checkpoint;
+  if (!completed_checkpoint.has_value()) {
+    ADD_FAILURE() << "expected the completed checkpoint";
+    return;
+  }
+  EXPECT_EQ(completed_checkpoint->checkpoint_generation, 3U);
   EXPECT_FALSE(completed->action.has_value());
   EXPECT_EQ(recovered->movement.record().phase, TabletMovementPhase::kComplete);
   EXPECT_EQ(recovered->checkpoint_generation, 3U);
   auto latest = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(latest.has_value());
   ASSERT_TRUE(latest->has_value());
-  auto reopened = recover_tablet_movement_generation(**latest, *chunk_storage);
+  const auto& latest_generation = *latest;
+  if (!latest_generation.has_value()) {
+    ADD_FAILURE() << "expected the latest checkpoint generation";
+    return;
+  }
+  auto reopened = recover_tablet_movement_generation(*latest_generation, *chunk_storage);
   ASSERT_TRUE(reopened.has_value());
   EXPECT_EQ(reopened->movement.record().phase, TabletMovementPhase::kComplete);
 }
@@ -224,7 +254,12 @@ TEST(DurableTabletReconfigurationTest, PreservesSelfContainedRepresentation) {
   auto first = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(first.has_value());
   ASSERT_TRUE(first->has_value());
-  auto recovered = recover_tablet_movement_generation(**first);
+  const auto& first_generation = *first;
+  if (!first_generation.has_value()) {
+    ADD_FAILURE() << "expected the initial checkpoint generation";
+    return;
+  }
+  auto recovered = recover_tablet_movement_generation(*first_generation);
   ASSERT_TRUE(recovered.has_value());
   auto metadata = MetadataStateMachine::create();
   ASSERT_TRUE(metadata.has_value());
@@ -243,7 +278,13 @@ TEST(DurableTabletReconfigurationTest, PreservesSelfContainedRepresentation) {
   auto latest = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(latest.has_value());
   ASSERT_TRUE(latest->has_value());
-  EXPECT_TRUE(std::holds_alternative<TabletMovementCheckpointGeneration>((**latest).generation));
+  const auto& latest_generation = *latest;
+  if (!latest_generation.has_value()) {
+    ADD_FAILURE() << "expected the latest checkpoint generation";
+    return;
+  }
+  EXPECT_TRUE(
+      std::holds_alternative<TabletMovementCheckpointGeneration>(latest_generation->generation));
 }
 
 TEST(DurableTabletReconfigurationTest, CheckpointConflictLeavesLiveMovementUnchanged) {
@@ -266,7 +307,12 @@ TEST(DurableTabletReconfigurationTest, CheckpointConflictLeavesLiveMovementUncha
   auto first = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(first.has_value());
   ASSERT_TRUE(first->has_value());
-  auto recovered = recover_tablet_movement_generation(**first, *chunk_storage);
+  const auto& first_generation = *first;
+  if (!first_generation.has_value()) {
+    ADD_FAILURE() << "expected the initial checkpoint generation";
+    return;
+  }
+  auto recovered = recover_tablet_movement_generation(*first_generation, *chunk_storage);
   ASSERT_TRUE(recovered.has_value());
   ASSERT_TRUE(checkpoint_storage->install_reference({2U, ready_reference}).has_value());
   auto metadata = MetadataStateMachine::create();
@@ -303,7 +349,12 @@ TEST(DurableTabletReconfigurationTest, ReturnsOnlyLedgerPreparedDispatchAndRetri
   auto first = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(first.has_value());
   ASSERT_TRUE(first->has_value());
-  auto recovered = recover_tablet_movement_generation(**first);
+  const auto& first_generation = *first;
+  if (!first_generation.has_value()) {
+    ADD_FAILURE() << "expected the initial checkpoint generation";
+    return;
+  }
+  auto recovered = recover_tablet_movement_generation(*first_generation);
   ASSERT_TRUE(recovered.has_value());
   auto metadata = MetadataStateMachine::create();
   ASSERT_TRUE(metadata.has_value());
@@ -320,11 +371,16 @@ TEST(DurableTabletReconfigurationTest, ReturnsOnlyLedgerPreparedDispatchAndRetri
   ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
   EXPECT_FALSE(prepared->installed_checkpoint.has_value());
   ASSERT_TRUE(prepared->dispatch.has_value());
-  EXPECT_FALSE(prepared->dispatch->preparation().already_present);
-  EXPECT_EQ(prepared->dispatch->action().id, prepared->dispatch->preparation().id);
-  auto loaded = action_ledger->load(prepared->dispatch->action().id);
+  const auto& prepared_dispatch = prepared->dispatch;
+  if (!prepared_dispatch.has_value()) {
+    ADD_FAILURE() << "expected a prepared dispatch";
+    return;
+  }
+  EXPECT_FALSE(prepared_dispatch->preparation().already_present);
+  EXPECT_EQ(prepared_dispatch->action().id, prepared_dispatch->preparation().id);
+  auto loaded = action_ledger->load(prepared_dispatch->action().id);
   ASSERT_TRUE(loaded.has_value()) << loaded.error().to_string();
-  auto expected_bytes = encode_tablet_reconfiguration_action_v1(prepared->dispatch->action());
+  auto expected_bytes = encode_tablet_reconfiguration_action_v1(prepared_dispatch->action());
   ASSERT_TRUE(expected_bytes.has_value());
   EXPECT_EQ(loaded->bytes, *expected_bytes);
 
@@ -333,8 +389,13 @@ TEST(DurableTabletReconfigurationTest, ReturnsOnlyLedgerPreparedDispatchAndRetri
       *checkpoint_storage, *action_ledger, 2U);
   ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
   ASSERT_TRUE(retry->dispatch.has_value());
-  EXPECT_TRUE(retry->dispatch->preparation().already_present);
-  EXPECT_EQ(retry->dispatch->action().id, prepared->dispatch->action().id);
+  const auto& retry_dispatch = retry->dispatch;
+  if (!retry_dispatch.has_value()) {
+    ADD_FAILURE() << "expected the retained dispatch";
+    return;
+  }
+  EXPECT_TRUE(retry_dispatch->preparation().already_present);
+  EXPECT_EQ(retry_dispatch->action().id, prepared_dispatch->action().id);
   EXPECT_EQ(recovered->checkpoint_generation, 1U);
   EXPECT_EQ(recovered->movement.record().phase, TabletMovementPhase::kReady);
 
@@ -352,11 +413,21 @@ TEST(DurableTabletReconfigurationTest, ReturnsOnlyLedgerPreparedDispatchAndRetri
       *promoted_metadata, *checkpoint_storage, *action_ledger, 2U);
   ASSERT_TRUE(promoted.has_value()) << promoted.error().to_string();
   ASSERT_TRUE(promoted->installed_checkpoint.has_value());
-  EXPECT_EQ(promoted->installed_checkpoint->checkpoint_generation, 2U);
+  const auto& promoted_checkpoint = promoted->installed_checkpoint;
+  if (!promoted_checkpoint.has_value()) {
+    ADD_FAILURE() << "expected the promoted checkpoint";
+    return;
+  }
+  EXPECT_EQ(promoted_checkpoint->checkpoint_generation, 2U);
   ASSERT_TRUE(promoted->dispatch.has_value());
-  EXPECT_FALSE(promoted->dispatch->preparation().already_present);
-  EXPECT_EQ(promoted->dispatch->action().id.movement_epoch, 8U);
-  EXPECT_EQ(promoted->dispatch->action().id, promoted->dispatch->preparation().id);
+  const auto& promoted_dispatch = promoted->dispatch;
+  if (!promoted_dispatch.has_value()) {
+    ADD_FAILURE() << "expected the promoted dispatch";
+    return;
+  }
+  EXPECT_FALSE(promoted_dispatch->preparation().already_present);
+  EXPECT_EQ(promoted_dispatch->action().id.movement_epoch, 8U);
+  EXPECT_EQ(promoted_dispatch->action().id, promoted_dispatch->preparation().id);
   EXPECT_EQ(recovered->checkpoint_generation, 2U);
   EXPECT_EQ(recovered->movement.record().phase, TabletMovementPhase::kTargetPromoted);
 }
@@ -376,7 +447,12 @@ TEST(DurableTabletReconfigurationTest, LedgerConflictKeepsInstalledPhaseCheckpoi
   auto first = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(first.has_value());
   ASSERT_TRUE(first->has_value());
-  auto recovered = recover_tablet_movement_generation(**first);
+  const auto& first_generation = *first;
+  if (!first_generation.has_value()) {
+    ADD_FAILURE() << "expected the initial checkpoint generation";
+    return;
+  }
+  auto recovered = recover_tablet_movement_generation(*first_generation);
   ASSERT_TRUE(recovered.has_value());
   TabletReconfigurationAction conflict{
       {tablet_id(), 8U, TabletReconfigurationActionKind::kBeginJointMembership},
@@ -403,8 +479,13 @@ TEST(DurableTabletReconfigurationTest, LedgerConflictKeepsInstalledPhaseCheckpoi
   auto latest = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(latest.has_value());
   ASSERT_TRUE(latest->has_value());
+  const auto& latest_generation = *latest;
+  if (!latest_generation.has_value()) {
+    ADD_FAILURE() << "expected the latest checkpoint generation";
+    return;
+  }
   EXPECT_EQ(std::visit([](const auto& value) { return value.checkpoint_generation; },
-                       (**latest).generation),
+                       latest_generation->generation),
             2U);
 }
 
@@ -424,7 +505,12 @@ TEST(DurableTabletReconfigurationTest, ExecutesOnlySealedPreparedDispatchAfterRa
   auto first = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(first.has_value());
   ASSERT_TRUE(first->has_value());
-  auto recovered = recover_tablet_movement_generation(**first);
+  const auto& first_generation = *first;
+  if (!first_generation.has_value()) {
+    ADD_FAILURE() << "expected the initial checkpoint generation";
+    return;
+  }
+  auto recovered = recover_tablet_movement_generation(*first_generation);
   ASSERT_TRUE(recovered.has_value());
   auto metadata = MetadataStateMachine::create();
   ASSERT_TRUE(metadata.has_value());
@@ -444,9 +530,14 @@ TEST(DurableTabletReconfigurationTest, ExecutesOnlySealedPreparedDispatchAfterRa
       *runtime->find_group(tablet_group), *metadata, *checkpoint_storage, *action_ledger, 2U);
   ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
   ASSERT_TRUE(prepared->dispatch.has_value());
-  PreparedTabletReconfigurationDispatch dispatch = std::move(*prepared->dispatch);
-  EXPECT_FALSE(prepared->dispatch->is_valid());
-  auto moved_from = execute_local_prepared_tablet_reconfiguration(*prepared->dispatch, *runtime);
+  auto& prepared_dispatch = prepared->dispatch;
+  if (!prepared_dispatch.has_value()) {
+    ADD_FAILURE() << "expected a prepared dispatch";
+    return;
+  }
+  PreparedTabletReconfigurationDispatch dispatch = std::move(*prepared_dispatch);
+  EXPECT_FALSE(prepared_dispatch->is_valid());
+  auto moved_from = execute_local_prepared_tablet_reconfiguration(*prepared_dispatch, *runtime);
   ASSERT_FALSE(moved_from.has_value());
   EXPECT_EQ(moved_from.error().code(), common::StatusCode::kInvalidArgument);
   const std::uint64_t durable_before = runtime->durable_physical_sequence();
@@ -456,8 +547,18 @@ TEST(DurableTabletReconfigurationTest, ExecutesOnlySealedPreparedDispatchAfterRa
   ASSERT_TRUE(executed.has_value()) << executed.error().to_string();
   EXPECT_TRUE(executed->status.is_ok()) << executed->status.to_string();
   ASSERT_TRUE(executed->transition.has_value());
-  ASSERT_TRUE(executed->transition->persistence.has_value());
-  EXPECT_EQ(executed->transition->persistence->group_id, tablet_group);
+  const auto& executed_transition = executed->transition;
+  if (!executed_transition.has_value()) {
+    ADD_FAILURE() << "expected an executed transition";
+    return;
+  }
+  ASSERT_TRUE(executed_transition->persistence.has_value());
+  const auto& persistence = executed_transition->persistence;
+  if (!persistence.has_value()) {
+    ADD_FAILURE() << "expected a durable transition";
+    return;
+  }
+  EXPECT_EQ(persistence->group_id, tablet_group);
   EXPECT_GT(runtime->durable_physical_sequence(), durable_before);
   ASSERT_TRUE(runtime->close().is_ok());
   auto reopened = DurableMultiRaftRuntime::open_existing(2U, raft_config, {}, groups);
@@ -482,7 +583,12 @@ TEST(DurableTabletReconfigurationTest, AdmitsPreparedDispatchToBoundedAsyncOwner
   auto first = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(first.has_value());
   ASSERT_TRUE(first->has_value());
-  auto recovered = recover_tablet_movement_generation(**first);
+  const auto& first_generation = *first;
+  if (!first_generation.has_value()) {
+    ADD_FAILURE() << "expected the initial checkpoint generation";
+    return;
+  }
+  auto recovered = recover_tablet_movement_generation(*first_generation);
   ASSERT_TRUE(recovered.has_value());
   auto metadata = MetadataStateMachine::create();
   ASSERT_TRUE(metadata.has_value());
@@ -505,29 +611,49 @@ TEST(DurableTabletReconfigurationTest, AdmitsPreparedDispatchToBoundedAsyncOwner
   auto initial_observed = initial_observation->wait();
   ASSERT_TRUE(initial_observed.has_value()) << initial_observed.error().to_string();
   ASSERT_TRUE(initial_observed->front().observation.has_value());
+  const auto& initial_group_observation = initial_observed->front().observation;
+  if (!initial_group_observation.has_value()) {
+    ADD_FAILURE() << "expected the initial group observation";
+    return;
+  }
   auto prepared = reconcile_and_prepare_durable_tablet_reconfiguration(
-      *recovered, tablet_group, metadata_group, table_id(), *initial_observed->front().observation,
-      *metadata, *checkpoint_storage, *action_ledger, 2U);
+      *recovered, tablet_group, metadata_group, table_id(), *initial_group_observation, *metadata,
+      *checkpoint_storage, *action_ledger, 2U);
   ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
   ASSERT_TRUE(prepared->dispatch.has_value());
+  const auto& prepared_dispatch = prepared->dispatch;
+  if (!prepared_dispatch.has_value()) {
+    ADD_FAILURE() << "expected a prepared dispatch";
+    return;
+  }
 
-  auto completion = try_submit_local_prepared_tablet_reconfiguration(*prepared->dispatch, *runtime);
+  auto completion = try_submit_local_prepared_tablet_reconfiguration(*prepared_dispatch, *runtime);
   ASSERT_TRUE(completion.has_value()) << completion.error().to_string();
   auto executed = completion->wait();
   ASSERT_TRUE(executed.has_value()) << executed.error().to_string();
   ASSERT_EQ(executed->size(), 1U);
   EXPECT_TRUE(executed->front().status.is_ok()) << executed->front().status.to_string();
   ASSERT_TRUE(executed->front().transition.has_value());
-  EXPECT_TRUE(executed->front().transition->persistence.has_value());
+  const auto& executed_transition = executed->front().transition;
+  if (!executed_transition.has_value()) {
+    ADD_FAILURE() << "expected an executed transition";
+    return;
+  }
+  EXPECT_TRUE(executed_transition->persistence.has_value());
 
   auto pending_observation = runtime->try_observe_group(tablet_group);
   ASSERT_TRUE(pending_observation.has_value()) << pending_observation.error().to_string();
   auto pending_observed = pending_observation->wait();
   ASSERT_TRUE(pending_observed.has_value()) << pending_observed.error().to_string();
   ASSERT_TRUE(pending_observed->front().observation.has_value());
+  const auto& pending_group_observation = pending_observed->front().observation;
+  if (!pending_group_observation.has_value()) {
+    ADD_FAILURE() << "expected the pending group observation";
+    return;
+  }
   auto pending = reconcile_and_prepare_durable_tablet_reconfiguration(
-      *recovered, tablet_group, metadata_group, table_id(), *pending_observed->front().observation,
-      *metadata, *checkpoint_storage, *action_ledger, 2U);
+      *recovered, tablet_group, metadata_group, table_id(), *pending_group_observation, *metadata,
+      *checkpoint_storage, *action_ledger, 2U);
   ASSERT_TRUE(pending.has_value()) << pending.error().to_string();
   EXPECT_FALSE(pending->dispatch.has_value());
 
@@ -543,10 +669,15 @@ TEST(DurableTabletReconfigurationTest, AdmitsPreparedDispatchToBoundedAsyncOwner
   auto committed_observed = committed_observation->wait();
   ASSERT_TRUE(committed_observed.has_value()) << committed_observed.error().to_string();
   ASSERT_TRUE(committed_observed->front().observation.has_value());
-  EXPECT_EQ(committed_observed->front().observation->commit_index, 1U);
-  EXPECT_TRUE(committed_observed->front().observation->joint_membership_can_finalize);
+  const auto& committed_group_observation = committed_observed->front().observation;
+  if (!committed_group_observation.has_value()) {
+    ADD_FAILURE() << "expected the committed group observation";
+    return;
+  }
+  EXPECT_EQ(committed_group_observation->commit_index, 1U);
+  EXPECT_TRUE(committed_group_observation->joint_membership_can_finalize);
 
-  RaftGroupObservation foreign = *committed_observed->front().observation;
+  RaftGroupObservation foreign = *committed_group_observation;
   foreign.group_id = metadata_group;
   auto rejected_observation = reconcile_and_prepare_durable_tablet_reconfiguration(
       *recovered, tablet_group, metadata_group, table_id(), foreign, *metadata, *checkpoint_storage,
@@ -555,17 +686,22 @@ TEST(DurableTabletReconfigurationTest, AdmitsPreparedDispatchToBoundedAsyncOwner
   EXPECT_EQ(rejected_observation.error().code(), common::StatusCode::kInvalidArgument);
 
   auto finalize = reconcile_and_prepare_durable_tablet_reconfiguration(
-      *recovered, tablet_group, metadata_group, table_id(),
-      *committed_observed->front().observation, *metadata, *checkpoint_storage, *action_ledger, 2U);
+      *recovered, tablet_group, metadata_group, table_id(), *committed_group_observation, *metadata,
+      *checkpoint_storage, *action_ledger, 2U);
   ASSERT_TRUE(finalize.has_value()) << finalize.error().to_string();
   ASSERT_TRUE(finalize->dispatch.has_value());
-  EXPECT_EQ(finalize->dispatch->action().kind,
+  const auto& finalize_dispatch = finalize->dispatch;
+  if (!finalize_dispatch.has_value()) {
+    ADD_FAILURE() << "expected a finalize dispatch";
+    return;
+  }
+  EXPECT_EQ(finalize_dispatch->action().kind,
             TabletReconfigurationActionKind::kFinalizeJointMembership);
   EXPECT_TRUE(runtime->shutdown().is_ok());
-  auto rejected = try_submit_local_prepared_tablet_reconfiguration(*prepared->dispatch, *runtime);
+  auto rejected = try_submit_local_prepared_tablet_reconfiguration(*prepared_dispatch, *runtime);
   ASSERT_FALSE(rejected.has_value());
   EXPECT_EQ(rejected.error().code(), common::StatusCode::kUnavailable);
-  EXPECT_TRUE(prepared->dispatch->is_valid());
+  EXPECT_TRUE(prepared_dispatch->is_valid());
   auto reopened = DurableMultiRaftRuntime::open_existing(2U, raft_config, {}, groups);
   ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
   ASSERT_NE(reopened->find_group(tablet_group), nullptr);
@@ -589,7 +725,12 @@ TEST(DurableTabletReconfigurationTest, SuppressesExactRetainedPlacementRetry) {
   auto first = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(first.has_value());
   ASSERT_TRUE(first->has_value());
-  auto recovered = recover_tablet_movement_generation(**first);
+  const auto& first_generation = *first;
+  if (!first_generation.has_value()) {
+    ADD_FAILURE() << "expected the initial checkpoint generation";
+    return;
+  }
+  auto recovered = recover_tablet_movement_generation(*first_generation);
   ASSERT_TRUE(recovered.has_value());
   auto metadata = MetadataStateMachine::create();
   ASSERT_TRUE(metadata.has_value());
@@ -605,24 +746,34 @@ TEST(DurableTabletReconfigurationTest, SuppressesExactRetainedPlacementRetry) {
       *checkpoint_storage, *action_ledger, 2U);
   ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
   ASSERT_TRUE(prepared->dispatch.has_value());
-  ASSERT_EQ(prepared->dispatch->action().kind, TabletReconfigurationActionKind::kPublishPlacement);
+  const auto& prepared_dispatch = prepared->dispatch;
+  if (!prepared_dispatch.has_value()) {
+    ADD_FAILURE() << "expected a prepared placement dispatch";
+    return;
+  }
+  ASSERT_EQ(prepared_dispatch->action().kind, TabletReconfigurationActionKind::kPublishPlacement);
   const std::vector<RaftGroupConfiguration> groups{{metadata_group, {2U}}};
   auto runtime =
       DurableMultiRaftRuntime::create_new(2U, {.directory_path = raft_log.path().string()}, groups);
   ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
   ASSERT_TRUE(runtime->execute_batch({{metadata_group, StartElectionOperation{}}}).has_value());
-  auto executed = execute_local_prepared_tablet_reconfiguration(*prepared->dispatch, *runtime);
+  auto executed = execute_local_prepared_tablet_reconfiguration(*prepared_dispatch, *runtime);
   ASSERT_TRUE(executed.has_value()) << executed.error().to_string();
   ASSERT_TRUE(executed->status.is_ok());
   const std::uint64_t durable_after_first = runtime->durable_physical_sequence();
 
-  auto retry = execute_local_prepared_tablet_reconfiguration(*prepared->dispatch, *runtime);
+  auto retry = execute_local_prepared_tablet_reconfiguration(*prepared_dispatch, *runtime);
 
   ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
   EXPECT_TRUE(retry->status.is_ok());
   ASSERT_TRUE(retry->transition.has_value());
-  EXPECT_FALSE(retry->transition->persistence.has_value());
-  EXPECT_TRUE(retry->transition->outbound.empty());
+  const auto& retry_transition = retry->transition;
+  if (!retry_transition.has_value()) {
+    ADD_FAILURE() << "expected a retry transition";
+    return;
+  }
+  EXPECT_FALSE(retry_transition->persistence.has_value());
+  EXPECT_TRUE(retry_transition->outbound.empty());
   EXPECT_EQ(runtime->durable_physical_sequence(), durable_after_first);
   EXPECT_EQ(runtime->find_group(metadata_group)->persistent_state().log.size(), 1U);
 }
