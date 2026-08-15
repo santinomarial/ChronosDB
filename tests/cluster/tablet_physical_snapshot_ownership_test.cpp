@@ -226,13 +226,16 @@ request_snapshot(raft::DurableMultiRaftRuntime& runtime, const OwnershipFixture&
         raft::ReceiveOperation{1U, raft::InstallSnapshotRequest{2U, 1U, std::move(metadata)}}}});
   if (!requested.has_value())
     return common::make_unexpected(requested.error());
-  if (requested->size() != 1U || !requested->front().status.is_ok() ||
-      !requested->front().transition.has_value() ||
-      !requested->front().transition->snapshot_install.has_value()) {
+  if (requested->size() != 1U || !requested->front().status.is_ok()) {
     return common::make_unexpected(common::Status{common::StatusCode::kInternal,
                                                   "test snapshot request did not become pending"});
   }
-  return *requested->front().transition->snapshot_install;
+  const auto& transition = requested->front().transition;
+  if (!transition.has_value() || !transition.value().snapshot_install.has_value()) {
+    return common::make_unexpected(common::Status{common::StatusCode::kInternal,
+                                                  "test snapshot request did not become pending"});
+  }
+  return transition.value().snapshot_install.value();
 }
 
 TEST(TabletPhysicalSnapshotOwnershipTest, InstallsReloadsAndAtomicallyPublishesOwnership) {
@@ -475,8 +478,10 @@ TEST(TabletPhysicalSnapshotOwnershipTest,
           .has_value());
   auto latest = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(latest.has_value());
-  ASSERT_TRUE(latest->has_value());
-  auto recovered = raft::recover_tablet_movement_generation(**latest);
+  auto& latest_checkpoint = latest.value();
+  if (!latest_checkpoint.has_value())
+    FAIL() << "tablet movement checkpoint was not retained";
+  auto recovered = raft::recover_tablet_movement_generation(latest_checkpoint.value());
   ASSERT_TRUE(recovered.has_value());
   auto pending = request_snapshot(*runtime, fixture, metadata);
   ASSERT_TRUE(pending.has_value()) << pending.error().to_string();
@@ -493,9 +498,11 @@ TEST(TabletPhysicalSnapshotOwnershipTest,
   EXPECT_EQ(recovered->movement.record().phase, raft::TabletMovementPhase::kCatchingUp);
   auto still_catching_up = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(still_catching_up.has_value());
-  ASSERT_TRUE(still_catching_up->has_value());
+  auto& catching_up_checkpoint = still_catching_up.value();
+  if (!catching_up_checkpoint.has_value())
+    FAIL() << "catching-up checkpoint was not retained";
   EXPECT_EQ(std::visit([](const auto& value) { return value.checkpoint_generation; },
-                       (**still_catching_up).generation),
+                       catching_up_checkpoint.value().generation),
             1U);
 
   auto ready = checkpoint_tablet_physical_movement_readiness(
@@ -516,8 +523,11 @@ TEST(TabletPhysicalSnapshotOwnershipTest,
   EXPECT_FALSE(receipt->is_reclaimed());
   auto reclaimed = reclaim_tablet_physical_part_receipt(*receipt, published->destination, *ready);
   ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  EXPECT_EQ(reclaimed->receipt.session, transfer_session);
   EXPECT_EQ(reclaimed->receipt.removed_chunks, 1U);
   EXPECT_EQ(reclaimed->receipt.removed_payload_bytes, fixture.encoded.bytes().size());
+  EXPECT_EQ(reclaimed->destination_manifest_generation, published->destination.generation());
+  EXPECT_EQ(reclaimed->part_set_checksum, projection.part_set_checksum());
   EXPECT_TRUE(receipt->is_reclaimed());
 
   auto readiness_retry = checkpoint_tablet_physical_movement_readiness(

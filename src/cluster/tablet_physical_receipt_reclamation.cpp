@@ -86,7 +86,7 @@ reclaim_tablet_physical_part_receipt(TabletPhysicalPartChunkStorage& receipt,
     if (!reclaimed.has_value())
       return common::make_unexpected(reclaimed.error());
     return TabletPhysicalReceiptReclamationReport{
-        .receipt = std::move(*reclaimed),
+        .receipt = *reclaimed,
         .destination_manifest_generation = destination.generation(),
         .part_set_checksum = physical->part_set_checksum()};
   } catch (const std::bad_alloc&) {
