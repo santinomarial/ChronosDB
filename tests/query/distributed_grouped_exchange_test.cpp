@@ -110,7 +110,9 @@ TEST(DistributedGroupedExchangeTest, FreezesLayoutAndCanonicalizesFloatGroupingK
   auto decoded = decode_grouped_float64_exchange_message_exact(encoded->bytes());
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   ASSERT_TRUE(decoded->group_key.has_value());
-  EXPECT_EQ(std::bit_cast<std::uint64_t>(*decoded->group_key), 0U);
+  EXPECT_EQ(std::bit_cast<std::uint64_t>(
+                decoded->group_key.value_or(std::numeric_limits<double>::quiet_NaN())),
+            0U);
   EXPECT_EQ(decoded->partial.count, 2U);
   EXPECT_EQ(decoded->partial.sum, 3.0);
   EXPECT_TRUE(decoded->terminal);
@@ -121,7 +123,7 @@ TEST(DistributedGroupedExchangeTest, FreezesLayoutAndCanonicalizesFloatGroupingK
   const auto nan_decoded = decode_grouped_float64_exchange_message_exact(nan_encoded->bytes());
   ASSERT_TRUE(nan_decoded.has_value());
   ASSERT_TRUE(nan_decoded->group_key.has_value());
-  EXPECT_EQ(std::bit_cast<std::uint64_t>(*nan_decoded->group_key),
+  EXPECT_EQ(std::bit_cast<std::uint64_t>(nan_decoded->group_key.value_or(0.0)),
             grouped_float64_exchange_format::kCanonicalQuietNanBits);
   const double second_nan = std::bit_cast<double>(0x7ff8'0000'0000'1234ULL);
   const auto second_nan_encoded = encode_grouped_float64_exchange_message(message(second_nan));
@@ -213,9 +215,11 @@ TEST(DistributedGroupedExchangeTest, OwnsEveryReadSplitAndShortWriteSuffix) {
     const auto suffix = reader.consume(first_encoded->bytes().subspan(split));
     ASSERT_TRUE(suffix.has_value()) << "split=" << split;
     EXPECT_EQ(suffix->consumed_bytes, first_encoded->bytes().size() - split) << "split=" << split;
-    const GroupedFloat64ExchangeMessage* decoded =
-        prefix->message.has_value() ? &*prefix->message : &*suffix->message;
-    EXPECT_EQ(decoded->sequence, first_message.sequence) << "split=" << split;
+    GroupedFloat64ExchangeMessage missing = first_message;
+    missing.sequence = 0U;
+    const GroupedFloat64ExchangeMessage decoded =
+        prefix->message.value_or(suffix->message.value_or(missing));
+    EXPECT_EQ(decoded.sequence, first_message.sequence) << "split=" << split;
     EXPECT_EQ(reader.buffered_bytes(), 0U);
   }
 
@@ -229,8 +233,9 @@ TEST(DistributedGroupedExchangeTest, OwnsEveryReadSplitAndShortWriteSuffix) {
   const auto second = reader.consume(common::ByteView{coalesced}.subspan(first->consumed_bytes));
   ASSERT_TRUE(second.has_value());
   ASSERT_TRUE(second->message.has_value());
-  EXPECT_EQ(second->message->sequence, 2U);
-  EXPECT_FALSE(second->message->group_key.has_value());
+  const GroupedFloat64ExchangeMessage decoded_second = second->message.value_or(first_message);
+  EXPECT_EQ(decoded_second.sequence, 2U);
+  EXPECT_FALSE(decoded_second.group_key.has_value());
 
   Frame corrupt = copy_encoded(*first_encoded);
   corrupt[64U] ^= std::byte{1U};
@@ -350,9 +355,11 @@ TEST(DistributedGroupedExchangeTest, OwnsEveryTerminalReadSplitAndShortWriteSuff
     const auto suffix = reader.consume(first_encoded->bytes().subspan(split));
     ASSERT_TRUE(suffix.has_value()) << "split=" << split;
     EXPECT_EQ(suffix->consumed_bytes, first_encoded->bytes().size() - split) << "split=" << split;
-    const GroupedExchangeTerminalMessage* decoded =
-        prefix->message.has_value() ? &*prefix->message : &*suffix->message;
-    EXPECT_EQ(decoded->sequence, first_message.sequence) << "split=" << split;
+    GroupedExchangeTerminalMessage missing = first_message;
+    missing.sequence = 0U;
+    const GroupedExchangeTerminalMessage decoded =
+        prefix->message.value_or(suffix->message.value_or(missing));
+    EXPECT_EQ(decoded.sequence, first_message.sequence) << "split=" << split;
     EXPECT_EQ(reader.buffered_bytes(), 0U);
   }
 
@@ -366,7 +373,7 @@ TEST(DistributedGroupedExchangeTest, OwnsEveryTerminalReadSplitAndShortWriteSuff
   const auto second = reader.consume(common::ByteView{coalesced}.subspan(first->consumed_bytes));
   ASSERT_TRUE(second.has_value());
   ASSERT_TRUE(second->message.has_value());
-  EXPECT_EQ(second->message->sequence, second_message.sequence);
+  EXPECT_EQ(second->message.value_or(first_message).sequence, second_message.sequence);
 
   TerminalFrame corrupt{};
   std::ranges::copy(first_encoded->bytes(), corrupt.begin());
@@ -465,11 +472,13 @@ TEST(DistributedGroupedExchangeTest, CoordinatesCanonicalGroupsOnlyAfterEveryTab
   EXPECT_FALSE((*result)[0].group_key.has_value());
   EXPECT_DOUBLE_EQ((*result)[0].aggregate.sum, 2.0);
   ASSERT_TRUE((*result)[1].group_key.has_value());
-  EXPECT_EQ(std::bit_cast<std::uint64_t>(*(*result)[1].group_key), 0U);
+  EXPECT_EQ(std::bit_cast<std::uint64_t>(
+                (*result)[1].group_key.value_or(std::numeric_limits<double>::quiet_NaN())),
+            0U);
   EXPECT_EQ((*result)[1].aggregate.count, 2U);
   EXPECT_DOUBLE_EQ((*result)[1].aggregate.sum, 4.0);
   ASSERT_TRUE((*result)[2].group_key.has_value());
-  EXPECT_EQ(std::bit_cast<std::uint64_t>(*(*result)[2].group_key),
+  EXPECT_EQ(std::bit_cast<std::uint64_t>((*result)[2].group_key.value_or(0.0)),
             grouped_float64_exchange_format::kCanonicalQuietNanBits);
   EXPECT_DOUBLE_EQ((*result)[2].aggregate.sum, 4.0);
 
@@ -572,10 +581,10 @@ TEST(DistributedGroupedExchangeTest, OrdersAndLimitsOnlyAfterGlobalGroupMerge) {
   ASSERT_TRUE(result.has_value()) << result.error().to_string();
   ASSERT_EQ(result->size(), 2U);
   ASSERT_TRUE((*result)[0].group_key.has_value());
-  EXPECT_TRUE(std::isnan(*(*result)[0].group_key));
+  EXPECT_TRUE(std::isnan((*result)[0].group_key.value_or(0.0)));
   EXPECT_DOUBLE_EQ((*result)[0].aggregate.sum, 4.0);
   ASSERT_TRUE((*result)[1].group_key.has_value());
-  EXPECT_DOUBLE_EQ(*(*result)[1].group_key, 1.0);
+  EXPECT_DOUBLE_EQ((*result)[1].group_key.value_or(std::numeric_limits<double>::quiet_NaN()), 1.0);
   EXPECT_EQ((*result)[1].aggregate.count, 2U);
   EXPECT_DOUBLE_EQ((*result)[1].aggregate.sum, 4.0);
 
@@ -595,6 +604,8 @@ TEST(DistributedGroupedExchangeTest, OrdersAndLimitsOnlyAfterGlobalGroupMerge) {
 
   EXPECT_EQ(DistributedGroupedFloat64Coordinator::create(
                 query_id, {tablet(0x82U)}, {},
+                // Deliberately probes validation of an out-of-range wire-facing enum value.
+                // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
                 {.direction = static_cast<DistributedGroupedFloat64ResultDirection>(0U)})
                 .error()
                 .code(),
@@ -654,6 +665,8 @@ TEST(DistributedGroupedExchangeTest, OrdersByMergedAggregateWithDeterministicGro
 
   EXPECT_EQ(DistributedGroupedFloat64Coordinator::create(
                 query_id, {tablet(0x92U)}, {},
+                // Deliberately probes validation of an out-of-range wire-facing enum value.
+                // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
                 {.order_key = static_cast<DistributedGroupedFloat64ResultOrderKey>(0U)})
                 .error()
                 .code(),
@@ -695,13 +708,26 @@ TEST(DistributedGroupedExchangeTest, BoundsHistoryAndRetainsFirstIncompleteWorke
 
   auto failed = DistributedGroupedFloat64Coordinator::create(query_id, {tablet(0x62U)});
   ASSERT_TRUE(failed.has_value());
-  EXPECT_TRUE(
-      failed->worker_failed(tablet(0x62U), {common::StatusCode::kUnavailable, "worker lost"})
-          .is_ok());
+  const common::Status first_failure{common::StatusCode::kUnavailable, "worker lost"};
+  EXPECT_TRUE(failed->worker_failed(tablet(0x62U), first_failure).is_ok());
+  const GroupedFloat64ExchangeMessage after_failure{.query_id = query_id,
+                                                    .tablet_id = tablet(0x62U),
+                                                    .sequence = 1U,
+                                                    .group_key = 1.0,
+                                                    .partial = one_value(1.0),
+                                                    .terminal = true};
+  EXPECT_EQ(failed->accept(after_failure), first_failure);
   EXPECT_EQ(
-      failed->worker_failed(tablet(0x62U), {common::StatusCode::kInternal, "later failure"}).code(),
-      common::StatusCode::kUnavailable);
-  EXPECT_EQ(failed->finish().error().code(), common::StatusCode::kUnavailable);
+      failed->accept_terminal({.query_id = query_id, .tablet_id = tablet(0x62U), .sequence = 1U}),
+      first_failure);
+  EXPECT_EQ(failed->worker_failed(tablet(0x62U), {common::StatusCode::kInternal, "later failure"}),
+            first_failure);
+  const auto finished = failed->finish();
+  ASSERT_FALSE(finished.has_value());
+  EXPECT_EQ(finished.error(), first_failure);
+  const auto repeated_finish = failed->finish();
+  ASSERT_FALSE(repeated_finish.has_value());
+  EXPECT_EQ(repeated_finish.error(), first_failure);
 }
 
 TEST(DistributedGroupedExchangeTest, FailsClosedWhenCrossTabletGroupCountOverflows) {

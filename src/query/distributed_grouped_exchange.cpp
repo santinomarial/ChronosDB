@@ -78,7 +78,7 @@ struct CanonicalGroupedFloat64Key {
   std::uint64_t bits{};
 
   [[nodiscard]] bool operator<(const CanonicalGroupedFloat64Key& other) const noexcept {
-    return present != other.present ? present < other.present : bits < other.bits;
+    return present != other.present ? !present : bits < other.bits;
   }
 };
 
@@ -128,13 +128,16 @@ canonicalize_message(GroupedFloat64ExchangeMessage message) noexcept {
                                        const GroupedStreamMessage& right) noexcept {
   if (left.index() != right.index())
     return false;
-  if (const auto* grouped = std::get_if<GroupedFloat64ExchangeMessage>(&left))
-    return same_grouped_message(*grouped, std::get<GroupedFloat64ExchangeMessage>(right));
-  const auto& left_terminal = std::get<GroupedExchangeTerminalMessage>(left);
-  const auto& right_terminal = std::get<GroupedExchangeTerminalMessage>(right);
-  return left_terminal.query_id == right_terminal.query_id &&
-         left_terminal.tablet_id == right_terminal.tablet_id &&
-         left_terminal.sequence == right_terminal.sequence;
+  if (const auto* left_grouped = std::get_if<GroupedFloat64ExchangeMessage>(&left)) {
+    const auto* right_grouped = std::get_if<GroupedFloat64ExchangeMessage>(&right);
+    return right_grouped != nullptr && same_grouped_message(*left_grouped, *right_grouped);
+  }
+  const auto* left_terminal = std::get_if<GroupedExchangeTerminalMessage>(&left);
+  const auto* right_terminal = std::get_if<GroupedExchangeTerminalMessage>(&right);
+  return left_terminal != nullptr && right_terminal != nullptr &&
+         left_terminal->query_id == right_terminal->query_id &&
+         left_terminal->tablet_id == right_terminal->tablet_id &&
+         left_terminal->sequence == right_terminal->sequence;
 }
 
 [[nodiscard]] bool
@@ -231,7 +234,7 @@ validate_terminal_message(const GroupedExchangeTerminalMessage& message) {
 
 EncodedGroupedFloat64ExchangeMessage::EncodedGroupedFloat64ExchangeMessage(
     std::array<std::byte, grouped_float64_exchange_format::kFrameLength> bytes) noexcept
-    : bytes_(std::move(bytes)) {}
+    : bytes_(bytes) {}
 
 common::ByteView EncodedGroupedFloat64ExchangeMessage::bytes() const noexcept {
   return bytes_;
@@ -239,7 +242,7 @@ common::ByteView EncodedGroupedFloat64ExchangeMessage::bytes() const noexcept {
 
 EncodedGroupedExchangeTerminalMessage::EncodedGroupedExchangeTerminalMessage(
     std::array<std::byte, grouped_exchange_terminal_format::kFrameLength> bytes) noexcept
-    : bytes_(std::move(bytes)) {}
+    : bytes_(bytes) {}
 
 common::ByteView EncodedGroupedExchangeTerminalMessage::bytes() const noexcept {
   return bytes_;
@@ -299,7 +302,7 @@ encode_grouped_float64_exchange_message(const GroupedFloat64ExchangeMessage& mes
     return common::make_unexpected(common::Status{
         common::StatusCode::kInternal, "grouped exchange checksum does not fit its layout"});
   }
-  return EncodedGroupedFloat64ExchangeMessage{std::move(bytes)};
+  return EncodedGroupedFloat64ExchangeMessage{bytes};
 }
 
 common::Result<GroupedFloat64ExchangeMessage>
@@ -418,7 +421,7 @@ encode_grouped_exchange_terminal_message(const GroupedExchangeTerminalMessage& m
     return common::make_unexpected(common::Status{
         common::StatusCode::kInternal, "grouped terminal checksum does not fit its layout"});
   }
-  return EncodedGroupedExchangeTerminalMessage{std::move(bytes)};
+  return EncodedGroupedExchangeTerminalMessage{bytes};
 }
 
 common::Result<GroupedExchangeTerminalMessage>
@@ -484,8 +487,7 @@ GroupedExchangeTerminalFrameReader::consume(const common::ByteView bytes) {
     return common::make_unexpected(*failure_);
   }
   buffered_bytes_ = 0U;
-  return GroupedExchangeTerminalFrameReadStep{.consumed_bytes = consumed,
-                                              .message = std::move(*decoded)};
+  return GroupedExchangeTerminalFrameReadStep{.consumed_bytes = consumed, .message = *decoded};
 }
 
 std::size_t GroupedExchangeTerminalFrameReader::buffered_bytes() const noexcept {
@@ -498,18 +500,18 @@ bool GroupedExchangeTerminalFrameReader::failed() const noexcept {
 
 GroupedExchangeTerminalFrameWriteCursor::GroupedExchangeTerminalFrameWriteCursor(
     EncodedGroupedExchangeTerminalMessage encoded) noexcept
-    : encoded_(std::move(encoded)) {}
+    : encoded_(encoded) {}
 
 GroupedExchangeTerminalFrameWriteCursor::GroupedExchangeTerminalFrameWriteCursor(
     GroupedExchangeTerminalFrameWriteCursor&& other) noexcept
-    : encoded_(std::move(other.encoded_)),
+    : encoded_(other.encoded_),
       written_bytes_(
           std::exchange(other.written_bytes_, grouped_exchange_terminal_format::kFrameLength)) {}
 
 GroupedExchangeTerminalFrameWriteCursor& GroupedExchangeTerminalFrameWriteCursor::operator=(
     GroupedExchangeTerminalFrameWriteCursor&& other) noexcept {
   if (this != &other) {
-    encoded_ = std::move(other.encoded_);
+    encoded_ = other.encoded_;
     written_bytes_ =
         std::exchange(other.written_bytes_, grouped_exchange_terminal_format::kFrameLength);
   }
@@ -521,7 +523,7 @@ GroupedExchangeTerminalFrameWriteCursor::create(const GroupedExchangeTerminalMes
   auto encoded = encode_grouped_exchange_terminal_message(message);
   if (!encoded.has_value())
     return common::make_unexpected(encoded.error());
-  return GroupedExchangeTerminalFrameWriteCursor{std::move(*encoded)};
+  return GroupedExchangeTerminalFrameWriteCursor{*encoded};
 }
 
 common::ByteView GroupedExchangeTerminalFrameWriteCursor::pending_write() const noexcept {
@@ -561,8 +563,7 @@ GroupedFloat64ExchangeFrameReader::consume(const common::ByteView bytes) {
     return common::make_unexpected(*failure_);
   }
   buffered_bytes_ = 0U;
-  return GroupedFloat64ExchangeFrameReadStep{.consumed_bytes = consumed,
-                                             .message = std::move(*decoded)};
+  return GroupedFloat64ExchangeFrameReadStep{.consumed_bytes = consumed, .message = *decoded};
 }
 
 std::size_t GroupedFloat64ExchangeFrameReader::buffered_bytes() const noexcept {
@@ -575,18 +576,18 @@ bool GroupedFloat64ExchangeFrameReader::failed() const noexcept {
 
 GroupedFloat64ExchangeFrameWriteCursor::GroupedFloat64ExchangeFrameWriteCursor(
     EncodedGroupedFloat64ExchangeMessage encoded) noexcept
-    : encoded_(std::move(encoded)) {}
+    : encoded_(encoded) {}
 
 GroupedFloat64ExchangeFrameWriteCursor::GroupedFloat64ExchangeFrameWriteCursor(
     GroupedFloat64ExchangeFrameWriteCursor&& other) noexcept
-    : encoded_(std::move(other.encoded_)),
+    : encoded_(other.encoded_),
       written_bytes_(
           std::exchange(other.written_bytes_, grouped_float64_exchange_format::kFrameLength)) {}
 
 GroupedFloat64ExchangeFrameWriteCursor& GroupedFloat64ExchangeFrameWriteCursor::operator=(
     GroupedFloat64ExchangeFrameWriteCursor&& other) noexcept {
   if (this != &other) {
-    encoded_ = std::move(other.encoded_);
+    encoded_ = other.encoded_;
     written_bytes_ =
         std::exchange(other.written_bytes_, grouped_float64_exchange_format::kFrameLength);
   }
@@ -598,7 +599,7 @@ GroupedFloat64ExchangeFrameWriteCursor::create(const GroupedFloat64ExchangeMessa
   auto encoded = encode_grouped_float64_exchange_message(message);
   if (!encoded.has_value())
     return common::make_unexpected(encoded.error());
-  return GroupedFloat64ExchangeFrameWriteCursor{std::move(*encoded)};
+  return GroupedFloat64ExchangeFrameWriteCursor{*encoded};
 }
 
 common::ByteView GroupedFloat64ExchangeFrameWriteCursor::pending_write() const noexcept {
@@ -642,7 +643,7 @@ public:
   DistributedGroupedFloat64ResultOptions result_options;
   std::map<schema::TabletId, FragmentProgress> fragments;
   std::size_t retained_messages{};
-  std::optional<common::Status> failure;
+  common::Status failure;
 };
 
 DistributedGroupedFloat64Coordinator::DistributedGroupedFloat64Coordinator(
@@ -658,7 +659,9 @@ DistributedGroupedFloat64Coordinator& DistributedGroupedFloat64Coordinator::oper
     DistributedGroupedFloat64Coordinator&&) noexcept = default;
 
 common::Result<DistributedGroupedFloat64Coordinator> DistributedGroupedFloat64Coordinator::create(
-    common::Uuid query_id, std::vector<schema::TabletId> tablets,
+    common::Uuid query_id,
+    // Preserve the public ownership-transfer boundary.
+    std::vector<schema::TabletId> tablets, // NOLINT(performance-unnecessary-value-param)
     const DistributedCoordinatorLimits limits,
     const DistributedGroupedFloat64ResultOptions result_options) {
   if (query_id.is_nil())
@@ -685,9 +688,9 @@ common::Result<DistributedGroupedFloat64Coordinator> DistributedGroupedFloat64Co
 
 common::Status
 DistributedGroupedFloat64Coordinator::accept(const GroupedFloat64ExchangeMessage& message) {
-  if (impl_->failure.has_value())
-    return *impl_->failure;
-  const common::Status validation = validate_message(message);
+  if (!impl_->failure.is_ok())
+    return impl_->failure;
+  common::Status validation = validate_message(message);
   if (!validation.is_ok())
     return validation;
   GroupedFloat64ExchangeMessage canonical = canonicalize_message(message);
@@ -734,7 +737,7 @@ DistributedGroupedFloat64Coordinator::accept(const GroupedFloat64ExchangeMessage
                               "grouped coordinator key insertion raced serialized ownership"};
       }
     } else {
-      existing->second = std::move(merged);
+      existing->second = merged;
     }
   } catch (const std::bad_alloc&) {
     if (progress.messages.size() == canonical.sequence)
@@ -749,9 +752,9 @@ DistributedGroupedFloat64Coordinator::accept(const GroupedFloat64ExchangeMessage
 
 common::Status DistributedGroupedFloat64Coordinator::accept_terminal(
     const GroupedExchangeTerminalMessage& message) {
-  if (impl_->failure.has_value())
-    return *impl_->failure;
-  const common::Status validation = validate_terminal_message(message);
+  if (!impl_->failure.is_ok())
+    return impl_->failure;
+  common::Status validation = validate_terminal_message(message);
   if (!validation.is_ok())
     return validation;
   auto fragment = impl_->fragments.find(message.tablet_id);
@@ -794,16 +797,16 @@ DistributedGroupedFloat64Coordinator::worker_failed(const schema::TabletId& tabl
     return invalid("grouped worker failure is invalid or belongs to another coordinator");
   if (fragment->second.terminal)
     return common::Status::ok();
-  if (impl_->failure.has_value())
-    return *impl_->failure;
+  if (!impl_->failure.is_ok())
+    return impl_->failure;
   impl_->failure = std::move(failure);
   return common::Status::ok();
 }
 
 common::Result<std::vector<GroupedFloat64AggregateResult>>
 DistributedGroupedFloat64Coordinator::finish() const {
-  if (impl_->failure.has_value())
-    return common::make_unexpected(*impl_->failure);
+  if (!impl_->failure.is_ok())
+    return common::make_unexpected(impl_->failure);
   std::map<CanonicalGroupedFloat64Key, MergeableAggregateState> groups;
   try {
     for (const auto& [tablet_id, progress] : impl_->fragments) {
@@ -822,7 +825,7 @@ DistributedGroupedFloat64Coordinator::finish() const {
         const common::Status merge_status = merged.merge(partial);
         if (!merge_status.is_ok())
           return common::make_unexpected(merge_status);
-        existing->second = std::move(merged);
+        existing->second = merged;
       }
     }
     std::vector<GroupedFloat64AggregateResult> result;
@@ -837,9 +840,9 @@ DistributedGroupedFloat64Coordinator::finish() const {
                                   const GroupedFloat64AggregateResult& right) {
       return result_precedes(left, right, impl_->result_options);
     });
-    if (impl_->result_options.limit.has_value() && *impl_->result_options.limit < result.size()) {
-      result.resize(static_cast<std::size_t>(*impl_->result_options.limit));
-    }
+    const std::uint64_t limit = impl_->result_options.limit.value_or(result.size());
+    if (limit < result.size())
+      result.resize(static_cast<std::size_t>(limit));
     return result;
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,

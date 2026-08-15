@@ -219,28 +219,34 @@ public:
   }
 
   [[nodiscard]] common::Status publish_if_terminal() {
-    bool all_succeeded = true;
-    for (const Slot& slot : slots) {
-      auto sender_state = execution.sender_state(slot.tablet_id);
-      if (!sender_state.has_value())
-        return fail(sender_state.error());
-      if (*sender_state == DistributedQuerySenderState::kFailed) {
-        auto finished = execution.finish();
-        return fail(finished.has_value()
-                        ? common::Status{common::StatusCode::kInternal,
-                                         "failed grouped query unexpectedly produced a result"}
-                        : finished.error());
+    try {
+      bool all_succeeded = true;
+      for (const Slot& slot : slots) {
+        auto sender_state = execution.sender_state(slot.tablet_id);
+        if (!sender_state.has_value())
+          return fail(sender_state.error());
+        if (*sender_state == DistributedQuerySenderState::kFailed) {
+          auto finished = execution.finish();
+          return fail(finished.has_value()
+                          ? common::Status{common::StatusCode::kInternal,
+                                           "failed grouped query unexpectedly produced a result"}
+                          : finished.error());
+        }
+        all_succeeded = all_succeeded && *sender_state == DistributedQuerySenderState::kSucceeded;
       }
-      all_succeeded = all_succeeded && *sender_state == DistributedQuerySenderState::kSucceeded;
-    }
-    if (!all_succeeded)
+      if (!all_succeeded)
+        return common::Status::ok();
+      auto finished = execution.finish();
+      if (!finished.has_value())
+        return fail(finished.error());
+      execution_result = std::move(*finished);
+      execution_state = DistributedGroupedQueryTcpExecutionState::kComplete;
       return common::Status::ok();
-    auto finished = execution.finish();
-    if (!finished.has_value())
-      return fail(finished.error());
-    execution_result = std::move(*finished);
-    execution_state = DistributedGroupedQueryTcpExecutionState::kComplete;
-    return common::Status::ok();
+    } catch (const std::bad_alloc&) {
+      return fail(exhausted("grouped query final result publication allocation failed"));
+    } catch (const std::length_error&) {
+      return fail(exhausted("grouped query final result publication exceeds container limits"));
+    }
   }
 
   DistributedGroupedQueryExecution execution;

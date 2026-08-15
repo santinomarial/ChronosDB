@@ -179,11 +179,13 @@ DistributedGroupedQueryTcpClient::responses() const {
     return common::make_unexpected(
         invalid("grouped query TCP responses are unavailable before completion"));
   }
-  return implementation_->carrier
-      .transform(
-          [](const DistributedGroupedQueryTlsClient& carrier) { return carrier.responses(); })
-      .value_or(common::make_unexpected(
-          internal("completed grouped query TCP client has no TLS carrier")));
+  if (!implementation_->carrier.has_value()) {
+    return common::make_unexpected(
+        internal("completed grouped query TCP client has no TLS carrier"));
+  }
+  // Guarded above; clang-tidy does not preserve the state/optional relationship here.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  return implementation_->carrier.value().responses();
 }
 
 const common::Status& DistributedGroupedQueryTcpClient::failure() const noexcept {

@@ -171,10 +171,12 @@ common::Result<common::ByteView> DistributedQueryTcpClient::response_bytes() con
       implementation_->client_state != DistributedQueryTcpClientState::kComplete)
     return common::make_unexpected(
         invalid("distributed query TCP response is unavailable before completion"));
-  return implementation_->carrier
-      .transform([](const DistributedQueryTlsClient& carrier) { return carrier.response_bytes(); })
-      .value_or(common::make_unexpected(
-          internal("completed distributed query TCP client has no TLS carrier")));
+  if (!implementation_->carrier.has_value())
+    return common::make_unexpected(
+        internal("completed distributed query TCP client has no TLS carrier"));
+  // Guarded by the carrier-presence check above.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  return implementation_->carrier->response_bytes();
 }
 
 const common::Status& DistributedQueryTcpClient::failure() const noexcept {
