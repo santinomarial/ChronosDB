@@ -77,22 +77,27 @@ TEST(RaftTransportPeerReconnectTest, AppliesCappedBackoffAtExactAttemptDeadlines
   ASSERT_TRUE(reconnect.has_value());
   const auto start = RaftTransportPeerReconnect::TimePoint{};
   ASSERT_TRUE(reconnect->drive(start).is_ok());
-  ASSERT_TRUE(reconnect->next_deadline().has_value());
-  EXPECT_EQ(*reconnect->next_deadline(), start + std::chrono::milliseconds{10});
+  EXPECT_GE(reconnect->descriptor(), 0);
+  EXPECT_TRUE(reconnect->wants_write());
+  EXPECT_EQ(reconnect->next_deadline(), std::optional{start + std::chrono::milliseconds{10}});
   EXPECT_EQ(reconnect->attempts_started(), 1U);
   EXPECT_EQ(reconnect->on_ready(false, start + std::chrono::milliseconds{10}).code(),
             common::StatusCode::kUnavailable);
-  ASSERT_TRUE(reconnect->next_attempt_not_before().has_value());
-  EXPECT_EQ(*reconnect->next_attempt_not_before(), start + std::chrono::milliseconds{15});
-  EXPECT_EQ(*reconnect->next_deadline(), start + std::chrono::milliseconds{15});
+  EXPECT_EQ(reconnect->state(), RaftTransportPeerReconnectState::kBackoff);
+  EXPECT_EQ(reconnect->descriptor(), -1);
+  EXPECT_FALSE(reconnect->wants_write());
+  EXPECT_EQ(reconnect->next_attempt_not_before(),
+            std::optional{start + std::chrono::milliseconds{15}});
+  EXPECT_EQ(reconnect->next_deadline(), std::optional{start + std::chrono::milliseconds{15}});
   ASSERT_TRUE(reconnect->drive(start + std::chrono::milliseconds{14}).is_ok());
   EXPECT_EQ(reconnect->attempts_started(), 1U);
   ASSERT_TRUE(reconnect->drive(start + std::chrono::milliseconds{15}).is_ok());
-  EXPECT_EQ(*reconnect->next_deadline(), start + std::chrono::milliseconds{25});
+  EXPECT_EQ(reconnect->next_deadline(), std::optional{start + std::chrono::milliseconds{25}});
   EXPECT_EQ(reconnect->attempts_started(), 2U);
   EXPECT_EQ(reconnect->on_ready(false, start + std::chrono::milliseconds{25}).code(),
             common::StatusCode::kUnavailable);
-  EXPECT_EQ(*reconnect->next_attempt_not_before(), start + std::chrono::milliseconds{35});
+  EXPECT_EQ(reconnect->next_attempt_not_before(),
+            std::optional{start + std::chrono::milliseconds{35}});
 }
 
 TEST(RaftTransportPeerReconnectTest, ReclaimsFailedPoolPeerAndRetainsItsRetryFrames) {
@@ -113,8 +118,9 @@ TEST(RaftTransportPeerReconnectTest, ReclaimsFailedPoolPeerAndRetainsItsRetryFra
        ++iteration) {
     auto next = listener->accept_one();
     ASSERT_TRUE(next.has_value());
-    if (next->has_value())
-      accepted.emplace(std::move(**next));
+    std::optional<network::TcpSocket>& next_socket = *next;
+    if (next_socket.has_value())
+      accepted.emplace(std::move(next_socket.value()));
     ASSERT_TRUE(reconnect->on_ready(true, start + std::chrono::milliseconds{1}).is_ok());
   }
   ASSERT_EQ(reconnect->state(), RaftTransportPeerReconnectState::kCarrierReady);
@@ -134,7 +140,8 @@ TEST(RaftTransportPeerReconnectTest, ReclaimsFailedPoolPeerAndRetainsItsRetryFra
           .is_ok());
   EXPECT_EQ(reconnect->state(), RaftTransportPeerReconnectState::kBackoff);
   EXPECT_EQ(reconnect->retry_frame_count(), 1U);
-  EXPECT_EQ(*reconnect->next_attempt_not_before(), start + std::chrono::milliseconds{11});
+  EXPECT_EQ(reconnect->next_attempt_not_before(),
+            std::optional{start + std::chrono::milliseconds{11}});
 }
 
 } // namespace

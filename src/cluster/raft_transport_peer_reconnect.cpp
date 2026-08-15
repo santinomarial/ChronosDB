@@ -26,8 +26,8 @@ class RaftTransportPeerReconnect::Impl {
 public:
   explicit Impl(RaftTransportPeerReconnectConfig configured) noexcept
       : config(configured), next_backoff(config.limits.initial_backoff) {}
-  void schedule(const common::Status failure, const TimePoint now) {
-    last = failure;
+  void schedule(common::Status failure, const TimePoint now) {
+    last = std::move(failure);
     next_attempt = add(now, next_backoff);
     const auto current = next_backoff.count();
     const auto maximum = config.limits.maximum_backoff.count();
@@ -103,9 +103,16 @@ common::Status RaftTransportPeerReconnect::on_ready(const bool writable, const T
     return status(common::StatusCode::kInvalidArgument,
                   "Raft peer reconnect has no connecting attempt");
   Impl& impl = *implementation_;
-  const common::Status progress = impl.connector->on_ready(writable, now);
+  if (!impl.connector.has_value()) {
+    common::Status failure =
+        status(common::StatusCode::kCorruption, "Raft peer reconnect lost its connector");
+    impl.schedule(failure, now);
+    return failure;
+  }
+  RaftTransportTcpConnector& connector = impl.connector.value();
+  common::Status progress = connector.on_ready(writable, now);
   if (!progress.is_ok()) {
-    auto retry = impl.connector->take_retry_frames();
+    auto retry = connector.take_retry_frames();
     if (!retry.has_value())
       return retry.error();
     impl.retry_frames = std::move(*retry);
@@ -113,7 +120,7 @@ common::Status RaftTransportPeerReconnect::on_ready(const bool writable, const T
     impl.schedule(progress, now);
     return progress;
   }
-  if (impl.connector->state() == RaftTransportTcpConnectorState::kCarrierReady)
+  if (connector.state() == RaftTransportTcpConnectorState::kCarrierReady)
     impl.state = RaftTransportPeerReconnectState::kCarrierReady;
   return common::Status::ok();
 }
@@ -123,7 +130,10 @@ common::Result<RaftTransportConnectedPeer> RaftTransportPeerReconnect::take_conn
     return common::make_unexpected(
         status(common::StatusCode::kUnavailable, "Raft peer reconnect carrier is not ready"));
   Impl& impl = *implementation_;
-  auto peer = impl.connector->take_connected_peer();
+  if (!impl.connector.has_value())
+    return common::make_unexpected(
+        status(common::StatusCode::kCorruption, "Raft peer reconnect lost its ready carrier"));
+  auto peer = impl.connector.value().take_connected_peer();
   if (!peer.has_value())
     return common::make_unexpected(peer.error());
   impl.connector.reset();
@@ -158,12 +168,13 @@ std::optional<RaftTransportPeerReconnect::TimePoint>
 RaftTransportPeerReconnect::next_deadline() const noexcept {
   if (!implementation_)
     return std::nullopt;
-  if (implementation_->state == RaftTransportPeerReconnectState::kConnecting &&
-      implementation_->connector.has_value())
-    return implementation_->connector->next_deadline();
-  return implementation_->state == RaftTransportPeerReconnectState::kBackoff
-             ? implementation_->next_attempt
-             : std::nullopt;
+  const Impl& impl = *implementation_;
+  if (impl.state == RaftTransportPeerReconnectState::kConnecting) {
+    if (!impl.connector.has_value())
+      return std::nullopt;
+    return impl.connector.value().next_deadline();
+  }
+  return impl.state == RaftTransportPeerReconnectState::kBackoff ? impl.next_attempt : std::nullopt;
 }
 std::size_t RaftTransportPeerReconnect::attempts_started() const noexcept {
   return implementation_ ? implementation_->attempts : 0U;
@@ -172,13 +183,16 @@ std::size_t RaftTransportPeerReconnect::retry_frame_count() const noexcept {
   return implementation_ ? implementation_->retry_frames.size() : 0U;
 }
 int RaftTransportPeerReconnect::descriptor() const noexcept {
-  return implementation_ && implementation_->connector.has_value()
-             ? implementation_->connector->descriptor()
-             : -1;
+  if (!implementation_)
+    return -1;
+  const std::optional<RaftTransportTcpConnector>& connector = implementation_->connector;
+  return connector.has_value() ? connector.value().descriptor() : -1;
 }
 bool RaftTransportPeerReconnect::wants_write() const noexcept {
-  return implementation_ && implementation_->connector.has_value() &&
-         implementation_->connector->wants_write();
+  if (!implementation_)
+    return false;
+  const std::optional<RaftTransportTcpConnector>& connector = implementation_->connector;
+  return connector.has_value() && connector.value().wants_write();
 }
 const common::Status& RaftTransportPeerReconnect::last_failure() const noexcept {
   static const common::Status empty{common::StatusCode::kInvalidArgument,
