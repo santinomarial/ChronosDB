@@ -93,8 +93,7 @@ TEST(RaftTransportTcpConnectorTest, TransfersDescriptorAndRetryFrameIntoPersiste
         connector_config(listener->bound_endpoint(), *client_context, authenticator, authorizer),
         now);
     ASSERT_TRUE(connector.has_value()) << connector.error().to_string();
-    ASSERT_TRUE(connector->next_deadline().has_value());
-    EXPECT_EQ(*connector->next_deadline(), now + std::chrono::milliseconds{10});
+    EXPECT_EQ(connector->next_deadline(), std::optional{now + std::chrono::milliseconds{10}});
     for (std::size_t iteration = 0U;
          iteration < 1024U && connector->state() == RaftTransportTcpConnectorState::kConnecting;
          ++iteration) {
@@ -111,6 +110,7 @@ TEST(RaftTransportTcpConnectorTest, TransfersDescriptorAndRetryFrameIntoPersiste
     auto taken = connector->take_connected_peer();
     ASSERT_TRUE(taken.has_value()) << taken.error().to_string();
     connected.emplace(std::move(*taken));
+    EXPECT_EQ(connector->take_connected_peer().error().code(), common::StatusCode::kUnavailable);
   }
   for (std::size_t iteration = 0U; iteration < 1024U && !accepted.has_value(); ++iteration) {
     auto next = listener->accept_one();
@@ -169,8 +169,7 @@ TEST(RaftTransportTcpConnectorTest, TimeoutReturnsEveryCompleteRetryFrame) {
       connector_config(listener->bound_endpoint(), *client_context, authenticator, authorizer),
       now);
   ASSERT_TRUE(connector.has_value());
-  ASSERT_TRUE(connector->next_deadline().has_value());
-  EXPECT_EQ(*connector->next_deadline(), now + std::chrono::milliseconds{10});
+  EXPECT_EQ(connector->next_deadline(), std::optional{now + std::chrono::milliseconds{10}});
   EXPECT_EQ(connector->on_ready(false, now + std::chrono::milliseconds{10}).code(),
             common::StatusCode::kUnavailable);
   EXPECT_FALSE(connector->next_deadline().has_value());
@@ -198,6 +197,7 @@ TEST(RaftTransportTcpConnectorTest, RejectsForeignRetryRouteWithoutConsumingCall
       std::move(retry), connector_config(endpoint, *client_context, authenticator, authorizer), {});
   ASSERT_FALSE(rejected.has_value());
   EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+  // NOLINTNEXTLINE(bugprone-use-after-move)
   EXPECT_EQ(retry, expected);
 }
 

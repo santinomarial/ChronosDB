@@ -51,7 +51,7 @@ public:
   network::TcpSocket socket;
   std::vector<std::vector<std::byte>> retry_frames;
   RaftTransportTcpConnectorConfig config;
-  TimePoint deadline{};
+  TimePoint deadline;
   std::optional<RaftTransportTlsClient> carrier;
   RaftTransportTcpConnectorState connector_state{RaftTransportTcpConnectorState::kConnecting};
   common::Status connector_failure{common::StatusCode::kInternal,
@@ -167,7 +167,10 @@ common::Result<RaftTransportConnectedPeer> RaftTransportTcpConnector::take_conne
     return common::make_unexpected(
         status(common::StatusCode::kUnavailable, "Raft TCP connected peer is not ready"));
   Impl& impl = *implementation_;
-  RaftTransportConnectedPeer peer{std::move(impl.socket), std::move(*impl.carrier)};
+  if (!impl.carrier.has_value())
+    return common::make_unexpected(
+        status(common::StatusCode::kCorruption, "Raft TCP connector lost its ready carrier"));
+  RaftTransportConnectedPeer peer{std::move(impl.socket), std::move(impl.carrier.value())};
   impl.carrier.reset();
   impl.connector_state = RaftTransportTcpConnectorState::kTaken;
   return peer;
