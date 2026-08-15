@@ -55,8 +55,9 @@ retention_frontiers(const MultiTabletSubscriptionCheckpoint& checkpoint) {
   std::vector<SourcePosition> frontiers;
   frontiers.reserve(checkpoint.sources.size());
   for (const MultiTabletSubscriptionCheckpointSource& source : checkpoint.sources) {
-    frontiers.push_back({source.latest_position.tablet_id, source.latest_position.wal_id,
-                         source.expired_through_sequence});
+    frontiers.push_back(SourcePosition::wal(source.latest_position.tablet_id,
+                                            source.latest_position.wal_id,
+                                            source.expired_through_sequence));
   }
   return frontiers;
 }

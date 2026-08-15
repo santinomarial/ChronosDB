@@ -105,7 +105,7 @@ TEST(MultiTabletSubscriptionTest, CapturesVectorAndReplaysRecordedCrossTabletOrd
 
   const auto safe_token = manager->acknowledge(fixture.subscription_id, 2U);
   ASSERT_TRUE(safe_token.has_value());
-  const auto decoded = decode_resume_token_v1(*safe_token, token_key());
+  const auto decoded = decode_resume_token(*safe_token, token_key());
   ASSERT_TRUE(decoded.has_value());
   EXPECT_EQ(decoded->safe_delivery_sequence, 2U);
   EXPECT_EQ(decoded->source_positions[0].record_sequence, 11U);

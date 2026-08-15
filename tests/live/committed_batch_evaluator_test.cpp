@@ -135,8 +135,12 @@ TEST(CommittedBatchEvaluatorTest, RejectsStatefulPlansAndResourceFailureWithoutP
       prepare_subscription_plan("SUBSCRIBE SELECT count(*) FROM events", catalog(input));
   ASSERT_TRUE(aggregate.has_value());
   query::QueryResourceContext resources = query::QueryResourceContext::create(1U << 20U).value();
-  auto rejected =
-      evaluate_committed_batch(*aggregate, {tablet_id(), wal_id(), 1U}, input, resources);
+  auto rejected = evaluate_committed_batch(
+      *aggregate, SourcePosition::raft(tablet_id(), uuid(std::byte{9}), 1U), input, resources);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+
+  rejected = evaluate_committed_batch(*aggregate, {tablet_id(), wal_id(), 1U}, input, resources);
   ASSERT_FALSE(rejected.has_value());
   EXPECT_EQ(rejected.error().code(), common::StatusCode::kNotSupported);
 

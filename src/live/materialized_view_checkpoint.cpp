@@ -400,7 +400,7 @@ common::Result<WindowedMaterializedViewCheckpoint> decode_windowed_materialized_
                      .allowed_lateness = load_i64(bytes, kAllowedLatenessOffset),
                      .maximum_windows = static_cast<std::size_t>(maximum_windows),
                      .maximum_rows = static_cast<std::size_t>(maximum_rows)},
-      .position = {*tablet_id, wal_id, load_u64(bytes, kAppliedSequenceOffset)},
+      .position = SourcePosition::wal(*tablet_id, wal_id, load_u64(bytes, kAppliedSequenceOffset)),
       .watermark = load_i64(bytes, kWatermarkOffset)};
   try {
     checkpoint.rows.reserve(static_cast<std::size_t>(row_count));

@@ -63,7 +63,7 @@ SubscriptionRetentionCoordinator::create(SubscriptionRetentionConfig config) {
           (index != 0U && config.members[index - 1U].tablet_id >= member.tablet_id))
         return common::make_unexpected(
             invalid("subscription retention source topology is invalid"));
-      initial.push_back({member.tablet_id, member.wal_id, 0U});
+      initial.emplace_back(member.tablet_id, member.wal_id, 0U);
     }
     for (std::size_t owner_index = 0U; owner_index < config.subscription_owners.size();
          ++owner_index) {
@@ -109,7 +109,7 @@ common::Result<SubscriptionRetentionReport> SubscriptionRetentionCoordinator::ad
   for (std::size_t index = 0U; index < impl_->config.members.size(); ++index) {
     const SubscriptionRetentionMember& member = impl_->config.members[index];
     const SourcePosition& storage = storage_safe_frontiers[index];
-    if (storage.tablet_id != member.tablet_id || storage.wal_id != member.wal_id ||
+    if (!storage.same_source(SourcePosition::wal(member.tablet_id, member.wal_id, 0U)) ||
         storage.record_sequence < impl_->frontiers[index].record_sequence)
       return common::make_unexpected(
           invalid("subscription retention storage frontier regressed or changed lineage"));
@@ -136,8 +136,7 @@ common::Result<SubscriptionRetentionReport> SubscriptionRetentionCoordinator::ad
         return common::make_unexpected(common::Status{
             common::StatusCode::kCorruption, "durable subscription frontier source count changed"});
       for (std::size_t index = 0U; index < candidate.size(); ++index) {
-        if (durable_frontiers[index].tablet_id != candidate[index].tablet_id ||
-            durable_frontiers[index].wal_id != candidate[index].wal_id)
+        if (!durable_frontiers[index].same_source(candidate[index]))
           return common::make_unexpected(
               common::Status{common::StatusCode::kCorruption,
                              "durable subscription frontier source lineage changed"});

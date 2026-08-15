@@ -107,8 +107,8 @@ validate_and_size(const MultiTabletSubscriptionCheckpoint& checkpoint,
     expected.reserve(checkpoint.sources.size());
     for (std::size_t index = 0U; index < checkpoint.sources.size(); ++index) {
       const auto& source = checkpoint.sources[index];
-      if (source.latest_position.tablet_id.uuid().is_nil() ||
-          !source.latest_position.wal_id.is_valid() ||
+      if (!source.latest_position.is_valid() ||
+          source.latest_position.source_kind != SubscriptionSourceKind::kWal ||
           source.expired_through_sequence > source.latest_position.record_sequence ||
           (index != 0U && checkpoint.sources[index - 1U].latest_position.tablet_id >=
                               source.latest_position.tablet_id) ||
@@ -136,7 +136,7 @@ validate_and_size(const MultiTabletSubscriptionCheckpoint& checkpoint,
       if (found == indexes.end())
         return common::make_unexpected(invalid("subscription checkpoint change source is unknown"));
       const std::size_t index = found->second;
-      if (change.position.wal_id != checkpoint.sources[index].latest_position.wal_id ||
+      if (!change.position.same_source(checkpoint.sources[index].latest_position) ||
           expected[index] == std::numeric_limits<std::uint64_t>::max() ||
           change.position.record_sequence != expected[index] + 1U ||
           change.position.record_sequence >
@@ -362,7 +362,7 @@ common::Result<MultiTabletSubscriptionCheckpoint> decode_multi_tablet_subscripti
       auto tablet_id = schema::TabletId::from_bytes(tablet_array);
       if (!tablet_id.has_value())
         return common::make_unexpected(corruption("subscription checkpoint tablet is invalid"));
-      checkpoint.sources.push_back({{*tablet_id, wal_id, *latest}, *expired});
+      checkpoint.sources.push_back({SourcePosition::wal(*tablet_id, wal_id, *latest), *expired});
     }
     checkpoint.retained_changes.reserve(*change_count);
     for (std::uint32_t index = 0U; index < *change_count; ++index) {
@@ -401,9 +401,7 @@ common::Result<MultiTabletSubscriptionCheckpoint> decode_multi_tablet_subscripti
         return common::make_unexpected(
             corruption("subscription checkpoint change identity is invalid"));
       checkpoint.retained_changes.push_back(
-          {{*tablet_id, wal_id, *sequence},
-           *change_schema_id,
-           *parsed_version,
+          {SourcePosition::wal(*tablet_id, wal_id, *sequence), *change_schema_id, *parsed_version,
            static_cast<LogicalChangeOperation>(*operation),
            std::vector<std::byte>{key->begin(), key->end()},
            std::vector<std::byte>{payload->begin(), payload->end()}});

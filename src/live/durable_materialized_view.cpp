@@ -112,8 +112,8 @@ DurableWindowedMaterializedView::open_existing(DurableWindowedMaterializedViewCo
 
     BoundMaterializedViewCheckpoint checkpoint = std::move(loaded).value().checkpoint;
     if (checkpoint.identity != identity ||
-        checkpoint.state.position.tablet_id != config.tablet_id ||
-        checkpoint.state.position.wal_id != config.wal_id ||
+        !checkpoint.state.position.same_source(
+            SourcePosition::wal(config.tablet_id, config.wal_id, 0U)) ||
         checkpoint.state.definition != config.definition) {
       return common::make_unexpected(
           corruption("durable materialized-view checkpoint disagrees with configured owner"));

@@ -78,7 +78,7 @@ public:
     std::vector<SourcePosition> result;
     result.reserve(sources.size());
     for (const SourceState& state : sources)
-      result.push_back({state.tablet_id, state.wal_id, state.latest_sequence});
+      result.push_back(SourcePosition::wal(state.tablet_id, state.wal_id, state.latest_sequence));
     return result;
   }
 
@@ -93,7 +93,7 @@ public:
   }
 
   [[nodiscard]] common::Result<std::vector<std::byte>> encode_token(const State& state) const {
-    return encode_resume_token_v1(token_for(state), source.token_key);
+    return encode_resume_token_v2(token_for(state), source.token_key);
   }
 
   [[nodiscard]] bool can_buffer(const State& state, const std::size_t bytes) const noexcept {
@@ -148,8 +148,8 @@ public:
     if (positions.size() != sources.size())
       return false;
     for (std::size_t index = 0U; index < sources.size(); ++index) {
-      if (positions[index].tablet_id != sources[index].tablet_id ||
-          positions[index].wal_id != sources[index].wal_id)
+      if (!positions[index].same_source(SourcePosition::wal(
+              sources[index].tablet_id, sources[index].wal_id, sources[index].latest_sequence)))
         return false;
     }
     return true;
@@ -233,8 +233,8 @@ MultiTabletSubscriptionManager::restore(MultiTabletSubscriptionSource source,
     for (std::size_t index = 0U; index < impl.sources.size(); ++index) {
       const MultiTabletSubscriptionCheckpointSource& saved = checkpoint.sources[index];
       const Impl::SourceState& current = impl.sources[index];
-      if (saved.latest_position.tablet_id != current.tablet_id ||
-          saved.latest_position.wal_id != current.wal_id ||
+      if (!saved.latest_position.same_source(
+              SourcePosition::wal(current.tablet_id, current.wal_id, current.latest_sequence)) ||
           saved.latest_position.record_sequence != current.latest_sequence ||
           saved.expired_through_sequence > current.latest_sequence)
         return common::make_unexpected(
@@ -250,7 +250,9 @@ MultiTabletSubscriptionManager::restore(MultiTabletSubscriptionSource source,
         return common::make_unexpected(
             invalid("subscription checkpoint change has an unknown source"));
       const std::size_t index = source_index->second;
-      if (change.position.wal_id != impl.sources[index].wal_id ||
+      if (!change.position.same_source(SourcePosition::wal(impl.sources[index].tablet_id,
+                                                           impl.sources[index].wal_id,
+                                                           impl.sources[index].latest_sequence)) ||
           expected_sequences[index] == std::numeric_limits<std::uint64_t>::max() ||
           change.position.record_sequence != expected_sequences[index] + 1U ||
           change.position.record_sequence > impl.sources[index].latest_sequence ||
@@ -335,8 +337,7 @@ MultiTabletSubscriptionManager::resume_subscription(const common::ByteView encod
 common::Result<MultiTabletSubscriptionRegistration>
 MultiTabletSubscriptionManager::resume_subscription(const common::Uuid& expected_subscription_id,
                                                     const common::ByteView encoded_token) {
-  auto token =
-      decode_resume_token_v1(encoded_token, impl_->source.token_key, impl_->sources.size());
+  auto token = decode_resume_token(encoded_token, impl_->source.token_key, impl_->sources.size());
   if (!token.has_value())
     return common::make_unexpected(token.error());
   if (!expected_subscription_id.is_nil() && token->subscription_id != expected_subscription_id)
@@ -428,7 +429,8 @@ common::Status MultiTabletSubscriptionManager::publish_committed(CommittedChange
   if (source == impl_->source_indexes.end())
     return invalid("committed change belongs to an unconfigured tablet");
   Impl::SourceState& source_state = impl_->sources[source->second];
-  if (change.position.wal_id != source_state.wal_id ||
+  if (!change.position.same_source(SourcePosition::wal(source_state.tablet_id, source_state.wal_id,
+                                                       source_state.latest_sequence)) ||
       source_state.latest_sequence == std::numeric_limits<std::uint64_t>::max() ||
       change.position.record_sequence != source_state.latest_sequence + 1U)
     return invalid("committed change does not follow its exact source lineage and sequence");
@@ -485,7 +487,8 @@ common::Status MultiTabletSubscriptionManager::mark_continuity_lost(const Source
   if (source == impl_->source_indexes.end())
     return invalid("lost subscription continuity belongs to an unconfigured tablet");
   Impl::SourceState& source_state = impl_->sources[source->second];
-  if (position.wal_id != source_state.wal_id ||
+  if (!position.same_source(SourcePosition::wal(source_state.tablet_id, source_state.wal_id,
+                                                source_state.latest_sequence)) ||
       source_state.latest_sequence == std::numeric_limits<std::uint64_t>::max() ||
       position.record_sequence != source_state.latest_sequence + 1U)
     return invalid("lost subscription continuity does not follow the exact source sequence");
@@ -526,7 +529,8 @@ common::Status MultiTabletSubscriptionManager::mark_replay_unavailable_through(
   for (std::size_t index = 0U; index < positions.size(); ++index) {
     const SourcePosition& position = positions[index];
     const Impl::SourceState& source = impl_->sources[index];
-    if (position.tablet_id != source.tablet_id || position.wal_id != source.wal_id ||
+    if (!position.same_source(
+            SourcePosition::wal(source.tablet_id, source.wal_id, source.latest_sequence)) ||
         position.record_sequence < source.latest_sequence)
       return invalid("replay rebase changes source identity or moves a position backward");
   }
@@ -661,8 +665,9 @@ MultiTabletSubscriptionManager::checkpoint() const {
                                                  {}};
     checkpoint.sources.reserve(impl_->sources.size());
     for (const Impl::SourceState& source : impl_->sources) {
-      checkpoint.sources.push_back({{source.tablet_id, source.wal_id, source.latest_sequence},
-                                    source.expired_through_sequence});
+      checkpoint.sources.push_back(
+          {SourcePosition::wal(source.tablet_id, source.wal_id, source.latest_sequence),
+           source.expired_through_sequence});
     }
     checkpoint.retained_changes.reserve(impl_->retained_changes.size());
     for (const auto& change : impl_->retained_changes)

@@ -87,7 +87,7 @@ public:
   };
 
   Impl(schema::TabletId tablet, wal::WalId wal, WindowDefinition configured)
-      : definition(configured), position{tablet, wal, 0U} {}
+      : definition(configured), position(SourcePosition::wal(tablet, wal, 0U)) {}
 
   WindowDefinition definition;
   SourcePosition position;
@@ -126,6 +126,11 @@ WindowedMaterializedView::create(schema::TabletId tablet_id, wal::WalId wal_id,
 
 common::Result<WindowedMaterializedView>
 WindowedMaterializedView::restore(const WindowedMaterializedViewCheckpoint& checkpoint) {
+  if (!checkpoint.position.is_valid() ||
+      checkpoint.position.source_kind != SubscriptionSourceKind::kWal) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kCorruption, "materialized-view checkpoint source is not WAL-backed"});
+  }
   auto restored =
       create(checkpoint.position.tablet_id, checkpoint.position.wal_id, checkpoint.definition);
   if (!restored.has_value()) {
@@ -221,8 +226,7 @@ WindowedMaterializedView::restore(const WindowedMaterializedViewCheckpoint& chec
 common::Result<std::vector<MaterializedViewChange>>
 WindowedMaterializedView::apply_committed(const SourcePosition position,
                                           MaterializedViewInput input) {
-  if (position.tablet_id != impl_->position.tablet_id ||
-      position.wal_id != impl_->position.wal_id ||
+  if (!position.same_source(impl_->position) ||
       position.record_sequence != impl_->position.record_sequence + 1U) {
     return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
                                                   "materialized-view input is not consecutive"});

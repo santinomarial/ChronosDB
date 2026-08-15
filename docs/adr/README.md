@@ -441,3 +441,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0404](0404-injectable-system-uuid-entropy.md) | Injectable system UUID entropy | accepted |
 | [0405](0405-verified-logical-to-physical-wal-prefix-resolution.md) | Verified logical-to-physical WAL prefix resolution | accepted |
 | [0406](0406-prevalidated-subscription-wal-prefix-reclamation.md) | Prevalidated subscription WAL prefix reclamation | accepted |
+| [0407](0407-source-tagged-resume-token-v2.md) | Source-tagged Resume Token v2 | accepted |

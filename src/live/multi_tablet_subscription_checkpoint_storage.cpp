@@ -90,8 +90,8 @@ valid_codec_limits(const MultiTabletSubscriptionCheckpointCodecLimits& limits) n
       actual.sources.size() != expected.sources.size())
     return false;
   for (std::size_t index = 0U; index < expected.sources.size(); ++index) {
-    if (actual.sources[index].latest_position.tablet_id != expected.sources[index].tablet_id ||
-        actual.sources[index].latest_position.wal_id != expected.sources[index].wal_id)
+    if (!actual.sources[index].latest_position.same_source(SourcePosition::wal(
+            expected.sources[index].tablet_id, expected.sources[index].wal_id, 0U)))
       return false;
   }
   return true;

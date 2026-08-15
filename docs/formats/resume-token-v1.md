@@ -1,7 +1,8 @@
 # Resume Token v1
 
 > **Status: implemented logical token format.** These opaque authenticated bytes are not a native
-> Protocol v1 frame and do not change any existing Protocol v1 message bytes.
+> Protocol v1 frame and do not change any existing Protocol v1 message bytes. New issuance uses
+> [Resume Token v2](resume-token-v2.md); v1 remains accepted for WAL-backed sources.
 
 All integers are little-endian. The authenticated prefix is followed by a 32-byte HMAC-SHA256 over
 that complete prefix. The MAC key is deployment state and is never encoded in the token.
@@ -38,3 +39,6 @@ validates magic, version, size relationships, source bound, required-zero bytes,
 identities. Unknown major versions and newer minor versions fail as unsupported. Modification fails
 as unauthenticated. A valid token is still rejected when database, tablet/WAL lineage, plan/schema,
 or retained suffix is incompatible. External delivery remains at least once.
+
+V1 is permanently WAL-only. A Raft group UUID must not be encoded as a WAL ID; source-tagged Raft
+positions require Resume Token v2.

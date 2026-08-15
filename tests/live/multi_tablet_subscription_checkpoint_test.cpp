@@ -87,6 +87,13 @@ TEST(MultiTabletSubscriptionCheckpointTest, RejectsCorruptionAndDiscontinuousSta
 
   checkpoint.retained_changes.erase(checkpoint.retained_changes.begin() + 1);
   EXPECT_FALSE(encode_multi_tablet_subscription_checkpoint_v1(checkpoint).has_value());
+
+  checkpoint = fixture();
+  checkpoint.sources.front().latest_position = SourcePosition::raft(
+      checkpoint.sources.front().latest_position.tablet_id, uuid(std::byte{3}), 2U);
+  const auto raft_rejected = encode_multi_tablet_subscription_checkpoint_v1(checkpoint);
+  ASSERT_FALSE(raft_rejected.has_value());
+  EXPECT_EQ(raft_rejected.error().code(), common::StatusCode::kInvalidArgument);
 }
 
 TEST(MultiTabletSubscriptionCheckpointTest, HonorsExactEncodedSizeLimit) {

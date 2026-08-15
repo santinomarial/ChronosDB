@@ -37,8 +37,8 @@ namespace {
                                   const manifest::PublishedTabletStorage& tablet) noexcept {
   if (snapshot.database_id().uuid() != source.database_id || snapshot.wal_id() != source.wal_id ||
       tablet.table_id() != source.table_id || tablet.tablet_id() != source.tablet_id ||
-      registration.snapshot_boundary.tablet_id != source.tablet_id ||
-      registration.snapshot_boundary.wal_id != source.wal_id)
+      !registration.snapshot_boundary.same_source(
+          SourcePosition::wal(source.tablet_id, source.wal_id, 0U)))
     return false;
   const std::optional<head::HeadCommitPosition>& applied_position = tablet.applied_position();
   if (!applied_position.has_value()) {

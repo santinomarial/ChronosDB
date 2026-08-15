@@ -90,8 +90,8 @@ common::Status WalSubscriptionSourceReclaimer::reclaim(
     for (std::size_t index = 0U; index < requests.size(); ++index) {
       const WalSubscriptionReclamationSource& source = impl_->config.sources[index];
       const SubscriptionSourceReclamation& request = requests[index];
-      if (request.reclaim_through.tablet_id != source.tablet_id ||
-          request.reclaim_through.wal_id != source.writer->wal_id() ||
+      if (!request.reclaim_through.same_source(
+              SourcePosition::wal(source.tablet_id, source.writer->wal_id(), 0U)) ||
           request.placement_epoch != source.placement_epoch ||
           request.metadata_index != metadata_index) {
         return invalid("WAL subscription reclamation identity or topology is invalid");

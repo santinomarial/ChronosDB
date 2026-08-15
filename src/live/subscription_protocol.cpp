@@ -57,6 +57,11 @@ encode_subscription_delivery(const DeliveryRecord& delivery,
                              const network::SubscriptionMessageLimits& limits) {
   if (delivery.delivery_sequence == 0U || !delivery.change)
     return common::make_unexpected(invalid("subscription delivery owner is invalid"));
+  if (!delivery.change->position.is_valid() ||
+      delivery.change->position.source_kind != SubscriptionSourceKind::kWal) {
+    return common::make_unexpected(
+        invalid("Protocol 1.1 subscription delivery supports only WAL source positions"));
+  }
   const auto operation = wire_operation(delivery.change->operation);
   if (!operation.has_value())
     return common::make_unexpected(operation.error());

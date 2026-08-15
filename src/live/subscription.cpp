@@ -43,7 +43,7 @@ public:
 
   Impl(SubscriptionSource source_value, SubscriptionLimits limits_value)
       : source(source_value), limits(limits_value),
-        latest_position{source.tablet_id, source.wal_id, 0U} {}
+        latest_position(SourcePosition::wal(source.tablet_id, source.wal_id, 0U)) {}
 
   [[nodiscard]] ResumeToken token_for(const State& state) const {
     return ResumeToken{source.database_id,
@@ -56,7 +56,7 @@ public:
   }
 
   [[nodiscard]] common::Result<std::vector<std::byte>> encode_token(const State& state) const {
-    return encode_resume_token_v1(token_for(state), source.token_key);
+    return encode_resume_token_v2(token_for(state), source.token_key);
   }
 
   [[nodiscard]] bool can_buffer(const State& state, const std::size_t bytes) const noexcept {
@@ -173,13 +173,12 @@ SubscriptionManager::register_subscription(const SubscriptionRequest& request) {
 
 common::Result<SubscriptionRegistration>
 SubscriptionManager::resume_subscription(const common::ByteView encoded_token) {
-  auto token = decode_resume_token_v1(encoded_token, impl_->source.token_key, 1U);
+  auto token = decode_resume_token(encoded_token, impl_->source.token_key, 1U);
   if (!token.has_value()) {
     return common::make_unexpected(token.error());
   }
   if (token->database_id != impl_->source.database_id || token->source_positions.size() != 1U ||
-      token->source_positions.front().tablet_id != impl_->source.tablet_id ||
-      token->source_positions.front().wal_id != impl_->source.wal_id ||
+      !token->source_positions.front().same_source(impl_->latest_position) ||
       token->plan_fingerprint != impl_->source.plan_fingerprint ||
       token->schema_id != impl_->source.schema_id ||
       token->schema_version != impl_->source.schema_version) {
@@ -266,8 +265,7 @@ common::Status SubscriptionManager::complete_snapshot(const common::Uuid& subscr
 }
 
 common::Status SubscriptionManager::publish_committed(CommittedChange change) {
-  if (change.position.tablet_id != impl_->source.tablet_id ||
-      change.position.wal_id != impl_->source.wal_id ||
+  if (!change.position.same_source(impl_->latest_position) ||
       change.position.record_sequence != impl_->latest_position.record_sequence + 1U) {
     return invalid("committed changes must follow the exact source lineage and sequence");
   }

@@ -604,7 +604,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
 
 ## Phase 11 — Subscriptions and incremental materialized views
 
-- **Feature-pass status:** the `chronos_live` target implements authenticated Resume Token v1,
+- **Feature-pass status:** the `chronos_live` target implements source-tagged authenticated Resume
+  Token v2 issuance with v1 WAL compatibility,
   single-source register-before-boundary handoff, bounded retained/buffered committed changes,
   at-least-once poll/acknowledge/resume, fail-closed overflow/cancellation, removable count/sum/
   min/max/VWAP/OHLC/Welford state, tumbling/sliding windows, watermarks, corrections, and logical
@@ -646,8 +647,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   record-end checkpoints, conservatively merge tablets sharing one WAL, and reclaim only after
   all-WAL prevalidation. A deterministic Release microbenchmark suite now covers logical handoff,
   fan-out, slow-consumer overflow, resume replay, late aggregate correction, and logical aggregate
-  recovery scaling without publishing unreviewed numbers. Raft prefix mapping and the remaining
-  exit evidence remain deferred; the phase exit gate is not claimed.
+  recovery scaling without publishing unreviewed numbers. Source-neutral in-memory positions and
+  Resume Token v2 now distinguish WAL IDs from Raft group UUIDs without aliasing; Raft checkpoint/
+  protocol integration, prefix mapping, and the remaining exit evidence remain deferred. The phase
+  exit gate is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.

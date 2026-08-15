@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <gtest/gtest.h>
+#include <memory>
 
 namespace chronos::live {
 namespace {
@@ -78,7 +79,7 @@ TEST(SubscriptionProtocolTest, BridgesManagerDeliveryAcknowledgementAndTerminati
   const auto checkpoint = network::decode_subscription_checkpoint(*checkpoint_payload);
   ASSERT_TRUE(checkpoint.has_value());
   EXPECT_EQ(checkpoint->acknowledged_delivery_sequence, 1U);
-  const auto decoded_token = decode_resume_token_v1(checkpoint->resume_token, key());
+  const auto decoded_token = decode_resume_token(checkpoint->resume_token, key());
   ASSERT_TRUE(decoded_token.has_value());
   EXPECT_EQ(decoded_token->safe_delivery_sequence, 1U);
   EXPECT_EQ(decoded_token->source_positions.front().record_sequence, 1U);
@@ -112,6 +113,21 @@ TEST(SubscriptionProtocolTest, ManagerRejectsNoncanonicalDeleteBeforeWireDeliver
                                         .result_key = {std::byte{8}},
                                         .payload = {std::byte{9}}})
                    .is_ok());
+}
+
+TEST(SubscriptionProtocolTest, ProtocolOnePointOneRejectsRaftSourceWithoutAliasingGroupBytes) {
+  const schema::TabletId tablet_id = identifier<schema::TabletId>(std::byte{3});
+  const schema::SchemaId schema_id = identifier<schema::SchemaId>(std::byte{7});
+  const auto change = std::make_shared<const CommittedChange>(
+      CommittedChange{.position = SourcePosition::raft(tablet_id, uuid(std::byte{4}), 1U),
+                      .schema_id = schema_id,
+                      .schema_version = schema::SchemaVersion::initial(),
+                      .operation = LogicalChangeOperation::kUpsert,
+                      .result_key = {std::byte{8}},
+                      .payload = {std::byte{9}}});
+  const auto encoded = encode_subscription_delivery({1U, change});
+  ASSERT_FALSE(encoded.has_value());
+  EXPECT_EQ(encoded.error().code(), common::StatusCode::kInvalidArgument);
 }
 
 } // namespace

@@ -44,7 +44,7 @@ namespace {
     const manifest::PublishedTabletStorage* tablet = snapshot.find_tablet(member.tablet_id);
     if (tablet == nullptr || tablet->table_id() != source.table_id ||
         tablet->tablet_id() != member.tablet_id || snapshot.wal_id() != member.wal_id ||
-        boundary.tablet_id != member.tablet_id || boundary.wal_id != member.wal_id)
+        !boundary.same_source(SourcePosition::wal(member.tablet_id, member.wal_id, 0U)))
       return false;
     const std::optional<head::HeadCommitPosition>& applied_position = tablet->applied_position();
     if (applied_position.has_value()) {

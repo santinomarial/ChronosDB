@@ -2,6 +2,7 @@
 #include "chronos/live/subscription.hpp"
 #include "chronos/live/subscription_protocol.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <gtest/gtest.h>
 
@@ -88,7 +89,7 @@ TEST(SubscriptionTest, BuffersEveryPostBoundaryCommitUntilSnapshotCompletes) {
   EXPECT_EQ(delivered->front().change->position.record_sequence, 1U);
   const auto token = manager->acknowledge(fixture.subscription_id, 1U);
   ASSERT_TRUE(token.has_value());
-  const auto decoded = decode_resume_token_v1(*token, key());
+  const auto decoded = decode_resume_token(*token, key());
   ASSERT_TRUE(decoded.has_value());
   EXPECT_EQ(decoded->safe_delivery_sequence, 1U);
   EXPECT_EQ(decoded->source_positions.front().record_sequence, 1U);
@@ -117,6 +118,44 @@ TEST(SubscriptionTest, ResumeReplaysRetainedSuffixAtLeastOnce) {
   EXPECT_EQ((*replayed)[0].change->position.record_sequence, 2U);
   EXPECT_EQ((*replayed)[1].delivery_sequence, 3U);
   EXPECT_EQ((*replayed)[1].change->position.record_sequence, 3U);
+}
+
+TEST(SubscriptionTest, IssuesV2AndAcceptsOutstandingV1WalToken) {
+  Fixture fixture;
+  auto manager = SubscriptionManager::create(fixture.source());
+  ASSERT_TRUE(manager.has_value());
+  const auto registration = manager->register_subscription(fixture.request());
+  ASSERT_TRUE(registration.has_value());
+  const auto issued = decode_resume_token_v2(registration->initial_resume_token, key());
+  ASSERT_TRUE(issued.has_value()) << issued.error().to_string();
+  const auto legacy = encode_resume_token_v1(*issued, key());
+  ASSERT_TRUE(legacy.has_value()) << legacy.error().to_string();
+  ASSERT_TRUE(manager->cancel(fixture.subscription_id).has_value());
+
+  const auto resumed = manager->resume_subscription(*legacy);
+  ASSERT_TRUE(resumed.has_value()) << resumed.error().to_string();
+  EXPECT_TRUE(decode_resume_token_v2(resumed->initial_resume_token, key()).has_value());
+}
+
+TEST(SubscriptionTest, RejectsRaftTokenEvenWhenGroupBytesEqualConfiguredWalId) {
+  Fixture fixture;
+  auto manager = SubscriptionManager::create(fixture.source());
+  ASSERT_TRUE(manager.has_value());
+  common::Uuid::Bytes group_bytes{};
+  std::ranges::copy(fixture.wal.bytes, group_bytes.begin());
+  const ResumeToken token{fixture.database_id,
+                          fixture.subscription_id,
+                          fixture.schema_id,
+                          schema::SchemaVersion::initial(),
+                          0U,
+                          fixture.plan,
+                          {SourcePosition::raft(fixture.tablet_id, common::Uuid{group_bytes}, 0U)}};
+  const auto encoded = encode_resume_token_v2(token, key());
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+
+  const auto rejected = manager->resume_subscription(*encoded);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
 }
 
 TEST(SubscriptionTest, SlowSubscriberOverflowDoesNotRejectCommittedChange) {

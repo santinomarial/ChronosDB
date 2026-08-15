@@ -139,6 +139,8 @@ existence of a design document alone is not implementation evidence.
   per tablet, and publishes terminal success or failure to the aggregate coordinator exactly once.
 - [Resume Token v1](formats/resume-token-v1.md): authenticated live-subscription resume identity,
   compatibility, limits, and rejection rules.
+- [Resume Token v2](formats/resume-token-v2.md): authenticated source-tagged WAL/Raft positions with
+  v1 WAL compatibility.
 - [Materialized View Checkpoint v1](formats/materialized-view-checkpoint-v1.md): bounded exact
   window/aggregate state, committed progress, IEEE-754 preservation, and CRC32C rejection rules.
 - [Multiplexed Raft Persistent-State Record v1](formats/multiplexed-raft-log-v1.md): checksummed,

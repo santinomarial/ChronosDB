@@ -1,7 +1,8 @@
 # Live Query Semantics
 
 > **Status: single-source core, durable views, and Protocol 1.1 delivery implemented; service
-> integration incomplete.** Resume Token v1, bounded register-before-boundary buffering,
+> integration incomplete.** Source-tagged Resume Token v2 issuance with v1 WAL compatibility,
+> bounded register-before-boundary buffering,
 > poll/acknowledge/resume, overflow, incremental windows, exact durable view recovery, and negotiated
 > native subscription delivery are implemented. A plan-bound multi-tablet coordinator records one
 > replayable delivery order over exact per-tablet positions. An already-lowered single-tablet
@@ -101,9 +102,10 @@ A resume token is opaque, versioned, integrity-protected, and scoped to database
 Topology transitions, state-retention defaults, window trigger cadence, spill, and the complete
 eligible incremental SQL subset remain deferred. Durable fingerprint-to-plan lookup, multi-tablet
 snapshot execution, durable coordinator checkpoint installation, single-source SQL planning,
-single-tablet plan-bound snapshot execution, multi-tablet delivery ordering, Resume Token v1 bytes,
+single-tablet plan-bound snapshot execution, multi-tablet delivery ordering, Resume Token v1/v2 bytes,
 the Protocol 1.1 acknowledgement/checkpoint lifecycle, exact logical coordinator restoration, and
 versioned coordinator checkpoint bytes are implemented. Topology-bound subscription retention and
 verified physical WAL-prefix reclamation are implemented for fixed WAL-backed source sets; Raft
-mapping and dynamic plan-owner retirement remain deferred. Every later choice must preserve
+checkpoint/protocol integration, prefix mapping, and dynamic plan-owner retirement remain deferred.
+Every later choice must preserve
 [invariant 17](../architecture/invariants.md).

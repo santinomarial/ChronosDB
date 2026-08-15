@@ -195,9 +195,9 @@ evaluate_committed_batch(const PreparedSubscriptionPlan& plan, const SourcePosit
                          std::shared_ptr<const columnar::OwnedColumnarBatch> batch,
                          const query::QueryResourceContext& resources,
                          const CommittedBatchEvaluatorLimits limits) {
-  if (batch == nullptr || position.tablet_id.uuid().is_nil() || !position.wal_id.is_valid() ||
-      position.record_sequence == 0U || limits.maximum_output_chunks == 0U ||
-      limits.maximum_workspace_bytes == 0U)
+  if (batch == nullptr || !position.is_valid() ||
+      position.source_kind != SubscriptionSourceKind::kWal || position.record_sequence == 0U ||
+      limits.maximum_output_chunks == 0U || limits.maximum_workspace_bytes == 0U)
     return common::make_unexpected(invalid("committed batch evaluation input is invalid"));
   if (const common::Status status =
           network::validate_subscription_message_limits(limits.subscription);

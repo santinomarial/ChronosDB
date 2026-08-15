@@ -24,8 +24,8 @@ their full roadmap exit gates or that ChronosDB is a production three-node datab
 
 `chronos_live` implements:
 
-- Resume Token v1 with fixed versioned bytes, HMAC-SHA256, constant-time MAC comparison, and bound
-  database/subscription/plan/schema/tablet/WAL/sequence identity;
+- Resume Token v2 issuance with fixed source-tagged WAL/Raft positions, HMAC-SHA256, constant-time
+  MAC comparison, and v1 WAL-token decoding compatibility;
 - single-source register-before-boundary handoff, snapshot-phase buffering, live transition,
   at-least-once poll, acknowledgment checkpoints, retained-suffix resume, cancellation, and bounded
   fail-closed overflow that never rejects an already committed source change;
