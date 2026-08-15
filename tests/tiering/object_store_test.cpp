@@ -46,6 +46,18 @@ constexpr std::size_t kMultipartPartBytes = std::size_t{5U} * 1024U * 1024U;
   return std::as_bytes(std::span{value.data(), value.size()});
 }
 
+[[nodiscard]] const sockaddr* const_socket_address(const sockaddr_in& address) noexcept {
+  // POSIX exposes protocol-specific addresses through this generic pointer type.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  return reinterpret_cast<const sockaddr*>(&address);
+}
+
+[[nodiscard]] sockaddr* socket_address(sockaddr_in& address) noexcept {
+  // POSIX writes a protocol-specific address through this generic pointer type.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  return reinterpret_cast<sockaddr*>(&address);
+}
+
 [[nodiscard]] std::string lower(std::string value) {
   std::ranges::transform(value, value.begin(), [](const unsigned char character) {
     return static_cast<char>(character >= 'A' && character <= 'Z' ? character + ('a' - 'A')
@@ -109,11 +121,7 @@ public:
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     address.sin_port = 0U;
-    // POSIX socket APIs expose protocol-specific addresses through sockaddr pointers.
-    if (::bind(listener_,
-               reinterpret_cast<const sockaddr*>(
-                   &address), // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
-               sizeof(address)) != 0 ||
+    if (::bind(listener_, const_socket_address(address), sizeof(address)) != 0 ||
         ::listen(listener_, 8) != 0) {
       failure_ = "listener bind failed";
       ::close(listener_);
@@ -121,10 +129,7 @@ public:
       return;
     }
     socklen_t address_length = sizeof(address);
-    if (::getsockname(listener_,
-                      reinterpret_cast<sockaddr*>(
-                          &address), // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
-                      &address_length) != 0) {
+    if (::getsockname(listener_, socket_address(address), &address_length) != 0) {
       failure_ = "listener endpoint lookup failed";
       ::close(listener_);
       listener_ = -1;
@@ -586,7 +591,7 @@ private:
   mutable std::mutex mutex_;
   int listener_{-1};
   std::uint16_t port_{};
-  std::atomic_bool stop_{};
+  std::atomic_bool stop_;
   std::thread worker_;
   std::vector<RecordedRequest> requests_;
   std::string failure_;
@@ -735,17 +740,21 @@ public:
     for (std::size_t index = 0U; index < names_.size(); ++index) {
       if (const char* existing = std::getenv(names_[index].data()); existing != nullptr)
         previous_[index] = existing;
-      const int result = values_[index].has_value()
-                             ? ::setenv(names_[index].data(), values_[index]->c_str(), 1)
-                             : ::unsetenv(names_[index].data());
+      const auto& value = values_[index];
+      int result{};
+      if (value.has_value())
+        result = ::setenv(names_[index].data(), value->c_str(), 1);
+      else
+        result = ::unsetenv(names_[index].data());
       valid_ = valid_ && result == 0;
     }
   }
 
   ~ScopedAwsEnvironment() {
     for (std::size_t index = 0U; index < names_.size(); ++index) {
-      if (previous_[index].has_value())
-        static_cast<void>(::setenv(names_[index].data(), previous_[index]->c_str(), 1));
+      const auto& previous = previous_[index];
+      if (previous.has_value())
+        static_cast<void>(::setenv(names_[index].data(), previous->c_str(), 1));
       else
         static_cast<void>(::unsetenv(names_[index].data()));
     }
@@ -810,7 +819,12 @@ TEST(S3EnvironmentCredentialProviderTest, SnapshotsStandardEnvironmentAndSignsRe
   EXPECT_EQ(current->access_key_id, "environment-access");
   EXPECT_EQ(current->secret_access_key, "environment-secret");
   ASSERT_TRUE(current->session_token.has_value());
-  EXPECT_EQ(*current->session_token, "environment-token");
+  const auto& session_token = current->session_token;
+  if (!session_token.has_value()) {
+    ADD_FAILURE() << "expected the environment session token";
+    return;
+  }
+  EXPECT_EQ(*session_token, "environment-token");
 
   S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
                              .region = "us-east-1",
@@ -929,7 +943,12 @@ TEST(S3ContainerCredentialProviderTest, CachesRefreshesAndSignsWithTemporaryCred
   ASSERT_TRUE(first.has_value()) << first.error().to_string();
   EXPECT_EQ(first->access_key_id, "container-access");
   ASSERT_TRUE(first->session_token.has_value());
-  EXPECT_EQ(*first->session_token, "container-token");
+  const auto& session_token = first->session_token;
+  if (!session_token.has_value()) {
+    ADD_FAILURE() << "expected the container session token";
+    return;
+  }
+  EXPECT_EQ(*session_token, "container-token");
   ASSERT_TRUE((*provider)->acquire(S3CredentialRequest::kCurrent).has_value());
   EXPECT_EQ(credential_server.requests().size(), 1U);
   ASSERT_TRUE((*provider)->acquire(S3CredentialRequest::kRefresh).has_value());
@@ -1005,7 +1024,12 @@ TEST(S3InstanceCredentialProviderTest, UsesImdsv2CachesAndRefreshesTemporaryCred
   ASSERT_TRUE(current.has_value()) << current.error().to_string();
   EXPECT_EQ(current->access_key_id, "instance-access");
   ASSERT_TRUE(current->session_token.has_value());
-  EXPECT_EQ(*current->session_token, "instance-token");
+  const auto& session_token = current->session_token;
+  if (!session_token.has_value()) {
+    ADD_FAILURE() << "expected the instance session token";
+    return;
+  }
+  EXPECT_EQ(*session_token, "instance-token");
   ASSERT_TRUE((*provider)->acquire(S3CredentialRequest::kCurrent).has_value());
   EXPECT_EQ(metadata_server.requests().size(), 3U);
   ASSERT_TRUE((*provider)->acquire(S3CredentialRequest::kRefresh).has_value());
