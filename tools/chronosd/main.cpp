@@ -25,6 +25,7 @@
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <fcntl.h>
 #include <filesystem>
 #include <iostream>
@@ -253,10 +254,10 @@ new_database_descriptor(chronos::common::UuidGenerator& identities) {
       .local_node_id = 1U,
       .mutable_head_rows = 65'536U,
       .maximum_sealed_generations = 8U,
-      .variable_column_bytes = 1U * 1024U * 1024U,
+      .variable_column_bytes = std::uint64_t{1U} * 1024U * 1024U,
       .maximum_retry_entries = 65'536U,
       .wal_segment_target_bytes = chronos::wal::kSegmentSizeLimit,
-      .raft_segment_target_bytes = 64U * 1024U * 1024U};
+      .raft_segment_target_bytes = std::uint64_t{64U} * 1024U * 1024U};
 }
 
 [[nodiscard]] chronos::common::Status invalid(std::string message) {
@@ -355,7 +356,7 @@ load_bounded_config(const std::string& path, const std::size_t maximum_bytes,
   if (descriptor < 0)
     return io_error("cannot open Raft TLS file");
   struct stat metadata {};
-  constexpr std::uintmax_t maximum_bytes = 16U * 1024U * 1024U;
+  constexpr std::uintmax_t maximum_bytes = std::uintmax_t{16U} * 1024U * 1024U;
   const bool valid = ::fstat(descriptor, &metadata) == 0 && S_ISREG(metadata.st_mode) &&
                      metadata.st_size > 0 &&
                      static_cast<std::uintmax_t>(metadata.st_size) <= maximum_bytes &&
@@ -409,10 +410,17 @@ elect_single_node_groups(ReplicatedIngestDatabase& database,
     auto observed = observation->wait();
     if (!observed.has_value())
       return observed.error();
-    if (observed->size() != 1U || !observed->front().status.is_ok() ||
-        !observed->front().observation.has_value() ||
-        observed->front().observation->role != chronos::raft::Role::kLeader ||
-        observed->front().observation->leader_id != database.bootstrap().local_node_id) {
+    if (observed->size() != 1U)
+      return invalid("single-node Raft observation returned an invalid result count");
+    const auto& group_observation = observed->front();
+    const auto& state = group_observation.observation;
+    if (!group_observation.status.is_ok() || !state.has_value()) {
+      return {chronos::common::StatusCode::kUnavailable,
+              "single-node Raft group did not become local leader"};
+    }
+    const auto& value = *state;
+    if (value.role != chronos::raft::Role::kLeader ||
+        value.leader_id != database.bootstrap().local_node_id) {
       return {chronos::common::StatusCode::kUnavailable,
               "single-node Raft group did not become local leader"};
     }
@@ -459,8 +467,9 @@ current_subscription_members(const chronos::manifest::DatabaseStorageSnapshot& s
       if (tablet.table_id() != table_id)
         continue;
       std::uint64_t sequence = 0U;
-      if (tablet.applied_position().has_value()) {
-        const chronos::head::HeadCommitPosition& position = *tablet.applied_position();
+      const auto& applied_position = tablet.applied_position();
+      if (applied_position.has_value()) {
+        const chronos::head::HeadCommitPosition& position = *applied_position;
         if (position.source != chronos::head::CommitSource::kWal ||
             position.wal_id != snapshot.wal_id())
           return chronos::common::make_unexpected(
@@ -489,6 +498,8 @@ current_subscription_members(const chronos::manifest::DatabaseStorageSnapshot& s
   }
 }
 
+// Field order keeps the runtime ahead of every owner it borrows during reverse destruction.
+// NOLINTNEXTLINE(clang-analyzer-optin.performance.Padding)
 struct DaemonSubscription {
   chronos::live::PreparedSubscriptionPlan plan;
   chronos::live::DurableMultiTabletSubscription coordinator;
@@ -608,7 +619,7 @@ configure_subscription(SingleNodeDatabase& database, SingleNodeCommittedAppendRo
   auto context = database.subscription_snapshot_context(plan->schema_ptr()->table_id());
   if (!context.has_value())
     return chronos::common::make_unexpected(context.error());
-  auto resources = chronos::query::QueryResourceContext::create(128U * 1024U * 1024U);
+  auto resources = chronos::query::QueryResourceContext::create(std::size_t{128U} * 1024U * 1024U);
   auto requests = SpscNetworkTaskQueue::create(options.queue_capacity);
   auto responses = SpscNetworkTaskQueue::create(options.queue_capacity);
   if (!resources.has_value() || !requests.has_value() || !responses.has_value()) {
@@ -642,17 +653,24 @@ configure_subscription(SingleNodeDatabase& database, SingleNodeCommittedAppendRo
   }
 }
 
+struct DataPlaneWorkerConfig {
+  SpscNetworkTaskQueue* requests{};
+  SpscNetworkTaskQueue* responses{};
+  Reactor* reactor{};
+  NativeProtocolService* service{};
+  ReplicatedIngestService* replicated{};
+  SingleNodeSubscriptionRuntime* subscriptions{};
+  SpscNetworkTaskQueue* subscription_requests{};
+  SpscNetworkTaskQueue* subscription_responses{};
+};
+
 class DataPlaneWorker {
 public:
-  DataPlaneWorker(SpscNetworkTaskQueue& requests, SpscNetworkTaskQueue& responses, Reactor& reactor,
-                  NativeProtocolService* service, ReplicatedIngestService* replicated,
-                  SingleNodeSubscriptionRuntime* subscriptions,
-                  SpscNetworkTaskQueue* subscription_requests,
-                  SpscNetworkTaskQueue* subscription_responses) noexcept
-      : requests_(&requests), responses_(&responses), reactor_(&reactor), service_(service),
-        replicated_(replicated), subscriptions_(subscriptions),
-        subscription_requests_(subscription_requests),
-        subscription_responses_(subscription_responses) {}
+  explicit DataPlaneWorker(const DataPlaneWorkerConfig& config) noexcept
+      : requests_(config.requests), responses_(config.responses), reactor_(config.reactor),
+        service_(config.service), replicated_(config.replicated),
+        subscriptions_(config.subscriptions), subscription_requests_(config.subscription_requests),
+        subscription_responses_(config.subscription_responses) {}
 
   DataPlaneWorker(const DataPlaneWorker&) = delete;
   DataPlaneWorker& operator=(const DataPlaneWorker&) = delete;
@@ -689,7 +707,7 @@ public:
   }
 
 private:
-  [[nodiscard]] std::optional<NetworkTask> unconfigured(NetworkTask request) {
+  [[nodiscard]] static std::optional<NetworkTask> unconfigured(NetworkTask request) {
     auto payload = chronos::network::encode_error_message(ProtocolErrorCode::kExecutionFailure,
                                                           "chronosd data plane is not configured");
     if (!payload.has_value())
@@ -701,7 +719,7 @@ private:
     return request;
   }
 
-  [[nodiscard]] std::optional<NetworkTask> unsupported(NetworkTask request) {
+  [[nodiscard]] static std::optional<NetworkTask> unsupported(NetworkTask request) {
     auto payload = chronos::network::encode_error_message(
         ProtocolErrorCode::kExecutionFailure, "native subscriptions are not configured");
     if (!payload.has_value())
@@ -902,10 +920,10 @@ private:
           failed_.store(true, std::memory_order_release);
           return;
         }
-        if (!completed->result.status.is_ok() || !completed->result.transition.has_value())
+        const auto& transition = completed->result.transition;
+        if (!completed->result.status.is_ok() || !transition.has_value())
           continue;
-        const chronos::raft::MultiRaftTransition& transition = *completed->result.transition;
-        if (transition.snapshot_install.has_value()) {
+        if (transition->snapshot_install.has_value()) {
           failed_.store(true, std::memory_order_release);
           return;
         }
@@ -920,10 +938,8 @@ private:
   std::thread thread_;
 };
 
-} // namespace
-
 // NOLINTNEXTLINE(modernize-avoid-c-arrays)
-int main(const int argc, const char* const argv[]) {
+int run_daemon(const int argc, const char* const argv[]) {
   const std::string_view program = argc > 0 ? std::string_view{argv[0]} : "chronosd";
   const auto options = parse_options(argc, argv);
   if (!options.has_value()) {
@@ -1095,7 +1111,7 @@ int main(const int argc, const char* const argv[]) {
           .wal_recovery = {.repair_incomplete_final_tail = false},
           .raft_recovery = {.repair_incomplete_final_tail = false},
           .committed_append_observer = subscription_key.has_value() ? &append_router : nullptr};
-      auto opened = SingleNodeDatabase::open_or_create(std::move(database_config));
+      auto opened = SingleNodeDatabase::open_or_create(database_config);
       if (!opened.has_value()) {
         std::cerr << "chronosd: database start failed: " << opened.error().to_string() << '\n';
         return 1;
@@ -1179,14 +1195,16 @@ int main(const int argc, const char* const argv[]) {
   }
 
   DataPlaneWorker worker{
-      *requests,
-      *responses,
-      *reactor,
-      service.has_value() ? std::addressof(*service) : nullptr,
-      replicated_service.has_value() ? std::addressof(*replicated_service) : nullptr,
-      subscription != nullptr ? std::addressof(*subscription->runtime) : nullptr,
-      subscription != nullptr ? std::addressof(subscription->requests) : nullptr,
-      subscription != nullptr ? std::addressof(subscription->responses) : nullptr};
+      {.requests = std::addressof(*requests),
+       .responses = std::addressof(*responses),
+       .reactor = std::addressof(*reactor),
+       .service = service.has_value() ? std::addressof(*service) : nullptr,
+       .replicated = replicated_service.has_value() ? std::addressof(*replicated_service) : nullptr,
+       .subscriptions = subscription != nullptr ? std::addressof(*subscription->runtime) : nullptr,
+       .subscription_requests =
+           subscription != nullptr ? std::addressof(subscription->requests) : nullptr,
+       .subscription_responses =
+           subscription != nullptr ? std::addressof(subscription->responses) : nullptr}};
   if (!worker.start()) {
     if (raft_worker.has_value()) {
       raft_worker->request_stop();
@@ -1319,4 +1337,19 @@ int main(const int argc, const char* const argv[]) {
     }
   }
   return exit_code;
+}
+
+} // namespace
+
+// C++ process entry points supply the conventional C argv array.
+// NOLINTNEXTLINE(modernize-avoid-c-arrays)
+int main(const int argc, const char* const argv[]) {
+  try {
+    return run_daemon(argc, argv);
+  } catch (const std::exception& error) {
+    std::fprintf(stderr, "chronosd: unhandled exception: %s\n", error.what());
+  } catch (...) {
+    std::fputs("chronosd: unhandled non-standard exception\n", stderr);
+  }
+  return 1;
 }

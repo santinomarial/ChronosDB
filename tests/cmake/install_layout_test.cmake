@@ -40,6 +40,18 @@ execute_process(
 if(NOT daemon_help_result EQUAL 0)
   message(FATAL_ERROR "installed chronosd --help failed with status ${daemon_help_result}")
 endif()
+execute_process(
+  COMMAND "${installed_daemon}" --version
+  RESULT_VARIABLE daemon_version_result
+  OUTPUT_VARIABLE daemon_version_output
+  ERROR_QUIET
+)
+if(NOT daemon_version_result EQUAL 0)
+  message(FATAL_ERROR "installed chronosd --version failed with status ${daemon_version_result}")
+endif()
+if(NOT daemon_version_output MATCHES "^ChronosDB [0-9]+\\.[0-9]+\\.[0-9]+")
+  message(FATAL_ERROR "installed chronosd --version did not report a semantic version")
+endif()
 
 set(installed_flushbench
     "${install_prefix}/${CHRONOS_TEST_INSTALL_BINDIR}/chronos-flushbench${CHRONOS_TEST_EXECUTABLE_SUFFIX}")
