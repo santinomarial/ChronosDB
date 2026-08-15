@@ -310,6 +310,32 @@ TEST(SingleNodeDatabaseTest, CreatesAndReopensAnEmptyDatabaseWithoutConfiguredTa
   EXPECT_TRUE(reopened->shutdown().is_ok());
 }
 
+TEST(SingleNodeDatabaseTest, MoveAssignmentClosesTheReplacedDatabaseBeforeTakingOwnership) {
+  TemporaryDirectory replaced_directory;
+  TemporaryDirectory incoming_directory;
+  auto target = SingleNodeDatabase::open_or_create(config(replaced_directory));
+  ASSERT_TRUE(target.has_value()) << target.error().to_string();
+  auto source = SingleNodeDatabase::open_or_create(config(incoming_directory));
+  ASSERT_TRUE(source.has_value()) << source.error().to_string();
+
+  *target = std::move(*source);
+
+  auto moved_from_snapshot = source->storage_snapshot();
+  ASSERT_FALSE(moved_from_snapshot.has_value());
+  EXPECT_EQ(moved_from_snapshot.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(source->find_tablet(tablet_id()), nullptr);
+  EXPECT_EQ(source->find_lineage(columnar::test::batch_schema()->table_id()), nullptr);
+  EXPECT_TRUE(source->shutdown().is_ok());
+  auto reopened_replaced = SingleNodeDatabase::open_or_create(config(replaced_directory));
+  ASSERT_TRUE(reopened_replaced.has_value()) << reopened_replaced.error().to_string();
+  EXPECT_TRUE(reopened_replaced->shutdown().is_ok());
+
+  EXPECT_TRUE(target->shutdown().is_ok());
+  auto reopened_incoming = SingleNodeDatabase::open_or_create(config(incoming_directory));
+  ASSERT_TRUE(reopened_incoming.has_value()) << reopened_incoming.error().to_string();
+  EXPECT_TRUE(reopened_incoming->shutdown().is_ok());
+}
+
 TEST(SingleNodeDatabaseTest, RecoversCatalogWalRowsAndVectorQueryVisibility) {
   TemporaryDirectory directory;
   seed_catalog(directory);
@@ -346,7 +372,7 @@ TEST(NativeProtocolServiceTest, AppliesLocalSyncIngestAndReturnsPositionlessMatc
   RecordingCommittedAppendObserver observer;
   SingleNodeDatabaseConfig database_config = config(directory);
   database_config.committed_append_observer = &observer;
-  auto database = SingleNodeDatabase::open_or_create(std::move(database_config));
+  auto database = SingleNodeDatabase::open_or_create(database_config);
   ASSERT_TRUE(database.has_value()) << database.error().to_string();
   NativeProtocolService service{*database};
 

@@ -99,7 +99,7 @@ public:
   SingleNodeDatabase& operator=(SingleNodeDatabase&&) noexcept;
 
   [[nodiscard]] static common::Result<SingleNodeDatabase>
-  open_or_create(SingleNodeDatabaseConfig config);
+  open_or_create(const SingleNodeDatabaseConfig& config);
 
   [[nodiscard]] const runtime::DatabaseBootstrapDescriptor& bootstrap() const noexcept;
   [[nodiscard]] const raft::MetadataCatalogSnapshot& metadata_catalog() const noexcept;
@@ -118,7 +118,7 @@ public:
   // committed/applied mutation notifies the configured observer exactly once; a matching retry
   // returns its original outcome without another notification.
   [[nodiscard]] common::Result<ingest::ColumnarAppendExecutionResult>
-  execute_append(schema::TabletId tablet_id, ingest::ColumnarAppendExecutionInput input);
+  execute_append(schema::TabletId tablet_id, const ingest::ColumnarAppendExecutionInput& input);
   [[nodiscard]] common::Result<manifest::DatabaseStorageSnapshot> storage_snapshot() const;
   // Borrows the exact storage publication and lineage owners used to execute a subscription's
   // historical half. The database must outlive the returned context and subscription runtime.
@@ -149,6 +149,7 @@ public:
   [[nodiscard]] common::Status shutdown();
 
 private:
+  void shutdown_noexcept() noexcept;
   [[nodiscard]] common::Status checkpoint_flushed_wal();
   class Impl;
   explicit SingleNodeDatabase(std::unique_ptr<Impl> impl) noexcept;

@@ -60,7 +60,7 @@ SingleNodeLiveAppendFanout::create(std::vector<SingleNodeLiveAppendBinding> bind
             return entry.binding.plan->fingerprint() == binding.plan->fingerprint();
           }))
         return common::make_unexpected(invalid("live append fan-out plan is duplicated"));
-      entries.push_back({std::move(binding), true});
+      entries.push_back({binding, true});
     }
     return std::unique_ptr<SingleNodeLiveAppendFanout>{
         new SingleNodeLiveAppendFanout{std::move(entries)}};
@@ -91,7 +91,8 @@ void SingleNodeLiveAppendFanout::on_applied(AppliedSingleNodeColumnarAppend appe
           ++metrics_.checkpoint_successes;
           return true;
         }
-      } catch (...) {
+      } catch (...) { // NOLINT(bugprone-empty-catch)
+        // The observer is noexcept; checkpoint failure is contained below.
       }
       ++metrics_.checkpoint_failures;
       try {
@@ -100,7 +101,8 @@ void SingleNodeLiveAppendFanout::on_applied(AppliedSingleNodeColumnarAppend appe
           ++metrics_.replay_invalidations;
         else
           ++metrics_.containment_failures;
-      } catch (...) {
+      } catch (...) { // NOLINT(bugprone-empty-catch)
+        // Replay invalidation failure is reported by the containment metric below.
         ++metrics_.containment_failures;
       }
       entry.enabled = false;
@@ -115,7 +117,8 @@ void SingleNodeLiveAppendFanout::on_applied(AppliedSingleNodeColumnarAppend appe
           static_cast<void>(persist());
           return;
         }
-      } catch (...) {
+      } catch (...) { // NOLINT(bugprone-empty-catch)
+        // The observer is noexcept; continuity failure disables this binding below.
       }
       entry.enabled = false;
       ++metrics_.disabled_plans;
@@ -137,7 +140,8 @@ void SingleNodeLiveAppendFanout::on_applied(AppliedSingleNodeColumnarAppend appe
           static_cast<void>(persist());
           continue;
         }
-      } catch (...) {
+      } catch (...) { // NOLINT(bugprone-empty-catch)
+        // The observer is noexcept; publication failure is contained below.
       }
       ++metrics_.publication_failures;
       contain();

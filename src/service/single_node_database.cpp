@@ -278,6 +278,10 @@ public:
     return refresh_catalog();
   }
 
+  [[nodiscard]] manifest::RecoveredManifestColumnarState* recovered_state() noexcept {
+    return recovered.has_value() ? std::addressof(*recovered) : nullptr;
+  }
+
   runtime::DatabaseBootstrap bootstrap_owner;
   std::unique_ptr<raft::DurableMultiRaftRuntime> raft_runtime;
   raft::DurableMetadataStateMachine metadata;
@@ -295,14 +299,28 @@ public:
 SingleNodeDatabase::SingleNodeDatabase(std::unique_ptr<Impl> impl) noexcept
     : impl_(std::move(impl)) {}
 SingleNodeDatabase::~SingleNodeDatabase() {
-  if (impl_ != nullptr)
-    static_cast<void>(shutdown());
+  shutdown_noexcept();
 }
 SingleNodeDatabase::SingleNodeDatabase(SingleNodeDatabase&&) noexcept = default;
-SingleNodeDatabase& SingleNodeDatabase::operator=(SingleNodeDatabase&&) noexcept = default;
+SingleNodeDatabase& SingleNodeDatabase::operator=(SingleNodeDatabase&& other) noexcept {
+  if (this != std::addressof(other)) {
+    shutdown_noexcept();
+    impl_ = std::move(other.impl_);
+  }
+  return *this;
+}
+
+void SingleNodeDatabase::shutdown_noexcept() noexcept {
+  try {
+    if (impl_ != nullptr)
+      static_cast<void>(shutdown());
+  } catch (...) { // NOLINT(bugprone-empty-catch)
+    // Explicit shutdown reports failures; destruction and replacement are necessarily best-effort.
+  }
+}
 
 common::Result<SingleNodeDatabase>
-SingleNodeDatabase::open_or_create(SingleNodeDatabaseConfig config) {
+SingleNodeDatabase::open_or_create(const SingleNodeDatabaseConfig& config) {
   auto bootstrap = runtime::DatabaseBootstrap::open_or_create(config.bootstrap);
   if (!bootstrap.has_value())
     return common::make_unexpected(bootstrap.error());
@@ -521,14 +539,18 @@ SingleNodeDatabase::query_catalog() const noexcept {
 }
 const schema::SchemaLineage*
 SingleNodeDatabase::find_lineage(const schema::TableId& table_id) const noexcept {
+  if (impl_ == nullptr)
+    return nullptr;
   const auto found = std::ranges::find_if(impl_->tables, [&](const RecoveredTable& table) {
     return table.lineage.table_id() == table_id;
   });
   return found == impl_->tables.end() ? nullptr : &found->lineage;
 }
 ingest::TabletState* SingleNodeDatabase::find_tablet(const schema::TabletId& tablet_id) noexcept {
-  if (impl_->recovered.has_value()) {
-    if (auto* tablet = impl_->recovered->tablet(tablet_id); tablet != nullptr)
+  if (impl_ == nullptr)
+    return nullptr;
+  if (auto* recovered = impl_->recovered_state(); recovered != nullptr) {
+    if (auto* tablet = recovered->tablet(tablet_id); tablet != nullptr)
       return tablet;
   }
   const auto found = std::ranges::find(impl_->fresh_tablets, tablet_id, &FreshTablet::tablet_id);
@@ -536,8 +558,10 @@ ingest::TabletState* SingleNodeDatabase::find_tablet(const schema::TabletId& tab
 }
 const ingest::TabletState*
 SingleNodeDatabase::find_tablet(const schema::TabletId& tablet_id) const noexcept {
-  if (impl_->recovered.has_value()) {
-    if (const auto* tablet = impl_->recovered->tablet(tablet_id); tablet != nullptr)
+  if (impl_ == nullptr)
+    return nullptr;
+  if (auto* recovered = impl_->recovered_state(); recovered != nullptr) {
+    if (const auto* tablet = recovered->tablet(tablet_id); tablet != nullptr)
       return tablet;
   }
   const auto found = std::ranges::find(impl_->fresh_tablets, tablet_id, &FreshTablet::tablet_id);
@@ -545,6 +569,8 @@ SingleNodeDatabase::find_tablet(const schema::TabletId& tablet_id) const noexcep
 }
 common::Result<std::vector<ingest::TabletSnapshot>>
 SingleNodeDatabase::table_snapshots(const schema::TableId& table_id) const {
+  if (impl_ == nullptr || impl_->shutdown)
+    return common::make_unexpected(invalid("database tablet state is unavailable"));
   const auto table = std::ranges::find_if(impl_->tables, [&](const RecoveredTable& candidate) {
     return candidate.lineage.table_id() == table_id;
   });
@@ -574,8 +600,9 @@ SingleNodeDatabase::table_snapshots(const schema::TableId& table_id) const {
 }
 common::Result<ingest::ColumnarAppendExecutionResult>
 SingleNodeDatabase::execute_append(const schema::TabletId tablet_id,
-                                   ingest::ColumnarAppendExecutionInput input) {
-  if (impl_ == nullptr || impl_->shutdown || !impl_->recovered.has_value())
+                                   const ingest::ColumnarAppendExecutionInput& input) {
+  auto* recovered = impl_ == nullptr ? nullptr : impl_->recovered_state();
+  if (impl_ == nullptr || impl_->shutdown || recovered == nullptr)
     return common::make_unexpected(invalid("single-node append storage is unavailable"));
   if (input.batch == nullptr)
     return common::make_unexpected(invalid("single-node append requires an owning batch"));
@@ -589,31 +616,35 @@ SingleNodeDatabase::execute_append(const schema::TabletId tablet_id,
     return common::make_unexpected(invalid("single-node append batch is routed to another tablet"));
 
   std::shared_ptr<const columnar::OwnedColumnarBatch> retained_batch = input.batch;
-  auto executed = ingest::execute_columnar_append(input, impl_->recovered->retry_directory(),
-                                                  *tablet, impl_->wal_coordinator);
+  auto executed = ingest::execute_columnar_append(input, recovered->retry_directory(), *tablet,
+                                                  impl_->wal_coordinator);
   if (!executed.has_value())
     return common::make_unexpected(executed.error());
+  const auto& wal_commit = executed->wal_commit;
   if (executed->kind == ingest::ColumnarAppendExecutionKind::kApplied &&
-      impl_->committed_append_observer != nullptr && executed->wal_commit.has_value() &&
+      impl_->committed_append_observer != nullptr && wal_commit.has_value() &&
       executed->outcome != nullptr) {
+    const auto& commit = *wal_commit;
     impl_->committed_append_observer->on_applied(
         {.tablet_id = tablet_id,
-         .position = {.wal_id = executed->wal_commit->append.record_start.wal_id,
-                      .record_sequence = executed->wal_commit->append.record_sequence},
+         .position = {.wal_id = commit.append.record_start.wal_id,
+                      .record_sequence = commit.append.record_sequence},
          .batch = std::move(retained_batch),
          .outcome = executed->outcome});
   }
   return executed;
 }
 common::Result<manifest::DatabaseStorageSnapshot> SingleNodeDatabase::storage_snapshot() const {
-  if (impl_ == nullptr || !impl_->recovered.has_value())
+  const auto* recovered = impl_ == nullptr ? nullptr : impl_->recovered_state();
+  if (recovered == nullptr)
     return common::make_unexpected(invalid("database storage publication is unavailable"));
-  return impl_->recovered->snapshot();
+  return recovered->snapshot();
 }
 
 common::Result<SingleNodeSubscriptionSnapshotContext>
 SingleNodeDatabase::subscription_snapshot_context(const schema::TableId& table_id) const {
-  if (impl_ == nullptr || impl_->shutdown || !impl_->recovered.has_value())
+  auto* recovered = impl_ == nullptr ? nullptr : impl_->recovered_state();
+  if (impl_ == nullptr || impl_->shutdown || recovered == nullptr)
     return common::make_unexpected(invalid("database subscription storage is unavailable"));
   const auto table = std::ranges::find_if(impl_->tables, [&](const RecoveredTable& candidate) {
     return candidate.lineage.table_id() == table_id;
@@ -621,10 +652,10 @@ SingleNodeDatabase::subscription_snapshot_context(const schema::TableId& table_i
   if (table == impl_->tables.end())
     return common::make_unexpected(common::Status{common::StatusCode::kNotFound,
                                                   "subscription table has no local runtime state"});
-  return SingleNodeSubscriptionSnapshotContext{
-      .storage = &std::as_const(*impl_->recovered).manifest_storage(),
-      .publisher = &impl_->recovered->storage_publisher(),
-      .lineage = &table->lineage};
+  return SingleNodeSubscriptionSnapshotContext{.storage =
+                                                   &std::as_const(*recovered).manifest_storage(),
+                                               .publisher = &recovered->storage_publisher(),
+                                               .lineage = &table->lineage};
 }
 
 common::Result<std::unique_ptr<query::PhysicalOperator>>
@@ -632,7 +663,8 @@ SingleNodeDatabase::instantiate_table_pipeline(
     const query::QueryResourceContext& resources, const schema::TableId& table_id,
     const schema::SchemaId& destination_schema_id, const query::PhysicalPipelinePlan& pipeline,
     const query::SnapshotTabletPipelineLimits limits) const {
-  if (impl_ == nullptr || impl_->shutdown || !impl_->recovered.has_value())
+  const auto* recovered = impl_ == nullptr ? nullptr : impl_->recovered_state();
+  if (impl_ == nullptr || impl_->shutdown || recovered == nullptr)
     return common::make_unexpected(invalid("database query storage is unavailable"));
   const auto table = std::ranges::find_if(impl_->tables, [&](const RecoveredTable& candidate) {
     return candidate.lineage.table_id() == table_id;
@@ -640,11 +672,11 @@ SingleNodeDatabase::instantiate_table_pipeline(
   if (table == impl_->tables.end())
     return common::make_unexpected(
         common::Status{common::StatusCode::kNotFound, "query table has no local runtime state"});
-  auto snapshot = impl_->recovered->snapshot();
+  auto snapshot = recovered->snapshot();
   if (!snapshot.has_value())
     return common::make_unexpected(snapshot.error());
   return query::instantiate_snapshot_tablets_pipeline(
-      resources, std::as_const(*impl_->recovered).manifest_storage(), *snapshot, table->tablets,
+      resources, std::as_const(*recovered).manifest_storage(), *snapshot, table->tablets,
       table->lineage, destination_schema_id, pipeline, limits);
 }
 
@@ -653,7 +685,8 @@ SingleNodeDatabase::instantiate_asof_pipeline(
     const query::QueryResourceContext& resources,
     const std::span<const SingleNodeAsofSourceBinding> sources,
     const query::PhysicalAsofPlan& plan) const {
-  if (impl_ == nullptr || impl_->shutdown || !impl_->recovered.has_value())
+  const auto* recovered = impl_ == nullptr ? nullptr : impl_->recovered_state();
+  if (impl_ == nullptr || impl_->shutdown || recovered == nullptr)
     return common::make_unexpected(invalid("database query storage is unavailable"));
   try {
     std::vector<query::SnapshotTableSourceBinding> bindings;
@@ -671,11 +704,11 @@ SingleNodeDatabase::instantiate_asof_pipeline(
                           .destination_schema_id = source.destination_schema_id,
                           .limits = source.limits});
     }
-    auto snapshot = impl_->recovered->snapshot();
+    auto snapshot = recovered->snapshot();
     if (!snapshot.has_value())
       return common::make_unexpected(snapshot.error());
     return query::instantiate_snapshot_tables_asof_plan(
-        resources, std::as_const(*impl_->recovered).manifest_storage(), *snapshot, bindings, plan);
+        resources, std::as_const(*recovered).manifest_storage(), *snapshot, bindings, plan);
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("single-node ASOF query allocation failed"));
   } catch (const std::length_error&) {
@@ -684,7 +717,8 @@ SingleNodeDatabase::instantiate_asof_pipeline(
 }
 
 common::Result<std::size_t> SingleNodeDatabase::flush_ready_heads() {
-  if (impl_ == nullptr || impl_->shutdown || !impl_->recovered.has_value())
+  auto* recovered = impl_ == nullptr ? nullptr : impl_->recovered_state();
+  if (impl_ == nullptr || impl_->shutdown || recovered == nullptr)
     return common::make_unexpected(invalid("database is not accepting storage maintenance"));
   try {
     common::SystemUuidGenerator identities;
@@ -696,8 +730,7 @@ common::Result<std::size_t> SingleNodeDatabase::flush_ready_heads() {
       auto current_snapshot = current_tablet->snapshot();
       if (!current_snapshot.has_value())
         return common::make_unexpected(current_snapshot.error());
-      auto refreshed =
-          impl_->recovered->storage_publisher().publish_tablet_snapshot(*current_snapshot);
+      auto refreshed = recovered->storage_publisher().publish_tablet_snapshot(*current_snapshot);
       if (!refreshed.has_value())
         return common::make_unexpected(refreshed.error());
       while (owner.queue->metrics().ready != 0U) {
@@ -748,7 +781,7 @@ common::Result<std::size_t> SingleNodeDatabase::flush_ready_heads() {
                              .applied_row_count = entry->outcome->applied_row_count});
         }
 
-        auto storage = impl_->recovered->snapshot();
+        auto storage = recovered->snapshot();
         if (!storage.has_value())
           return common::make_unexpected(storage.error());
         std::vector<schema::TabletId> binding_tablets;
@@ -816,10 +849,11 @@ common::Result<std::size_t> SingleNodeDatabase::flush_ready_heads() {
 }
 
 common::Status SingleNodeDatabase::checkpoint_flushed_wal() {
-  if (impl_ == nullptr || !impl_->recovered.has_value())
+  auto* recovered = impl_ == nullptr ? nullptr : impl_->recovered_state();
+  if (recovered == nullptr)
     return invalid("database storage is unavailable for WAL checkpointing");
   try {
-    auto snapshot = impl_->recovered->snapshot();
+    auto snapshot = recovered->snapshot();
     if (!snapshot.has_value())
       return snapshot.error();
     if (snapshot->parts().empty())
@@ -867,8 +901,8 @@ common::Status SingleNodeDatabase::checkpoint_flushed_wal() {
     image_names.reserve(snapshot->parts().size());
     for (const manifest::PartDescriptor& part : snapshot->parts()) {
       const std::array ids{part.part_id};
-      auto loaded = impl_->recovered->manifest_storage().load_snapshot_part_images(
-          *snapshot, ids, schema_bindings, {});
+      auto loaded = recovered->manifest_storage().load_snapshot_part_images(*snapshot, ids,
+                                                                            schema_bindings, {});
       if (!loaded.has_value())
         return loaded.error();
       if (loaded->size() != 1U)
@@ -898,7 +932,7 @@ common::Status SingleNodeDatabase::checkpoint_flushed_wal() {
     auto nonce = identities.generate();
     if (!nonce.has_value())
       return nonce.error();
-    auto installed = impl_->recovered->manifest_storage().install_manifest(
+    auto installed = recovered->manifest_storage().install_manifest(
         {.encoded_manifest = std::cref(checkpointed->encoded_manifest),
          .schema_bindings = schema_bindings,
          .nonce = *nonce,
@@ -908,7 +942,7 @@ common::Status SingleNodeDatabase::checkpoint_flushed_wal() {
          .compaction_equivalence_limits = {}});
     if (!installed.has_value())
       return installed.error();
-    auto selected = impl_->recovered->manifest_storage().load_selected_manifest(
+    auto selected = recovered->manifest_storage().load_selected_manifest(
         {.expected_database_id = snapshot->database_id(),
          .expected_wal_id = snapshot->wal_id(),
          .schema_bindings = schema_bindings,
@@ -918,7 +952,7 @@ common::Status SingleNodeDatabase::checkpoint_flushed_wal() {
       return selected.error();
     auto selected_owner =
         std::make_shared<const manifest::LoadedManifestGeneration>(std::move(*selected));
-    auto published = impl_->recovered->storage_publisher().publish_manifest(
+    auto published = recovered->storage_publisher().publish_manifest(
         {.selected_manifest = std::move(selected_owner), .replacements = {}});
     return published.has_value() ? common::Status::ok() : published.error();
   } catch (const std::bad_alloc&) {
@@ -958,7 +992,8 @@ common::Result<CreatedSingleNodeTable>
 SingleNodeDatabase::create_table(const query::BoundSqlCreateTable& statement,
                                  NewTableIdentities identities,
                                  const std::uint64_t retry_retention_positions) {
-  if (impl_ == nullptr || impl_->shutdown)
+  auto* recovered = impl_ == nullptr ? nullptr : impl_->recovered_state();
+  if (impl_ == nullptr || impl_->shutdown || recovered == nullptr)
     return common::make_unexpected(invalid("database is not accepting table creation"));
   if (statement.catalog().get() != impl_->query_catalog.get())
     return common::make_unexpected(invalid("CREATE TABLE was bound against a stale catalog"));
@@ -1093,14 +1128,12 @@ SingleNodeDatabase::create_table(const query::BoundSqlCreateTable& statement,
       if (!tablet_snapshot.has_value())
         return common::make_unexpected(tablet_snapshot.error());
       auto flush = manifest::SealedHeadFlushCoordinator::create(
-          *flush_queue, impl_->recovered->manifest_storage(),
-          impl_->recovered->storage_publisher());
+          *flush_queue, recovered->manifest_storage(), recovered->storage_publisher());
       if (!flush.has_value())
         return common::make_unexpected(flush.error());
       impl_->fresh_tablets.reserve(impl_->fresh_tablets.size() + 1U);
       impl_->flush_owners.reserve(impl_->flush_owners.size() + 1U);
-      auto published =
-          impl_->recovered->storage_publisher().publish_tablet_snapshot(*tablet_snapshot);
+      auto published = recovered->storage_publisher().publish_tablet_snapshot(*tablet_snapshot);
       if (!published.has_value())
         return common::make_unexpected(published.error());
       impl_->fresh_tablets.push_back({tablet_id, std::move(*state)});
