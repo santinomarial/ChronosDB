@@ -1,6 +1,7 @@
 #include "chronos/cluster/distributed_grouped_query_tcp_client.hpp"
 #include "chronos/cluster/distributed_grouped_query_tcp_server.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -63,6 +64,12 @@ template <typename Id> [[nodiscard]] Id id(const std::uint8_t seed) {
                         .aggregate_input_index = 0U,
                         .event_time_predicate = std::nullopt},
           .group_key_input_index = 0U}};
+}
+
+[[nodiscard]] std::optional<double> grouped_sum(const DistributedGroupedQueryResponse& response) {
+  return response.payload.transform([](const DistributedGroupedQueryResponsePayload& payload) {
+    return std::get<query::GroupedFloat64ExchangeMessage>(payload).partial.sum;
+  });
 }
 
 class Authenticator final : public network::ConnectionAuthenticator {
@@ -163,6 +170,8 @@ TEST(DistributedGroupedQueryTcpClientTest, OwnsConnectAndCompleteMutualTlsStream
       start);
   ASSERT_TRUE(client.has_value()) << client.error().to_string();
   EXPECT_FALSE(client->responses().has_value());
+  EXPECT_FALSE(client->interest().want_read);
+  EXPECT_TRUE(client->interest().want_write);
 
   Authenticator client_authenticator{91U};
   std::optional<network::TcpSocket> accepted_socket;
@@ -171,15 +180,17 @@ TEST(DistributedGroupedQueryTcpClientTest, OwnsConnectAndCompleteMutualTlsStream
     if (!accepted_socket.has_value()) {
       auto accepted = listener->accept_one();
       ASSERT_TRUE(accepted.has_value());
-      if (accepted->has_value()) {
-        accepted_socket.emplace(std::move(**accepted));
-        auto tls = network::TlsSocket::accept(*server_context, accepted_socket->descriptor());
+      std::optional<network::TcpSocket> pending_socket = std::move(*accepted);
+      if (pending_socket.has_value()) {
+        network::TcpSocket& socket =
+            accepted_socket.emplace(std::move(pending_socket).value_or(network::TcpSocket{}));
+        auto tls = network::TlsSocket::accept(*server_context, socket.descriptor());
         ASSERT_TRUE(tls.has_value());
         auto carrier = DistributedGroupedQueryTlsServer::create(
             std::move(*tls),
             {.authenticator = &client_authenticator,
              .receiver = &*receiver,
-             .peer_ipv4_address = accepted_socket->peer_endpoint().value().address,
+             .peer_ipv4_address = socket.peer_endpoint().value().address,
              .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
                         .exchange_timeout = std::chrono::milliseconds{1000},
                         .maximum_response_frames = 4U}},
@@ -189,7 +200,7 @@ TEST(DistributedGroupedQueryTcpClientTest, OwnsConnectAndCompleteMutualTlsStream
       }
     }
 
-    pollfd descriptors[2]{};
+    std::array<pollfd, 2U> descriptors{};
     std::size_t count = 0U;
     const auto client_interest = client->interest();
     descriptors[count++] = {.fd = client->descriptor(),
@@ -198,12 +209,16 @@ TEST(DistributedGroupedQueryTcpClientTest, OwnsConnectAndCompleteMutualTlsStream
                                                    (client_interest.want_write ? POLLOUT : 0))};
     if (server.has_value()) {
       const auto server_interest = server->interest();
-      descriptors[count++] = {.fd = accepted_socket->descriptor(),
+      const int server_descriptor =
+          accepted_socket
+              .transform([](const network::TcpSocket& socket) { return socket.descriptor(); })
+              .value_or(-1);
+      descriptors[count++] = {.fd = server_descriptor,
                               .events =
                                   static_cast<short>((server_interest.want_read ? POLLIN : 0) |
                                                      (server_interest.want_write ? POLLOUT : 0))};
     }
-    ASSERT_GE(::poll(descriptors, static_cast<nfds_t>(count), 1), 0);
+    ASSERT_GE(::poll(descriptors.data(), static_cast<nfds_t>(count), 1), 0);
     const auto now = DistributedGroupedQueryTcpClient::TimePoint::clock::now();
     ASSERT_TRUE(client
                     ->on_ready((descriptors[0].revents & POLLIN) != 0,
@@ -224,18 +239,20 @@ TEST(DistributedGroupedQueryTcpClientTest, OwnsConnectAndCompleteMutualTlsStream
   }
 
   ASSERT_EQ(client->state(), DistributedGroupedQueryTcpClientState::kComplete);
+  EXPECT_FALSE(client->interest().want_read);
+  EXPECT_FALSE(client->interest().want_write);
   ASSERT_TRUE(server.has_value());
-  ASSERT_EQ(server->state(), DistributedGroupedQueryTlsState::kComplete);
+  EXPECT_EQ(server.transform(
+                [](const DistributedGroupedQueryTlsServer& carrier) { return carrier.state(); }),
+            std::optional{DistributedGroupedQueryTlsState::kComplete});
   ASSERT_TRUE(client_authenticator.saw_fingerprint);
   ASSERT_TRUE(server_authenticator.saw_fingerprint);
   EXPECT_EQ(worker.calls, 1U);
   auto responses = client->responses();
   ASSERT_TRUE(responses.has_value());
   ASSERT_EQ(responses->size(), 2U);
-  EXPECT_EQ(std::get<query::GroupedFloat64ExchangeMessage>(*(*responses)[0].payload).partial.sum,
-            2.5);
-  EXPECT_EQ(std::get<query::GroupedFloat64ExchangeMessage>(*(*responses)[1].payload).partial.sum,
-            7.5);
+  EXPECT_EQ(grouped_sum((*responses)[0]), 2.5);
+  EXPECT_EQ(grouped_sum((*responses)[1]), 7.5);
 }
 
 TEST(DistributedGroupedQueryTcpClientTest, ValidatesBeforeConnectAndExpiresExactly) {
@@ -261,11 +278,15 @@ TEST(DistributedGroupedQueryTcpClientTest, ValidatesBeforeConnectAndExpiresExact
   auto client =
       DistributedGroupedQueryTcpClient::begin({1U, 2U, std::move(*request)}, config, start);
   ASSERT_TRUE(client.has_value());
+  EXPECT_FALSE(client->interest().want_read);
+  EXPECT_TRUE(client->interest().want_write);
   EXPECT_TRUE(client->on_ready(false, false, start + std::chrono::milliseconds{4}).is_ok());
   const auto expired = client->on_ready(false, false, start + std::chrono::milliseconds{5});
   EXPECT_EQ(expired.code(), common::StatusCode::kUnavailable);
   EXPECT_EQ(client->state(), DistributedGroupedQueryTcpClientState::kFailed);
   EXPECT_EQ(client->descriptor(), -1);
+  EXPECT_FALSE(client->interest().want_read);
+  EXPECT_FALSE(client->interest().want_write);
   EXPECT_EQ(client->on_ready(true, true, start + std::chrono::milliseconds{6}), expired);
 
   config.carrier.limits.maximum_response_frames = 0U;
@@ -329,10 +350,8 @@ TEST(DistributedGroupedQueryTcpServerTest, ServesRealTcpMutualTlsStream) {
   auto responses = client->responses();
   ASSERT_TRUE(responses.has_value());
   ASSERT_EQ(responses->size(), 2U);
-  EXPECT_EQ(std::get<query::GroupedFloat64ExchangeMessage>(*(*responses)[0].payload).partial.sum,
-            2.5);
-  EXPECT_EQ(std::get<query::GroupedFloat64ExchangeMessage>(*(*responses)[1].payload).partial.sum,
-            7.5);
+  EXPECT_EQ(grouped_sum((*responses)[0]), 2.5);
+  EXPECT_EQ(grouped_sum((*responses)[1]), 7.5);
   EXPECT_EQ(worker.calls, 1U);
   EXPECT_TRUE(client_authenticator.saw_fingerprint);
   EXPECT_TRUE(server_authenticator.saw_fingerprint);
@@ -370,8 +389,10 @@ TEST(DistributedGroupedQueryTcpServerTest, BoundsAdmissionAndValidatesConfigurat
     for (network::TcpSocket* socket : {&*first, &*second}) {
       if (socket->valid() && socket->connect_state() == network::TcpConnectState::kInProgress) {
         pollfd descriptor{.fd = socket->descriptor(), .events = POLLOUT};
-        if (::poll(&descriptor, 1U, 0) > 0)
-          (void)socket->finish_connect();
+        if (::poll(&descriptor, 1U, 0) > 0) {
+          const auto connected = socket->finish_connect();
+          ASSERT_TRUE(connected.has_value()) << connected.error().to_string();
+        }
       }
     }
   }

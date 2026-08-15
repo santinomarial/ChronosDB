@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <memory>
 #include <new>
+#include <optional>
 #include <poll.h>
 #include <stdexcept>
 #include <string>
@@ -74,13 +75,14 @@ public:
         ++server_metrics.accept_errors;
         return;
       }
-      if (!next->has_value())
+      std::optional<network::TcpSocket> accepted_socket = std::move(*next);
+      if (!accepted_socket.has_value())
         return;
       if (connections.size() == config.maximum_connections) {
         ++server_metrics.rejected_connections;
         continue;
       }
-      network::TcpSocket socket = std::move(**next);
+      network::TcpSocket socket = std::move(accepted_socket).value_or(network::TcpSocket{});
       const auto peer = socket.peer_endpoint();
       if (!peer.has_value()) {
         ++server_metrics.rejected_connections;

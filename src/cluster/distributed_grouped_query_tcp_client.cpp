@@ -20,6 +20,10 @@ namespace {
   return {common::StatusCode::kResourceExhausted, message};
 }
 
+[[nodiscard]] common::Status internal(const char* message) {
+  return {common::StatusCode::kInternal, message};
+}
+
 [[nodiscard]] bool valid_timeout(const std::chrono::milliseconds timeout) noexcept {
   const auto maximum = std::chrono::duration_cast<std::chrono::milliseconds>(
       DistributedGroupedQueryTcpClient::TimePoint::duration::max());
@@ -59,7 +63,7 @@ public:
   network::TcpSocket socket;
   DistributedGroupedQueryAttempt attempt;
   DistributedGroupedQueryTcpClientConfig config;
-  TimePoint connect_deadline{};
+  TimePoint connect_deadline;
   std::optional<DistributedGroupedQueryTlsClient> carrier;
   DistributedGroupedQueryTcpClientState client_state{
       DistributedGroupedQueryTcpClientState::kConnecting};
@@ -159,7 +163,9 @@ DistributedGroupedQueryTlsInterest DistributedGroupedQueryTcpClient::interest() 
   }
   if (implementation_->client_state == DistributedGroupedQueryTcpClientState::kConnecting)
     return {.want_write = true};
-  return implementation_->carrier->interest();
+  return implementation_->carrier
+      .transform([](const DistributedGroupedQueryTlsClient& carrier) { return carrier.interest(); })
+      .value_or(DistributedGroupedQueryTlsInterest{});
 }
 
 int DistributedGroupedQueryTcpClient::descriptor() const noexcept {
@@ -173,7 +179,11 @@ DistributedGroupedQueryTcpClient::responses() const {
     return common::make_unexpected(
         invalid("grouped query TCP responses are unavailable before completion"));
   }
-  return implementation_->carrier->responses();
+  return implementation_->carrier
+      .transform(
+          [](const DistributedGroupedQueryTlsClient& carrier) { return carrier.responses(); })
+      .value_or(common::make_unexpected(
+          internal("completed grouped query TCP client has no TLS carrier")));
 }
 
 const common::Status& DistributedGroupedQueryTcpClient::failure() const noexcept {
