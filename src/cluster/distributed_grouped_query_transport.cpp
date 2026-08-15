@@ -574,21 +574,26 @@ decode_distributed_grouped_query_response_v1(const common::ByteView bytes) {
         return common::make_unexpected(decoded.error());
       if (decoded->query_id != *query_id || decoded->tablet_id != *tablet_id)
         return common::make_unexpected(corruption("grouped query partial is not correlated"));
-      payload = std::move(*decoded);
+      payload = *decoded;
     } else {
       auto decoded = query::decode_grouped_exchange_terminal_message_exact(payload_bytes);
       if (!decoded.has_value())
         return common::make_unexpected(decoded.error());
       if (decoded->query_id != *query_id || decoded->tablet_id != *tablet_id)
         return common::make_unexpected(corruption("grouped query terminal is not correlated"));
-      payload = std::move(*decoded);
+      payload = *decoded;
     }
   }
   std::optional<DistributedQueryLeaderHint> leader_hint;
   if (has_hint)
     leader_hint = DistributedQueryLeaderHint{*leader_node, *placement_epoch};
-  return DistributedGroupedQueryResponse{
-      *source, *target, *query_id, *tablet_id, *status, std::move(payload), leader_hint};
+  return DistributedGroupedQueryResponse{.source_node_id = *source,
+                                         .target_node_id = *target,
+                                         .query_id = *query_id,
+                                         .tablet_id = *tablet_id,
+                                         .status_code = *status,
+                                         .payload = payload,
+                                         .leader_hint = leader_hint};
 }
 
 common::Result<DistributedGroupedQueryRequestReadStep>
@@ -684,8 +689,7 @@ DistributedGroupedQueryResponseReader::consume(const common::ByteView bytes) {
   }
   buffered_bytes_ = 0U;
   expected_frame_bytes_.reset();
-  return DistributedGroupedQueryResponseReadStep{.consumed_bytes = consumed,
-                                                 .response = std::move(*decoded)};
+  return DistributedGroupedQueryResponseReadStep{.consumed_bytes = consumed, .response = *decoded};
 }
 
 std::size_t DistributedGroupedQueryResponseReader::buffered_bytes() const noexcept {
@@ -807,7 +811,7 @@ common::Result<std::vector<std::vector<std::byte>>> DistributedGroupedQueryRecei
           tablet_id, request->dispatch.raft_group_id);
       if (!resolved.has_value())
         return common::make_unexpected(resolved.error());
-      leader_hint = std::move(*resolved);
+      leader_hint = *resolved;
     }
     auto encoded =
         encode_distributed_grouped_query_response_v1({.source_node_id = config_.local_node_id,
@@ -815,7 +819,7 @@ common::Result<std::vector<std::vector<std::byte>>> DistributedGroupedQueryRecei
                                                       .query_id = query_id,
                                                       .tablet_id = tablet_id,
                                                       .status_code = result.error().code(),
-                                                      .leader_hint = std::move(leader_hint)});
+                                                      .leader_hint = leader_hint});
     if (!encoded.has_value())
       return common::make_unexpected(encoded.error());
     try {
@@ -956,9 +960,10 @@ common::Status DistributedGroupedQuerySender::accept_responses(
   if (responses.front().status_code != common::StatusCode::kOk) {
     if (responses.size() != 1U || responses.front().payload.has_value())
       return invalid("grouped query failure response stream is invalid");
+    const DistributedQueryLeaderHint leader_hint =
+        responses.front().leader_hint.value_or(DistributedQueryLeaderHint{});
     if (responses.front().leader_hint.has_value() &&
-        (responses.front().leader_hint->node_id == 0U ||
-         responses.front().leader_hint->placement_epoch == 0U)) {
+        (leader_hint.node_id == 0U || leader_hint.placement_epoch == 0U)) {
       return invalid("grouped query response leader hint is invalid");
     }
     suggested_leader_ = responses.front().leader_hint;

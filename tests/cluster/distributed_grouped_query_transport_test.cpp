@@ -183,8 +183,10 @@ TEST(DistributedGroupedQueryTransportCodecTest, RoundTripsDistinctRequestAndEver
   ASSERT_TRUE(decoded_grouped.has_value()) << decoded_grouped.error().to_string();
   EXPECT_EQ(decode_distributed_query_response_v1(*encoded_grouped).error().code(),
             common::StatusCode::kCorruption);
-  const auto* decoded_partial =
-      std::get_if<query::GroupedFloat64ExchangeMessage>(&*decoded_grouped->payload);
+  ASSERT_TRUE(decoded_grouped->payload.has_value());
+  const DistributedGroupedQueryResponsePayload grouped_payload =
+      decoded_grouped->payload.value_or(DistributedGroupedQueryResponsePayload{partial()});
+  const auto* decoded_partial = std::get_if<query::GroupedFloat64ExchangeMessage>(&grouped_payload);
   ASSERT_NE(decoded_partial, nullptr);
   EXPECT_EQ(decoded_partial->sequence, 2U);
   EXPECT_EQ(decoded_partial->group_key, 0.0);
@@ -204,8 +206,10 @@ TEST(DistributedGroupedQueryTransportCodecTest, RoundTripsDistinctRequestAndEver
   EXPECT_EQ(encoded_terminal->size(), kDistributedGroupedQueryResponseHeaderSize + 64U + 4U);
   const auto decoded_terminal = decode_distributed_grouped_query_response_v1(*encoded_terminal);
   ASSERT_TRUE(decoded_terminal.has_value()) << decoded_terminal.error().to_string();
-  EXPECT_TRUE(
-      std::holds_alternative<query::GroupedExchangeTerminalMessage>(*decoded_terminal->payload));
+  ASSERT_TRUE(decoded_terminal->payload.has_value());
+  const DistributedGroupedQueryResponsePayload terminal_payload =
+      decoded_terminal->payload.value_or(DistributedGroupedQueryResponsePayload{partial()});
+  EXPECT_TRUE(std::holds_alternative<query::GroupedExchangeTerminalMessage>(terminal_payload));
 
   const DistributedGroupedQueryResponse failure{.source_node_id = 2U,
                                                 .target_node_id = 1U,
@@ -321,15 +325,19 @@ TEST(DistributedGroupedQueryStreamTest, RequestReaderOwnsEverySplitAndOneCoalesc
     EXPECT_EQ(first->consumed_bytes, split);
     if (split == encoded.size()) {
       ASSERT_TRUE(first->request.has_value());
-      EXPECT_EQ(first->request->dispatch.fragment.aggregate.query_id, uuid(1U));
+      const DistributedGroupedQueryRequest completed_request =
+          first->request.value_or(DistributedGroupedQueryRequest{1U, 2U, dispatch()});
+      EXPECT_EQ(completed_request.dispatch.fragment.aggregate.query_id, uuid(1U));
       continue;
     }
     EXPECT_FALSE(first->request.has_value());
     const auto second = reader.consume(common::ByteView{encoded}.subspan(split));
     ASSERT_TRUE(second.has_value()) << "split " << split;
     ASSERT_TRUE(second->request.has_value());
+    const DistributedGroupedQueryRequest completed_request =
+        second->request.value_or(DistributedGroupedQueryRequest{1U, 2U, dispatch()});
     EXPECT_EQ(second->consumed_bytes, encoded.size() - split);
-    EXPECT_EQ(second->request->dispatch.raft_group_id, uuid(9U));
+    EXPECT_EQ(completed_request.dispatch.raft_group_id, uuid(9U));
   }
 
   std::vector<std::byte> coalesced = encoded;
@@ -486,7 +494,10 @@ TEST(DistributedGroupedQueryReceiverTest, AuthenticatesAndPublishesOnlyCompleteW
   for (std::size_t index = 0U; index < success->size(); ++index) {
     const auto decoded = decode_distributed_grouped_query_response_v1((*success)[index]);
     ASSERT_TRUE(decoded.has_value()) << index;
-    const auto* message = std::get_if<query::GroupedFloat64ExchangeMessage>(&*decoded->payload);
+    ASSERT_TRUE(decoded->payload.has_value());
+    const DistributedGroupedQueryResponsePayload decoded_payload =
+        decoded->payload.value_or(DistributedGroupedQueryResponsePayload{partial()});
+    const auto* message = std::get_if<query::GroupedFloat64ExchangeMessage>(&decoded_payload);
     ASSERT_NE(message, nullptr);
     EXPECT_EQ(message->sequence, index + 1U);
     EXPECT_EQ(message->terminal, index + 1U == success->size());
@@ -498,8 +509,11 @@ TEST(DistributedGroupedQueryReceiverTest, AuthenticatesAndPublishesOnlyCompleteW
   ASSERT_EQ(terminal->size(), 1U);
   const auto decoded_terminal = decode_distributed_grouped_query_response_v1(terminal->front());
   ASSERT_TRUE(decoded_terminal.has_value());
+  ASSERT_TRUE(decoded_terminal->payload.has_value());
+  const DistributedGroupedQueryResponsePayload decoded_terminal_payload =
+      decoded_terminal->payload.value_or(DistributedGroupedQueryResponsePayload{partial()});
   EXPECT_TRUE(
-      std::holds_alternative<query::GroupedExchangeTerminalMessage>(*decoded_terminal->payload));
+      std::holds_alternative<query::GroupedExchangeTerminalMessage>(decoded_terminal_payload));
 
   worker.terminal_only = false;
   worker.failure = common::Status{common::StatusCode::kUnavailable, "placement changed"};
@@ -568,7 +582,10 @@ TEST(DistributedGroupedQuerySenderTest, RetainsOnlyCompleteCorrelatedTerminalStr
                                       .status_code = common::StatusCode::kOk,
                                       .payload = DistributedGroupedQueryResponsePayload{second}}};
   auto wrong_payload = responses;
-  std::get<query::GroupedFloat64ExchangeMessage>(*wrong_payload[1].payload).query_id = uuid(8U);
+  DistributedGroupedQueryResponsePayload mismatched_payload =
+      wrong_payload[1].payload.value_or(DistributedGroupedQueryResponsePayload{partial()});
+  std::get<query::GroupedFloat64ExchangeMessage>(mismatched_payload).query_id = uuid(8U);
+  wrong_payload[1].payload = mismatched_payload;
   EXPECT_EQ(sender->accept_responses(wrong_payload, now).code(),
             common::StatusCode::kInvalidArgument);
   EXPECT_EQ(sender->state(), DistributedQuerySenderState::kWaitingForResponse);
@@ -576,9 +593,11 @@ TEST(DistributedGroupedQuerySenderTest, RetainsOnlyCompleteCorrelatedTerminalStr
   EXPECT_TRUE(sender->accept_responses(responses, now).is_ok());
   EXPECT_EQ(sender->state(), DistributedQuerySenderState::kSucceeded);
   ASSERT_TRUE(sender->result().has_value());
-  ASSERT_EQ(sender->result()->size(), 2U);
-  EXPECT_EQ(std::get<query::GroupedFloat64ExchangeMessage>(sender->result()->front()).sequence, 1U);
-  EXPECT_TRUE(std::get<query::GroupedFloat64ExchangeMessage>(sender->result()->back()).terminal);
+  const std::vector<DistributedGroupedQueryResponsePayload> accepted =
+      sender->result().value_or(std::vector<DistributedGroupedQueryResponsePayload>{});
+  ASSERT_EQ(accepted.size(), 2U);
+  EXPECT_EQ(std::get<query::GroupedFloat64ExchangeMessage>(accepted.front()).sequence, 1U);
+  EXPECT_TRUE(std::get<query::GroupedFloat64ExchangeMessage>(accepted.back()).terminal);
   EXPECT_FALSE(sender->begin_attempt(now).has_value());
 
   auto empty_sender = DistributedGroupedQuerySender::create(1U, dispatch());
@@ -594,8 +613,10 @@ TEST(DistributedGroupedQuerySenderTest, RetainsOnlyCompleteCorrelatedTerminalStr
           .query_id = uuid(1U), .tablet_id = id<schema::TabletId>(4U), .sequence = 1U}}}};
   EXPECT_TRUE(empty_sender->accept_responses(empty_response, now).is_ok());
   ASSERT_TRUE(empty_sender->result().has_value());
-  EXPECT_TRUE(std::holds_alternative<query::GroupedExchangeTerminalMessage>(
-      empty_sender->result()->front()));
+  const std::vector<DistributedGroupedQueryResponsePayload> empty_result =
+      empty_sender->result().value_or(std::vector<DistributedGroupedQueryResponsePayload>{});
+  ASSERT_EQ(empty_result.size(), 1U);
+  EXPECT_TRUE(std::holds_alternative<query::GroupedExchangeTerminalMessage>(empty_result.front()));
 }
 
 TEST(DistributedGroupedQuerySenderTest, RetriesWholeAttemptsWithoutPartialPublication) {
@@ -622,8 +643,12 @@ TEST(DistributedGroupedQuerySenderTest, RetriesWholeAttemptsWithoutPartialPublic
   EXPECT_TRUE(sender->accept_responses(std::span{&unavailable_response, 1U}, start).is_ok());
   EXPECT_EQ(sender->state(), DistributedQuerySenderState::kBackoff);
   ASSERT_TRUE(sender->suggested_leader().has_value());
-  EXPECT_EQ(sender->suggested_leader()->node_id, 3U);
-  EXPECT_EQ(*sender->next_attempt_not_before(), start + std::chrono::milliseconds{10});
+  const DistributedQueryLeaderHint suggested_leader =
+      sender->suggested_leader().value_or(DistributedQueryLeaderHint{});
+  EXPECT_EQ(suggested_leader.node_id, 3U);
+  ASSERT_TRUE(sender->next_attempt_not_before().has_value());
+  EXPECT_EQ(sender->next_attempt_not_before().value_or(start),
+            start + std::chrono::milliseconds{10});
   EXPECT_FALSE(sender->result().has_value());
   EXPECT_FALSE(sender->begin_attempt(start + std::chrono::milliseconds{9}).has_value());
   ASSERT_TRUE(sender->begin_attempt(start + std::chrono::milliseconds{10}).has_value());
@@ -631,7 +656,9 @@ TEST(DistributedGroupedQuerySenderTest, RetriesWholeAttemptsWithoutPartialPublic
                   ->record_transport_failure(common::StatusCode::kIoError,
                                              start + std::chrono::milliseconds{10})
                   .is_ok());
-  EXPECT_EQ(*sender->next_attempt_not_before(), start + std::chrono::milliseconds{30});
+  ASSERT_TRUE(sender->next_attempt_not_before().has_value());
+  EXPECT_EQ(sender->next_attempt_not_before().value_or(start),
+            start + std::chrono::milliseconds{30});
   ASSERT_TRUE(sender->begin_attempt(start + std::chrono::milliseconds{30}).has_value());
   EXPECT_TRUE(sender
                   ->record_transport_failure(common::StatusCode::kInvalidArgument,
