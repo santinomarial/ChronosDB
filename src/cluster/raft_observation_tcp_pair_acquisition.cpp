@@ -249,13 +249,18 @@ RaftObservationTcpPairAcquisition::result() const {
       implementation_->pair_state == RaftObservationTcpPairAcquisitionState::kCancelled) {
     return common::make_unexpected(implementation_->pair_failure);
   }
-  if (implementation_->pair_state != RaftObservationTcpPairAcquisitionState::kComplete ||
-      !implementation_->pair_result.has_value()) {
+  if (implementation_->pair_state != RaftObservationTcpPairAcquisitionState::kComplete) {
     return common::make_unexpected(status(common::StatusCode::kInvalidArgument,
                                           "Raft observation pair result is unavailable"));
   }
+  const auto* pair =
+      implementation_->pair_result.transform([](const auto& value) { return &value; })
+          .value_or(nullptr);
+  if (pair == nullptr)
+    return common::make_unexpected(
+        status(common::StatusCode::kInternal, "Completed Raft observation pair is unavailable"));
   try {
-    return *implementation_->pair_result;
+    return *pair;
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
                                           "Raft observation pair result allocation failed"));

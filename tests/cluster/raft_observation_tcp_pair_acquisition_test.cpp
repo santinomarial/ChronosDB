@@ -156,9 +156,8 @@ struct PairFixture {
         {.local_node_id = 2U, .authorizer = &authorizer, .service = follower_service.get()});
     if (!leader_receiver_value.has_value() || !follower_receiver_value.has_value())
       throw std::runtime_error("creating pair observation receivers failed");
-    leader_receiver = std::make_unique<RaftObservationReceiver>(std::move(*leader_receiver_value));
-    follower_receiver =
-        std::make_unique<RaftObservationReceiver>(std::move(*follower_receiver_value));
+    leader_receiver = std::make_unique<RaftObservationReceiver>(*leader_receiver_value);
+    follower_receiver = std::make_unique<RaftObservationReceiver>(*follower_receiver_value);
     auto leader_server_value =
         RaftObservationTcpServer::start(server_config(client_authenticator, *leader_receiver));
     auto follower_server_value =
@@ -180,7 +179,7 @@ struct PairFixture {
                                       follower_authenticator, authorizer)};
   }
 
-  void drive_servers() {
+  void drive_servers() const {
     ASSERT_TRUE(leader_server->poll_once(std::chrono::milliseconds{1}).is_ok());
     ASSERT_TRUE(follower_server->poll_once(std::chrono::milliseconds{1}).is_ok());
   }
@@ -204,6 +203,8 @@ TEST(RaftObservationTcpPairAcquisitionTest, FansOutAndPublishesOnlyCompleteCorre
   }
   ASSERT_EQ(acquisition->state(), RaftObservationTcpPairAcquisitionState::kComplete)
       << acquisition->failure().to_string();
+  EXPECT_EQ(acquisition->poll_targets().size, 0U);
+  EXPECT_FALSE(acquisition->wake_deadline().has_value());
   auto authority = acquisition->result();
   ASSERT_TRUE(authority.has_value()) << authority.error().to_string();
   EXPECT_EQ(authority->leader_observation, leader_observation());
@@ -229,6 +230,8 @@ TEST(RaftObservationTcpPairAcquisitionTest, RejectsTermMismatchAfterBothExactObs
   EXPECT_EQ(acquisition->state(), RaftObservationTcpPairAcquisitionState::kFailed);
   EXPECT_EQ(acquisition->failure().code(), common::StatusCode::kUnavailable);
   EXPECT_EQ(acquisition->result().error(), acquisition->failure());
+  EXPECT_EQ(acquisition->poll_targets().size, 0U);
+  EXPECT_FALSE(acquisition->wake_deadline().has_value());
   EXPECT_EQ(fixture.leader_service->calls, 1U);
   EXPECT_EQ(fixture.follower_service->calls, 1U);
 }
