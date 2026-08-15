@@ -158,6 +158,8 @@ TEST(RaftObservationTlsServerTest, ServesOneAuthenticatedObservationExactlyOnce)
   }
   ASSERT_EQ(client->state(), RaftObservationTlsClientState::kComplete);
   ASSERT_EQ(server->state(), RaftObservationTlsServerState::kComplete);
+  EXPECT_FALSE(server->interest().want_read);
+  EXPECT_FALSE(server->interest().want_write);
   EXPECT_EQ(service.calls, 1U);
   EXPECT_TRUE(client_authenticator.saw_fingerprint);
   EXPECT_TRUE(server_authenticator.saw_fingerprint);
@@ -197,6 +199,9 @@ TEST(RaftObservationTlsServerTest, RejectsPrincipalBeforeObservationService) {
     progress = server->on_ready(true, true, start + std::chrono::milliseconds{1});
   }
   EXPECT_EQ(progress.code(), common::StatusCode::kUnauthenticated);
+  EXPECT_EQ(server->state(), RaftObservationTlsServerState::kFailed);
+  EXPECT_FALSE(server->interest().want_read);
+  EXPECT_FALSE(server->interest().want_write);
   EXPECT_EQ(service.calls, 0U);
   EXPECT_TRUE(client_authenticator.saw_fingerprint);
 }
@@ -220,6 +225,8 @@ TEST(RaftObservationTlsServerTest, ConfigurationAndDeadlineFailClosed) {
   const auto failure = server->on_ready(false, false, start + std::chrono::milliseconds{5});
   EXPECT_EQ(failure.code(), common::StatusCode::kUnavailable);
   EXPECT_EQ(server->state(), RaftObservationTlsServerState::kFailed);
+  EXPECT_FALSE(server->interest().want_read);
+  EXPECT_FALSE(server->interest().want_write);
   EXPECT_EQ(server->on_ready(true, true, start + std::chrono::milliseconds{6}), failure);
 }
 

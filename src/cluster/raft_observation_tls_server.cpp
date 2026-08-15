@@ -39,7 +39,7 @@ public:
       : socket_(std::move(socket)), config_(config),
         deadline_(deadline_after(now, config.limits.handshake_timeout)) {}
 
-  [[nodiscard]] common::Status fail(common::Status failure) noexcept {
+  [[nodiscard]] common::Status fail(common::Status failure) {
     if (state_ != RaftObservationTlsServerState::kFailed) {
       failure_ = std::move(failure);
       state_ = RaftObservationTlsServerState::kFailed;
@@ -146,7 +146,11 @@ public:
   [[nodiscard]] common::Status write(const bool readable, const bool writable) {
     if ((!interest_.want_read || !readable) && (!interest_.want_write || !writable))
       return common::Status::ok();
-    auto progress = socket_.write(response_writer_->pending_write());
+    auto* writer = response_writer_.transform([](auto& value) { return &value; }).value_or(nullptr);
+    if (writer == nullptr)
+      return fail(
+          status(common::StatusCode::kInternal, "Raft observation response writer is unavailable"));
+    auto progress = socket_.write(writer->pending_write());
     if (!progress.has_value())
       return fail(progress.error());
     if (progress->state == network::TlsIoState::kClosed)
@@ -163,10 +167,10 @@ public:
     if (progress->bytes_transferred == 0U)
       return fail(status(common::StatusCode::kUnavailable,
                          "Raft observation response write made no progress"));
-    const common::Status consumed = response_writer_->consume_written(progress->bytes_transferred);
+    const common::Status consumed = writer->consume_written(progress->bytes_transferred);
     if (!consumed.is_ok())
       return fail(consumed);
-    if (response_writer_->complete()) {
+    if (writer->complete()) {
       state_ = RaftObservationTlsServerState::kComplete;
       interest_ = {};
     } else {
@@ -177,7 +181,7 @@ public:
 
   network::TlsSocket socket_;
   RaftObservationTlsServerConfig config_;
-  TimePoint deadline_{};
+  TimePoint deadline_;
   RaftObservationTlsServerState state_{RaftObservationTlsServerState::kHandshaking};
   RaftObservationTlsServerInterest interest_{.want_read = true};
   std::optional<network::PeerAuthenticationResult> authenticated_peer_;
