@@ -115,7 +115,7 @@ inline constexpr std::uint32_t kKnownExchangeFlags = kTerminalFlag | kMinimumFla
 
 EncodedExchangeMessage::EncodedExchangeMessage(
     std::array<std::byte, distributed_format::kExchangeMessageLength> bytes) noexcept
-    : bytes_(std::move(bytes)) {}
+    : bytes_(bytes) {}
 
 common::ByteView EncodedExchangeMessage::bytes() const noexcept {
   return bytes_;
@@ -168,7 +168,7 @@ common::Result<EncodedExchangeMessage> encode_exchange_message(const ExchangeMes
     return common::make_unexpected(common::Status{
         common::StatusCode::kInternal, "exchange frame checksum does not fit frozen layout"});
   }
-  return EncodedExchangeMessage{std::move(bytes)};
+  return EncodedExchangeMessage{bytes};
 }
 
 common::Result<ExchangeMessage> decode_exchange_message_exact(const common::ByteView bytes) {
@@ -268,7 +268,7 @@ common::Result<ExchangeFrameReadStep> ExchangeFrameReader::consume(const common:
     return common::make_unexpected(*failure_);
   }
   buffered_bytes_ = 0U;
-  return ExchangeFrameReadStep{.consumed_bytes = consumed, .message = std::move(*decoded)};
+  return ExchangeFrameReadStep{.consumed_bytes = consumed, .message = *decoded};
 }
 
 std::size_t ExchangeFrameReader::buffered_bytes() const noexcept {
@@ -280,17 +280,17 @@ bool ExchangeFrameReader::failed() const noexcept {
 }
 
 ExchangeFrameWriteCursor::ExchangeFrameWriteCursor(EncodedExchangeMessage encoded) noexcept
-    : encoded_(std::move(encoded)) {}
+    : encoded_(encoded) {}
 
 ExchangeFrameWriteCursor::ExchangeFrameWriteCursor(ExchangeFrameWriteCursor&& other) noexcept
-    : encoded_(std::move(other.encoded_)),
+    : encoded_(other.encoded_),
       written_bytes_(
           std::exchange(other.written_bytes_, distributed_format::kExchangeMessageLength)) {}
 
 ExchangeFrameWriteCursor&
 ExchangeFrameWriteCursor::operator=(ExchangeFrameWriteCursor&& other) noexcept {
   if (this != &other) {
-    encoded_ = std::move(other.encoded_);
+    encoded_ = other.encoded_;
     written_bytes_ =
         std::exchange(other.written_bytes_, distributed_format::kExchangeMessageLength);
   }
@@ -302,7 +302,7 @@ ExchangeFrameWriteCursor::create(const ExchangeMessage& message) {
   common::Result<EncodedExchangeMessage> encoded = encode_exchange_message(message);
   if (!encoded.has_value())
     return common::make_unexpected(encoded.error());
-  return ExchangeFrameWriteCursor{std::move(*encoded)};
+  return ExchangeFrameWriteCursor{*encoded};
 }
 
 common::ByteView ExchangeFrameWriteCursor::pending_write() const noexcept {
@@ -430,8 +430,7 @@ common::Status MergeableAggregateState::add(const double value) {
 common::Status MergeableAggregateState::merge(const MergeableAggregateState& other) {
   if (other.count == 0U)
     return common::Status::ok();
-  if (!other.minimum.has_value() || !other.maximum.has_value() ||
-      (count != 0U && (!minimum.has_value() || !maximum.has_value()))) {
+  if (!other.minimum.has_value() || !other.maximum.has_value()) {
     return invalid("distributed partial aggregate state is inconsistent");
   }
   if (count > std::numeric_limits<std::uint64_t>::max() - other.count) {
@@ -441,6 +440,8 @@ common::Status MergeableAggregateState::merge(const MergeableAggregateState& oth
     *this = other;
     return common::Status::ok();
   }
+  if (!minimum.has_value() || !maximum.has_value())
+    return invalid("distributed partial aggregate state is inconsistent");
   const std::uint64_t combined = count + other.count;
   const double delta = other.mean - mean;
   m2 += other.m2 + delta * delta * static_cast<double>(count) * static_cast<double>(other.count) /
@@ -487,7 +488,7 @@ common::Status BoundedExchange::push(ExchangeMessage message) {
   if (impl_->is_cancelled) {
     return common::Status{common::StatusCode::kCancelled, "exchange is cancelled"};
   }
-  const common::Status validation = validate_exchange_message(message);
+  common::Status validation = validate_exchange_message(message);
   if (!validation.is_ok())
     return validation;
   if (message.query_id != impl_->query_id)
@@ -497,7 +498,7 @@ common::Status BoundedExchange::push(ExchangeMessage message) {
     return common::Status{common::StatusCode::kResourceExhausted, "exchange is backpressured"};
   }
   impl_->charged_bytes += kExchangeMessageCharge;
-  impl_->messages.push_back(std::move(message));
+  impl_->messages.push_back(message);
   return common::Status::ok();
 }
 
@@ -509,10 +510,10 @@ common::Result<std::optional<ExchangeMessage>> BoundedExchange::try_pop() {
   }
   if (impl_->messages.empty())
     return std::optional<ExchangeMessage>{};
-  ExchangeMessage message = std::move(impl_->messages.front());
+  const ExchangeMessage message = impl_->messages.front();
   impl_->messages.pop_front();
   impl_->charged_bytes -= kExchangeMessageCharge;
-  return std::optional<ExchangeMessage>{std::move(message)};
+  return std::optional<ExchangeMessage>{message};
 }
 
 common::Status BoundedExchange::cancel() {
@@ -549,7 +550,7 @@ public:
   DistributedCoordinatorLimits limits;
   std::map<schema::TabletId, FragmentProgress> fragments;
   std::size_t retained_messages{};
-  std::optional<common::Status> failure;
+  common::Status failure;
 };
 
 DistributedAggregateCoordinator::DistributedAggregateCoordinator(
@@ -561,10 +562,11 @@ DistributedAggregateCoordinator::DistributedAggregateCoordinator(
 DistributedAggregateCoordinator&
 DistributedAggregateCoordinator::operator=(DistributedAggregateCoordinator&&) noexcept = default;
 
-common::Result<DistributedAggregateCoordinator>
-DistributedAggregateCoordinator::create(DistributedAggregatePlan plan,
-                                        std::vector<DistributedReadAdmission> admissions,
-                                        const DistributedCoordinatorLimits limits) {
+common::Result<DistributedAggregateCoordinator> DistributedAggregateCoordinator::create(
+    DistributedAggregatePlan plan,
+    // Preserve the public ownership-transfer boundary.
+    std::vector<DistributedReadAdmission> admissions, // NOLINT(performance-unnecessary-value-param)
+    const DistributedCoordinatorLimits limits) {
   if (plan.query_id.is_nil()) {
     return common::make_unexpected(invalid("distributed coordinator query identity is invalid"));
   }
@@ -599,9 +601,9 @@ DistributedAggregateCoordinator::create(DistributedAggregatePlan plan,
 }
 
 common::Status DistributedAggregateCoordinator::accept(const ExchangeMessage& message) {
-  if (impl_->failure.has_value())
-    return *impl_->failure;
-  const common::Status validation = validate_exchange_message(message);
+  if (!impl_->failure.is_ok())
+    return impl_->failure;
+  common::Status validation = validate_exchange_message(message);
   if (!validation.is_ok())
     return validation;
   auto fragment = impl_->fragments.find(message.tablet_id);
@@ -629,7 +631,7 @@ common::Status DistributedAggregateCoordinator::accept(const ExchangeMessage& me
   }
 
   MergeableAggregateState merged = progress.merged;
-  const common::Status merge_status = merged.merge(message.partial);
+  common::Status merge_status = merged.merge(message.partial);
   if (!merge_status.is_ok())
     return merge_status;
   try {
@@ -638,7 +640,7 @@ common::Status DistributedAggregateCoordinator::accept(const ExchangeMessage& me
     return common::Status{common::StatusCode::kResourceExhausted,
                           "distributed coordinator message retention allocation failed"};
   }
-  progress.merged = std::move(merged);
+  progress.merged = merged;
   progress.terminal = message.terminal;
   ++impl_->retained_messages;
   return common::Status::ok();
@@ -652,15 +654,15 @@ common::Status DistributedAggregateCoordinator::worker_failed(const schema::Tabl
   }
   if (fragment->second.terminal)
     return common::Status::ok();
-  if (impl_->failure.has_value())
-    return *impl_->failure;
+  if (!impl_->failure.is_ok())
+    return impl_->failure;
   impl_->failure = std::move(failure);
   return common::Status::ok();
 }
 
 common::Result<MergeableAggregateState> DistributedAggregateCoordinator::finish() const {
-  if (impl_->failure.has_value())
-    return common::make_unexpected(*impl_->failure);
+  if (!impl_->failure.is_ok())
+    return common::make_unexpected(impl_->failure);
   MergeableAggregateState merged;
   for (const auto& [tablet, progress] : impl_->fragments) {
     static_cast<void>(tablet);

@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -51,6 +52,7 @@ void rewrite_exchange_crc(ExchangeBytes& bytes) {
 [[nodiscard]] std::vector<DistributedReadAdmission>
 linearizable_admissions(const DistributedAggregatePlan& plan) {
   std::vector<DistributedReadAdmission> admissions;
+  admissions.reserve(plan.fragments.size());
   for (const DistributedTablet& fragment : plan.fragments) {
     admissions.push_back({fragment.tablet_id, fragment.leader_node, fragment.local_applied_position,
                           fragment.local_applied_position,
@@ -96,9 +98,13 @@ TEST(DistributedQueryTest, PrunesTabletsMergesPartialStateAndRequiresEveryFragme
   ASSERT_TRUE(result.has_value());
   EXPECT_EQ(result->count, 4U);
   EXPECT_DOUBLE_EQ(result->sum, 10.0);
-  EXPECT_DOUBLE_EQ(*result->minimum, 1.0);
-  EXPECT_DOUBLE_EQ(*result->maximum, 4.0);
-  EXPECT_NEAR(*result->variance_population(), 1.25, 1e-12);
+  ASSERT_TRUE(result->minimum.has_value());
+  ASSERT_TRUE(result->maximum.has_value());
+  const std::optional<double> variance = result->variance_population();
+  ASSERT_TRUE(variance.has_value());
+  EXPECT_DOUBLE_EQ(result->minimum.value_or(std::numeric_limits<double>::quiet_NaN()), 1.0);
+  EXPECT_DOUBLE_EQ(result->maximum.value_or(std::numeric_limits<double>::quiet_NaN()), 4.0);
+  EXPECT_NEAR(variance.value_or(std::numeric_limits<double>::quiet_NaN()), 1.25, 1e-12);
 }
 
 TEST(DistributedQueryTest, BackpressureCancellationAndWorkerFailureFailClosed) {
@@ -129,9 +135,16 @@ TEST(DistributedQueryTest, BackpressureCancellationAndWorkerFailureFailClosed) {
                                 common::Status{common::StatusCode::kInternal, "later failure"})
                 .code(),
             common::StatusCode::kUnavailable);
+  EXPECT_EQ(coordinator->accept({query_id, tablet(2U), 1U, partial, true}).code(),
+            common::StatusCode::kUnavailable);
   const auto result = coordinator->finish();
   ASSERT_FALSE(result.has_value());
   EXPECT_EQ(result.error().code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(result.error().message(), "worker lost");
+  const auto repeated = coordinator->finish();
+  ASSERT_FALSE(repeated.has_value());
+  EXPECT_EQ(repeated.error().code(), result.error().code());
+  EXPECT_EQ(repeated.error().message(), result.error().message());
 }
 
 TEST(DistributedQueryTest, CoordinatorEnforcesSequenceDeduplicationAndTerminalOwnership) {
@@ -170,8 +183,10 @@ TEST(DistributedQueryTest, CoordinatorEnforcesSequenceDeduplicationAndTerminalOw
   ASSERT_TRUE(result.has_value());
   EXPECT_EQ(result->count, 2U);
   EXPECT_DOUBLE_EQ(result->sum, 4.0);
-  EXPECT_DOUBLE_EQ(*result->minimum, 1.0);
-  EXPECT_DOUBLE_EQ(*result->maximum, 3.0);
+  ASSERT_TRUE(result->minimum.has_value());
+  ASSERT_TRUE(result->maximum.has_value());
+  EXPECT_DOUBLE_EQ(result->minimum.value_or(std::numeric_limits<double>::quiet_NaN()), 1.0);
+  EXPECT_DOUBLE_EQ(result->maximum.value_or(std::numeric_limits<double>::quiet_NaN()), 3.0);
 }
 
 TEST(DistributedQueryTest, CoordinatorEnforcesFiniteRetryHistory) {
@@ -248,10 +263,16 @@ TEST(DistributedQueryTest, ExchangeFrameHasFrozenLayoutAndRoundTripsAggregateBit
   EXPECT_EQ(decoded->partial.count, message.partial.count);
   EXPECT_EQ(std::bit_cast<std::uint64_t>(decoded->partial.sum),
             std::bit_cast<std::uint64_t>(message.partial.sum));
-  EXPECT_EQ(std::bit_cast<std::uint64_t>(*decoded->partial.minimum),
-            std::bit_cast<std::uint64_t>(*message.partial.minimum));
-  EXPECT_EQ(std::bit_cast<std::uint64_t>(*decoded->partial.maximum),
-            std::bit_cast<std::uint64_t>(*message.partial.maximum));
+  ASSERT_TRUE(decoded->partial.minimum.has_value());
+  ASSERT_TRUE(decoded->partial.maximum.has_value());
+  EXPECT_EQ(std::bit_cast<std::uint64_t>(
+                decoded->partial.minimum.value_or(std::numeric_limits<double>::quiet_NaN())),
+            std::bit_cast<std::uint64_t>(
+                message.partial.minimum.value_or(std::numeric_limits<double>::quiet_NaN())));
+  EXPECT_EQ(std::bit_cast<std::uint64_t>(
+                decoded->partial.maximum.value_or(std::numeric_limits<double>::quiet_NaN())),
+            std::bit_cast<std::uint64_t>(
+                message.partial.maximum.value_or(std::numeric_limits<double>::quiet_NaN())));
   EXPECT_EQ(std::bit_cast<std::uint64_t>(decoded->partial.mean),
             std::bit_cast<std::uint64_t>(message.partial.mean));
   EXPECT_EQ(std::bit_cast<std::uint64_t>(decoded->partial.m2),
@@ -341,6 +362,8 @@ TEST(DistributedQueryTest, ExchangeFrameReaderHandlesEverySplitAndCoalescedFrame
   const auto second_encoded = encode_exchange_message(second_message);
   ASSERT_TRUE(first_encoded.has_value());
   ASSERT_TRUE(second_encoded.has_value());
+  ExchangeMessage missing_message = first_message;
+  missing_message.sequence = 0U;
 
   for (std::size_t split = 0U; split <= first_encoded->bytes().size(); ++split) {
     ExchangeFrameReader reader;
@@ -352,9 +375,10 @@ TEST(DistributedQueryTest, ExchangeFrameReaderHandlesEverySplitAndCoalescedFrame
     const auto suffix = reader.consume(first_encoded->bytes().subspan(split));
     ASSERT_TRUE(suffix.has_value()) << "split=" << split;
     EXPECT_EQ(suffix->consumed_bytes, first_encoded->bytes().size() - split) << "split=" << split;
-    const ExchangeMessage* decoded =
-        prefix->message.has_value() ? &*prefix->message : &*suffix->message;
-    EXPECT_EQ(decoded->sequence, first_message.sequence) << "split=" << split;
+    ASSERT_TRUE(prefix->message.has_value() || suffix->message.has_value()) << "split=" << split;
+    const ExchangeMessage decoded =
+        prefix->message.value_or(suffix->message.value_or(missing_message));
+    EXPECT_EQ(decoded.sequence, first_message.sequence) << "split=" << split;
     EXPECT_EQ(reader.buffered_bytes(), 0U);
   }
 
@@ -365,12 +389,14 @@ TEST(DistributedQueryTest, ExchangeFrameReaderHandlesEverySplitAndCoalescedFrame
   ASSERT_TRUE(first.has_value());
   ASSERT_TRUE(first->message.has_value());
   EXPECT_EQ(first->consumed_bytes, distributed_format::kExchangeMessageLength);
-  EXPECT_EQ(first->message->sequence, first_message.sequence);
+  const ExchangeMessage decoded_first = first->message.value_or(missing_message);
+  EXPECT_EQ(decoded_first.sequence, first_message.sequence);
   const auto second = reader.consume(common::ByteView{coalesced}.subspan(first->consumed_bytes));
   ASSERT_TRUE(second.has_value());
   ASSERT_TRUE(second->message.has_value());
-  EXPECT_EQ(second->message->sequence, second_message.sequence);
-  EXPECT_TRUE(second->message->terminal);
+  const ExchangeMessage decoded_second = second->message.value_or(missing_message);
+  EXPECT_EQ(decoded_second.sequence, second_message.sequence);
+  EXPECT_TRUE(decoded_second.terminal);
 }
 
 TEST(DistributedQueryTest, ExchangeFrameReaderFailureIsSticky) {
