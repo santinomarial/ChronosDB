@@ -1,3 +1,5 @@
 #include "chronos/live/subscription_retention.hpp"
 
-static_assert(sizeof(chronos::live::SubscriptionRetentionReport) > 0U);
+#include <type_traits>
+
+static_assert(std::is_move_constructible_v<chronos::live::SubscriptionRetentionReport>);
