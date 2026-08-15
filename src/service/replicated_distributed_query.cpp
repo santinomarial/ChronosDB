@@ -249,7 +249,7 @@ create_replicated_follower_distributed_vector_aggregate_query_v2(
 
 common::Result<cluster::DistributedGroupedQueryTcpExecution>
 create_replicated_distributed_grouped_float64_query(
-    query::DistributedAggregatePlan plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const query::DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
     const ReplicatedDistributedGroupedFloat64QueryConfig& config) {
   const common::Status config_status = validate_config(config);
   if (!config_status.is_ok())
@@ -280,7 +280,7 @@ create_replicated_distributed_grouped_float64_query(
 
 common::Result<cluster::DistributedGroupedQueryTcpExecution>
 create_replicated_follower_distributed_grouped_float64_query(
-    query::DistributedAggregatePlan plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const query::DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
     const std::span<const query::DistributedAggregateFollowerReadAuthority> follower_authorities,
     const ReplicatedDistributedGroupedFloat64QueryConfig& config) {
   const common::Status config_status = validate_config(config);
@@ -447,7 +447,11 @@ common::Status ReplicatedFollowerDistributedAggregateQuery::poll_once(
     impl.owner_state = ReplicatedFollowerDistributedAggregateQueryState::kExecuting;
     return common::Status::ok();
   }
-  const common::Status progress = impl.execution->poll_once(maximum_wait);
+  if (!impl.execution.has_value()) {
+    return impl.fail(
+        common::Status{common::StatusCode::kInternal, "replicated follower query lost execution"});
+  }
+  common::Status progress = impl.execution->poll_once(maximum_wait);
   const auto state = impl.execution->state();
   if (state == cluster::DistributedQueryTcpExecutionState::kComplete) {
     impl.owner_state = ReplicatedFollowerDistributedAggregateQueryState::kComplete;
@@ -460,6 +464,8 @@ common::Status ReplicatedFollowerDistributedAggregateQuery::poll_once(
     impl.owner_state = ReplicatedFollowerDistributedAggregateQueryState::kCancelled;
     return impl.owner_failure;
   }
+  if (!progress.is_ok())
+    return impl.fail(std::move(progress));
   return progress;
 }
 
@@ -477,8 +483,11 @@ common::Status ReplicatedFollowerDistributedAggregateQuery::cancel() {
   }
   if (impl.owner_state == ReplicatedFollowerDistributedAggregateQueryState::kAcquiringAuthority)
     static_cast<void>(impl.authority.cancel());
-  else
+  else if (impl.execution.has_value())
     static_cast<void>(impl.execution->cancel());
+  else
+    return impl.fail(
+        common::Status{common::StatusCode::kInternal, "replicated follower query lost execution"});
   impl.owner_failure = {common::StatusCode::kCancelled,
                         "replicated follower distributed query was cancelled"};
   impl.owner_state = ReplicatedFollowerDistributedAggregateQueryState::kCancelled;
@@ -495,10 +504,9 @@ ReplicatedFollowerDistributedAggregateQueryMetrics
 ReplicatedFollowerDistributedAggregateQuery::metrics() const noexcept {
   if (!implementation_)
     return {};
-  return {.authority = implementation_->authority.metrics(),
-          .execution = implementation_->execution.has_value()
-                           ? std::optional{implementation_->execution->metrics()}
-                           : std::nullopt};
+  const auto execution_metrics = implementation_->execution.transform(
+      [](const auto& execution) { return execution.metrics(); });
+  return {.authority = implementation_->authority.metrics(), .execution = execution_metrics};
 }
 
 common::Result<query::MergeableAggregateState>
@@ -514,7 +522,12 @@ ReplicatedFollowerDistributedAggregateQuery::result() const {
   if (implementation_->owner_state != ReplicatedFollowerDistributedAggregateQueryState::kComplete)
     return common::make_unexpected(common::Status{
         common::StatusCode::kInvalidArgument, "replicated follower query result is unavailable"});
-  return implementation_->execution->result();
+  const auto& execution = implementation_->execution;
+  if (!execution.has_value()) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kInternal, "replicated follower query lost completed execution"});
+  }
+  return execution->result();
 }
 
 const common::Status& ReplicatedFollowerDistributedAggregateQuery::failure() const noexcept {
@@ -860,14 +873,18 @@ common::Status ReplicatedFollowerDistributedGroupedFloat64Query::poll_once(
     if (!authorities.has_value())
       return impl.fail(authorities.error());
     auto execution = create_replicated_follower_distributed_grouped_float64_query(
-        std::move(impl.plan), std::move(impl.snapshot), *authorities, impl.config);
+        impl.plan, std::move(impl.snapshot), *authorities, impl.config);
     if (!execution.has_value())
       return impl.fail(execution.error());
     impl.execution.emplace(std::move(*execution));
     impl.owner_state = ReplicatedFollowerDistributedGroupedFloat64QueryState::kExecuting;
     return common::Status::ok();
   }
-  const common::Status progress = impl.execution->poll_once(maximum_wait);
+  if (!impl.execution.has_value()) {
+    return impl.fail(common::Status{common::StatusCode::kInternal,
+                                    "replicated follower grouped query lost execution"});
+  }
+  common::Status progress = impl.execution->poll_once(maximum_wait);
   const auto state = impl.execution->state();
   if (state == cluster::DistributedGroupedQueryTcpExecutionState::kComplete) {
     impl.owner_state = ReplicatedFollowerDistributedGroupedFloat64QueryState::kComplete;
@@ -880,6 +897,8 @@ common::Status ReplicatedFollowerDistributedGroupedFloat64Query::poll_once(
     impl.owner_state = ReplicatedFollowerDistributedGroupedFloat64QueryState::kCancelled;
     return impl.owner_failure;
   }
+  if (!progress.is_ok())
+    return impl.fail(std::move(progress));
   return progress;
 }
 
@@ -899,8 +918,11 @@ common::Status ReplicatedFollowerDistributedGroupedFloat64Query::cancel() {
   if (impl.owner_state ==
       ReplicatedFollowerDistributedGroupedFloat64QueryState::kAcquiringAuthority) {
     static_cast<void>(impl.authority.cancel());
-  } else {
+  } else if (impl.execution.has_value()) {
     static_cast<void>(impl.execution->cancel());
+  } else {
+    return impl.fail(common::Status{common::StatusCode::kInternal,
+                                    "replicated follower grouped query lost execution"});
   }
   impl.owner_failure = {common::StatusCode::kCancelled,
                         "replicated follower distributed grouped query was cancelled"};
@@ -918,10 +940,9 @@ ReplicatedFollowerDistributedGroupedFloat64QueryMetrics
 ReplicatedFollowerDistributedGroupedFloat64Query::metrics() const noexcept {
   if (!implementation_)
     return {};
-  return {.authority = implementation_->authority.metrics(),
-          .execution = implementation_->execution.has_value()
-                           ? std::optional{implementation_->execution->metrics()}
-                           : std::nullopt};
+  const auto execution_metrics = implementation_->execution.transform(
+      [](const auto& execution) { return execution.metrics(); });
+  return {.authority = implementation_->authority.metrics(), .execution = execution_metrics};
 }
 
 common::Result<std::vector<query::GroupedFloat64AggregateResult>>
@@ -942,7 +963,13 @@ ReplicatedFollowerDistributedGroupedFloat64Query::result() const {
         common::Status{common::StatusCode::kInvalidArgument,
                        "replicated follower grouped query result is unavailable"});
   }
-  return implementation_->execution->result();
+  const auto& execution = implementation_->execution;
+  if (!execution.has_value()) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInternal,
+                       "replicated follower grouped query lost completed execution"});
+  }
+  return execution->result();
 }
 
 const common::Status& ReplicatedFollowerDistributedGroupedFloat64Query::failure() const noexcept {

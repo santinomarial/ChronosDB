@@ -126,14 +126,14 @@ struct ReplicatedDistributedGroupedFloat64QueryConfig {
 // exposing aggregate/group/schema/route correlation to the embedding.
 [[nodiscard]] common::Result<cluster::DistributedGroupedQueryTcpExecution>
 create_replicated_distributed_grouped_float64_query(
-    query::DistributedAggregatePlan plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const query::DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
     const ReplicatedDistributedGroupedFloat64QueryConfig& config);
 
 // Applies the same grouped specialization, route, execution, and lifecycle gates to a canonical
 // bounded-stale leader/follower authority vector. Observation acquisition remains caller-owned.
 [[nodiscard]] common::Result<cluster::DistributedGroupedQueryTcpExecution>
 create_replicated_follower_distributed_grouped_float64_query(
-    query::DistributedAggregatePlan plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const query::DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
     std::span<const query::DistributedAggregateFollowerReadAuthority> follower_authorities,
     const ReplicatedDistributedGroupedFloat64QueryConfig& config);
 

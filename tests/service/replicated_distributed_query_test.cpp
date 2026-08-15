@@ -317,6 +317,23 @@ private:
 };
 
 TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwner) {
+  ReplicatedFollowerDistributedAggregateQuery empty_scalar_owner;
+  EXPECT_EQ(empty_scalar_owner.state(), ReplicatedFollowerDistributedAggregateQueryState::kFailed);
+  EXPECT_FALSE(empty_scalar_owner.metrics().execution.has_value());
+  EXPECT_EQ(empty_scalar_owner.poll_once(std::chrono::milliseconds{0}).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(empty_scalar_owner.cancel().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(empty_scalar_owner.result().error().code(), common::StatusCode::kInvalidArgument);
+
+  ReplicatedFollowerDistributedGroupedFloat64Query empty_grouped_owner;
+  EXPECT_EQ(empty_grouped_owner.state(),
+            ReplicatedFollowerDistributedGroupedFloat64QueryState::kFailed);
+  EXPECT_FALSE(empty_grouped_owner.metrics().execution.has_value());
+  EXPECT_EQ(empty_grouped_owner.poll_once(std::chrono::milliseconds{0}).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(empty_grouped_owner.cancel().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(empty_grouped_owner.result().error().code(), common::StatusCode::kInvalidArgument);
+
   TemporaryDirectory directory;
   ASSERT_TRUE(std::filesystem::create_directory(directory.path() / "raft"));
   const raft::GroupId metadata_group = uuid(1U);
