@@ -16,7 +16,7 @@ namespace chronos::service {
 inline constexpr std::string_view kReplicatedPeerConfigV1Magic{"CHRONOSDB_REPLICATED_PEERS_V1"};
 
 struct ReplicatedPeerConfigLimits {
-  std::size_t maximum_bytes{1024U * 1024U};
+  std::size_t maximum_bytes{std::size_t{1024U} * 1024U};
   std::size_t maximum_nodes{1024U};
   std::size_t maximum_tls_identity_bytes{253U};
 };

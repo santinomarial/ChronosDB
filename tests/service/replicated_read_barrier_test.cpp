@@ -51,7 +51,11 @@ TEST(ReplicatedReadBarrierTest, ConfirmsSortedSingleVoterGroupsAfterCurrentTermN
   auto barrier =
       ReplicatedReadBarrier::create_local(std::addressof(*runtime), {group(0x22U), group(0x11U)});
   ASSERT_TRUE(barrier.has_value()) << barrier.error().to_string();
-  auto ready = barrier->await();
+  auto moved_barrier = std::move(*barrier);
+  EXPECT_TRUE(barrier->groups().empty());
+  EXPECT_EQ(barrier->await().error().code(), common::StatusCode::kUnavailable);
+  EXPECT_TRUE(barrier->shutdown().is_ok());
+  auto ready = moved_barrier.await();
   ASSERT_TRUE(ready.has_value()) << ready.error().to_string();
   ASSERT_EQ(ready->size(), 2U);
   EXPECT_EQ((*ready)[0].group_id, group(0x11U));
@@ -61,7 +65,7 @@ TEST(ReplicatedReadBarrierTest, ConfirmsSortedSingleVoterGroupsAfterCurrentTermN
     EXPECT_EQ(group_barrier.barrier.read_index, 1U);
     EXPECT_NE(group_barrier.barrier.context, 0U);
   }
-  auto authority = barrier->await_authority();
+  auto authority = moved_barrier.await_authority();
   ASSERT_TRUE(authority.has_value()) << authority.error().to_string();
   ASSERT_EQ(authority->size(), 2U);
   for (const ReplicatedReadAuthority& proof : *authority) {
@@ -71,8 +75,8 @@ TEST(ReplicatedReadBarrierTest, ConfirmsSortedSingleVoterGroupsAfterCurrentTermN
     EXPECT_EQ(proof.observation.current_term, proof.barrier.barrier.term);
     EXPECT_GE(proof.observation.commit_index, proof.barrier.barrier.read_index);
   }
-  EXPECT_TRUE(barrier->shutdown().is_ok());
-  EXPECT_FALSE(barrier->await().has_value());
+  EXPECT_TRUE(moved_barrier.shutdown().is_ok());
+  EXPECT_FALSE(moved_barrier.await().has_value());
   EXPECT_TRUE(runtime->shutdown().is_ok());
 }
 

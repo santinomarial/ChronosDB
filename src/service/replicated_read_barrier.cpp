@@ -148,29 +148,40 @@ public:
             status(common::StatusCode::kCorruption, "local read-barrier result count is invalid"));
       if (!(*results)[0].status.is_ok())
         return common::make_unexpected((*results)[0].status);
-      if (!(*results)[1].status.is_ok())
-        return common::make_unexpected((*results)[1].status);
-      if (!(*results)[1].transition.has_value() ||
-          !(*results)[1].transition->read_barrier_ready.has_value())
+      const auto& barrier_result = (*results)[1];
+      if (!barrier_result.status.is_ok())
+        return common::make_unexpected(barrier_result.status);
+      const auto& transition = barrier_result.transition;
+      if (!transition.has_value())
         return common::make_unexpected(
             status(common::StatusCode::kUnavailable,
                    "local read barrier requires an immediately confirmed group quorum"));
-      const raft::GroupReadBarrier& ready = *(*results)[1].transition->read_barrier_ready;
-      if (observations != nullptr &&
-          (!(*results)[2].status.is_ok() || (*results)[2].transition.has_value() ||
-           !(*results)[2].observation.has_value())) {
+      const auto& ready_result = transition->read_barrier_ready;
+      if (!ready_result.has_value()) {
         return common::make_unexpected(
-            status(common::StatusCode::kCorruption,
-                   "local read-barrier batch lacks its ordered leader observation"));
+            status(common::StatusCode::kUnavailable,
+                   "local read barrier requires an immediately confirmed group quorum"));
       }
-      const common::Status valid = observations == nullptr
-                                       ? validate_ready(ready, group_id)
-                                       : validate_ready(ready, group_id, (*results)[2].observation);
+      const raft::GroupReadBarrier& ready = *ready_result;
+      common::Status valid;
+      if (observations == nullptr) {
+        valid = validate_ready(ready, group_id);
+      } else {
+        auto& observation_result = (*results)[2];
+        auto& observation = observation_result.observation;
+        if (!observation_result.status.is_ok() || observation_result.transition.has_value() ||
+            !observation.has_value()) {
+          return common::make_unexpected(
+              status(common::StatusCode::kCorruption,
+                     "local read-barrier batch lacks its ordered leader observation"));
+        }
+        valid = validate_ready(ready, group_id, observation);
+        if (valid.is_ok())
+          observations->push_back(std::move(*observation));
+      }
       if (!valid.is_ok())
         return common::make_unexpected(valid);
       barriers.push_back(ready);
-      if (observations != nullptr)
-        observations->push_back(std::move(*(*results)[2].observation));
     }
     return barriers;
   }
@@ -229,15 +240,23 @@ public:
         observations->reserve(request->groups.size());
       }
       for (GroupState& group : request->groups) {
-        if (!group.ready.has_value() ||
-            (observations != nullptr && !group.observation.has_value())) {
+        auto& ready = group.ready;
+        auto& observation = group.observation;
+        if (!ready.has_value()) {
           request.reset();
           return common::make_unexpected(status(common::StatusCode::kCorruption,
                                                 "replicated read-barrier vector is incomplete"));
         }
-        barriers.push_back(*group.ready);
-        if (observations != nullptr)
-          observations->push_back(std::move(*group.observation));
+        barriers.push_back(*ready);
+        if (observations != nullptr) {
+          if (!observation.has_value()) {
+            request.reset();
+            return common::make_unexpected(
+                status(common::StatusCode::kCorruption,
+                       "replicated read-barrier observation vector is incomplete"));
+          }
+          observations->push_back(std::move(*observation));
+        }
       }
     } catch (const std::bad_alloc&) {
       request.reset();
@@ -365,7 +384,7 @@ common::Result<std::vector<ReplicatedReadAuthority>> ReplicatedReadBarrier::awai
       if ((*barriers)[index].group_id != observations[index].group_id)
         return common::make_unexpected(status(common::StatusCode::kCorruption,
                                               "replicated read authority group order differs"));
-      authority.push_back({std::move((*barriers)[index]), std::move(observations[index])});
+      authority.push_back({(*barriers)[index], std::move(observations[index])});
     }
     return authority;
   } catch (const std::bad_alloc&) {
@@ -382,14 +401,20 @@ common::Status ReplicatedReadBarrier::poll_owner_drive(ReplicatedRaftTransportRu
     return status(common::StatusCode::kInvalidArgument,
                   "replicated read-barrier transport drive is unavailable");
   std::scoped_lock lock(impl_->mutex);
-  if (!impl_->accepting || !impl_->request.has_value() || impl_->request->completed)
+  if (!impl_->accepting)
     return common::Status::ok();
-  if (std::chrono::steady_clock::now() >= impl_->request->deadline) {
+  auto& pending_request = impl_->request;
+  if (!pending_request.has_value())
+    return common::Status::ok();
+  Impl::Request& active_request = *pending_request;
+  if (active_request.completed)
+    return common::Status::ok();
+  if (std::chrono::steady_clock::now() >= active_request.deadline) {
     impl_->finish(
         status(common::StatusCode::kUnavailable, "replicated read-barrier request timed out"));
     return common::Status::ok();
   }
-  for (Impl::GroupState& group : impl_->request->groups) {
+  for (Impl::GroupState& group : active_request.groups) {
     raft::DurableRaftOperation operation;
     if (group.stage == Impl::Stage::kCommitPending)
       operation = raft::CommitCurrentTermOperation{};
@@ -417,11 +442,17 @@ ReplicatedReadBarrier::poll_owner_observe(const cluster::RaftTransportRuntimeRes
     return status(common::StatusCode::kInvalidArgument,
                   "replicated read-barrier transport observation is unavailable");
   std::scoped_lock lock(impl_->mutex);
-  if (!impl_->accepting || !impl_->request.has_value() || impl_->request->completed)
+  if (!impl_->accepting)
+    return common::Status::ok();
+  auto& pending_request = impl_->request;
+  if (!pending_request.has_value())
+    return common::Status::ok();
+  Impl::Request& active_request = *pending_request;
+  if (active_request.completed)
     return common::Status::ok();
   auto found =
-      std::ranges::find(impl_->request->groups, result.group_id, &Impl::GroupState::group_id);
-  if (found == impl_->request->groups.end())
+      std::ranges::find(active_request.groups, result.group_id, &Impl::GroupState::group_id);
+  if (found == active_request.groups.end())
     return common::Status::ok();
 
   if (result.origin == cluster::RaftTransportRuntimeResultOrigin::kApplication &&

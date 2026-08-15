@@ -13,7 +13,7 @@ namespace chronos::service {
 inline constexpr std::string_view kReplicatedGroupConfigV1Magic{"CHRONOSDB_REPLICATED_GROUPS_V1"};
 
 struct ReplicatedGroupConfigLimits {
-  std::size_t maximum_bytes{1024U * 1024U};
+  std::size_t maximum_bytes{std::size_t{1024U} * 1024U};
   std::size_t maximum_groups{4096U};
   std::size_t maximum_voters_per_group{9U};
 };

@@ -30,9 +30,8 @@ namespace {
 
 class SystemElectionDeadlines final : public raft::RaftElectionDeadlineSource {
 public:
-  SystemElectionDeadlines(const std::chrono::milliseconds minimum,
-                          const std::chrono::milliseconds maximum) noexcept
-      : minimum_(minimum), maximum_(maximum) {}
+  explicit SystemElectionDeadlines(const ReplicatedRaftTransportLimits& limits) noexcept
+      : minimum_(limits.minimum_election_timeout), maximum_(limits.maximum_election_timeout) {}
 
   [[nodiscard]] common::Result<raft::RaftTimerRuntime::TimePoint>
   next_election_deadline(const raft::GroupId&, raft::Term,
@@ -72,12 +71,11 @@ class ReplicatedRaftTransportRuntime::Impl {
 public:
   Impl(ReplicatedPeerAuthority configured_authority,
        raft::AsyncDurableMultiRaftRuntime* configured_durable,
-       const std::chrono::milliseconds minimum_election,
-       const std::chrono::milliseconds maximum_election) noexcept
-      : authority(std::move(configured_authority)), deadlines(minimum_election, maximum_election),
+       const ReplicatedRaftTransportLimits& configured_limits) noexcept
+      : authority(std::move(configured_authority)), deadlines(configured_limits),
         durable(configured_durable) {}
 
-  [[nodiscard]] common::Status initialize(ReplicatedRaftTransportRuntimeConfig config) {
+  [[nodiscard]] common::Status initialize(const ReplicatedRaftTransportRuntimeConfig& config) {
     auto receiver_value =
         cluster::RaftTransportReceiver::create({.local_node_id = config.local_node_id,
                                                 .authorizer = &authority,
@@ -85,7 +83,7 @@ public:
                                                 .codec_limits = config.limits.peer_pool.codec});
     if (!receiver_value.has_value())
       return receiver_value.error();
-    receiver.emplace(std::move(*receiver_value));
+    auto& installed_receiver = receiver.emplace(std::move(*receiver_value));
 
     try {
       const std::size_t remote_count = authority.peers().size() - 1U;
@@ -123,7 +121,7 @@ public:
                    .private_key_file = config.tls.private_key_file,
                    .trust_store_file = config.tls.trust_store_file},
            .authenticator = &authority,
-           .receiver = &*receiver,
+           .receiver = &installed_receiver,
            .carrier_limits = config.limits.inbound_carrier,
            .codec_limits = config.limits.peer_pool.codec,
            .maximum_connections = config.limits.maximum_inbound_connections,
@@ -145,7 +143,7 @@ public:
                                                 std::move(*outbound), config.limits.runtime);
       if (!transport_value.has_value())
         return transport_value.error();
-      transport.emplace(std::move(*transport_value));
+      auto& installed_transport = transport.emplace(std::move(*transport_value));
 
       const auto now = std::chrono::steady_clock::now();
       for (const raft::GroupId& group_id : config.resident_groups) {
@@ -155,13 +153,20 @@ public:
         auto results = completion->wait();
         if (!results.has_value())
           return results.error();
-        if (results->size() != 1U || !results->front().status.is_ok() ||
-            results->front().transition.has_value() || !results->front().observation.has_value() ||
-            results->front().observation->group_id != group_id ||
-            results->front().observation->node_id != config.local_node_id)
+        if (results->size() != 1U)
           return status(common::StatusCode::kCorruption,
                         "replicated transport initial group observation is invalid");
-        const common::Status added = transport->add_group(*results->front().observation, now);
+        const auto& initial = results->front();
+        const auto& observation = initial.observation;
+        if (!initial.status.is_ok() || initial.transition.has_value() || !observation.has_value()) {
+          return status(common::StatusCode::kCorruption,
+                        "replicated transport initial group observation is invalid");
+        }
+        if (observation->group_id != group_id || observation->node_id != config.local_node_id) {
+          return status(common::StatusCode::kCorruption,
+                        "replicated transport initial group observation is invalid");
+        }
+        const common::Status added = installed_transport.add_group(*observation, now);
         if (!added.is_ok())
           return added;
       }
@@ -210,10 +215,9 @@ ReplicatedRaftTransportRuntime::create(ReplicatedRaftTransportRuntimeConfig conf
   if (!authority.has_value())
     return common::make_unexpected(authority.error());
   try {
-    auto impl = std::make_unique<Impl>(std::move(*authority), config.durable_runtime,
-                                       config.limits.minimum_election_timeout,
-                                       config.limits.maximum_election_timeout);
-    const common::Status initialized = impl->initialize(std::move(config));
+    auto impl =
+        std::make_unique<Impl>(std::move(*authority), config.durable_runtime, config.limits);
+    const common::Status initialized = impl->initialize(config);
     if (!initialized.is_ok())
       return common::make_unexpected(initialized);
     return ReplicatedRaftTransportRuntime{std::move(impl)};
@@ -227,7 +231,10 @@ common::Status
 ReplicatedRaftTransportRuntime::poll_once(const std::chrono::milliseconds maximum_wait) {
   if (!is_running())
     return status(common::StatusCode::kUnavailable, "replicated Raft transport is not running");
-  return impl_->transport->poll_once(maximum_wait);
+  auto& transport = impl_->transport;
+  return transport.has_value()
+             ? transport->poll_once(maximum_wait)
+             : status(common::StatusCode::kUnavailable, "replicated Raft transport is not running");
 }
 
 common::Result<std::uint64_t>
@@ -235,7 +242,12 @@ ReplicatedRaftTransportRuntime::try_submit_application(raft::DurableRaftRequest 
   if (!is_running())
     return common::make_unexpected(
         status(common::StatusCode::kUnavailable, "replicated Raft transport is not running"));
-  return impl_->transport->try_submit_application(std::move(request));
+  auto& transport = impl_->transport;
+  if (!transport.has_value()) {
+    return common::make_unexpected(
+        status(common::StatusCode::kUnavailable, "replicated Raft transport is not running"));
+  }
+  return transport->try_submit_application(std::move(request));
 }
 
 common::Result<cluster::RaftTransportRuntimeResult>
@@ -243,15 +255,26 @@ ReplicatedRaftTransportRuntime::take_completed() {
   if (!is_running())
     return common::make_unexpected(
         status(common::StatusCode::kUnavailable, "replicated Raft transport is not running"));
-  return impl_->transport->take_completed();
+  auto& transport = impl_->transport;
+  if (!transport.has_value()) {
+    return common::make_unexpected(
+        status(common::StatusCode::kUnavailable, "replicated Raft transport is not running"));
+  }
+  return transport->take_completed();
 }
 
 network::Ipv4Endpoint ReplicatedRaftTransportRuntime::bound_endpoint() const noexcept {
-  return is_running() ? impl_->transport->bound_endpoint() : network::Ipv4Endpoint{};
+  if (!is_running())
+    return {};
+  const auto& transport = impl_->transport;
+  return transport.has_value() ? transport->bound_endpoint() : network::Ipv4Endpoint{};
 }
 
 cluster::RaftTransportRuntimeMetrics ReplicatedRaftTransportRuntime::metrics() const noexcept {
-  return is_running() ? impl_->transport->metrics() : cluster::RaftTransportRuntimeMetrics{};
+  if (!is_running())
+    return {};
+  const auto& transport = impl_->transport;
+  return transport.has_value() ? transport->metrics() : cluster::RaftTransportRuntimeMetrics{};
 }
 
 bool ReplicatedRaftTransportRuntime::is_running() const noexcept {
@@ -261,9 +284,14 @@ bool ReplicatedRaftTransportRuntime::is_running() const noexcept {
 common::Status ReplicatedRaftTransportRuntime::shutdown() {
   if (!impl_ || !impl_->transport.has_value())
     return common::Status::ok();
+  auto& transport = impl_->transport;
   const common::Status result =
-      impl_->transport->failed() ? impl_->transport->failure() : common::Status::ok();
-  impl_->transport.reset();
+      transport
+          .transform([](const auto& running) {
+            return running.failed() ? running.failure() : common::Status::ok();
+          })
+          .value_or(common::Status::ok());
+  transport.reset();
   return result;
 }
 

@@ -74,12 +74,18 @@ TEST(ReplicatedRaftTransportRuntimeTest, OwnsAuthenticatedTransportAndDurableTim
                   .maximum_election_timeout = std::chrono::milliseconds{1000},
                   .peer_pool = {.maximum_peers = 1U}}});
   ASSERT_TRUE(transport.has_value()) << transport.error().to_string();
-  EXPECT_TRUE(transport->is_running());
-  EXPECT_EQ(transport->bound_endpoint(), local_endpoint);
-  EXPECT_TRUE(transport->poll_once(std::chrono::milliseconds{0}).is_ok());
-  EXPECT_GE(transport->metrics().polls, 1U);
-  EXPECT_TRUE(transport->shutdown().is_ok());
+  auto moved_transport = std::move(*transport);
   EXPECT_FALSE(transport->is_running());
+  EXPECT_EQ(transport->poll_once(std::chrono::milliseconds{0}).code(),
+            common::StatusCode::kUnavailable);
+  EXPECT_EQ(transport->take_completed().error().code(), common::StatusCode::kUnavailable);
+  EXPECT_TRUE(transport->shutdown().is_ok());
+  EXPECT_TRUE(moved_transport.is_running());
+  EXPECT_EQ(moved_transport.bound_endpoint(), local_endpoint);
+  EXPECT_TRUE(moved_transport.poll_once(std::chrono::milliseconds{0}).is_ok());
+  EXPECT_GE(moved_transport.metrics().polls, 1U);
+  EXPECT_TRUE(moved_transport.shutdown().is_ok());
+  EXPECT_FALSE(moved_transport.is_running());
   EXPECT_TRUE(durable->shutdown().is_ok());
 }
 
