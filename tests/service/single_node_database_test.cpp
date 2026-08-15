@@ -105,7 +105,7 @@ constexpr std::string_view kCreateSql =
           .variable_column_bytes = 64U,
           .maximum_retry_entries = 128U,
           .wal_segment_target_bytes = wal::kSegmentSizeLimit,
-          .raft_segment_target_bytes = 1U * 1024U * 1024U};
+          .raft_segment_target_bytes = std::uint64_t{1U} * 1024U * 1024U};
 }
 
 [[nodiscard]] SingleNodeDatabaseConfig config(const TemporaryDirectory& directory) {
@@ -273,7 +273,7 @@ batch(const std::byte timestamp_tail = std::byte{0U}) {
   auto snapshot = tablet->snapshot();
   EXPECT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
   query::QueryResourceContext resources =
-      query::QueryResourceContext::create(8U * 1024U * 1024U).value();
+      query::QueryResourceContext::create(std::size_t{8U} * 1024U * 1024U).value();
   auto pipeline = query::instantiate_tablet_state_pipeline(resources, *snapshot, *lineage,
                                                            schema->schema_id(), *lowered);
   EXPECT_TRUE(pipeline.has_value()) << pipeline.error().to_string();
@@ -363,11 +363,15 @@ TEST(NativeProtocolServiceTest, AppliesLocalSyncIngestAndReturnsPositionlessMatc
   EXPECT_NE(applied_ack->record_sequence, 0U);
   EXPECT_NE(applied_ack->segment_number, 0U);
   ASSERT_EQ(observer.notifications, 1U);
-  ASSERT_TRUE(observer.last.has_value());
-  EXPECT_EQ(observer.last->tablet_id, tablet_id());
-  EXPECT_EQ(observer.last->position.record_sequence, applied_ack->record_sequence);
-  EXPECT_EQ(observer.last->batch->row_count(), 2U);
-  EXPECT_EQ(observer.last->outcome->record_sequence, applied_ack->record_sequence);
+  if (!observer.last.has_value()) {
+    ADD_FAILURE() << "applied append notification was not published";
+    return;
+  }
+  const auto& notification = *observer.last;
+  EXPECT_EQ(notification.tablet_id, tablet_id());
+  EXPECT_EQ(notification.position.record_sequence, applied_ack->record_sequence);
+  EXPECT_EQ(notification.batch->row_count(), 2U);
+  EXPECT_EQ(notification.outcome->record_sequence, applied_ack->record_sequence);
 
   auto matching = service.execute_ingest(ingest_task(3U, network::DurabilityMode::kAsync));
   ASSERT_TRUE(matching.has_value()) << matching.error().to_string();
@@ -401,6 +405,13 @@ TEST(NativeProtocolServiceTest, AppliesLocalSyncIngestAndReturnsPositionlessMatc
   common::ByteReader count{cell->value};
   EXPECT_EQ(count.read_i64_le().value(), 2);
   EXPECT_TRUE(database->shutdown().is_ok());
+}
+
+TEST(NativeProtocolServiceTest, DefaultsToFiniteSixtyFourMebibyteQueryBudgets) {
+  const NativeProtocolServiceLimits limits;
+  constexpr std::size_t expected_bytes = std::size_t{64U} * 1024U * 1024U;
+  EXPECT_EQ(limits.maximum_query_memory_bytes, expected_bytes);
+  EXPECT_EQ(limits.maximum_response_payload_bytes, expected_bytes);
 }
 
 TEST(NativeProtocolServiceTest, FlushesSealedHeadsAndRecoversOnlyTheWalSuffix) {

@@ -36,10 +36,10 @@ struct NativeProtocolServiceLimits {
   query::TabletStatePipelineLimits replicated_tablet_pipeline{};
   columnar::ColumnarBatchLimits insert_batch{};
   network::QueryResultLimits query_result{};
-  std::size_t maximum_query_memory_bytes{64U * 1024U * 1024U};
+  std::size_t maximum_query_memory_bytes{std::size_t{64U} * 1024U * 1024U};
   std::uint64_t maximum_result_rows{1'048'576U};
   std::size_t maximum_result_batches{1024U};
-  std::size_t maximum_response_payload_bytes{64U * 1024U * 1024U};
+  std::size_t maximum_response_payload_bytes{std::size_t{64U} * 1024U * 1024U};
   std::uint64_t ddl_retry_retention_positions{1'000'000U};
 };
 

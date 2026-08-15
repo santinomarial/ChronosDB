@@ -395,12 +395,12 @@ NativeProtocolService::execute_ingest(network::NetworkTask request) {
       .outcome = executed->kind == ingest::ColumnarAppendExecutionKind::kApplied
                      ? network::IngestOutcome::kApplied
                      : network::IngestOutcome::kMatchingRetry};
-  if (executed->wal_commit.has_value()) {
-    acknowledgement.effective_durability =
-        protocol_durability(executed->wal_commit->effective_durability);
-    acknowledgement.record_sequence = executed->wal_commit->append.record_sequence;
-    acknowledgement.segment_number = executed->wal_commit->append.record_start.segment_number;
-    acknowledgement.byte_offset = executed->wal_commit->append.record_start.byte_offset;
+  const auto& wal_commit = executed->wal_commit;
+  if (wal_commit.has_value()) {
+    acknowledgement.effective_durability = protocol_durability(wal_commit->effective_durability);
+    acknowledgement.record_sequence = wal_commit->append.record_sequence;
+    acknowledgement.segment_number = wal_commit->append.record_start.segment_number;
+    acknowledgement.byte_offset = wal_commit->append.record_start.byte_offset;
   }
   auto payload = network::encode_ingest_acknowledgement(acknowledgement);
   if (!payload.has_value())
