@@ -53,8 +53,8 @@ TEST(DurableMultiRaftRuntimeTest, BatchesGroupsBehindOneDurableFrontierAndReopen
   ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
 
   std::vector<DurableRaftRequest> elections;
-  elections.push_back({first, StartElectionOperation{}});
-  elections.push_back({second, StartElectionOperation{}});
+  elections.emplace_back(first, StartElectionOperation{});
+  elections.emplace_back(second, StartElectionOperation{});
   auto elected = runtime->execute_batch(std::move(elections));
   ASSERT_TRUE(elected.has_value()) << elected.error().to_string();
   ASSERT_EQ(elected->size(), 2U);
@@ -65,8 +65,8 @@ TEST(DurableMultiRaftRuntimeTest, BatchesGroupsBehindOneDurableFrontierAndReopen
   EXPECT_EQ(runtime->find_group(second)->role(), Role::kLeader);
 
   std::vector<DurableRaftRequest> proposals;
-  proposals.push_back({first, ProposeOperation{1U, {std::byte{0x11U}}}});
-  proposals.push_back({second, ProposeOperation{1U, {std::byte{0x22U}}}});
+  proposals.emplace_back(first, ProposeOperation{1U, {std::byte{0x11U}}});
+  proposals.emplace_back(second, ProposeOperation{1U, {std::byte{0x22U}}});
   auto proposed = runtime->execute_batch(std::move(proposals));
   ASSERT_TRUE(proposed.has_value()) << proposed.error().to_string();
   EXPECT_EQ(runtime->durable_physical_sequence(), 4U);
@@ -138,8 +138,12 @@ TEST(DurableMultiRaftRuntimeTest, ReturnsVoteMessagesOnlyAfterStateIsDurable) {
 
   ASSERT_TRUE(result.has_value()) << result.error().to_string();
   ASSERT_EQ(result->size(), 1U);
-  ASSERT_TRUE(result->front().transition.has_value());
-  EXPECT_EQ(result->front().transition->outbound.size(), 2U);
+  const auto& transition = result->front().transition;
+  if (!transition.has_value()) {
+    ADD_FAILURE() << "expected durable election transition";
+    return;
+  }
+  EXPECT_EQ(transition->outbound.size(), 2U);
   EXPECT_EQ(runtime->durable_physical_sequence(), 1U);
   ASSERT_TRUE(runtime->close().is_ok());
   auto reopened = DurableMultiRaftRuntime::open_existing(1U, log_config, {}, groups);
@@ -166,11 +170,19 @@ TEST(DurableMultiRaftRuntimeTest, SurfacesGroupReadBarrierWithoutInventingPersis
   ASSERT_TRUE(barrier.has_value()) << barrier.error().to_string();
   ASSERT_EQ(barrier->size(), 1U);
   ASSERT_TRUE(barrier->front().status.is_ok());
-  ASSERT_TRUE(barrier->front().transition.has_value());
-  EXPECT_FALSE(barrier->front().transition->persistence.has_value());
-  ASSERT_TRUE(barrier->front().transition->read_barrier_ready.has_value());
-  EXPECT_EQ(barrier->front().transition->read_barrier_ready->group_id, group);
-  EXPECT_EQ(barrier->front().transition->read_barrier_ready->barrier.read_index, 1U);
+  const auto& transition = barrier->front().transition;
+  if (!transition.has_value()) {
+    ADD_FAILURE() << "expected read-barrier transition";
+    return;
+  }
+  EXPECT_FALSE(transition->persistence.has_value());
+  const auto& ready = transition->read_barrier_ready;
+  if (!ready.has_value()) {
+    ADD_FAILURE() << "expected completed single-voter read barrier";
+    return;
+  }
+  EXPECT_EQ(ready->group_id, group);
+  EXPECT_EQ(ready->barrier.read_index, 1U);
   EXPECT_EQ(runtime->find_group(group)->applied_index(), 0U);
   EXPECT_EQ(runtime->durable_physical_sequence(), durable_before);
 }
@@ -190,8 +202,12 @@ TEST(DurableMultiRaftRuntimeTest, ObservesBoundedGroupStateInBatchOrderWithoutPe
   ASSERT_EQ(result->size(), 3U);
   ASSERT_TRUE((*result)[2].status.is_ok());
   EXPECT_FALSE((*result)[2].transition.has_value());
-  ASSERT_TRUE((*result)[2].observation.has_value());
-  const RaftGroupObservation& observed = *(*result)[2].observation;
+  const auto& observation = (*result)[2].observation;
+  if (!observation.has_value()) {
+    ADD_FAILURE() << "expected batch-ordered group observation";
+    return;
+  }
+  const RaftGroupObservation& observed = *observation;
   EXPECT_EQ(observed.group_id, group);
   EXPECT_EQ(observed.node_id, 1U);
   EXPECT_EQ(observed.role, Role::kLeader);
@@ -235,9 +251,13 @@ TEST(DurableMultiRaftRuntimeTest, ExactRetainedProposalDoesNotAppendOrSynchroniz
 
   ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
   ASSERT_TRUE(retry->front().status.is_ok());
-  ASSERT_TRUE(retry->front().transition.has_value());
-  EXPECT_FALSE(retry->front().transition->persistence.has_value());
-  EXPECT_TRUE(retry->front().transition->outbound.empty());
+  const auto& transition = retry->front().transition;
+  if (!transition.has_value()) {
+    ADD_FAILURE() << "expected retained-proposal retry transition";
+    return;
+  }
+  EXPECT_FALSE(transition->persistence.has_value());
+  EXPECT_TRUE(transition->outbound.empty());
   EXPECT_EQ(runtime->durable_physical_sequence(), durable_after_first);
   EXPECT_EQ(runtime->find_group(group)->persistent_state().log.size(), 1U);
 }
@@ -282,8 +302,12 @@ TEST(DurableMultiRaftRuntimeTest, RequiredLeaderTermRejectsStaleOrFollowerWorkWi
 
   ASSERT_TRUE(admitted.has_value()) << admitted.error().to_string();
   ASSERT_TRUE(admitted->front().status.is_ok()) << admitted->front().status.to_string();
-  ASSERT_TRUE(admitted->front().transition.has_value());
-  EXPECT_TRUE(admitted->front().transition->persistence.has_value());
+  const auto& transition = admitted->front().transition;
+  if (!transition.has_value()) {
+    ADD_FAILURE() << "expected required-term proposal transition";
+    return;
+  }
+  EXPECT_TRUE(transition->persistence.has_value());
   EXPECT_EQ(runtime->find_group(group)->persistent_state().log.size(), 1U);
   EXPECT_GT(runtime->durable_physical_sequence(), elected_sequence);
 }
@@ -306,17 +330,26 @@ TEST(DurableMultiRaftRuntimeTest, ProvesQuorumSyncOnlyAfterDurableMajorityCommit
 
   auto election = leader->execute_batch({{group, StartElectionOperation{}}});
   ASSERT_TRUE(election.has_value());
-  ASSERT_TRUE(election->front().transition.has_value());
-  const auto vote_request = std::ranges::find_if(
-      election->front().transition->outbound,
-      [](const GroupOutboundMessage& message) { return message.outbound.destination == 2U; });
-  ASSERT_NE(vote_request, election->front().transition->outbound.end());
+  const auto& election_transition = election->front().transition;
+  if (!election_transition.has_value()) {
+    ADD_FAILURE() << "expected election transition";
+    return;
+  }
+  const auto vote_request =
+      std::ranges::find_if(election_transition->outbound, [](const GroupOutboundMessage& message) {
+        return message.outbound.destination == 2U;
+      });
+  ASSERT_NE(vote_request, election_transition->outbound.end());
   auto voted = follower->execute_batch(
       {{group, ReceiveOperation{vote_request->source, vote_request->outbound.message}}});
   ASSERT_TRUE(voted.has_value());
-  ASSERT_TRUE(voted->front().transition.has_value());
-  ASSERT_EQ(voted->front().transition->outbound.size(), 1U);
-  const GroupOutboundMessage vote_response = voted->front().transition->outbound.front();
+  const auto& vote_transition = voted->front().transition;
+  if (!vote_transition.has_value()) {
+    ADD_FAILURE() << "expected vote response transition";
+    return;
+  }
+  ASSERT_EQ(vote_transition->outbound.size(), 1U);
+  const GroupOutboundMessage vote_response = vote_transition->outbound.front();
   ASSERT_GT(follower->durable_physical_sequence(), 0U);
   auto elected = leader->execute_batch(
       {{group, ReceiveOperation{vote_response.source, vote_response.outbound.message}}});
@@ -325,22 +358,31 @@ TEST(DurableMultiRaftRuntimeTest, ProvesQuorumSyncOnlyAfterDurableMajorityCommit
 
   auto proposed = leader->execute_batch({{group, ProposeOperation{1U, {std::byte{0x42U}}}}});
   ASSERT_TRUE(proposed.has_value());
-  ASSERT_TRUE(proposed->front().transition.has_value());
+  const auto& proposal_transition = proposed->front().transition;
+  if (!proposal_transition.has_value()) {
+    ADD_FAILURE() << "expected proposal transition";
+    return;
+  }
   EXPECT_EQ(leader->find_group(group)->commit_index(), 0U);
   EXPECT_EQ(leader->prove_quorum_sync(group, 1U).error().code(), common::StatusCode::kUnavailable);
-  const auto append_request = std::ranges::find_if(
-      proposed->front().transition->outbound,
-      [](const GroupOutboundMessage& message) { return message.outbound.destination == 2U; });
-  ASSERT_NE(append_request, proposed->front().transition->outbound.end());
+  const auto append_request =
+      std::ranges::find_if(proposal_transition->outbound, [](const GroupOutboundMessage& message) {
+        return message.outbound.destination == 2U;
+      });
+  ASSERT_NE(append_request, proposal_transition->outbound.end());
 
   const std::uint64_t follower_before = follower->durable_physical_sequence();
   auto appended = follower->execute_batch(
       {{group, ReceiveOperation{append_request->source, append_request->outbound.message}}});
   ASSERT_TRUE(appended.has_value());
-  ASSERT_TRUE(appended->front().transition.has_value());
-  ASSERT_EQ(appended->front().transition->outbound.size(), 1U);
+  const auto& append_transition = appended->front().transition;
+  if (!append_transition.has_value()) {
+    ADD_FAILURE() << "expected append response transition";
+    return;
+  }
+  ASSERT_EQ(append_transition->outbound.size(), 1U);
   EXPECT_GT(follower->durable_physical_sequence(), follower_before);
-  const GroupOutboundMessage append_response = appended->front().transition->outbound.front();
+  const GroupOutboundMessage append_response = append_transition->outbound.front();
 
   auto committed = leader->execute_batch(
       {{group, ReceiveOperation{append_response.source, append_response.outbound.message}}});
@@ -431,17 +473,25 @@ TEST(DurableMultiRaftRuntimeTest, ReleasesSnapshotAcknowledgmentOnlyAfterInstall
   auto requested = follower->execute_batch(
       {{group, ReceiveOperation{1U, InstallSnapshotRequest{2U, 1U, snapshot}}}});
   ASSERT_TRUE(requested.has_value()) << requested.error().to_string();
-  ASSERT_TRUE(requested->front().transition.has_value());
-  ASSERT_TRUE(requested->front().transition->snapshot_install.has_value());
-  EXPECT_TRUE(requested->front().transition->outbound.empty());
+  const auto& requested_transition = requested->front().transition;
+  if (!requested_transition.has_value()) {
+    ADD_FAILURE() << "expected snapshot request transition";
+    return;
+  }
+  EXPECT_TRUE(requested_transition->snapshot_install.has_value());
+  EXPECT_TRUE(requested_transition->outbound.empty());
   const std::uint64_t term_sequence = follower->durable_physical_sequence();
   ASSERT_GT(term_sequence, 0U);
 
   auto completed =
       follower->execute_batch({{group, CompleteSnapshotInstallOperation{1U, snapshot, true}}});
   ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
-  ASSERT_TRUE(completed->front().transition.has_value());
-  ASSERT_EQ(completed->front().transition->outbound.size(), 1U);
+  const auto& completed_transition = completed->front().transition;
+  if (!completed_transition.has_value()) {
+    ADD_FAILURE() << "expected snapshot completion transition";
+    return;
+  }
+  ASSERT_EQ(completed_transition->outbound.size(), 1U);
   EXPECT_GT(follower->durable_physical_sequence(), term_sequence);
   EXPECT_EQ(follower->find_group(group)->persistent_state().snapshot, snapshot);
   ASSERT_TRUE(follower->close().is_ok());

@@ -168,7 +168,10 @@ TEST(AsyncDurableMultiRaftRuntimeTest, RunsApplicationExtensionBeforePublishingC
   ASSERT_TRUE(proposed.has_value()) << proposed.error().to_string();
 
   const auto receipt = extension->receipt();
-  ASSERT_TRUE(receipt.has_value());
+  if (!receipt.has_value()) {
+    ADD_FAILURE() << "expected application extension quorum receipt";
+    return;
+  }
   EXPECT_EQ(receipt->group_id, group);
   EXPECT_EQ(receipt->log_index, 1U);
   EXPECT_EQ(extension->prepared(), 2U);
@@ -240,18 +243,22 @@ TEST(AsyncDurableMultiRaftRuntimeTest, DrainsAcceptedFifoBatchesObservesAndRecov
   ASSERT_EQ(observed_result->size(), 1U);
   ASSERT_TRUE(observed_result->front().status.is_ok());
   EXPECT_FALSE(observed_result->front().transition.has_value());
-  ASSERT_TRUE(observed_result->front().observation.has_value());
-  EXPECT_EQ(observed_result->front().observation->group_id, group);
-  EXPECT_EQ(observed_result->front().observation->node_id, 1U);
-  EXPECT_EQ(observed_result->front().observation->role, Role::kLeader);
-  EXPECT_EQ(observed_result->front().observation->current_term, 1U);
-  EXPECT_EQ(observed_result->front().observation->leader_id, 1U);
-  EXPECT_EQ(observed_result->front().observation->last_log_index, 1U);
-  EXPECT_EQ(observed_result->front().observation->commit_index, 1U);
-  EXPECT_EQ(observed_result->front().observation->applied_index, 1U);
-  EXPECT_EQ(observed_result->front().observation->voters, std::vector<NodeId>{1U});
-  EXPECT_EQ(observed_result->front().observation->committed_voters, std::vector<NodeId>{1U});
-  EXPECT_FALSE(observed_result->front().observation->joint_membership_active);
+  const auto& observation = observed_result->front().observation;
+  if (!observation.has_value()) {
+    ADD_FAILURE() << "expected FIFO-ordered group observation";
+    return;
+  }
+  EXPECT_EQ(observation->group_id, group);
+  EXPECT_EQ(observation->node_id, 1U);
+  EXPECT_EQ(observation->role, Role::kLeader);
+  EXPECT_EQ(observation->current_term, 1U);
+  EXPECT_EQ(observation->leader_id, 1U);
+  EXPECT_EQ(observation->last_log_index, 1U);
+  EXPECT_EQ(observation->commit_index, 1U);
+  EXPECT_EQ(observation->applied_index, 1U);
+  EXPECT_EQ(observation->voters, std::vector<NodeId>{1U});
+  EXPECT_EQ(observation->committed_voters, std::vector<NodeId>{1U});
+  EXPECT_FALSE(observation->joint_membership_active);
   ASSERT_EQ(missing_result->size(), 1U);
   EXPECT_EQ(missing_result->front().status.code(), common::StatusCode::kNotFound);
   EXPECT_FALSE(missing_result->front().transition.has_value());
