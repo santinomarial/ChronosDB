@@ -50,10 +50,10 @@ enum class SubscriptionPhase : std::uint8_t {
 struct SubscriptionLimits {
   std::size_t maximum_subscriptions{1024U};
   std::size_t maximum_retained_changes{65'536U};
-  std::size_t maximum_retained_bytes{64U * 1024U * 1024U};
+  std::size_t maximum_retained_bytes{std::size_t{64U} * 1024U * 1024U};
   std::size_t maximum_buffered_changes_per_subscription{4096U};
-  std::size_t maximum_buffered_bytes_per_subscription{8U * 1024U * 1024U};
-  std::size_t maximum_change_bytes{16U * 1024U * 1024U};
+  std::size_t maximum_buffered_bytes_per_subscription{std::size_t{8U} * 1024U * 1024U};
+  std::size_t maximum_change_bytes{std::size_t{16U} * 1024U * 1024U};
 };
 
 struct SubscriptionSource {
