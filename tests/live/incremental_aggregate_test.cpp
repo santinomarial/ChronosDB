@@ -14,12 +14,12 @@ TEST(IncrementalAggregateTest, MaintainsCountSumExtremaVwapOhlcAndWelfordState) 
   auto value = state.snapshot();
   EXPECT_EQ(value.count, 2U);
   EXPECT_DOUBLE_EQ(value.sum, 30.0);
-  ASSERT_TRUE(value.minimum.has_value());
-  ASSERT_TRUE(value.maximum.has_value());
-  ASSERT_TRUE(value.vwap.has_value());
-  ASSERT_TRUE(value.ohlc.has_value());
-  ASSERT_TRUE(value.variance_population.has_value());
-  ASSERT_TRUE(value.variance_sample.has_value());
+  if (!value.minimum.has_value() || !value.maximum.has_value() || !value.vwap.has_value() ||
+      !value.ohlc.has_value() || !value.variance_population.has_value() ||
+      !value.variance_sample.has_value()) {
+    ADD_FAILURE() << "expected every aggregate for two contributing rows";
+    return;
+  }
   EXPECT_DOUBLE_EQ(*value.minimum, 10.0);
   EXPECT_DOUBLE_EQ(*value.maximum, 20.0);
   EXPECT_NEAR(*value.vwap, 40.0 / 3.0, 1e-12);
@@ -31,6 +31,10 @@ TEST(IncrementalAggregateTest, MaintainsCountSumExtremaVwapOhlcAndWelfordState) 
   value = state.snapshot();
   EXPECT_EQ(value.count, 2U);
   EXPECT_DOUBLE_EQ(value.sum, 50.0);
+  if (!value.ohlc.has_value() || !value.vwap.has_value()) {
+    ADD_FAILURE() << "expected OHLC and VWAP after replacing a contribution";
+    return;
+  }
   EXPECT_EQ(*value.ohlc, (OhlcValue{30.0, 30.0, 20.0, 20.0}));
   EXPECT_NEAR(*value.vwap, 80.0 / 3.0, 1e-12);
 
@@ -39,6 +43,10 @@ TEST(IncrementalAggregateTest, MaintainsCountSumExtremaVwapOhlcAndWelfordState) 
   EXPECT_EQ(value.count, 1U);
   EXPECT_DOUBLE_EQ(value.sum, 30.0);
   EXPECT_FALSE(value.variance_sample.has_value());
+  if (!value.variance_population.has_value()) {
+    ADD_FAILURE() << "expected population variance for one contributing row";
+    return;
+  }
   EXPECT_DOUBLE_EQ(*value.variance_population, 0.0);
 
   auto checkpoint = state.checkpoint();
