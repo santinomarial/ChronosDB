@@ -29,6 +29,7 @@ fi
 targets=(
   chronos_byte_reader_fuzz
   chronos_wal_codec_fuzz
+  chronos_network_protocol_fuzz
   chronos_columnar_batch_codec_fuzz
   chronos_distributed_vector_result_exchange_fuzz
   chronos_distributed_vector_fragment_v2_fuzz
@@ -47,9 +48,32 @@ targets=(
   chronos_sql_parser_fuzz
   chronos_sql_binder_fuzz
   chronos_vector_chunk_fuzz
+  chronos_grouped_aggregate_fuzz
+  chronos_asof_join_fuzz
+  chronos_relational_plan_fuzz
   chronos_physical_plan_fuzz
+  chronos_physical_optimizer_fuzz
   chronos_physical_lowering_fuzz
+  chronos_parallel_scheduler_fuzz
+  chronos_spill_sort_fuzz
 )
+
+configured_targets="$(
+  ninja -C "${build_dir}" -t targets all |
+    sed -n 's/^\(chronos_[[:alnum:]_]*_fuzz\):.*/\1/p' |
+    LC_ALL=C sort
+)"
+listed_targets="$(printf '%s\n' "${targets[@]}" | LC_ALL=C sort)"
+if [[ -z "${configured_targets}" ]]; then
+  echo "error: no configured fuzz targets found in ${build_dir}" >&2
+  exit 1
+fi
+if [[ "${configured_targets}" != "${listed_targets}" ]]; then
+  echo "error: fuzz smoke target list does not match the configured build" >&2
+  diff -u <(printf '%s\n' "${configured_targets}") <(printf '%s\n' "${listed_targets}") >&2 ||
+    true
+  exit 1
+fi
 
 campaign_root="$(mktemp -d "${TMPDIR:-/tmp}/chronos-fuzz-smoke.XXXXXX")"
 cleanup() {

@@ -194,11 +194,12 @@ database performance claim.
 
 ## Fuzz targets
 
-The fuzz preset is optional and requires Clang with a linkable libFuzzer runtime. It builds all
-current common, WAL, columnar, ingest, CSEG, Manifest, and SQL decoder/parser targets with ASan and
-UBSan while leaving ordinary tests out of that build tree. The deterministic smoke script copies the
-checked-in binary and SQL seed corpora to temporary writable directories, runs every target with a
-fixed seed, and retains crash artifacts under the build tree:
+The fuzz preset is optional and requires Clang with a linkable libFuzzer runtime. It builds the
+registered common, WAL, network, columnar, ingest, CSEG, Manifest, SQL/vector-plan, and distributed
+exchange/transport targets with ASan and UBSan while leaving ordinary tests out of that build tree.
+The deterministic smoke script verifies that its target list exactly matches the configured Ninja
+graph, copies the checked-in binary and SQL seed corpora to temporary writable directories, runs
+every target with a fixed seed, and retains crash artifacts under the build tree:
 
 ```sh
 cmake --preset fuzz
