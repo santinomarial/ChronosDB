@@ -69,13 +69,14 @@ public:
         ++server_metrics.accept_errors;
         return;
       }
-      if (!next->has_value())
+      auto* accepted_socket = next->transform([](auto& value) { return &value; }).value_or(nullptr);
+      if (accepted_socket == nullptr)
         return;
       if (connections.size() == config.maximum_connections) {
         ++server_metrics.rejected_connections;
         continue;
       }
-      network::TcpSocket socket = std::move(**next);
+      network::TcpSocket socket = std::move(*accepted_socket);
       auto peer = socket.peer_endpoint();
       if (!peer.has_value()) {
         ++server_metrics.rejected_connections;

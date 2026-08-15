@@ -151,6 +151,8 @@ TEST(RaftObservationTcpServerTest, ServesRealTcpMutualTlsObservation) {
   EXPECT_EQ(metrics.completed_connections, 1U);
   EXPECT_EQ(metrics.active_connections, 0U);
   EXPECT_TRUE(server->shutdown().is_ok());
+  EXPECT_FALSE(server->is_running());
+  EXPECT_TRUE(server->shutdown().is_ok());
 }
 
 TEST(RaftObservationTcpServerTest, BoundsAdmissionAndShutsDownDeterministically) {
@@ -179,8 +181,10 @@ TEST(RaftObservationTcpServerTest, BoundsAdmissionAndShutsDownDeterministically)
     for (network::TcpSocket* socket : {&*first, &*second}) {
       if (socket->valid() && socket->connect_state() == network::TcpConnectState::kInProgress) {
         pollfd descriptor{.fd = socket->descriptor(), .events = POLLOUT};
-        if (::poll(&descriptor, 1U, 0) > 0)
-          (void)socket->finish_connect();
+        if (::poll(&descriptor, 1U, 0) > 0) {
+          auto connected = socket->finish_connect();
+          ASSERT_TRUE(connected.has_value()) << connected.error().to_string();
+        }
       }
     }
   }
@@ -191,6 +195,7 @@ TEST(RaftObservationTcpServerTest, BoundsAdmissionAndShutsDownDeterministically)
   EXPECT_TRUE(server->shutdown().is_ok());
   EXPECT_EQ(server->metrics().active_connections, 0U);
   EXPECT_FALSE(server->is_running());
+  EXPECT_TRUE(server->shutdown().is_ok());
 }
 
 } // namespace
