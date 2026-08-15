@@ -617,6 +617,7 @@ TEST(DistributedQueryExecutionTest, DeliversEveryTerminalResultExactlyOnceAndFin
                                             message(tablets[0], 2.5), std::nullopt})
           .value();
   ASSERT_TRUE(execution->accept_response(tablets[0], first, now).is_ok());
+  EXPECT_EQ(*execution->sender_state(tablets[0]), DistributedQuerySenderState::kSucceeded);
   EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kUnavailable);
   const auto second =
       encode_distributed_query_response_v1({12U, 1U, uuid(7U), tablets[1], common::StatusCode::kOk,

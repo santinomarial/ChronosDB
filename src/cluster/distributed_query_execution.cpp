@@ -136,7 +136,7 @@ common::Status DistributedQueryExecution::accept_response(const schema::TabletId
   if (!index.has_value())
     return index.error();
   SenderSlot& slot = senders_[*index];
-  const common::Status status = slot.sender.accept_response(response_bytes, now);
+  common::Status status = slot.sender.accept_response(response_bytes, now);
   if (!status.is_ok())
     return status;
   return publish_terminal_state(slot);
@@ -148,7 +148,7 @@ common::Status DistributedQueryExecution::record_transport_failure(
   if (!index.has_value())
     return index.error();
   SenderSlot& slot = senders_[*index];
-  const common::Status status = slot.sender.record_transport_failure(code, now);
+  common::Status status = slot.sender.record_transport_failure(code, now);
   if (!status.is_ok())
     return status;
   return publish_terminal_state(slot);
@@ -157,9 +157,13 @@ common::Status DistributedQueryExecution::record_transport_failure(
 common::Status DistributedQueryExecution::publish_terminal_state(SenderSlot& slot) {
   if (slot.sender.state() == DistributedQuerySenderState::kSucceeded &&
       !slot.coordinator_result_delivered) {
-    if (!slot.sender.result().has_value())
+    const query::ExchangeMessage* const result =
+        slot.sender.result()
+            .transform([](const query::ExchangeMessage& value) { return &value; })
+            .value_or(nullptr);
+    if (result == nullptr)
       return invalid("distributed query sender success has no result");
-    const common::Status accepted = coordinator_.accept(*slot.sender.result());
+    const common::Status accepted = coordinator_.accept(*result);
     if (!accepted.is_ok()) {
       static_cast<void>(coordinator_.worker_failed(slot.tablet_id, accepted));
       slot.coordinator_failure_delivered = true;
