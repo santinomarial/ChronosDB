@@ -119,10 +119,13 @@ load_cold_owner(ColdLocationManifestStorage& storage,
     return nullptr;
   auto loaded = storage.load_selected(*decoded);
   EXPECT_TRUE(loaded.has_value()) << loaded.error().to_string();
-  EXPECT_TRUE(loaded.has_value() && loaded->has_value());
-  return loaded.has_value() && loaded->has_value()
-             ? std::make_shared<const LoadedColdLocationManifest>(std::move(**loaded))
-             : nullptr;
+  if (!loaded.has_value())
+    return nullptr;
+  auto& generation = *loaded;
+  EXPECT_TRUE(generation.has_value());
+  if (!generation.has_value())
+    return nullptr;
+  return std::make_shared<const LoadedColdLocationManifest>(std::move(*generation));
 }
 
 void install_empty_cold(ColdLocationManifestStorage& storage,
@@ -140,19 +143,24 @@ void install_empty_cold(ColdLocationManifestStorage& storage,
   ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
 }
 
+struct ManifestAdvance {
+  manifest::DatabaseId database_id;
+  std::uint64_t generation;
+  common::Uuid install_nonce;
+};
+
 [[nodiscard]] manifest::TemporalDatabaseStorageSnapshot
 advance_manifest(manifest::ManifestStorage& storage,
                  manifest::TemporalDatabaseStoragePublisher& publisher,
-                 const manifest::DatabaseId database_id, const std::uint64_t generation,
-                 const std::uint8_t nonce_seed) {
-  const auto encoded = empty_manifest(database_id, generation);
+                 const ManifestAdvance& advance) {
+  const auto encoded = empty_manifest(advance.database_id, advance.generation);
   auto installed = storage.install_temporal_manifest({.encoded_manifest = std::cref(encoded),
                                                       .schema_bindings = {},
-                                                      .nonce = nonce(nonce_seed),
+                                                      .nonce = advance.install_nonce,
                                                       .decode_limits = {},
                                                       .part_validation_limits = {}});
   EXPECT_TRUE(installed.has_value()) << installed.error().to_string();
-  auto selected = load_manifest_owner(storage, database_id);
+  auto selected = load_manifest_owner(storage, advance.database_id);
   auto published = publisher.publish_manifest(
       {.selected_manifest = std::move(selected), .schema_bindings = {}, .decode_limits = {}});
   EXPECT_TRUE(published.has_value()) << published.error().to_string();
@@ -204,7 +212,9 @@ TEST(TieredDatabaseStoragePublisherTest,
   EXPECT_EQ(cold_advanced->cold_manifest()->manifest().generation(), 2U);
   EXPECT_FALSE(cold1_lifetime.expired());
 
-  const auto base2 = advance_manifest(*manifest_storage, *manifest_publisher, database_id, 2U, 9U);
+  const auto base2 =
+      advance_manifest(*manifest_storage, *manifest_publisher,
+                       {.database_id = database_id, .generation = 2U, .install_nonce = nonce(9U)});
   install_empty_cold(*cold_storage, base2, object_store_id, 3U);
   auto cold3 = load_cold_owner(*cold_storage, base2);
   ASSERT_NE(cold3, nullptr);
@@ -246,13 +256,15 @@ TEST(TieredDatabaseStoragePublisherTest, ConcurrentReadersSeeOnlyCompleteOldOrNe
       TieredDatabaseStoragePublisher::create(*base1, load_cold_owner(*cold_storage, *base1));
   ASSERT_TRUE(publisher.has_value());
 
-  const auto base2 = advance_manifest(*manifest_storage, *manifest_publisher, database_id, 2U, 13U);
+  const auto base2 =
+      advance_manifest(*manifest_storage, *manifest_publisher,
+                       {.database_id = database_id, .generation = 2U, .install_nonce = nonce(13U)});
   install_empty_cold(*cold_storage, base2, object_store_id, 2U);
   auto cold2 = load_cold_owner(*cold_storage, base2);
   ASSERT_NE(cold2, nullptr);
   std::atomic<bool> stop{false};
   std::atomic<bool> invalid_pair{false};
-  std::jthread reader([&] {
+  std::thread reader([&] {
     while (!stop.load(std::memory_order_acquire)) {
       auto snapshot = publisher->snapshot();
       if (!snapshot.has_value() || snapshot->cold_manifest() == nullptr) {
@@ -302,7 +314,9 @@ TEST(TieredDatabaseStoragePublisherTest, FailsClosedOnIncompatibleDurablePair) {
   auto publisher = TieredDatabaseStoragePublisher::create(*base1, cold1);
   ASSERT_TRUE(publisher.has_value());
 
-  const auto base2 = advance_manifest(*manifest_storage, *manifest_publisher, database_id, 2U, 23U);
+  const auto base2 =
+      advance_manifest(*manifest_storage, *manifest_publisher,
+                       {.database_id = database_id, .generation = 2U, .install_nonce = nonce(23U)});
   auto rejected = publisher->publish({.manifest_snapshot = base2,
                                       .cold_manifest = cold1,
                                       .schema_bindings = {},
