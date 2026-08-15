@@ -1300,6 +1300,7 @@ TEST(DistributedGroupedQueryExecutionTest, WithholdsResultsUntilEverySenderClose
       .payload = DistributedGroupedQueryResponsePayload{
           query::GroupedFloat64ExchangeMessage{uuid(7U), tablets[0], 1U, 5.0, partial, true}}}};
   ASSERT_TRUE(execution->accept_responses(tablets[0], first, now).is_ok());
+  EXPECT_EQ(*execution->sender_state(tablets[0]), DistributedQuerySenderState::kSucceeded);
   EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kUnavailable);
 
   const std::array second{DistributedGroupedQueryResponse{

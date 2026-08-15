@@ -91,7 +91,7 @@ common::Status DistributedGroupedQueryExecution::accept_responses(
   if (!index.has_value())
     return index.error();
   SenderSlot& slot = senders_[*index];
-  const common::Status accepted = slot.sender.accept_responses(responses, now);
+  common::Status accepted = slot.sender.accept_responses(responses, now);
   if (!accepted.is_ok())
     return accepted;
   return publish_terminal_state(slot);
@@ -103,7 +103,7 @@ common::Status DistributedGroupedQueryExecution::record_transport_failure(
   if (!index.has_value())
     return index.error();
   SenderSlot& slot = senders_[*index];
-  const common::Status recorded = slot.sender.record_transport_failure(code, now);
+  common::Status recorded = slot.sender.record_transport_failure(code, now);
   if (!recorded.is_ok())
     return recorded;
   return publish_terminal_state(slot);
@@ -112,9 +112,14 @@ common::Status DistributedGroupedQueryExecution::record_transport_failure(
 common::Status DistributedGroupedQueryExecution::publish_terminal_state(SenderSlot& slot) {
   if (slot.sender.state() == DistributedQuerySenderState::kSucceeded &&
       !slot.coordinator_result_delivered) {
-    if (!slot.sender.result().has_value())
+    const auto result = slot.sender.result().transform(
+        [](const std::vector<DistributedGroupedQueryResponsePayload>& payloads) {
+          return std::span<const DistributedGroupedQueryResponsePayload>{payloads};
+        });
+    if (!result.has_value())
       return invalid("grouped query sender success has no result stream");
-    for (const DistributedGroupedQueryResponsePayload& payload : *slot.sender.result()) {
+    for (const DistributedGroupedQueryResponsePayload& payload :
+         result.value_or(std::span<const DistributedGroupedQueryResponsePayload>{})) {
       const common::Status accepted =
           std::holds_alternative<query::GroupedFloat64ExchangeMessage>(payload)
               ? coordinator_.accept(std::get<query::GroupedFloat64ExchangeMessage>(payload))
