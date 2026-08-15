@@ -1920,6 +1920,7 @@ TEST(DistributedQueryTcpExecutionTest, SchedulesPlanOrderedTabletsAndRetriesWith
        .connect_timeout = std::chrono::milliseconds{1000}});
   ASSERT_TRUE(tcp_execution.has_value()) << tcp_execution.error().to_string();
   EXPECT_EQ(tcp_execution->snapshot().snapshot().generation(), 1U);
+  EXPECT_EQ(tcp_execution->result().error().code(), common::StatusCode::kUnavailable);
 
   for (std::size_t iteration = 0U;
        iteration < 2048U && tcp_execution->state() == DistributedQueryTcpExecutionState::kRunning;
@@ -2063,6 +2064,7 @@ TEST(DistributedQueryTcpExecutionTest, DeadlineAndCancellationReleaseEveryAttemp
   EXPECT_EQ(deadline.code(), common::StatusCode::kCancelled);
   EXPECT_EQ(expired->state(), DistributedQueryTcpExecutionState::kCancelled);
   EXPECT_EQ(expired->metrics().attempts_started, 0U);
+  EXPECT_EQ(expired->metrics().active_attempts, 0U);
   EXPECT_EQ(expired->result().error(), deadline);
   EXPECT_EQ(expired->poll_once(std::chrono::milliseconds{0}), deadline);
 

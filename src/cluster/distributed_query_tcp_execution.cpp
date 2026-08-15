@@ -277,7 +277,8 @@ public:
         auto deadline = execution.next_attempt_not_before(slot.tablet_id);
         if (!deadline.has_value())
           return deadline.error();
-        if (!deadline->has_value() || now < **deadline)
+        const TimePoint retry_deadline = deadline->value_or(TimePoint::max());
+        if (retry_deadline == TimePoint::max() || now < retry_deadline)
           continue;
       }
       auto attempt = execution.begin_attempt(slot.tablet_id, now);
@@ -326,9 +327,12 @@ public:
       if (!sender_state.has_value() || *sender_state != DistributedQuerySenderState::kBackoff)
         continue;
       const auto deadline = execution.next_attempt_not_before(slot.tablet_id);
-      if (deadline.has_value() && deadline->has_value() &&
-          (!earliest.has_value() || **deadline < *earliest)) {
-        earliest = **deadline;
+      if (deadline.has_value()) {
+        const TimePoint retry_deadline = deadline->value_or(TimePoint::max());
+        if (retry_deadline != TimePoint::max() &&
+            retry_deadline < earliest.value_or(TimePoint::max())) {
+          earliest = retry_deadline;
+        }
       }
     }
     if (!earliest.has_value() || *earliest <= now)
@@ -357,7 +361,7 @@ public:
     auto finished = execution.finish();
     if (!finished.has_value())
       return fail(finished.error());
-    execution_result = std::move(*finished);
+    execution_result = *finished;
     execution_state = DistributedQueryTcpExecutionState::kComplete;
     return common::Status::ok();
   }
@@ -461,7 +465,7 @@ DistributedQueryTcpExecution::poll_once(const std::chrono::milliseconds maximum_
   const common::Status started = impl.start_due_attempts(now);
   if (!started.is_ok())
     return impl.fail(started);
-  const common::Status initial_terminal = impl.publish_if_terminal();
+  common::Status initial_terminal = impl.publish_if_terminal();
   if (!initial_terminal.is_ok() ||
       impl.execution_state != DistributedQueryTcpExecutionState::kRunning) {
     return initial_terminal;
@@ -597,7 +601,7 @@ common::Result<query::MergeableAggregateState> DistributedQueryTcpExecution::res
   if (!implementation_->execution_result.has_value())
     return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
                                                   "distributed query TCP execution is incomplete"});
-  return *implementation_->execution_result;
+  return implementation_->execution_result.value_or(query::MergeableAggregateState{});
 }
 
 const common::Status& DistributedQueryTcpExecution::failure() const noexcept {
