@@ -271,6 +271,10 @@ TEST(TabletPhysicalSnapshotOwnershipTest, InstallsReloadsAndAtomicallyPublishesO
       *storage, *publisher, request(fixture, projection, metadata, schemas, sources, nonce(21U)));
   ASSERT_TRUE(published.has_value()) << published.error().to_string();
   EXPECT_FALSE(published->manifest_already_durable);
+  EXPECT_EQ(published->authority.group_id, fixture.group_id);
+  EXPECT_EQ(published->authority.table_id, fixture.owner.table_id);
+  EXPECT_EQ(published->authority.tablet_id, fixture.owner.tablet_id);
+  EXPECT_EQ(published->authority.part_set_checksum, projection.part_set_checksum());
   EXPECT_EQ(published->destination.generation(), 2U);
   ASSERT_EQ(published->destination.tablets().size(), 1U);
   EXPECT_EQ(published->destination.parts().front(), fixture.descriptor);

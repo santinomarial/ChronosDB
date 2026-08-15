@@ -125,7 +125,7 @@ common::Result<PublishedTabletPhysicalSnapshot> install_and_publish_tablet_physi
                                                .decode_limits = request.decode_limits});
   if (!published.has_value())
     return common::make_unexpected(with_context("publish destination Manifest", published.error()));
-  return PublishedTabletPhysicalSnapshot{.authority = std::move(*authority),
+  return PublishedTabletPhysicalSnapshot{.authority = *authority,
                                          .destination = std::move(*published),
                                          .manifest_already_durable = already_durable};
 }
