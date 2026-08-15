@@ -10,6 +10,7 @@
 #include <string>
 #include <system_error>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace chronos::live {
@@ -87,7 +88,7 @@ TEST(SubscriptionServiceTest, OwnsSnapshotResumeBackpressureCancellationAndShutd
                  .token_key = key}};
   auto owner = DurableMultiTabletSubscription::create_new(std::move(owner_config));
   ASSERT_TRUE(owner.has_value()) << owner.error().to_string();
-  auto resources = query::QueryResourceContext::create(32U * 1024U * 1024U).value();
+  auto resources = query::QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
   auto requests = network::SpscNetworkTaskQueue::create(8U).value();
   auto responses = network::SpscNetworkTaskQueue::create(1U).value();
   auto service = SubscriptionService::create({.owner = &*owner,
@@ -119,16 +120,20 @@ TEST(SubscriptionServiceTest, OwnsSnapshotResumeBackpressureCancellationAndShutd
   EXPECT_EQ(service->metrics().response_backpressure, 1U);
   auto first = responses.try_pop();
   ASSERT_TRUE(first.has_value());
-  EXPECT_EQ(first->frame.header.message_type, network::MessageType::kQueryResult);
+  const network::NetworkTask first_response = std::move(first).value_or(network::NetworkTask{});
+  EXPECT_EQ(first_response.frame.header.message_type, network::MessageType::kQueryResult);
   ASSERT_TRUE(service->poll_once().is_ok());
   auto second = responses.try_pop();
   ASSERT_TRUE(second.has_value());
-  EXPECT_EQ(second->frame.header.message_type, network::MessageType::kQueryResult);
-  EXPECT_NE(second->frame.header.flags & network::kFrameFlagEndStream, 0U);
+  const network::NetworkTask second_response = std::move(second).value_or(network::NetworkTask{});
+  EXPECT_EQ(second_response.frame.header.message_type, network::MessageType::kQueryResult);
+  EXPECT_NE(second_response.frame.header.flags & network::kFrameFlagEndStream, 0U);
   ASSERT_TRUE(service->poll_once().is_ok());
   auto ready_task = responses.try_pop();
   ASSERT_TRUE(ready_task.has_value());
-  EXPECT_EQ(ready_task->frame.header.message_type, network::MessageType::kSubscriptionReady);
+  const network::NetworkTask ready_response =
+      std::move(ready_task).value_or(network::NetworkTask{});
+  EXPECT_EQ(ready_response.frame.header.message_type, network::MessageType::kSubscriptionReady);
 
   CommittedChange change{.position = {tablet_a, wal, 2U},
                          .schema_id = snapshot.schema_ptr()->schema_id(),
@@ -140,8 +145,9 @@ TEST(SubscriptionServiceTest, OwnsSnapshotResumeBackpressureCancellationAndShutd
   ASSERT_TRUE(service->poll_once().is_ok());
   auto live_task = responses.try_pop();
   ASSERT_TRUE(live_task.has_value());
-  ASSERT_EQ(live_task->frame.header.message_type, network::MessageType::kSubscriptionChange);
-  const auto live = network::decode_subscription_change(live_task->frame.payload);
+  const network::NetworkTask live_response = std::move(live_task).value_or(network::NetworkTask{});
+  ASSERT_EQ(live_response.frame.header.message_type, network::MessageType::kSubscriptionChange);
+  const auto live = network::decode_subscription_change(live_response.frame.payload);
   ASSERT_TRUE(live.has_value());
   EXPECT_EQ(live->delivery_sequence, 1U);
 
@@ -152,9 +158,12 @@ TEST(SubscriptionServiceTest, OwnsSnapshotResumeBackpressureCancellationAndShutd
   ASSERT_TRUE(service->poll_once().is_ok());
   auto checkpoint_task = responses.try_pop();
   ASSERT_TRUE(checkpoint_task.has_value());
-  ASSERT_EQ(checkpoint_task->frame.header.message_type,
+  const network::NetworkTask checkpoint_response =
+      std::move(checkpoint_task).value_or(network::NetworkTask{});
+  ASSERT_EQ(checkpoint_response.frame.header.message_type,
             network::MessageType::kSubscriptionCheckpoint);
-  const auto checkpoint = network::decode_subscription_checkpoint(checkpoint_task->frame.payload);
+  const auto checkpoint =
+      network::decode_subscription_checkpoint(checkpoint_response.frame.payload);
   ASSERT_TRUE(checkpoint.has_value());
   std::vector<std::byte> resume_token{checkpoint->resume_token.begin(),
                                       checkpoint->resume_token.end()};
@@ -163,7 +172,13 @@ TEST(SubscriptionServiceTest, OwnsSnapshotResumeBackpressureCancellationAndShutd
   ASSERT_TRUE(service->poll_once().is_ok());
   auto cancelled_task = responses.try_pop();
   ASSERT_TRUE(cancelled_task.has_value());
-  const auto cancelled = network::decode_subscription_end(cancelled_task->frame.payload);
+  const network::NetworkTask cancelled_response =
+      std::move(cancelled_task).value_or(network::NetworkTask{});
+  EXPECT_EQ(cancelled_response.connection_id, 1U);
+  EXPECT_EQ(cancelled_response.principal_id, 77U);
+  EXPECT_EQ(cancelled_response.frame.header.request_id, 1U);
+  EXPECT_EQ(cancelled_response.frame.header.message_type, network::MessageType::kSubscriptionEnd);
+  const auto cancelled = network::decode_subscription_end(cancelled_response.frame.payload);
   ASSERT_TRUE(cancelled.has_value());
   EXPECT_EQ(cancelled->reason, network::SubscriptionEndReason::kCancelled);
 
@@ -175,9 +190,11 @@ TEST(SubscriptionServiceTest, OwnsSnapshotResumeBackpressureCancellationAndShutd
   ASSERT_TRUE(requests.try_push(request_task(2U, 1U, network::MessageType::kSubscribeRequest,
                                              std::move(*mismatched_resume))));
   ASSERT_TRUE(service->poll_once().is_ok());
-  const auto mismatch_error = responses.try_pop();
+  auto mismatch_error = responses.try_pop();
   ASSERT_TRUE(mismatch_error.has_value());
-  EXPECT_EQ(mismatch_error->frame.header.message_type, network::MessageType::kError);
+  const network::NetworkTask mismatch_response =
+      std::move(mismatch_error).value_or(network::NetworkTask{});
+  EXPECT_EQ(mismatch_response.frame.header.message_type, network::MessageType::kError);
 
   auto resume_payload =
       network::encode_subscription_request({.mode = network::SubscriptionStartMode::kResume,
@@ -190,19 +207,26 @@ TEST(SubscriptionServiceTest, OwnsSnapshotResumeBackpressureCancellationAndShutd
   ASSERT_TRUE(service->poll_once().is_ok());
   auto resume_end = responses.try_pop();
   ASSERT_TRUE(resume_end.has_value());
-  EXPECT_EQ(resume_end->frame.header.message_type, network::MessageType::kQueryResult);
-  EXPECT_NE(resume_end->frame.header.flags & network::kFrameFlagEndStream, 0U);
+  const network::NetworkTask resume_end_response =
+      std::move(resume_end).value_or(network::NetworkTask{});
+  EXPECT_EQ(resume_end_response.frame.header.message_type, network::MessageType::kQueryResult);
+  EXPECT_NE(resume_end_response.frame.header.flags & network::kFrameFlagEndStream, 0U);
   ASSERT_TRUE(service->poll_once().is_ok());
   auto resume_ready = responses.try_pop();
   ASSERT_TRUE(resume_ready.has_value());
-  EXPECT_EQ(resume_ready->frame.header.message_type, network::MessageType::kSubscriptionReady);
+  const network::NetworkTask resume_ready_response =
+      std::move(resume_ready).value_or(network::NetworkTask{});
+  EXPECT_EQ(resume_ready_response.frame.header.message_type,
+            network::MessageType::kSubscriptionReady);
 
   service->begin_shutdown();
   EXPECT_FALSE(service->accepting());
   ASSERT_TRUE(service->poll_once().is_ok());
   auto shutdown_task = responses.try_pop();
   ASSERT_TRUE(shutdown_task.has_value());
-  const auto shutdown = network::decode_subscription_end(shutdown_task->frame.payload);
+  const network::NetworkTask shutdown_response =
+      std::move(shutdown_task).value_or(network::NetworkTask{});
+  const auto shutdown = network::decode_subscription_end(shutdown_response.frame.payload);
   ASSERT_TRUE(shutdown.has_value());
   EXPECT_EQ(shutdown->reason, network::SubscriptionEndReason::kServerShutdown);
   EXPECT_TRUE(service->drained());

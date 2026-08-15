@@ -83,10 +83,10 @@ public:
     }
   }
 
-  [[nodiscard]] network::NetworkTask task(const Key& key, const std::uint64_t principal_id,
-                                          const network::MessageType type,
-                                          std::vector<std::byte> payload,
-                                          const std::uint32_t flags = 0U) const {
+  [[nodiscard]] static network::NetworkTask task(const Key& key, const std::uint64_t principal_id,
+                                                 const network::MessageType type,
+                                                 std::vector<std::byte> payload,
+                                                 const std::uint32_t flags = 0U) {
     return {
         .connection_id = key.connection_id,
         .principal_id = principal_id,
@@ -213,8 +213,8 @@ public:
     return common::Status::ok();
   }
 
-  [[nodiscard]] network::SubscriptionEndReason reason_for(const SubscriptionPhase phase,
-                                                          const bool shutdown) const noexcept {
+  [[nodiscard]] static network::SubscriptionEndReason reason_for(const SubscriptionPhase phase,
+                                                                 const bool shutdown) noexcept {
     if (phase == SubscriptionPhase::kSchemaChanged)
       return network::SubscriptionEndReason::kSchemaChanged;
     if (phase == SubscriptionPhase::kOverflowed)
@@ -282,7 +282,7 @@ public:
                         std::move(*payload)));
   }
 
-  [[nodiscard]] common::Status accept_cancel(network::NetworkTask request) {
+  [[nodiscard]] common::Status accept_cancel(const network::NetworkTask& request) {
     const Key key{request.connection_id, request.frame.header.request_id};
     const auto found = active.find(key);
     if (found == active.end())
@@ -305,7 +305,7 @@ public:
     case network::MessageType::kSubscriptionAcknowledge:
       return accept_acknowledgement(std::move(request));
     case network::MessageType::kCancel:
-      return accept_cancel(std::move(request));
+      return accept_cancel(request);
     default:
       return publish_error(request,
                            invalid("subscription service received an unrelated request type"));
