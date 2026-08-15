@@ -130,7 +130,7 @@ public:
                                          poison_.message());
   }
 
-  [[nodiscard]] common::Status cleanup_temporaries() {
+  [[nodiscard]] common::Status cleanup_temporaries() const {
     auto entries = directory_.list_entries();
     if (!entries.has_value()) {
       return entries.error();
@@ -355,11 +355,15 @@ MaterializedViewCheckpointStorage::install(const BoundMaterializedViewCheckpoint
   if (!latest.has_value()) {
     return common::make_unexpected(latest.error());
   }
-  if (latest->has_value() &&
-      ((checkpoint.checkpoint_generation == 0U &&
-        (*latest)->checkpoint.checkpoint_generation != 0U) ||
-       (checkpoint.checkpoint_generation != 0U &&
-        (*latest)->checkpoint.checkpoint_generation > checkpoint.checkpoint_generation))) {
+  const std::uint64_t previous_generation =
+      latest
+          ->transform([](const LoadedMaterializedViewCheckpoint& loaded) noexcept {
+            return loaded.checkpoint.checkpoint_generation;
+          })
+          .value_or(0U);
+  if ((checkpoint.checkpoint_generation == 0U && previous_generation != 0U) ||
+      (checkpoint.checkpoint_generation != 0U &&
+       previous_generation > checkpoint.checkpoint_generation)) {
     return common::make_unexpected(
         invalid("materialized-view checkpoint generation would move durable state backward"));
   }

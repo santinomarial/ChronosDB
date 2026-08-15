@@ -55,28 +55,32 @@ private:
           .plan_fingerprint = plan};
 }
 
-[[nodiscard]] BoundMaterializedViewCheckpoint
-checkpoint(const std::uint64_t sequence, const double value_bias = 0.0,
-           const std::uint64_t generation = 0U,
-           const std::optional<std::int64_t> watermark = std::nullopt) {
+struct CheckpointOptions {
+  double value_bias{};
+  std::uint64_t generation{};
+  std::optional<std::int64_t> watermark;
+};
+
+[[nodiscard]] BoundMaterializedViewCheckpoint checkpoint(const std::uint64_t sequence,
+                                                         const CheckpointOptions options = {}) {
   const auto tablet = schema::TabletId::from_uuid(uuid(5U)).value();
   wal::WalId wal;
   wal.bytes.fill(std::byte{0x62U});
   auto view = WindowedMaterializedView::create(tablet, wal, WindowDefinition{10, 10, 2, 16U, 16U});
   EXPECT_TRUE(view.has_value());
   for (std::uint64_t index = 1U; index <= sequence; ++index) {
-    EXPECT_TRUE(
-        view->apply_committed(SourcePosition{tablet, wal, index},
-                              MaterializedViewInput{{index, static_cast<std::int64_t>(index), index,
-                                                     static_cast<double>(index) + value_bias, 1.0},
-                                                    false})
-            .has_value());
+    EXPECT_TRUE(view->apply_committed(SourcePosition{tablet, wal, index},
+                                      MaterializedViewInput{
+                                          {index, static_cast<std::int64_t>(index), index,
+                                           static_cast<double>(index) + options.value_bias, 1.0},
+                                          false})
+                    .has_value());
   }
-  if (watermark.has_value()) {
-    EXPECT_TRUE(view->advance_watermark(*watermark).has_value());
+  if (options.watermark.has_value()) {
+    EXPECT_TRUE(view->advance_watermark(*options.watermark).has_value());
   }
   return {.identity = identity(),
-          .checkpoint_generation = generation,
+          .checkpoint_generation = options.generation,
           .state = std::move(view->checkpoint().value())};
 }
 
@@ -103,24 +107,30 @@ TEST(MaterializedViewCheckpointStorageTest, InstallsIdempotentlyAndSelectsLatest
     ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
     EXPECT_TRUE(repeated->already_present);
 
-    const auto conflicting = checkpoint(1U, 10.0);
+    const auto conflicting = checkpoint(1U, {.value_bias = 10.0});
     EXPECT_EQ(storage->install(conflicting).error().code(), common::StatusCode::kCorruption);
     ASSERT_TRUE(storage->install(checkpoint(2U)).has_value());
-    const auto generated = checkpoint(2U, 0.0, 1U);
+    const auto generated = checkpoint(2U, {.generation = 1U});
     auto installed_generation = storage->install(generated);
     ASSERT_TRUE(installed_generation.has_value()) << installed_generation.error().to_string();
     EXPECT_EQ(installed_generation->file_name, "generation-00000000000000000001.mvcg");
-    const auto watermarked = checkpoint(2U, 0.0, 2U, 12);
+    const auto watermarked = checkpoint(2U, {.generation = 2U, .watermark = 12});
     ASSERT_TRUE(storage->install(watermarked).has_value());
     auto stale_retry = storage->install(generated);
     ASSERT_TRUE(stale_retry.has_value()) << stale_retry.error().to_string();
     EXPECT_TRUE(stale_retry->already_present);
     EXPECT_EQ(storage->install(checkpoint(3U)).error().code(),
               common::StatusCode::kInvalidArgument);
+    const auto skipped = checkpoint(2U, {.generation = 4U, .watermark = 12});
+    ASSERT_TRUE(storage->install(skipped).has_value());
+    EXPECT_EQ(storage->install(checkpoint(2U, {.generation = 3U, .watermark = 12})).error().code(),
+              common::StatusCode::kInvalidArgument);
     auto latest = storage->load_latest();
     ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
     ASSERT_TRUE(latest->has_value());
-    EXPECT_EQ((*latest)->checkpoint, watermarked);
+    const auto selected = latest->transform(
+        [](const LoadedMaterializedViewCheckpoint& loaded) { return loaded.checkpoint; });
+    EXPECT_EQ(selected, std::optional<BoundMaterializedViewCheckpoint>{skipped});
   }
 
   auto reopened = MaterializedViewCheckpointStorage::open_existing(config(directory));
@@ -128,7 +138,10 @@ TEST(MaterializedViewCheckpointStorageTest, InstallsIdempotentlyAndSelectsLatest
   auto latest = reopened->load_latest();
   ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
   ASSERT_TRUE(latest->has_value());
-  EXPECT_EQ((*latest)->checkpoint, checkpoint(2U, 0.0, 2U, 12));
+  const auto selected = latest->transform(
+      [](const LoadedMaterializedViewCheckpoint& loaded) { return loaded.checkpoint; });
+  EXPECT_EQ(selected, std::optional<BoundMaterializedViewCheckpoint>{
+                          checkpoint(2U, {.generation = 4U, .watermark = 12})});
 }
 
 TEST(MaterializedViewCheckpointStorageTest, CleansTemporaryAndRejectsCorruptInstalledBytes) {
