@@ -22,7 +22,7 @@ struct CommittedBatchEvaluatorLimits {
   network::QueryResultLimits result{};
   network::SubscriptionMessageLimits subscription{};
   std::size_t maximum_output_chunks{4096U};
-  std::size_t maximum_workspace_bytes{128U * 1024U * 1024U};
+  std::size_t maximum_workspace_bytes{std::size_t{128U} * 1024U * 1024U};
 };
 
 // Checks whether the prepared pipeline is safe to evaluate independently per committed append.
