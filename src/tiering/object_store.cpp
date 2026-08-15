@@ -5,12 +5,14 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <charconv>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <curl/curl.h>
+#include <exception>
 #include <limits>
 #include <map>
 #include <memory>
@@ -26,6 +28,10 @@
 
 namespace chronos::tiering {
 namespace {
+constexpr std::size_t kSmallResponseLimit = std::size_t{64U} * 1024U;
+constexpr std::size_t kCredentialResponseLimit = std::size_t{1024U} * 1024U;
+constexpr std::size_t kMinimumMultipartPartBytes = std::size_t{5U} * 1024U * 1024U;
+
 [[nodiscard]] common::Status invalid(const char* message) {
   return common::Status{common::StatusCode::kInvalidArgument, message};
 }
@@ -33,6 +39,44 @@ namespace {
 [[nodiscard]] common::Status exhausted(const char* message) {
   return common::Status{common::StatusCode::kResourceExhausted, message};
 }
+
+[[nodiscard]] std::string_view byte_string_view(const common::ByteView bytes) noexcept {
+  if (bytes.empty())
+    return {};
+  // Character types may inspect any object's representation; keep that necessary cast isolated.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+}
+
+[[nodiscard]] common::ByteView string_byte_view(const std::string_view value) noexcept {
+  return std::as_bytes(std::span{value.data(), value.size()});
+}
+
+class JoiningThreads final {
+public:
+  JoiningThreads() = default;
+  JoiningThreads(const JoiningThreads&) = delete;
+  JoiningThreads& operator=(const JoiningThreads&) = delete;
+
+  ~JoiningThreads() noexcept {
+    for (auto& thread : threads_) {
+      if (!thread.joinable())
+        continue;
+      try {
+        thread.join();
+      } catch (...) {
+        std::terminate();
+      }
+    }
+  }
+
+  [[nodiscard]] std::vector<std::thread>& threads() noexcept {
+    return threads_;
+  }
+
+private:
+  std::vector<std::thread> threads_;
+};
 
 [[nodiscard]] bool contains_control(const std::string_view value) noexcept {
   return std::ranges::any_of(value, [](const char character) {
@@ -185,7 +229,7 @@ struct ResponseCapture {
 [[nodiscard]] std::optional<unsigned> month_number(const std::string_view month) noexcept {
   constexpr std::array<std::string_view, 12U> months{"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                                      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-  const auto found = std::ranges::find(months, month);
+  const auto* const found = std::ranges::find(months, month);
   if (found == months.end())
     return std::nullopt;
   return static_cast<unsigned>(std::distance(months.begin(), found) + 1);
@@ -196,7 +240,7 @@ struct ResponseCapture {
                                                          "Thu", "Fri", "Sat"};
   constexpr std::array<std::string_view, 7U> long_names{
       "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
-  auto found = std::ranges::find(short_names, weekday);
+  const auto* found = std::ranges::find(short_names, weekday);
   if (found != short_names.end())
     return static_cast<unsigned>(std::distance(short_names.begin(), found));
   found = std::ranges::find(long_names, weekday);
@@ -229,8 +273,7 @@ struct HttpDateFields {
          weekday{sys_days{date}}.c_encoding() == fields.weekday;
 }
 
-[[nodiscard]] std::optional<std::uint64_t>
-http_date_epoch_seconds(const std::string_view encoded) noexcept {
+[[nodiscard]] std::optional<std::uint64_t> http_date_epoch_seconds(const std::string_view encoded) {
   HttpDateFields fields;
   unsigned parsed_year{};
   if (encoded.size() == 29U && encoded[3] == ',' && encoded[4] == ' ' && encoded[7] == ' ' &&
@@ -305,7 +348,7 @@ http_date_epoch_seconds(const std::string_view encoded) noexcept {
 }
 
 [[nodiscard]] std::optional<std::uint64_t>
-retry_after_delay_seconds(const std::string_view encoded) noexcept {
+retry_after_delay_seconds(const std::string_view encoded) {
   std::uint64_t delta{};
   const auto parsed = std::from_chars(encoded.data(), encoded.data() + encoded.size(), delta);
   if (!encoded.empty() && parsed.ec == std::errc{} && parsed.ptr == encoded.data() + encoded.size())
@@ -321,6 +364,9 @@ retry_after_delay_seconds(const std::string_view encoded) noexcept {
   return *target - static_cast<std::uint64_t>(current);
 }
 
+// libcurl's write callback ABI requires a mutable char pointer even though this callback only reads
+// the received bytes.
+// NOLINTNEXTLINE(readability-non-const-parameter)
 [[nodiscard]] std::size_t capture_body(char* data, const std::size_t size, const std::size_t count,
                                        void* context) noexcept {
   auto& capture = *static_cast<ResponseCapture*>(context);
@@ -329,13 +375,14 @@ retry_after_delay_seconds(const std::string_view encoded) noexcept {
     return 0U;
   }
   const std::size_t length = size * count;
-  if (length > capture.maximum_body_bytes - capture.body.size()) {
+  if (capture.body.size() > capture.maximum_body_bytes ||
+      length > capture.maximum_body_bytes - capture.body.size()) {
     capture.body_limit_exhausted = true;
     return 0U;
   }
   try {
-    const auto* bytes = reinterpret_cast<const std::byte*>(data);
-    capture.body.insert(capture.body.end(), bytes, bytes + length);
+    const common::ByteView bytes = string_byte_view({data, length});
+    capture.body.insert(capture.body.end(), bytes.begin(), bytes.end());
   } catch (...) {
     capture.body_limit_exhausted = true;
     return 0U;
@@ -491,7 +538,7 @@ copy_environment_value(const char* name, const std::size_t maximum_length) {
                                                               const std::string_view element,
                                                               const std::size_t maximum_length) {
   try {
-    const std::string_view xml{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+    const std::string_view xml = byte_string_view(bytes);
     const std::string opening = "<" + std::string{element} + ">";
     const std::string closing = "</" + std::string{element} + ">";
     const std::size_t opening_offset = xml.find(opening);
@@ -549,7 +596,7 @@ copy_environment_value(const char* name, const std::size_t maximum_length) {
 }
 
 [[nodiscard]] bool is_complete_multipart_result(const common::ByteView bytes) noexcept {
-  std::string_view xml{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+  std::string_view xml = byte_string_view(bytes);
   const auto trim_leading = [&xml] {
     while (!xml.empty() && (xml.front() == ' ' || xml.front() == '\t' || xml.front() == '\r' ||
                             xml.front() == '\n')) {
@@ -620,7 +667,7 @@ complete_multipart_xml(const std::span<const std::string> entity_tags) {
   curl_slist* appended = curl_slist_append(headers.get(), header.c_str());
   if (appended == nullptr)
     return exhausted("S3 request header allocation failed");
-  static_cast<void>(headers.release());
+  [[maybe_unused]] curl_slist* const transferred = headers.release();
   headers.reset(appended);
   return common::Status::ok();
 }
@@ -833,8 +880,9 @@ S3CredentialProviderChain::acquire(const S3CredentialRequest request) {
   if (request != S3CredentialRequest::kCurrent && request != S3CredentialRequest::kRefresh)
     return common::make_unexpected(invalid("S3 credential request is invalid"));
   std::scoped_lock lock{impl_->mutex};
-  if (impl_->selected.has_value())
-    return impl_->providers[*impl_->selected]->acquire(request);
+  const auto& selected = impl_->selected;
+  if (selected.has_value())
+    return impl_->providers[*selected]->acquire(request);
   if (request == S3CredentialRequest::kRefresh) {
     return common::make_unexpected(
         common::Status{common::StatusCode::kUnauthenticated,
@@ -853,11 +901,15 @@ S3CredentialProviderChain::acquire(const S3CredentialRequest request) {
                                                 "S3 credential provider chain found no identity"});
 }
 
-[[nodiscard]] common::Result<std::string>
-extract_json_string_field(const std::string_view json, const std::string_view field,
-                          const std::size_t maximum_length) {
+struct JsonStringField {
+  std::string_view name;
+  std::size_t maximum_length{};
+};
+
+[[nodiscard]] common::Result<std::string> extract_json_string_field(const std::string_view json,
+                                                                    const JsonStringField field) {
   try {
-    const std::string needle = "\"" + std::string{field} + "\"";
+    const std::string needle = "\"" + std::string{field.name} + "\"";
     const std::size_t field_offset = json.find(needle);
     if (field_offset == std::string_view::npos ||
         json.find(needle, field_offset + needle.size()) != std::string_view::npos) {
@@ -868,19 +920,21 @@ extract_json_string_field(const std::string_view json, const std::string_view fi
     while (cursor < json.size() && (json[cursor] == ' ' || json[cursor] == '\t' ||
                                     json[cursor] == '\r' || json[cursor] == '\n'))
       ++cursor;
-    if (cursor == json.size() || json[cursor++] != ':') {
+    if (cursor == json.size() || json[cursor] != ':') {
       return common::make_unexpected(common::Status{
           common::StatusCode::kUnauthenticated, "container credential response field is invalid"});
     }
+    ++cursor;
     while (cursor < json.size() && (json[cursor] == ' ' || json[cursor] == '\t' ||
                                     json[cursor] == '\r' || json[cursor] == '\n'))
       ++cursor;
-    if (cursor == json.size() || json[cursor++] != '"') {
+    if (cursor == json.size() || json[cursor] != '"') {
       return common::make_unexpected(common::Status{
           common::StatusCode::kUnauthenticated, "container credential response value is invalid"});
     }
+    ++cursor;
     std::string value;
-    value.reserve(std::min(maximum_length, json.size() - cursor));
+    value.reserve(std::min(field.maximum_length, json.size() - cursor));
     while (cursor < json.size() && json[cursor] != '"') {
       const unsigned char byte = static_cast<unsigned char>(json[cursor++]);
       if (byte < 0x20U || byte == '\\') {
@@ -888,7 +942,7 @@ extract_json_string_field(const std::string_view json, const std::string_view fi
             common::Status{common::StatusCode::kUnauthenticated,
                            "container credential response value uses unsupported escaping"});
       }
-      if (value.size() == maximum_length) {
+      if (value.size() == field.maximum_length) {
         return common::make_unexpected(
             common::Status{common::StatusCode::kUnauthenticated,
                            "container credential response value is oversized"});
@@ -990,12 +1044,14 @@ public:
       if (status != 200L)
         return common::make_unexpected(common::Status{
             common::StatusCode::kUnavailable, "container credential endpoint is unavailable"});
-      const std::string_view json{reinterpret_cast<const char*>(capture.body.data()),
-                                  capture.body.size()};
-      auto access = extract_json_string_field(json, "AccessKeyId", 1024U);
-      auto secret = extract_json_string_field(json, "SecretAccessKey", 4096U);
-      auto token = extract_json_string_field(json, "Token", 8192U);
-      auto expiration = extract_json_string_field(json, "Expiration", 64U);
+      const std::string_view json = byte_string_view(capture.body);
+      auto access =
+          extract_json_string_field(json, {.name = "AccessKeyId", .maximum_length = 1024U});
+      auto secret =
+          extract_json_string_field(json, {.name = "SecretAccessKey", .maximum_length = 4096U});
+      auto token = extract_json_string_field(json, {.name = "Token", .maximum_length = 8192U});
+      auto expiration =
+          extract_json_string_field(json, {.name = "Expiration", .maximum_length = 64U});
       if (!access.has_value())
         return common::make_unexpected(access.error());
       if (!secret.has_value())
@@ -1053,7 +1109,8 @@ S3ContainerCredentialProvider::create(S3ContainerCredentialProviderConfig config
       config.request_timeout.count() <= 0 || config.request_timeout > maximum_long ||
       config.refresh_before_expiration.count() < 0 ||
       config.refresh_before_expiration > std::chrono::hours{24 * 7} ||
-      config.maximum_response_bytes == 0U || config.maximum_response_bytes > 1024U * 1024U) {
+      config.maximum_response_bytes == 0U ||
+      config.maximum_response_bytes > kCredentialResponseLimit) {
     return common::make_unexpected(
         invalid("container credential provider configuration is invalid"));
   }
@@ -1075,15 +1132,17 @@ S3ContainerCredentialProvider::acquire(const S3CredentialRequest request) {
   try {
     std::scoped_lock lock{impl_->mutex};
     const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
-    if (request == S3CredentialRequest::kCurrent && impl_->cached.has_value() &&
-        now + impl_->config.refresh_before_expiration < impl_->cached->expiration) {
-      return impl_->cached->credentials;
+    const auto& cached_state = impl_->cached;
+    if (request == S3CredentialRequest::kCurrent && cached_state.has_value()) {
+      const auto& cached = *cached_state;
+      if (now + impl_->config.refresh_before_expiration < cached.expiration)
+        return cached.credentials;
     }
     auto fetched = impl_->fetch();
     if (!fetched.has_value())
       return common::make_unexpected(fetched.error());
-    impl_->cached = std::move(*fetched);
-    return impl_->cached->credentials;
+    const auto& cached = impl_->cached.emplace(std::move(*fetched));
+    return cached.credentials;
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("container credential copy allocation failed"));
   } catch (const std::length_error&) {
@@ -1169,8 +1228,7 @@ public:
                                                         : common::StatusCode::kUnauthenticated,
                                                     "IMDSv2 token request failed"});
     }
-    const std::string_view token{reinterpret_cast<const char*>(token_response->body.data()),
-                                 token_response->body.size()};
+    const std::string_view token = byte_string_view(token_response->body);
     if (contains_control(token)) {
       return common::make_unexpected(
           common::Status{common::StatusCode::kUnauthenticated, "IMDSv2 token response is invalid"});
@@ -1184,8 +1242,7 @@ public:
     if (role_response->status != 200L)
       return common::make_unexpected(
           common::Status{common::StatusCode::kUnauthenticated, "IMDSv2 role request failed"});
-    std::string_view role{reinterpret_cast<const char*>(role_response->body.data()),
-                          role_response->body.size()};
+    std::string_view role = byte_string_view(role_response->body);
     while (!role.empty() && (role.back() == '\r' || role.back() == '\n'))
       role.remove_suffix(1U);
     if (role.empty() || role.size() > 256U || contains_control(role) ||
@@ -1205,13 +1262,14 @@ public:
       return common::make_unexpected(
           common::Status{common::StatusCode::kUnauthenticated, "IMDSv2 credential request failed"});
     }
-    const std::string_view json{reinterpret_cast<const char*>(credentials_response->body.data()),
-                                credentials_response->body.size()};
-    auto code = extract_json_string_field(json, "Code", 64U);
-    auto access = extract_json_string_field(json, "AccessKeyId", 1024U);
-    auto secret = extract_json_string_field(json, "SecretAccessKey", 4096U);
-    auto session = extract_json_string_field(json, "Token", 8192U);
-    auto expiration = extract_json_string_field(json, "Expiration", 64U);
+    const std::string_view json = byte_string_view(credentials_response->body);
+    auto code = extract_json_string_field(json, {.name = "Code", .maximum_length = 64U});
+    auto access = extract_json_string_field(json, {.name = "AccessKeyId", .maximum_length = 1024U});
+    auto secret =
+        extract_json_string_field(json, {.name = "SecretAccessKey", .maximum_length = 4096U});
+    auto session = extract_json_string_field(json, {.name = "Token", .maximum_length = 8192U});
+    auto expiration =
+        extract_json_string_field(json, {.name = "Expiration", .maximum_length = 64U});
     if (!code.has_value() || *code != "Success" || !access.has_value() || !secret.has_value() ||
         !session.has_value() || !expiration.has_value()) {
       return common::make_unexpected(common::Status{common::StatusCode::kUnauthenticated,
@@ -1256,7 +1314,8 @@ S3InstanceCredentialProvider::create(S3InstanceCredentialProviderConfig config) 
       config.token_lifetime > std::chrono::hours{6} ||
       config.refresh_before_expiration.count() < 0 ||
       config.refresh_before_expiration > std::chrono::hours{24 * 7} ||
-      config.maximum_response_bytes == 0U || config.maximum_response_bytes > 1024U * 1024U) {
+      config.maximum_response_bytes == 0U ||
+      config.maximum_response_bytes > kCredentialResponseLimit) {
     return common::make_unexpected(invalid("IMDSv2 credential provider configuration is invalid"));
   }
   if (initialize_curl() != CURLE_OK)
@@ -1277,15 +1336,17 @@ S3InstanceCredentialProvider::acquire(const S3CredentialRequest request) {
   try {
     std::scoped_lock lock{impl_->mutex};
     const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
-    if (request == S3CredentialRequest::kCurrent && impl_->cached.has_value() &&
-        now + impl_->config.refresh_before_expiration < impl_->cached->expiration) {
-      return impl_->cached->credentials;
+    const auto& cached_state = impl_->cached;
+    if (request == S3CredentialRequest::kCurrent && cached_state.has_value()) {
+      const auto& cached = *cached_state;
+      if (now + impl_->config.refresh_before_expiration < cached.expiration)
+        return cached.credentials;
     }
     auto fetched = impl_->fetch();
     if (!fetched.has_value())
       return common::make_unexpected(fetched.error());
-    impl_->cached = std::move(*fetched);
-    return impl_->cached->credentials;
+    const auto& cached = impl_->cached.emplace(std::move(*fetched));
+    return cached.credentials;
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("IMDSv2 credential copy allocation failed"));
   } catch (const std::length_error&) {
@@ -1341,7 +1402,7 @@ public:
         static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
     const auto wall =
         static_cast<std::uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
-    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(instance));
+    const auto address = static_cast<std::uint64_t>(std::bit_cast<std::uintptr_t>(instance));
     return steady ^ (wall << 1U) ^ address ^ sequence.fetch_add(0x9E3779B97F4A7C15ULL);
   }
 
@@ -1416,6 +1477,16 @@ public:
   [[nodiscard]] common::Result<Response> perform_once(const Request& request,
                                                       const S3Credentials& current) const {
     try {
+      const auto& request_checksum = request.checksum;
+      const auto& object_checksum = request.object_checksum;
+      const bool request_checksum_required = request.method == Method::kPut ||
+                                             request.method == Method::kUploadPart ||
+                                             request.method == Method::kCompleteMultipart;
+      if ((request_checksum_required && !request_checksum.has_value()) ||
+          (request.method == Method::kCreateMultipart && !object_checksum.has_value())) {
+        return common::make_unexpected(common::Status{
+            common::StatusCode::kInternal, "S3 request is missing required checksum state"});
+      }
       std::string url = config.endpoint + "/" + encode_path(config.bucket, false) + "/" +
                         encode_path(request.key, true);
       if (!request.query.empty())
@@ -1487,7 +1558,7 @@ public:
         configured = append_header(headers, "x-amz-security-token: " + *current.session_token);
       }
       if (configured.is_ok() && request.method == Method::kPut) {
-        const std::string hexadecimal_checksum = digest_hex(*request.checksum);
+        const std::string hexadecimal_checksum = digest_hex(*request_checksum);
         configured = append_header(headers, "If-None-Match: *");
         if (configured.is_ok())
           configured = append_header(headers, "Expect:");
@@ -1496,30 +1567,36 @@ public:
         }
         if (configured.is_ok()) {
           configured =
-              append_header(headers, "x-amz-checksum-sha256: " + digest_base64(*request.checksum));
+              append_header(headers, "x-amz-checksum-sha256: " + digest_base64(*request_checksum));
         }
         if (configured.is_ok()) {
           configured = append_header(headers, "x-amz-meta-chronos-sha256: " + hexadecimal_checksum);
         }
       }
       if (configured.is_ok() && request.method == Method::kCreateMultipart) {
-        configured = append_header(headers, "x-amz-meta-chronos-sha256: " +
-                                                digest_hex(*request.object_checksum));
+        configured =
+            append_header(headers, "x-amz-meta-chronos-sha256: " + digest_hex(*object_checksum));
       }
       if (configured.is_ok() &&
           (request.method == Method::kPut || request.method == Method::kCreateMultipart) &&
           config.server_side_encryption.has_value()) {
-        const bool kms = *config.server_side_encryption == S3ServerSideEncryption::kKms;
+        const auto& server_side_encryption = config.server_side_encryption;
+        const bool kms = *server_side_encryption == S3ServerSideEncryption::kKms;
         configured = append_header(headers, std::string{"x-amz-server-side-encryption: "} +
                                                 (kms ? "aws:kms" : "AES256"));
         if (configured.is_ok() && kms) {
-          configured = append_header(headers, "x-amz-server-side-encryption-aws-kms-key-id: " +
-                                                  *config.kms_key_id);
+          const auto& kms_key_id = config.kms_key_id;
+          if (!kms_key_id.has_value()) {
+            return common::make_unexpected(common::Status{
+                common::StatusCode::kInternal, "S3 KMS request is missing a key identifier"});
+          }
+          configured =
+              append_header(headers, "x-amz-server-side-encryption-aws-kms-key-id: " + *kms_key_id);
         }
       }
       if (configured.is_ok() &&
           (request.method == Method::kUploadPart || request.method == Method::kCompleteMultipart)) {
-        const std::string hexadecimal_checksum = digest_hex(*request.checksum);
+        const std::string hexadecimal_checksum = digest_hex(*request_checksum);
         configured = append_header(headers, "Expect:");
         if (configured.is_ok())
           configured = append_header(headers, "x-amz-content-sha256: " + hexadecimal_checksum);
@@ -1627,10 +1704,12 @@ public:
         return response;
       }
       refresh_credentials = authorization_rejected;
-      wait_before_retry(attempt, replayable_status && !response->capture.retry_after_invalid &&
-                                         response->capture.retry_after.has_value()
-                                     ? retry_after_delay_seconds(*response->capture.retry_after)
-                                     : std::nullopt);
+      std::optional<std::uint64_t> retry_delay;
+      const auto& retry_after = response->capture.retry_after;
+      if (replayable_status && !response->capture.retry_after_invalid && retry_after.has_value()) {
+        retry_delay = retry_after_delay_seconds(*retry_after);
+      }
+      wait_before_retry(attempt, retry_delay);
     }
     return common::make_unexpected(
         common::Status{common::StatusCode::kInternal, "S3 retry state is unreachable"});
@@ -1640,15 +1719,20 @@ public:
   std::string signature;
   mutable std::atomic_uint64_t jitter_sequence;
 
-  void abort_multipart_best_effort(const std::string_view key,
-                                   const std::string_view upload_id) const noexcept {
+  struct MultipartUploadIdentity {
+    std::string_view key;
+    std::string_view upload_id;
+  };
+
+  void abort_multipart_best_effort(const MultipartUploadIdentity identity) const noexcept {
     try {
-      const std::string query = "uploadId=" + encode_path(upload_id, false);
-      static_cast<void>(perform({.method = Method::kAbortMultipart,
-                                 .key = key,
-                                 .maximum_body_bytes = 64U * 1024U,
-                                 .query = query}));
+      const std::string query = "uploadId=" + encode_path(identity.upload_id, false);
+      [[maybe_unused]] auto aborted = perform({.method = Method::kAbortMultipart,
+                                               .key = identity.key,
+                                               .maximum_body_bytes = kSmallResponseLimit,
+                                               .query = query});
     } catch (...) {
+      return;
     }
   }
 };
@@ -1697,7 +1781,8 @@ common::Result<std::unique_ptr<S3ObjectStore>> S3ObjectStore::create(S3ObjectSto
       config.maximum_retry_backoff.count() < 0 || config.maximum_retry_backoff > maximum_long ||
       config.maximum_retry_jitter.count() < 0 || config.maximum_retry_jitter > maximum_long ||
       config.initial_retry_backoff > config.maximum_retry_backoff ||
-      config.multipart_threshold_bytes == 0U || config.multipart_part_bytes < 5U * 1024U * 1024U ||
+      config.multipart_threshold_bytes == 0U ||
+      config.multipart_part_bytes < kMinimumMultipartPartBytes ||
       static_cast<std::uintmax_t>(config.multipart_part_bytes) >
           static_cast<std::uintmax_t>(std::numeric_limits<curl_off_t>::max()) ||
       config.multipart_maximum_concurrency == 0U || config.multipart_maximum_concurrency > 64U ||
@@ -1758,7 +1843,7 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
 
       auto created = impl_->perform({.method = Impl::Method::kCreateMultipart,
                                      .key = key,
-                                     .maximum_body_bytes = 64U * 1024U,
+                                     .maximum_body_bytes = kSmallResponseLimit,
                                      .query = "uploads",
                                      .object_checksum = checksum});
       if (!created.has_value())
@@ -1766,8 +1851,7 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
       if (created->status != 200L)
         return common::make_unexpected(http_failure(created->status));
       const common::ByteView creation_body{created->capture.body};
-      const std::string_view creation_xml{reinterpret_cast<const char*>(creation_body.data()),
-                                          creation_body.size()};
+      const std::string_view creation_xml = byte_string_view(creation_body);
       if (!creation_xml.contains("<InitiateMultipartUploadResult")) {
         return common::make_unexpected(common::Status{common::StatusCode::kCorruption,
                                                       "S3 multipart creation response is invalid"});
@@ -1783,7 +1867,7 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
 
         ~MultipartAbortGuard() {
           if (active)
-            impl->abort_multipart_best_effort(key, upload_id);
+            impl->abort_multipart_best_effort({.key = key, .upload_id = upload_id});
         }
 
         void release() noexcept {
@@ -1826,7 +1910,7 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
                                             .key = key,
                                             .upload = part,
                                             .checksum = *part_checksum,
-                                            .maximum_body_bytes = 64U * 1024U,
+                                            .maximum_body_bytes = kSmallResponseLimit,
                                             .query = query});
             if (!uploaded.has_value() || uploaded->status != 200L ||
                 !uploaded->capture.entity_tag.has_value() ||
@@ -1861,7 +1945,8 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
         }
       };
       try {
-        std::vector<std::jthread> workers;
+        JoiningThreads worker_group;
+        auto& workers = worker_group.threads();
         const std::size_t worker_count =
             std::min(part_count, impl_->config.multipart_maximum_concurrency);
         workers.reserve(worker_count);
@@ -1882,8 +1967,7 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
       auto completion_xml = complete_multipart_xml(entity_tags);
       if (!completion_xml.has_value())
         return common::make_unexpected(completion_xml.error());
-      const common::ByteView completion_body{
-          reinterpret_cast<const std::byte*>(completion_xml->data()), completion_xml->size()};
+      const common::ByteView completion_body = string_byte_view(*completion_xml);
       auto completion_checksum = ingest::sha256(completion_body);
       if (!completion_checksum.has_value())
         return common::make_unexpected(completion_checksum.error());
@@ -1891,7 +1975,7 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
                                        .key = key,
                                        .upload = completion_body,
                                        .checksum = *completion_checksum,
-                                       .maximum_body_bytes = 64U * 1024U,
+                                       .maximum_body_bytes = kSmallResponseLimit,
                                        .query = upload_query});
       if (completed.has_value() && completed->status == 200L) {
         const common::ByteView response_body{completed->capture.body};
@@ -1939,7 +2023,7 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
                                   .key = key,
                                   .upload = bytes,
                                   .checksum = checksum,
-                                  .maximum_body_bytes = 64U * 1024U});
+                                  .maximum_body_bytes = kSmallResponseLimit});
   if (!response.has_value())
     return common::make_unexpected(response.error());
   if (response->status == 412L) {
@@ -1972,30 +2056,36 @@ common::Result<ObjectMetadata> S3ObjectStore::stat(const std::string_view key) c
   if (key.empty() || key.size() > 1024U || contains_control(key))
     return common::make_unexpected(invalid("S3 object key is invalid"));
   auto response = impl_->perform(
-      {.method = Impl::Method::kHead, .key = key, .maximum_body_bytes = 64U * 1024U});
+      {.method = Impl::Method::kHead, .key = key, .maximum_body_bytes = kSmallResponseLimit});
   if (!response.has_value())
     return common::make_unexpected(response.error());
   if (response->status != 200L)
     return common::make_unexpected(http_failure(response->status));
-  if (impl_->config.server_side_encryption.has_value()) {
-    const bool kms = *impl_->config.server_side_encryption == S3ServerSideEncryption::kKms;
+  const auto& configured_encryption = impl_->config.server_side_encryption;
+  if (configured_encryption.has_value()) {
+    const bool kms = *configured_encryption == S3ServerSideEncryption::kKms;
     const std::string_view expected = kms ? "aws:kms" : "AES256";
-    if (!response->capture.server_side_encryption.has_value() ||
-        *response->capture.server_side_encryption != expected ||
+    const auto& received_encryption = response->capture.server_side_encryption;
+    if (!received_encryption.has_value()) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kCorruption, "S3 object server-side encryption metadata is invalid"});
+    }
+    if (*received_encryption != expected ||
         (kms && response->capture.kms_key_id != impl_->config.kms_key_id) ||
         (!kms && response->capture.kms_key_id.has_value())) {
       return common::make_unexpected(common::Status{
           common::StatusCode::kCorruption, "S3 object server-side encryption metadata is invalid"});
     }
   }
+  const auto& checksum_hex = response->capture.checksum_hex;
   if (response->content_length < 0 ||
       static_cast<std::uintmax_t>(response->content_length) >
           std::numeric_limits<std::size_t>::max() ||
-      !response->capture.checksum_hex.has_value()) {
+      !checksum_hex.has_value()) {
     return common::make_unexpected(common::Status{
         common::StatusCode::kCorruption, "S3 object metadata is incomplete or unaddressable"});
   }
-  auto checksum = parse_digest_hex(*response->capture.checksum_hex);
+  auto checksum = parse_digest_hex(*checksum_hex);
   if (!checksum.has_value())
     return common::make_unexpected(checksum.error());
   return ObjectMetadata{std::string{key}, static_cast<std::size_t>(response->content_length),
@@ -2027,11 +2117,12 @@ common::Result<std::vector<std::byte>> S3ObjectStore::get_range(const std::strin
     return common::make_unexpected(response.error());
   if (response->status != 206L)
     return common::make_unexpected(http_failure(response->status));
-  if (!response->capture.content_range.has_value()) {
+  const auto& encoded_content_range = response->capture.content_range;
+  if (!encoded_content_range.has_value()) {
     return common::make_unexpected(
         common::Status{common::StatusCode::kCorruption, "S3 content range is absent"});
   }
-  auto content_range = parse_content_range(*response->capture.content_range);
+  auto content_range = parse_content_range(*encoded_content_range);
   if (!content_range.has_value())
     return common::make_unexpected(content_range.error());
   if (content_range->first != offset || content_range->last != offset + length - 1U) {
@@ -2051,23 +2142,29 @@ S3ObjectStore::remove_if_exact(const std::string_view key, const std::size_t exp
   if (key.empty() || key.size() > 1024U || contains_control(key))
     return common::make_unexpected(invalid("S3 object key is invalid"));
   auto head = impl_->perform(
-      {.method = Impl::Method::kHead, .key = key, .maximum_body_bytes = 64U * 1024U});
+      {.method = Impl::Method::kHead, .key = key, .maximum_body_bytes = kSmallResponseLimit});
   if (!head.has_value())
     return common::make_unexpected(head.error());
   if (head->status == 404L)
     return ObjectDeletionReport{.already_absent = true};
   if (head->status != 200L)
     return common::make_unexpected(http_failure(head->status));
+  const auto& checksum_hex = head->capture.checksum_hex;
+  const auto& entity_tag_state = head->capture.entity_tag;
   if (head->content_length < 0 ||
       static_cast<std::uintmax_t>(head->content_length) > std::numeric_limits<std::size_t>::max() ||
-      !head->capture.checksum_hex.has_value() || !head->capture.entity_tag.has_value() ||
-      head->capture.entity_tag->empty() || head->capture.entity_tag->size() > 1024U ||
-      contains_control(*head->capture.entity_tag)) {
+      !checksum_hex.has_value() || !entity_tag_state.has_value()) {
     return common::make_unexpected(
         common::Status{common::StatusCode::kCorruption,
                        "S3 object deletion metadata is incomplete or unaddressable"});
   }
-  auto checksum = parse_digest_hex(*head->capture.checksum_hex);
+  const auto& entity_tag = *entity_tag_state;
+  if (entity_tag.empty() || entity_tag.size() > 1024U || contains_control(entity_tag)) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kCorruption,
+                       "S3 object deletion metadata is incomplete or unaddressable"});
+  }
+  auto checksum = parse_digest_hex(*checksum_hex);
   if (!checksum.has_value())
     return common::make_unexpected(checksum.error());
   if (static_cast<std::size_t>(head->content_length) != expected_size ||
@@ -2078,8 +2175,8 @@ S3ObjectStore::remove_if_exact(const std::string_view key, const std::size_t exp
   }
   auto removed = impl_->perform({.method = Impl::Method::kDelete,
                                  .key = key,
-                                 .maximum_body_bytes = 64U * 1024U,
-                                 .match_validator = *head->capture.entity_tag});
+                                 .maximum_body_bytes = kSmallResponseLimit,
+                                 .match_validator = entity_tag});
   if (!removed.has_value())
     return common::make_unexpected(removed.error());
   if (removed->status == 404L)

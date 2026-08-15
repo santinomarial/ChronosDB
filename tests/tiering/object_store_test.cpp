@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <arpa/inet.h>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <charconv>
 #include <chrono>
@@ -18,6 +19,7 @@
 #include <netinet/in.h>
 #include <optional>
 #include <poll.h>
+#include <span>
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
@@ -28,6 +30,21 @@
 
 namespace chronos::tiering {
 namespace {
+
+constexpr std::size_t kMaximumTestRequestBytes = std::size_t{64U} * 1024U;
+constexpr std::size_t kMultipartPartBytes = std::size_t{5U} * 1024U * 1024U;
+
+[[nodiscard]] std::string_view byte_string_view(const common::ByteView bytes) noexcept {
+  if (bytes.empty())
+    return {};
+  // Character types may inspect any object's representation; keep that necessary cast isolated.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+}
+
+[[nodiscard]] common::ByteView string_byte_view(const std::string_view value) noexcept {
+  return std::as_bytes(std::span{value.data(), value.size()});
+}
 
 [[nodiscard]] std::string lower(std::string value) {
   std::ranges::transform(value, value.begin(), [](const unsigned char character) {
@@ -92,7 +109,11 @@ public:
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     address.sin_port = 0U;
-    if (::bind(listener_, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0 ||
+    // POSIX socket APIs expose protocol-specific addresses through sockaddr pointers.
+    if (::bind(listener_,
+               reinterpret_cast<const sockaddr*>(
+                   &address), // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+               sizeof(address)) != 0 ||
         ::listen(listener_, 8) != 0) {
       failure_ = "listener bind failed";
       ::close(listener_);
@@ -100,25 +121,28 @@ public:
       return;
     }
     socklen_t address_length = sizeof(address);
-    if (::getsockname(listener_, reinterpret_cast<sockaddr*>(&address), &address_length) != 0) {
+    if (::getsockname(listener_,
+                      reinterpret_cast<sockaddr*>(
+                          &address), // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+                      &address_length) != 0) {
       failure_ = "listener endpoint lookup failed";
       ::close(listener_);
       listener_ = -1;
       return;
     }
     port_ = ntohs(address.sin_port);
-    worker_ = std::jthread{[this](const std::stop_token stop) { serve(stop); }};
+    worker_ = std::thread{[this] { serve(); }};
   }
 
   ~LocalS3Server() {
-    worker_.request_stop();
+    stop_.store(true);
     if (listener_ >= 0) {
       static_cast<void>(::shutdown(listener_, SHUT_RDWR));
       ::close(listener_);
-      if (worker_.joinable())
-        worker_.join();
       listener_ = -1;
     }
+    if (worker_.joinable())
+      worker_.join();
   }
 
   LocalS3Server(const LocalS3Server&) = delete;
@@ -160,7 +184,7 @@ private:
     std::array<char, 2048U> fragment{};
     std::size_t header_end = std::string::npos;
     std::size_t content_length{};
-    while (bytes.size() <= 64U * 1024U) {
+    while (bytes.size() <= kMaximumTestRequestBytes) {
       const ssize_t received = ::recv(descriptor, fragment.data(), fragment.size(), 0);
       if (received <= 0)
         return std::nullopt;
@@ -213,8 +237,8 @@ private:
           return std::nullopt;
         bytes.insert(bytes.end(), fragment.begin(), fragment.begin() + body_received);
       }
-      const auto* body = reinterpret_cast<const std::byte*>(bytes.data() + body_begin);
-      request.body.assign(body, body + content_length);
+      const common::ByteView body = string_byte_view({bytes.data() + body_begin, content_length});
+      request.body.assign(body.begin(), body.end());
       return request;
     }
     return std::nullopt;
@@ -373,8 +397,7 @@ private:
     }
     if (request->method == "POST" && request->target.ends_with("?uploadId=fixture-upload%26id")) {
       const auto condition = request->headers.find("if-none-match");
-      const std::string_view body{reinterpret_cast<const char*>(request->body.data()),
-                                  request->body.size()};
+      const std::string_view body = byte_string_view(request->body);
       if (!multipart_upload_active_ || condition == request->headers.end() ||
           condition->second != "*" || !body.contains("<PartNumber>1</PartNumber>") ||
           !body.contains("<ETag>\"part-1\"</ETag>")) {
@@ -536,14 +559,14 @@ private:
         "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
   }
 
-  void serve(const std::stop_token stop) {
-    while (!stop.stop_requested()) {
+  void serve() {
+    while (!stop_.load()) {
       pollfd readiness{.fd = listener_, .events = POLLIN};
       const int ready = ::poll(&readiness, 1U, 50);
       if (ready < 0) {
         if (errno == EINTR)
           continue;
-        if (!stop.stop_requested())
+        if (!stop_.load())
           record_failure("listener poll failed");
         return;
       }
@@ -551,7 +574,7 @@ private:
         continue;
       const int connection = ::accept(listener_, nullptr, nullptr);
       if (connection < 0) {
-        if (!stop.stop_requested())
+        if (!stop_.load())
           record_failure("listener accept failed");
         return;
       }
@@ -563,7 +586,8 @@ private:
   mutable std::mutex mutex_;
   int listener_{-1};
   std::uint16_t port_{};
-  std::jthread worker_;
+  std::atomic_bool stop_{};
+  std::thread worker_;
   std::vector<RecordedRequest> requests_;
   std::string failure_;
   std::optional<std::vector<std::byte>> object_;
@@ -938,8 +962,8 @@ TEST(S3ContainerCredentialProviderTest, RejectsMalformedResponseAndInsecureDefau
   const std::string secret{"do-not-leak-container-secret"};
   LocalS3Server credential_server{
       LocalS3Behavior{.container_credential_response =
-                          "{\"AccessKeyId\":\"container-access\",\"SecretAccessKey\":\"" + secret +
-                          "\",\"Expiration\":\"" + future_iso_expiration() + "\"}"}};
+                          R"({"AccessKeyId":"container-access","SecretAccessKey":")" + secret +
+                          R"(","Expiration":")" + future_iso_expiration() + R"("})"}};
   ASSERT_TRUE(credential_server.valid()) << credential_server.failure();
   S3ContainerCredentialProviderConfig config{
       .endpoint = "http://127.0.0.1:" + std::to_string(credential_server.port()) + "/credentials",
@@ -1254,12 +1278,12 @@ TEST(S3ObjectStoreTest, ConcurrentConditionalWritersConvergeWithoutOverwrite) {
     const auto& second_bytes = same_content ? first_bytes : different_bytes;
     std::optional<common::Result<ObjectMetadata>> first_result;
     std::optional<common::Result<ObjectMetadata>> second_result;
-    std::jthread first_writer{[&] {
+    std::thread first_writer{[&] {
       first_result =
           (*first_store)
               ->put_if_absent("parts/concurrent", first_bytes, ingest::sha256(first_bytes).value());
     }};
-    std::jthread second_writer{[&] {
+    std::thread second_writer{[&] {
       second_result = (*second_store)
                           ->put_if_absent("parts/concurrent", second_bytes,
                                           ingest::sha256(second_bytes).value());
@@ -1471,7 +1495,7 @@ TEST(S3ObjectStoreTest, AppliesDeterministicJitterWithoutExceedingBackoffCeiling
 TEST(S3ObjectStoreTest, MultipartUploadCompletesConditionallyAndVerifiesExactObject) {
   LocalS3Server server;
   ASSERT_TRUE(server.valid()) << server.failure();
-  constexpr std::size_t part_bytes = 5U * 1024U * 1024U;
+  constexpr std::size_t part_bytes = kMultipartPartBytes;
   const std::string kms_key_arn{
       "arn:aws:kms:us-east-1:123456789012:key/01234567-89ab-cdef-0123-456789abcdef"};
   S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
@@ -1530,7 +1554,7 @@ TEST(S3ObjectStoreTest, MultipartUploadCompletesConditionallyAndVerifiesExactObj
 TEST(S3ObjectStoreTest, BoundsParallelPartWorkersAndPreservesCompletionOrder) {
   LocalS3Server server;
   ASSERT_TRUE(server.valid()) << server.failure();
-  constexpr std::size_t part_bytes = 5U * 1024U * 1024U;
+  constexpr std::size_t part_bytes = kMultipartPartBytes;
   auto provider = std::make_shared<MultipartConcurrencyCredentialProvider>();
   S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
                              .region = "us-east-1",
@@ -1556,8 +1580,7 @@ TEST(S3ObjectStoreTest, BoundsParallelPartWorkersAndPreservesCompletionOrder) {
     return request.method == "POST" && request.target.contains("?uploadId=");
   });
   ASSERT_NE(completion, requests.end());
-  const std::string_view completion_body{reinterpret_cast<const char*>(completion->body.data()),
-                                         completion->body.size()};
+  const std::string_view completion_body = byte_string_view(completion->body);
   const std::size_t first = completion_body.find("<PartNumber>1</PartNumber>");
   const std::size_t second = completion_body.find("<PartNumber>2</PartNumber>");
   EXPECT_NE(first, std::string_view::npos);
@@ -1581,7 +1604,7 @@ TEST(S3ObjectStoreTest, RejectsInvalidMultipartWorkerBound) {
 TEST(S3ObjectStoreTest, MultipartPartFailureAbortsWithoutPublishingAnObject) {
   LocalS3Server server{LocalS3Behavior{.fail_multipart_part = 2U}};
   ASSERT_TRUE(server.valid()) << server.failure();
-  constexpr std::size_t part_bytes = 5U * 1024U * 1024U;
+  constexpr std::size_t part_bytes = kMultipartPartBytes;
   S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
                              .region = "us-east-1",
                              .bucket = "chronos-test",
@@ -1616,7 +1639,7 @@ TEST(S3ObjectStoreTest, MultipartPartFailureAbortsWithoutPublishingAnObject) {
 TEST(S3ObjectStoreTest, EmbeddedMultipartCompletionErrorAbortsWithoutPublishingAnObject) {
   LocalS3Server server{LocalS3Behavior{.embedded_multipart_completion_error = true}};
   ASSERT_TRUE(server.valid()) << server.failure();
-  constexpr std::size_t part_bytes = 5U * 1024U * 1024U;
+  constexpr std::size_t part_bytes = kMultipartPartBytes;
   S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
                              .region = "us-east-1",
                              .bucket = "chronos-test",
