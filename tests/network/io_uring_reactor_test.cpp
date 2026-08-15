@@ -35,6 +35,11 @@ TEST(IoUringReactorTest, BuildAndKernelBoundaryIsExplicit) {
   IoUringReactor empty;
   EXPECT_EQ(empty.poll_once(std::chrono::milliseconds{0}).code(),
             common::StatusCode::kNotSupported);
+  EXPECT_EQ(empty.notify_response_ready().code(), common::StatusCode::kNotSupported);
+  EXPECT_TRUE(empty.shutdown().is_ok());
+  EXPECT_EQ(empty.bound_port(), 0U);
+  EXPECT_EQ(empty.metrics().active_connections, 0U);
+  EXPECT_FALSE(empty.is_running());
 #endif
 }
 

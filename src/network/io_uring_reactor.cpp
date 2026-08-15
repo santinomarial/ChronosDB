@@ -750,6 +750,9 @@ common::Result<IoUringReactor> IoUringReactor::start(const EpollServerConfig& co
 #endif
 }
 
+// The portable backend interface is intentionally instance-bound even when this build has no
+// liburing implementation to inspect.
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 common::Status IoUringReactor::poll_once(const std::chrono::milliseconds maximum_wait) {
 #if defined(__linux__) && defined(CHRONOS_HAS_LIBURING)
   if (!implementation_ || !implementation_->running)
@@ -786,6 +789,8 @@ common::Status IoUringReactor::poll_once(const std::chrono::milliseconds maximum
 #endif
 }
 
+// The portable backend interface is intentionally instance-bound on unsupported builds.
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 common::Status IoUringReactor::notify_response_ready() noexcept {
 #if defined(__linux__) && defined(CHRONOS_HAS_LIBURING)
   if (!implementation_ || implementation_->wake_fd < 0)
@@ -807,6 +812,8 @@ common::Status IoUringReactor::notify_response_ready() noexcept {
 #endif
 }
 
+// The portable backend interface is intentionally instance-bound on unsupported builds.
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 common::Status IoUringReactor::shutdown() noexcept {
 #if defined(__linux__) && defined(CHRONOS_HAS_LIBURING)
   return implementation_ ? implementation_->stop() : common::Status::ok();
@@ -815,6 +822,8 @@ common::Status IoUringReactor::shutdown() noexcept {
 #endif
 }
 
+// The portable backend interface is intentionally instance-bound on unsupported builds.
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 std::uint16_t IoUringReactor::bound_port() const noexcept {
 #if defined(__linux__) && defined(CHRONOS_HAS_LIBURING)
   return implementation_ ? implementation_->port : 0U;
@@ -823,6 +832,8 @@ std::uint16_t IoUringReactor::bound_port() const noexcept {
 #endif
 }
 
+// The portable backend interface is intentionally instance-bound on unsupported builds.
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 EpollServerMetrics IoUringReactor::metrics() const noexcept {
 #if defined(__linux__) && defined(CHRONOS_HAS_LIBURING)
   return implementation_ ? implementation_->stats : EpollServerMetrics{};
@@ -831,6 +842,8 @@ EpollServerMetrics IoUringReactor::metrics() const noexcept {
 #endif
 }
 
+// The portable backend interface is intentionally instance-bound on unsupported builds.
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 bool IoUringReactor::is_running() const noexcept {
 #if defined(__linux__) && defined(CHRONOS_HAS_LIBURING)
   return implementation_ && implementation_->running;
