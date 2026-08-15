@@ -71,6 +71,22 @@ on Linux and macOS and defines the reference behavior. Hardware CRC instructions
 feature detection, architecture-specific code, runtime dispatch, and equivalence benchmarks; those
 costs need measured justification in a later task.
 
+## Bounded structured diagnostics
+
+`LogRecord` is a borrowed, synchronous description of one diagnostic. The caller owns every string
+and field span until `encode_json_log` or `write_json_log` returns. Encoding produces one
+newline-free JSON object with a millisecond RFC 3339 UTC timestamp and stable severity, component,
+event, and message keys. At most 32 caller fields are accepted; built-in names cannot be shadowed,
+caller names must be unique ASCII identifiers, and individual plus aggregate text limits fail
+before unbounded log retention. Strings escape JSON controls, preserve valid UTF-8, and replace
+invalid input bytes with U+FFFD so malformed diagnostics cannot damage downstream line parsing.
+
+`write_json_log` owns no file. It serializes calls through one process-local mutex, writes exactly
+one encoded object plus newline, and flushes before returning. The function therefore provides
+atomic in-process log lines, not durable storage: successful return means the C stdio stream
+accepted and flushed the bytes, not that a filesystem or collector persisted them. Logging is not a
+data acknowledgment and cannot participate in WAL or Raft durability claims.
+
 ## Examples
 
 Encoding and decoding a fixed layout remains explicit:
@@ -127,3 +143,5 @@ equivalence test against this path.
 - What distinguishes CRC32C from IEEE CRC32 and from a cryptographic hash?
 - How can an already finalized CRC32C be extended without changing chunking semantics?
 - What evidence is needed before adding a hardware-accelerated checksum backend?
+- Why must caller-supplied log fields be bounded and forbidden from shadowing built-in keys?
+- What does flushing a structured log line guarantee, and what durability does it not guarantee?

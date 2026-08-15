@@ -1,3 +1,4 @@
+#include "chronos/common/log.hpp"
 #include "chronos/common/uuid_generator.hpp"
 #include "chronos/common/version.hpp"
 #include "chronos/io/posix_io.hpp"
@@ -67,6 +68,94 @@ extern "C" void request_stop(const int) {
   stop_requested = 1;
 }
 
+enum class LogFormat : std::uint8_t {
+  kText = 0,
+  kJson,
+};
+
+// C++ process entry points supply the conventional C argv array.
+// NOLINTNEXTLINE(modernize-avoid-c-arrays)
+[[nodiscard]] LogFormat requested_log_format(const int argc, const char* const argv[]) noexcept {
+  LogFormat format = LogFormat::kText;
+  for (int index = 1; index + 1 < argc; ++index) {
+    if (std::string_view{argv[index]} != "--log-format")
+      continue;
+    if (std::string_view{argv[index + 1]} == "json")
+      format = LogFormat::kJson;
+    else if (std::string_view{argv[index + 1]} == "text")
+      format = LogFormat::kText;
+  }
+  return format;
+}
+
+class DaemonLogger {
+public:
+  explicit DaemonLogger(const LogFormat format) noexcept : format_(format) {}
+
+  void info(const std::string_view event, const std::string_view message,
+            const std::span<const chronos::common::LogField> fields = {}) const noexcept {
+    emit(stdout, {.severity = chronos::common::LogSeverity::kInfo,
+                  .name = event,
+                  .message = message,
+                  .fields = fields,
+                  .text_prefix = false});
+  }
+
+  void error(const std::string_view event, const std::string_view message,
+             const std::span<const chronos::common::LogField> fields = {}) const noexcept {
+    emit(stderr, {.severity = chronos::common::LogSeverity::kError,
+                  .name = event,
+                  .message = message,
+                  .fields = fields,
+                  .text_prefix = true});
+  }
+
+private:
+  struct Event {
+    chronos::common::LogSeverity severity;
+    std::string_view name;
+    std::string_view message;
+    std::span<const chronos::common::LogField> fields;
+    bool text_prefix;
+  };
+
+  void emit(std::FILE* const output, const Event& event) const noexcept {
+    if (format_ == LogFormat::kJson) {
+      bool structured_write_failed = false;
+      try {
+        const std::string_view bounded_message = event.message.substr(
+            0U, std::min(event.message.size(), chronos::common::kMaximumLogMessageBytes));
+        const chronos::common::Status written =
+            chronos::common::write_json_log(output, {.severity = event.severity,
+                                                     .component = "chronosd",
+                                                     .event = event.name,
+                                                     .message = bounded_message,
+                                                     .fields = event.fields});
+        if (written.is_ok())
+          return;
+        structured_write_failed = true;
+      } catch (...) {
+        structured_write_failed = true;
+      }
+      static_cast<void>(structured_write_failed);
+      constexpr std::string_view fallback{
+          "{\"timestamp\":\"1970-01-01T00:00:00.000Z\",\"severity\":\"CRITICAL\","
+          "\"component\":\"chronosd\",\"event\":\"log_write_failed\","
+          "\"message\":\"structured log write failed\"}\n"};
+      static_cast<void>(std::fwrite(fallback.data(), 1U, fallback.size(), output));
+      static_cast<void>(std::fflush(output));
+      return;
+    }
+    if (event.text_prefix)
+      static_cast<void>(std::fputs("chronosd: ", output));
+    static_cast<void>(std::fwrite(event.message.data(), 1U, event.message.size(), output));
+    static_cast<void>(std::fputc('\n', output));
+    static_cast<void>(std::fflush(output));
+  }
+
+  LogFormat format_;
+};
+
 struct Options {
   ReactorBackend backend{ReactorBackend::kEpoll};
   std::uint16_t port{8812U};
@@ -79,6 +168,7 @@ struct Options {
   std::string raft_tls_certificate_file;
   std::string raft_tls_private_key_file;
   std::string raft_tls_trust_store_file;
+  LogFormat log_format{LogFormat::kText};
   bool help{};
   bool version{};
 };
@@ -87,6 +177,7 @@ void print_usage(const std::string_view program, std::ostream& stream) {
   stream << "Usage: " << program
          << " [--listen 127.0.0.1] [--port PORT] [--backend epoll|io_uring]"
             " [--queue-capacity COUNT] [--data-dir PATH]"
+            " [--log-format text|json]"
             " [--replicated-groups FILE]"
             " [--replicated-peers FILE --raft-tls-cert FILE --raft-tls-key FILE"
             " --raft-tls-ca FILE]"
@@ -110,7 +201,8 @@ template <typename Integer>
 
 // C++ process entry points supply the conventional C argv array.
 // NOLINTNEXTLINE(modernize-avoid-c-arrays)
-[[nodiscard]] std::optional<Options> parse_options(const int argc, const char* const argv[]) {
+[[nodiscard]] std::optional<Options> parse_options(const int argc, const char* const argv[],
+                                                   std::string& error) {
   Options options;
   for (int index = 1; index < argc; ++index) {
     const std::string_view argument{argv[index]};
@@ -123,24 +215,24 @@ template <typename Integer>
       continue;
     }
     if (index + 1 >= argc) {
-      std::cerr << "chronosd: missing value for " << argument << '\n';
+      error = "missing value for " + std::string{argument};
       return std::nullopt;
     }
     const std::string_view value{argv[++index]};
     if (argument == "--listen") {
       if (value != "127.0.0.1") {
-        std::cerr << "chronosd: plaintext service is restricted to 127.0.0.1\n";
+        error = "plaintext service is restricted to 127.0.0.1";
         return std::nullopt;
       }
     } else if (argument == "--port") {
       if (!parse_integer(value, options.port)) {
-        std::cerr << "chronosd: port must be an integer from 0 through 65535\n";
+        error = "port must be an integer from 0 through 65535";
         return std::nullopt;
       }
     } else if (argument == "--queue-capacity") {
       if (!parse_integer(value, options.queue_capacity) || options.queue_capacity == 0U ||
           options.queue_capacity > 1'048'576U) {
-        std::cerr << "chronosd: queue capacity must be from 1 through 1048576\n";
+        error = "queue capacity must be from 1 through 1048576";
         return std::nullopt;
       }
     } else if (argument == "--backend") {
@@ -149,36 +241,45 @@ template <typename Integer>
       else if (value == "io_uring")
         options.backend = ReactorBackend::kIoUring;
       else {
-        std::cerr << "chronosd: backend must be epoll or io_uring\n";
+        error = "backend must be epoll or io_uring";
+        return std::nullopt;
+      }
+    } else if (argument == "--log-format") {
+      if (value == "text")
+        options.log_format = LogFormat::kText;
+      else if (value == "json")
+        options.log_format = LogFormat::kJson;
+      else {
+        error = "log format must be text or json";
         return std::nullopt;
       }
     } else if (argument == "--data-dir") {
       if (value.empty()) {
-        std::cerr << "chronosd: data directory must be nonempty\n";
+        error = "data directory must be nonempty";
         return std::nullopt;
       }
       options.data_directory = value;
     } else if (argument == "--subscription-sql") {
       if (value.empty()) {
-        std::cerr << "chronosd: subscription SQL must be nonempty\n";
+        error = "subscription SQL must be nonempty";
         return std::nullopt;
       }
       options.subscription_sql = value;
     } else if (argument == "--subscription-key-file") {
       if (value.empty()) {
-        std::cerr << "chronosd: subscription key file must be nonempty\n";
+        error = "subscription key file must be nonempty";
         return std::nullopt;
       }
       options.subscription_key_file = value;
     } else if (argument == "--replicated-groups") {
       if (value.empty()) {
-        std::cerr << "chronosd: replicated group configuration path must be nonempty\n";
+        error = "replicated group configuration path must be nonempty";
         return std::nullopt;
       }
       options.replicated_groups_file = value;
     } else if (argument == "--replicated-peers") {
       if (value.empty()) {
-        std::cerr << "chronosd: replicated peer configuration path must be nonempty\n";
+        error = "replicated peer configuration path must be nonempty";
         return std::nullopt;
       }
       options.replicated_peers_file = value;
@@ -189,29 +290,28 @@ template <typename Integer>
     } else if (argument == "--raft-tls-ca") {
       options.raft_tls_trust_store_file = value;
     } else {
-      std::cerr << "chronosd: unknown option " << argument << '\n';
+      error = "unknown option " + std::string{argument};
       return std::nullopt;
     }
   }
   if ((options.help || options.version) && argc != 2) {
-    std::cerr << "chronosd: --help and --version must be used alone\n";
+    error = "--help and --version must be used alone";
     return std::nullopt;
   }
   if (options.subscription_sql.empty() != options.subscription_key_file.empty()) {
-    std::cerr << "chronosd: subscription SQL and key file must be configured together\n";
+    error = "subscription SQL and key file must be configured together";
     return std::nullopt;
   }
   if (!options.subscription_sql.empty() && options.data_directory.empty()) {
-    std::cerr << "chronosd: subscriptions require a configured data directory\n";
+    error = "subscriptions require a configured data directory";
     return std::nullopt;
   }
   if (!options.replicated_groups_file.empty() && options.data_directory.empty()) {
-    std::cerr << "chronosd: replicated group configuration requires a data directory\n";
+    error = "replicated group configuration requires a data directory";
     return std::nullopt;
   }
   if (!options.replicated_groups_file.empty() && !options.subscription_sql.empty()) {
-    std::cerr
-        << "chronosd: replicated ingest and single-node subscriptions are mutually exclusive\n";
+    error = "replicated ingest and single-node subscriptions are mutually exclusive";
     return std::nullopt;
   }
   const std::array<bool, 4U> transport_fields{
@@ -220,11 +320,11 @@ template <typename Integer>
   const std::size_t transport_field_count =
       static_cast<std::size_t>(std::ranges::count(transport_fields, true));
   if (transport_field_count != 0U && transport_field_count != transport_fields.size()) {
-    std::cerr << "chronosd: replicated peers and all Raft TLS files must be configured together\n";
+    error = "replicated peers and all Raft TLS files must be configured together";
     return std::nullopt;
   }
   if (transport_field_count != 0U && options.replicated_groups_file.empty()) {
-    std::cerr << "chronosd: Raft peer transport requires replicated group configuration\n";
+    error = "Raft peer transport requires replicated group configuration";
     return std::nullopt;
   }
   return options;
@@ -941,9 +1041,14 @@ private:
 // NOLINTNEXTLINE(modernize-avoid-c-arrays)
 int run_daemon(const int argc, const char* const argv[]) {
   const std::string_view program = argc > 0 ? std::string_view{argv[0]} : "chronosd";
-  const auto options = parse_options(argc, argv);
+  const LogFormat requested_format = requested_log_format(argc, argv);
+  const DaemonLogger logger{requested_format};
+  std::string option_error;
+  const auto options = parse_options(argc, argv, option_error);
   if (!options.has_value()) {
-    print_usage(program, std::cerr);
+    logger.error("invalid_options", option_error);
+    if (requested_format == LogFormat::kText)
+      print_usage(program, std::cerr);
     return 2;
   }
   if (options->help) {
@@ -963,14 +1068,14 @@ int run_daemon(const int argc, const char* const argv[]) {
                                       chronos::service::ReplicatedGroupConfigLimits{}.maximum_bytes,
                                       "replicated group config");
     if (!loaded.has_value()) {
-      std::cerr << "chronosd: replicated group config read failed: " << loaded.error().to_string()
-                << '\n';
+      logger.error("replicated_group_config_read_failed",
+                   "replicated group config read failed: " + loaded.error().to_string());
       return 1;
     }
     auto parsed = chronos::service::parse_replicated_group_config(*loaded);
     if (!parsed.has_value()) {
-      std::cerr << "chronosd: replicated group config is invalid: " << parsed.error().to_string()
-                << '\n';
+      logger.error("replicated_group_config_invalid",
+                   "replicated group config is invalid: " + parsed.error().to_string());
       return 1;
     }
     replicated_groups.emplace(std::move(*parsed));
@@ -981,14 +1086,14 @@ int run_daemon(const int argc, const char* const argv[]) {
                                       chronos::service::ReplicatedPeerConfigLimits{}.maximum_bytes,
                                       "replicated peer config");
     if (!loaded.has_value()) {
-      std::cerr << "chronosd: replicated peer config read failed: " << loaded.error().to_string()
-                << '\n';
+      logger.error("replicated_peer_config_read_failed",
+                   "replicated peer config read failed: " + loaded.error().to_string());
       return 1;
     }
     auto parsed = chronos::service::parse_replicated_peer_config(*loaded);
     if (!parsed.has_value()) {
-      std::cerr << "chronosd: replicated peer config is invalid: " << parsed.error().to_string()
-                << '\n';
+      logger.error("replicated_peer_config_invalid",
+                   "replicated peer config is invalid: " + parsed.error().to_string());
       return 1;
     }
     for (const auto& [path, private_key] : std::array<std::pair<std::string_view, bool>, 3U>{
@@ -997,7 +1102,8 @@ int run_daemon(const int argc, const char* const argv[]) {
              {options->raft_tls_trust_store_file, false}}) {
       const chronos::common::Status valid = validate_tls_file(std::string{path}, private_key);
       if (!valid.is_ok()) {
-        std::cerr << "chronosd: Raft TLS file validation failed: " << valid.to_string() << '\n';
+        logger.error("raft_tls_file_invalid",
+                     "Raft TLS file validation failed: " + valid.to_string());
         return 1;
       }
     }
@@ -1007,8 +1113,8 @@ int run_daemon(const int argc, const char* const argv[]) {
   if (!options->subscription_sql.empty()) {
     auto loaded = load_subscription_key(options->subscription_key_file);
     if (!loaded.has_value()) {
-      std::cerr << "chronosd: subscription key setup failed: " << loaded.error().to_string()
-                << '\n';
+      logger.error("subscription_key_setup_failed",
+                   "subscription key setup failed: " + loaded.error().to_string());
       return 1;
     }
     subscription_key.emplace(*loaded);
@@ -1024,8 +1130,8 @@ int run_daemon(const int argc, const char* const argv[]) {
       auto opened = ReplicatedIngestDatabase::open_existing(
           {.bootstrap = {.database_root = options->data_directory}, .groups = *replicated_groups});
       if (!opened.has_value()) {
-        std::cerr << "chronosd: replicated database start failed: " << opened.error().to_string()
-                  << '\n';
+        logger.error("replicated_database_start_failed",
+                     "replicated database start failed: " + opened.error().to_string());
         return 1;
       }
       replicated_database.emplace(std::move(*opened));
@@ -1034,8 +1140,8 @@ int run_daemon(const int argc, const char* const argv[]) {
             replicated_database->bootstrap().local_node_id, *replicated_groups, *replicated_peers);
         if (!membership.is_ok()) {
           static_cast<void>(replicated_database->shutdown());
-          std::cerr << "chronosd: replicated peer membership is invalid: " << membership.to_string()
-                    << '\n';
+          logger.error("replicated_peer_membership_invalid",
+                       "replicated peer membership is invalid: " + membership.to_string());
           return 1;
         }
         std::vector<chronos::raft::GroupId> resident_groups;
@@ -1052,8 +1158,8 @@ int run_daemon(const int argc, const char* const argv[]) {
                      .trust_store_file = options->raft_tls_trust_store_file}});
         if (!transport.has_value()) {
           static_cast<void>(replicated_database->shutdown());
-          std::cerr << "chronosd: Raft peer transport start failed: "
-                    << transport.error().to_string() << '\n';
+          logger.error("raft_peer_transport_start_failed",
+                       "Raft peer transport start failed: " + transport.error().to_string());
           return 1;
         }
         raft_transport.emplace(std::move(*transport));
@@ -1063,8 +1169,8 @@ int run_daemon(const int argc, const char* const argv[]) {
         if (!read_barrier.has_value()) {
           static_cast<void>(raft_transport->shutdown());
           static_cast<void>(replicated_database->shutdown());
-          std::cerr << "chronosd: replicated read barrier start failed: "
-                    << read_barrier.error().to_string() << '\n';
+          logger.error("replicated_read_barrier_start_failed",
+                       "replicated read barrier start failed: " + read_barrier.error().to_string());
           return 1;
         }
         replicated_read_barrier.emplace(std::move(*read_barrier));
@@ -1075,15 +1181,16 @@ int run_daemon(const int argc, const char* const argv[]) {
         });
         if (!all_local) {
           static_cast<void>(replicated_database->shutdown());
-          std::cerr << "chronosd: multi-voter groups require configured Raft peer transport\n";
+          logger.error("raft_peer_transport_required",
+                       "multi-voter groups require configured Raft peer transport");
           return 1;
         }
         const chronos::common::Status elected =
             elect_single_node_groups(*replicated_database, *replicated_groups);
         if (!elected.is_ok()) {
           static_cast<void>(replicated_database->shutdown());
-          std::cerr << "chronosd: replicated single-node election failed: " << elected.to_string()
-                    << '\n';
+          logger.error("replicated_single_node_election_failed",
+                       "replicated single-node election failed: " + elected.to_string());
           return 1;
         }
         auto read_barrier = ReplicatedReadBarrier::create_local(
@@ -1092,8 +1199,8 @@ int run_daemon(const int argc, const char* const argv[]) {
              replicated_database->query_barrier_groups().end()});
         if (!read_barrier.has_value()) {
           static_cast<void>(replicated_database->shutdown());
-          std::cerr << "chronosd: replicated read barrier start failed: "
-                    << read_barrier.error().to_string() << '\n';
+          logger.error("replicated_read_barrier_start_failed",
+                       "replicated read barrier start failed: " + read_barrier.error().to_string());
           return 1;
         }
         replicated_read_barrier.emplace(std::move(*read_barrier));
@@ -1102,8 +1209,8 @@ int run_daemon(const int argc, const char* const argv[]) {
     } else {
       auto descriptor = new_database_descriptor(identities);
       if (!descriptor.has_value()) {
-        std::cerr << "chronosd: secure identity setup failed: " << descriptor.error().to_string()
-                  << '\n';
+        logger.error("secure_identity_setup_failed",
+                     "secure identity setup failed: " + descriptor.error().to_string());
         return 1;
       }
       chronos::service::SingleNodeDatabaseConfig database_config{
@@ -1113,7 +1220,8 @@ int run_daemon(const int argc, const char* const argv[]) {
           .committed_append_observer = subscription_key.has_value() ? &append_router : nullptr};
       auto opened = SingleNodeDatabase::open_or_create(database_config);
       if (!opened.has_value()) {
-        std::cerr << "chronosd: database start failed: " << opened.error().to_string() << '\n';
+        logger.error("database_start_failed",
+                     "database start failed: " + opened.error().to_string());
         return 1;
       }
       database.emplace(std::move(*opened));
@@ -1123,8 +1231,8 @@ int run_daemon(const int argc, const char* const argv[]) {
             configure_subscription(*database, append_router, *options, *subscription_key);
         if (!configured.has_value()) {
           static_cast<void>(database->shutdown());
-          std::cerr << "chronosd: subscription runtime start failed: "
-                    << configured.error().to_string() << '\n';
+          logger.error("subscription_runtime_start_failed",
+                       "subscription runtime start failed: " + configured.error().to_string());
           return 1;
         }
         subscription = std::move(*configured);
@@ -1136,7 +1244,7 @@ int run_daemon(const int argc, const char* const argv[]) {
   auto responses = SpscNetworkTaskQueue::create(options->queue_capacity);
   if (!requests.has_value() || !responses.has_value()) {
     const auto& error = !requests.has_value() ? requests.error() : responses.error();
-    std::cerr << "chronosd: queue creation failed: " << error.to_string() << '\n';
+    logger.error("queue_creation_failed", "queue creation failed: " + error.to_string());
     if (raft_transport.has_value())
       static_cast<void>(raft_transport->shutdown());
     if (replicated_database.has_value())
@@ -1155,8 +1263,8 @@ int run_daemon(const int argc, const char* const argv[]) {
       if (raft_transport.has_value())
         static_cast<void>(raft_transport->shutdown());
       static_cast<void>(replicated_database->shutdown());
-      std::cerr << "chronosd: replicated ingest service start failed: "
-                << created.error().to_string() << '\n';
+      logger.error("replicated_ingest_service_start_failed",
+                   "replicated ingest service start failed: " + created.error().to_string());
       return 1;
     }
     replicated_service.emplace(std::move(*created));
@@ -1172,7 +1280,7 @@ int run_daemon(const int argc, const char* const argv[]) {
   auto reactor =
       Reactor::start(options->backend, config, {.requests = &*requests, .responses = &*responses});
   if (!reactor.has_value()) {
-    std::cerr << "chronosd: server start failed: " << reactor.error().to_string() << '\n';
+    logger.error("server_start_failed", "server start failed: " + reactor.error().to_string());
     replicated_service.reset();
     if (raft_transport.has_value())
       static_cast<void>(raft_transport->shutdown());
@@ -1189,7 +1297,7 @@ int run_daemon(const int argc, const char* const argv[]) {
       replicated_service.reset();
       static_cast<void>(raft_transport->shutdown());
       static_cast<void>(replicated_database->shutdown());
-      std::cerr << "chronosd: Raft transport worker start failed\n";
+      logger.error("raft_transport_worker_start_failed", "Raft transport worker start failed");
       return 1;
     }
   }
@@ -1218,7 +1326,7 @@ int run_daemon(const int argc, const char* const argv[]) {
       static_cast<void>(database->shutdown());
     if (replicated_database.has_value())
       static_cast<void>(replicated_database->shutdown());
-    std::cerr << "chronosd: worker start failed\n";
+    logger.error("data_plane_worker_start_failed", "worker start failed");
     return 1;
   }
 
@@ -1243,40 +1351,54 @@ int run_daemon(const int argc, const char* const argv[]) {
       static_cast<void>(database->shutdown());
     if (replicated_database.has_value())
       static_cast<void>(replicated_database->shutdown());
-    std::cerr << "chronosd: signal handler installation failed\n";
+    logger.error("signal_handler_installation_failed", "signal handler installation failed");
     return 1;
   }
 
-  std::cout << "chronosd listening on 127.0.0.1:" << reactor->bound_port()
-            << " backend=" << chronos::network::reactor_backend_name(options->backend)
-            << " data_plane="
-            << (replicated_service.has_value()
-                    ? "replicated"
-                    : (service.has_value() ? "configured" : "unconfigured"))
-            << " subscriptions=" << (subscription != nullptr ? "configured" : "disabled")
-            << " raft_transport="
-            << (raft_transport.has_value()
-                    ? "configured"
-                    : (replicated_service.has_value() ? "local" : "disabled"))
-            << '\n'
-            << std::flush;
+  const std::string port = std::to_string(reactor->bound_port());
+  const std::string_view backend = chronos::network::reactor_backend_name(options->backend);
+  const std::string_view data_plane = replicated_service.has_value()
+                                          ? "replicated"
+                                          : (service.has_value() ? "configured" : "unconfigured");
+  const std::string_view subscriptions = subscription != nullptr ? "configured" : "disabled";
+  const std::string_view raft_transport_state =
+      raft_transport.has_value() ? "configured"
+                                 : (replicated_service.has_value() ? "local" : "disabled");
+  std::string startup{"chronosd listening on 127.0.0.1:"};
+  startup.append(port);
+  startup.append(" backend=");
+  startup.append(backend);
+  startup.append(" data_plane=");
+  startup.append(data_plane);
+  startup.append(" subscriptions=");
+  startup.append(subscriptions);
+  startup.append(" raft_transport=");
+  startup.append(raft_transport_state);
+  const std::array startup_fields{
+      chronos::common::LogField{"address", "127.0.0.1"},
+      chronos::common::LogField{"port", port},
+      chronos::common::LogField{"backend", backend},
+      chronos::common::LogField{"data_plane", data_plane},
+      chronos::common::LogField{"subscriptions", subscriptions},
+      chronos::common::LogField{"raft_transport", raft_transport_state}};
+  logger.info("server_listening", startup, startup_fields);
 
   int exit_code = 0;
   while (stop_requested == 0 && !worker.failed() &&
          (!raft_worker.has_value() || !raft_worker->failed())) {
     const auto status = reactor->poll_once(std::chrono::milliseconds{10});
     if (!status.is_ok()) {
-      std::cerr << "chronosd: reactor failure: " << status.to_string() << '\n';
+      logger.error("reactor_failed", "reactor failure: " + status.to_string());
       exit_code = 1;
       break;
     }
   }
   if (worker.failed()) {
-    std::cerr << "chronosd: data-plane worker failed\n";
+    logger.error("data_plane_worker_failed", "data-plane worker failed");
     exit_code = 1;
   }
   if (raft_worker.has_value() && raft_worker->failed()) {
-    std::cerr << "chronosd: Raft transport worker failed\n";
+    logger.error("raft_transport_worker_failed", "Raft transport worker failed");
     exit_code = 1;
   }
 
@@ -1286,7 +1408,8 @@ int run_daemon(const int argc, const char* const argv[]) {
     if (!reactor_drain_failed) {
       const auto status = reactor->poll_once(std::chrono::milliseconds{10});
       if (!status.is_ok()) {
-        std::cerr << "chronosd: shutdown reactor drain failed: " << status.to_string() << '\n';
+        logger.error("shutdown_reactor_drain_failed",
+                     "shutdown reactor drain failed: " + status.to_string());
         exit_code = 1;
         reactor_drain_failed = true;
       }
@@ -1298,7 +1421,7 @@ int run_daemon(const int argc, const char* const argv[]) {
   worker.join();
   const auto shutdown = reactor->shutdown();
   if (!shutdown.is_ok()) {
-    std::cerr << "chronosd: shutdown failed: " << shutdown.to_string() << '\n';
+    logger.error("reactor_shutdown_failed", "shutdown failed: " + shutdown.to_string());
     exit_code = 1;
   }
   subscription.reset();
@@ -1306,8 +1429,8 @@ int run_daemon(const int argc, const char* const argv[]) {
   if (replicated_read_barrier.has_value()) {
     const auto barrier_shutdown = replicated_read_barrier->shutdown();
     if (!barrier_shutdown.is_ok()) {
-      std::cerr << "chronosd: replicated read barrier shutdown failed: "
-                << barrier_shutdown.to_string() << '\n';
+      logger.error("replicated_read_barrier_shutdown_failed",
+                   "replicated read barrier shutdown failed: " + barrier_shutdown.to_string());
       exit_code = 1;
     }
   }
@@ -1316,23 +1439,24 @@ int run_daemon(const int argc, const char* const argv[]) {
     raft_worker->join();
     const auto transport_shutdown = raft_transport->shutdown();
     if (!transport_shutdown.is_ok()) {
-      std::cerr << "chronosd: Raft transport shutdown failed: " << transport_shutdown.to_string()
-                << '\n';
+      logger.error("raft_transport_shutdown_failed",
+                   "Raft transport shutdown failed: " + transport_shutdown.to_string());
       exit_code = 1;
     }
   }
   if (database.has_value()) {
     const auto database_shutdown = database->shutdown();
     if (!database_shutdown.is_ok()) {
-      std::cerr << "chronosd: database shutdown failed: " << database_shutdown.to_string() << '\n';
+      logger.error("database_shutdown_failed",
+                   "database shutdown failed: " + database_shutdown.to_string());
       exit_code = 1;
     }
   }
   if (replicated_database.has_value()) {
     const auto database_shutdown = replicated_database->shutdown();
     if (!database_shutdown.is_ok()) {
-      std::cerr << "chronosd: replicated database shutdown failed: "
-                << database_shutdown.to_string() << '\n';
+      logger.error("replicated_database_shutdown_failed",
+                   "replicated database shutdown failed: " + database_shutdown.to_string());
       exit_code = 1;
     }
   }
@@ -1347,9 +1471,11 @@ int main(const int argc, const char* const argv[]) {
   try {
     return run_daemon(argc, argv);
   } catch (const std::exception& error) {
-    std::fprintf(stderr, "chronosd: unhandled exception: %s\n", error.what());
+    const DaemonLogger logger{requested_log_format(argc, argv)};
+    logger.error("unhandled_exception", error.what());
   } catch (...) {
-    std::fputs("chronosd: unhandled non-standard exception\n", stderr);
+    const DaemonLogger logger{requested_log_format(argc, argv)};
+    logger.error("unhandled_nonstandard_exception", "unhandled non-standard exception");
   }
   return 1;
 }

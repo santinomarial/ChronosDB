@@ -7,6 +7,13 @@ bounded request/response rings, start one
 deployments should bind explicitly.
 
 Run `chronosd --help` for bounded startup options. The binary accepts plaintext only on `127.0.0.1`.
+Diagnostics use the existing human-readable form by default. `--log-format json` emits one bounded,
+flushed JSON object per startup or error event with an RFC 3339 UTC timestamp, severity, component,
+stable event name, message, and event-specific string fields. JSON is written to the same stream as
+the corresponding text event: startup on stdout and errors on stderr. Invalid UTF-8 is replaced so
+one damaged diagnostic cannot corrupt the JSON stream. Option-parse failures honor a requested JSON
+format and do not append human usage text; `--help` remains human-readable stdout.
+
 Without `--data-dir` it reports `data_plane=unconfigured` and explicitly rejects data work. With
 `--data-dir PATH` it initializes or reopens an existing directory as a durable single-node root and
 reports `data_plane=configured`; native CREATE TABLE, single-local-tablet SQL INSERT VALUES,

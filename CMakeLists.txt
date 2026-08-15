@@ -113,6 +113,7 @@ add_library(
   src/common/byte_reader.cpp
   src/common/byte_writer.cpp
   src/common/crc32c.cpp
+  src/common/log.cpp
   src/common/status.cpp
   src/common/uuid_generator.cpp
   src/common/version.cpp
@@ -852,6 +853,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/common/checked_math_header_self_contained.cpp
     tests/common/crc32c_test.cpp
     tests/common/crc32c_header_self_contained.cpp
+    tests/common/log_header_self_contained.cpp
+    tests/common/log_test.cpp
     tests/common/result_header_self_contained.cpp
     tests/common/status_header_self_contained.cpp
     tests/common/status_result_test.cpp
@@ -1955,6 +1958,13 @@ if(CHRONOS_BUILD_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/build/version_metadata_test.sh"
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_COMMAND}"
+    )
+    add_test(
+      NAME ChronosdCliTest.StructuredAndTextDiagnostics
+      COMMAND
+        "${CMAKE_COMMAND}"
+        "-DCHRONOSD=$<TARGET_FILE:chronosd>"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/chronosd_cli_test.cmake"
     )
   endif()
 

@@ -39,10 +39,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
   CI configuration, and the version-reporting proof executable. Phase 1B adds status/result values,
   byte views, checked unsigned arithmetic, bounded little-endian binary I/O, portable incremental
   CRC32C, unit/property-style tests, an optional ByteReader fuzz target, local-only microbenchmarks,
+  a bounded structured JSON diagnostic encoder/writer, the common nonnil system UUID generator,
   and a learning document. The minimal durable POSIX file/directory layer adds explicit-offset
   transfer loops, synchronization, no-replace rename, and advisory locking with deterministic
-  syscall injection. Time, general identity, logging, and broader test utilities remain
-  unimplemented. The phase exit gates below remain unchanged and have not been declared complete.
+  syscall injection. A general injectable time surface, broader identity policy, logging sinks and
+  rotation/collection, and broader test utilities remain incomplete. The phase exit gates below
+  remain unchanged and have not been declared complete.
 
 - **Scope:** reproducible C++23 build profiles; foundational error/result, byte, checksum, file-I/O, time, identity, logging, and test utilities; sanitizers and initial Linux CI policy.
 - **Explicit non-scope:** WAL record semantics, storage engines, SQL, networking, custom allocators without a measured user, and production dependencies not covered by policy/ADR.
