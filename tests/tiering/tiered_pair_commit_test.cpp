@@ -18,6 +18,12 @@
 namespace chronos::tiering {
 namespace {
 
+template <typename T> [[nodiscard]] T* optional_value_pointer(std::optional<T>& value) noexcept {
+  if (!value.has_value())
+    return nullptr;
+  return std::addressof(*value);
+}
+
 class TemporaryDirectory {
 public:
   TemporaryDirectory() {
@@ -131,9 +137,12 @@ load_cold_owner(ColdLocationManifestStorage& storage,
     return nullptr;
   auto loaded = storage.load_selected(*decoded);
   EXPECT_TRUE(loaded.has_value() && loaded->has_value());
-  return loaded.has_value() && loaded->has_value()
-             ? std::make_shared<const LoadedColdLocationManifest>(std::move(**loaded))
-             : nullptr;
+  if (!loaded.has_value())
+    return nullptr;
+  LoadedColdLocationManifest* loaded_value = optional_value_pointer(*loaded);
+  return loaded_value == nullptr
+             ? nullptr
+             : std::make_shared<const LoadedColdLocationManifest>(std::move(*loaded_value));
 }
 
 void install_empty_cold(ColdLocationManifestStorage& storage,
@@ -212,9 +221,17 @@ TEST(TieredPairCommitStorageTest, IgnoresUncommittedFinalsThenRecoversNewCommitt
        .expected_database_id = database_id,
        .expected_object_store_id = object_store_id});
   ASSERT_TRUE(pair_storage.has_value()) << pair_storage.error().to_string();
+  auto empty_selection = pair_storage->load_selected_record();
+  ASSERT_TRUE(empty_selection.has_value());
+  EXPECT_FALSE(empty_selection->has_value());
   auto first = pair_storage->commit(*base1, cold1);
   ASSERT_TRUE(first.has_value()) << first.error().to_string();
   EXPECT_FALSE(first->already_present);
+  auto selected = pair_storage->load_selected_record();
+  ASSERT_TRUE(selected.has_value());
+  TieredPairCommitRecord* selected_record = optional_value_pointer(*selected);
+  ASSERT_NE(selected_record, nullptr);
+  EXPECT_EQ(*selected_record, first->record);
   auto retry = pair_storage->commit(*base1, cold1);
   ASSERT_TRUE(retry.has_value());
   EXPECT_TRUE(retry->already_present);
@@ -243,8 +260,10 @@ TEST(TieredPairCommitStorageTest, IgnoresUncommittedFinalsThenRecoversNewCommitt
   auto before_commit = pair_storage->recover(*manifest_storage, *cold_storage, recovery);
   ASSERT_TRUE(before_commit.has_value()) << before_commit.error().to_string();
   ASSERT_TRUE(before_commit->has_value());
-  EXPECT_EQ((*before_commit)->manifest_snapshot.generation(), 1U);
-  EXPECT_EQ((*before_commit)->cold_manifest->manifest().generation(), 1U);
+  RecoveredTieredPair* before_commit_pair = optional_value_pointer(*before_commit);
+  ASSERT_NE(before_commit_pair, nullptr);
+  EXPECT_EQ(before_commit_pair->manifest_snapshot.generation(), 1U);
+  EXPECT_EQ(before_commit_pair->cold_manifest->manifest().generation(), 1U);
 
   auto second = pair_storage->commit(*base2, cold2);
   ASSERT_TRUE(second.has_value()) << second.error().to_string();
@@ -252,8 +271,10 @@ TEST(TieredPairCommitStorageTest, IgnoresUncommittedFinalsThenRecoversNewCommitt
   auto after_commit = pair_storage->recover(*manifest_storage, *cold_storage, recovery);
   ASSERT_TRUE(after_commit.has_value()) << after_commit.error().to_string();
   ASSERT_TRUE(after_commit->has_value());
-  EXPECT_EQ((*after_commit)->manifest_snapshot.generation(), 2U);
-  EXPECT_EQ((*after_commit)->cold_manifest->manifest().generation(), 2U);
+  RecoveredTieredPair* after_commit_pair = optional_value_pointer(*after_commit);
+  ASSERT_NE(after_commit_pair, nullptr);
+  EXPECT_EQ(after_commit_pair->manifest_snapshot.generation(), 2U);
+  EXPECT_EQ(after_commit_pair->cold_manifest->manifest().generation(), 2U);
 }
 
 TEST(TieredPairCommitStorageTest, NeverFallsBackFromDamagedHighestCommit) {

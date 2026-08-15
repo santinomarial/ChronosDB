@@ -92,7 +92,7 @@ public:
 
   [[nodiscard]] common::Result<InstalledTieredPairCommit>
   commit(const manifest::TemporalDatabaseStorageSnapshot& manifest_snapshot,
-         std::shared_ptr<const LoadedColdLocationManifest> cold_manifest);
+         const std::shared_ptr<const LoadedColdLocationManifest>& cold_manifest);
 
   [[nodiscard]] common::Result<std::optional<RecoveredTieredPair>>
   recover(manifest::ManifestStorage& manifest_storage,

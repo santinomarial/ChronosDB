@@ -374,7 +374,7 @@ public:
     }
   }
 
-  [[nodiscard]] common::Status cleanup() {
+  [[nodiscard]] common::Status cleanup() const {
     auto entries = directory_.list_entries();
     if (!entries.has_value())
       return entries.error();
@@ -418,8 +418,7 @@ public:
     if (record->generation != generation || record->database_id != config_.expected_database_id ||
         record->object_store_id != config_.expected_object_store_id)
       return common::make_unexpected(corruption("tiered pair commit disagrees with owner or name"));
-    return std::pair<TieredPairCommitRecord, std::vector<std::byte>>{std::move(*record),
-                                                                     std::move(bytes)};
+    return std::pair<TieredPairCommitRecord, std::vector<std::byte>>{*record, std::move(bytes)};
   }
 
   TieredPairCommitStorageConfig config_;
@@ -474,9 +473,9 @@ TieredPairCommitStorage::open_existing(TieredPairCommitStorageConfig config) {
   return open(std::move(config), false);
 }
 
-common::Result<InstalledTieredPairCommit>
-TieredPairCommitStorage::commit(const manifest::TemporalDatabaseStorageSnapshot& manifest_snapshot,
-                                std::shared_ptr<const LoadedColdLocationManifest> cold_manifest) {
+common::Result<InstalledTieredPairCommit> TieredPairCommitStorage::commit(
+    const manifest::TemporalDatabaseStorageSnapshot& manifest_snapshot,
+    const std::shared_ptr<const LoadedColdLocationManifest>& cold_manifest) {
   if (impl_ == nullptr)
     return common::make_unexpected(invalid("tiered pair commit storage was moved from"));
   common::Status usable = impl_->usable();
@@ -694,7 +693,7 @@ TieredPairCommitStorage::load_selected_record() const {
   auto loaded = impl_->load(generations->back());
   if (!loaded.has_value())
     return common::make_unexpected(loaded.error());
-  return std::optional<TieredPairCommitRecord>{std::move(loaded->first)};
+  return std::optional<TieredPairCommitRecord>{loaded->first};
 }
 
 bool TieredPairCommitStorage::is_usable() const noexcept {
