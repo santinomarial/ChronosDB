@@ -98,11 +98,19 @@ source(const query::test::SnapshotTabletScanFixture& fixture, const std::uint64_
 
 TEST(MultiTabletSnapshotSubscriptionTest, ExecutesOneGlobalPlanBeforeOpeningLiveSuffix) {
   query::test::SnapshotTabletScanFixture fixture{2U, 3U};
+  const auto* first =
+      fixture.snapshot().find_tablet(query::test::SnapshotTabletScanFixture::tablet_id());
+  const auto* second =
+      fixture.snapshot().find_tablet(query::test::SnapshotTabletScanFixture::second_tablet_id());
+  ASSERT_NE(first, nullptr);
+  ASSERT_NE(second, nullptr);
+  EXPECT_TRUE(first->applied_position().has_value());
+  EXPECT_TRUE(second->applied_position().has_value());
   auto manager = MultiTabletSubscriptionManager::create(source(fixture, 1U, 1U));
   ASSERT_TRUE(manager.has_value()) << manager.error().to_string();
   const SubscriptionRequest subscription_request = request(fixture);
   BoundPlan bound = lower(fixture, "SELECT count(*) AS total FROM metrics");
-  auto resources = query::QueryResourceContext::create(32U * 1024U * 1024U).value();
+  auto resources = query::QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
 
   auto subscription = MultiTabletSnapshotSubscription::start(
       *manager, subscription_request, resources, fixture.storage(), fixture.publisher(),
@@ -141,7 +149,7 @@ TEST(MultiTabletSnapshotSubscriptionTest, CancelsWhenAnyTabletBoundaryDisagrees)
   ASSERT_TRUE(manager.has_value());
   const SubscriptionRequest subscription_request = request(fixture);
   BoundPlan bound = lower(fixture, "SELECT event_time FROM metrics");
-  auto resources = query::QueryResourceContext::create(8U * 1024U * 1024U).value();
+  auto resources = query::QueryResourceContext::create(std::size_t{8U} * 1024U * 1024U).value();
   auto rejected = MultiTabletSnapshotSubscription::start(
       *manager, subscription_request, resources, fixture.storage(), fixture.publisher(),
       fixture.lineage(), fixture.schema_ptr()->schema_id(), bound.plan, std::move(bound.columns));
@@ -159,7 +167,7 @@ TEST(MultiTabletSnapshotSubscriptionTest, AbandonsWithoutTokenEncodingWhenDriver
   ASSERT_TRUE(manager.has_value());
   const SubscriptionRequest subscription_request = request(fixture);
   BoundPlan bound = lower(fixture, "SELECT event_time FROM metrics");
-  auto resources = query::QueryResourceContext::create(8U * 1024U * 1024U).value();
+  auto resources = query::QueryResourceContext::create(std::size_t{8U} * 1024U * 1024U).value();
   {
     auto subscription = MultiTabletSnapshotSubscription::start(
         *manager, subscription_request, resources, fixture.storage(), fixture.publisher(),

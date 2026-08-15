@@ -11,6 +11,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -39,15 +40,16 @@ namespace {
       registration.snapshot_boundary.tablet_id != source.tablet_id ||
       registration.snapshot_boundary.wal_id != source.wal_id)
     return false;
-  if (!tablet.applied_position().has_value())
+  const std::optional<head::HeadCommitPosition>& applied_position = tablet.applied_position();
+  if (!applied_position.has_value()) {
     for (const manifest::TabletDescriptor& durable : snapshot.durable_tablets()) {
       if (durable.tablet_id == source.tablet_id)
         return durable.table_id == source.table_id &&
                durable.durable_record_sequence == registration.snapshot_boundary.record_sequence;
     }
-  if (!tablet.applied_position().has_value())
     return false;
-  const head::HeadCommitPosition& applied = *tablet.applied_position();
+  }
+  const head::HeadCommitPosition& applied = *applied_position;
   return applied.source == head::CommitSource::kWal && applied.wal_id == source.wal_id &&
          applied.record_sequence == registration.snapshot_boundary.record_sequence;
 }

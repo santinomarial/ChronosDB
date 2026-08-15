@@ -9,6 +9,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -45,8 +46,9 @@ namespace {
         tablet->tablet_id() != member.tablet_id || snapshot.wal_id() != member.wal_id ||
         boundary.tablet_id != member.tablet_id || boundary.wal_id != member.wal_id)
       return false;
-    if (tablet->applied_position().has_value()) {
-      const head::HeadCommitPosition& applied = *tablet->applied_position();
+    const std::optional<head::HeadCommitPosition>& applied_position = tablet->applied_position();
+    if (applied_position.has_value()) {
+      const head::HeadCommitPosition& applied = *applied_position;
       if (applied.source != head::CommitSource::kWal || applied.wal_id != member.wal_id ||
           applied.record_sequence != boundary.record_sequence)
         return false;

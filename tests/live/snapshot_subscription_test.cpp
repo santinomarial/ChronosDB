@@ -81,9 +81,13 @@ struct BoundPlan {
 
 TEST(SnapshotSubscriptionTest, ExecutesExactSnapshotThenOpensBufferedLiveSuffix) {
   query::test::SnapshotTabletScanFixture fixture{3U};
+  const auto* published =
+      fixture.snapshot().find_tablet(query::test::SnapshotTabletScanFixture::tablet_id());
+  ASSERT_NE(published, nullptr);
+  EXPECT_TRUE(published->applied_position().has_value());
   const SubscriptionRequest subscription_request = request(fixture);
   SubscriptionSource configured = source(fixture, subscription_request.plan_fingerprint);
-  auto manager = SubscriptionManager::create(std::move(configured));
+  auto manager = SubscriptionManager::create(configured);
   ASSERT_TRUE(manager.has_value());
   ASSERT_TRUE(manager->publish_committed(change(fixture, 1U)).is_ok());
   BoundPlan bound = lower(fixture, "SELECT event_time FROM metrics ORDER BY event_time");
