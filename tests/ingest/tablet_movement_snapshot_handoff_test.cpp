@@ -195,8 +195,11 @@ TEST(TabletMovementSnapshotHandoffTest, InstallsFromReopenedReferenceAndChunkOwn
   ASSERT_TRUE(snapshot_storage.has_value());
   auto latest = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(latest.has_value());
-  ASSERT_TRUE(latest->has_value());
-  auto recovered = raft::recover_tablet_movement_generation(**latest, *chunk_storage);
+  const auto& latest_generation = *latest;
+  if (!latest_generation.has_value()) {
+    FAIL() << "expected latest tablet movement generation";
+  }
+  auto recovered = raft::recover_tablet_movement_generation(*latest_generation, *chunk_storage);
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   auto installed =
       install_recovered_tablet_movement_snapshot(*recovered, table_id(), *snapshot_storage);

@@ -97,13 +97,21 @@ request_snapshot(raft::DurableMultiRaftRuntime& runtime, raft::SnapshotMetadata 
         raft::ReceiveOperation{1U, raft::InstallSnapshotRequest{2U, 1U, std::move(metadata)}}}});
   if (!requested.has_value())
     return common::make_unexpected(requested.error());
-  if (requested->size() != 1U || !requested->front().status.is_ok() ||
-      !requested->front().transition.has_value() ||
-      !requested->front().transition->snapshot_install.has_value()) {
+  if (requested->size() != 1U || !requested->front().status.is_ok()) {
     return common::make_unexpected(common::Status{common::StatusCode::kInternal,
                                                   "test snapshot request did not become pending"});
   }
-  return *requested->front().transition->snapshot_install;
+  const auto& pending_transition = requested->front().transition;
+  if (!pending_transition.has_value()) {
+    return common::make_unexpected(common::Status{common::StatusCode::kInternal,
+                                                  "test snapshot request did not become pending"});
+  }
+  const auto& transition = *pending_transition;
+  if (!transition.snapshot_install.has_value()) {
+    return common::make_unexpected(common::Status{common::StatusCode::kInternal,
+                                                  "test snapshot request did not become pending"});
+  }
+  return *transition.snapshot_install;
 }
 
 [[nodiscard]] raft::TabletMovementCheckpointStorageConfig
@@ -159,8 +167,11 @@ TEST(TabletMovementCatchUpCheckpointTest, ReconcilesRaftCompleteCrashIntoReadyRe
             .has_value());
     auto loaded = checkpoint_storage->load_latest_any();
     ASSERT_TRUE(loaded.has_value());
-    ASSERT_TRUE(loaded->has_value());
-    auto recovered = raft::recover_tablet_movement_generation(**loaded, *chunk_storage);
+    const auto& loaded_generation = *loaded;
+    if (!loaded_generation.has_value()) {
+      FAIL() << "expected installed tablet movement generation";
+    }
+    auto recovered = raft::recover_tablet_movement_generation(*loaded_generation, *chunk_storage);
     ASSERT_TRUE(recovered.has_value());
     auto pending = request_snapshot(*runtime, application.raft_snapshot);
     ASSERT_TRUE(pending.has_value());
@@ -184,8 +195,11 @@ TEST(TabletMovementCatchUpCheckpointTest, ReconcilesRaftCompleteCrashIntoReadyRe
     ASSERT_TRUE(runtime.has_value());
     auto latest = checkpoint_storage->load_latest_any();
     ASSERT_TRUE(latest.has_value());
-    ASSERT_TRUE(latest->has_value());
-    auto recovered = raft::recover_tablet_movement_generation(**latest, *chunk_storage);
+    const auto& latest_generation = *latest;
+    if (!latest_generation.has_value()) {
+      FAIL() << "expected latest tablet movement generation";
+    }
+    auto recovered = raft::recover_tablet_movement_generation(*latest_generation, *chunk_storage);
     ASSERT_TRUE(recovered.has_value());
     auto missing_owner = checkpoint_recovered_tablet_movement_catch_up(
         *recovered, table_id(), *snapshot_storage, *runtime, *checkpoint_storage);
@@ -201,10 +215,14 @@ TEST(TabletMovementCatchUpCheckpointTest, ReconcilesRaftCompleteCrashIntoReadyRe
     EXPECT_EQ(recovered->movement.record().phase, raft::TabletMovementPhase::kReady);
     auto ready = checkpoint_storage->load_latest_any();
     ASSERT_TRUE(ready.has_value());
-    ASSERT_TRUE(ready->has_value());
+    const auto& ready_generation = *ready;
+    if (!ready_generation.has_value()) {
+      FAIL() << "expected ready tablet movement generation";
+    }
     EXPECT_TRUE(std::holds_alternative<raft::TabletMovementCheckpointReferenceGeneration>(
-        (**ready).generation));
-    auto reopened_ready = raft::recover_tablet_movement_generation(**ready, *chunk_storage);
+        ready_generation->generation));
+    auto reopened_ready =
+        raft::recover_tablet_movement_generation(*ready_generation, *chunk_storage);
     ASSERT_TRUE(reopened_ready.has_value());
     EXPECT_EQ(reopened_ready->movement.record().phase, raft::TabletMovementPhase::kReady);
     ASSERT_TRUE(runtime->close().is_ok());
@@ -233,8 +251,11 @@ TEST(TabletMovementCatchUpCheckpointTest, AdvancesLegacySelfContainedGeneration)
           .has_value());
   auto latest = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(latest.has_value());
-  ASSERT_TRUE(latest->has_value());
-  auto recovered = raft::recover_tablet_movement_generation(**latest);
+  const auto& latest_generation = *latest;
+  if (!latest_generation.has_value()) {
+    FAIL() << "expected latest tablet movement generation";
+  }
+  auto recovered = raft::recover_tablet_movement_generation(*latest_generation);
   ASSERT_TRUE(recovered.has_value());
   auto pending = request_snapshot(*runtime, application.raft_snapshot);
   ASSERT_TRUE(pending.has_value());
@@ -248,10 +269,13 @@ TEST(TabletMovementCatchUpCheckpointTest, AdvancesLegacySelfContainedGeneration)
   EXPECT_EQ(installed->checkpoint_generation, 2U);
   auto ready = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(ready.has_value());
-  ASSERT_TRUE(ready->has_value());
-  EXPECT_TRUE(
-      std::holds_alternative<raft::TabletMovementCheckpointGeneration>((**ready).generation));
-  auto reopened_ready = raft::recover_tablet_movement_generation(**ready);
+  const auto& ready_generation = *ready;
+  if (!ready_generation.has_value()) {
+    FAIL() << "expected ready tablet movement generation";
+  }
+  EXPECT_TRUE(std::holds_alternative<raft::TabletMovementCheckpointGeneration>(
+      ready_generation->generation));
+  auto reopened_ready = raft::recover_tablet_movement_generation(*ready_generation);
   ASSERT_TRUE(reopened_ready.has_value());
   EXPECT_EQ(reopened_ready->movement.record().phase, raft::TabletMovementPhase::kReady);
 }
@@ -278,8 +302,11 @@ TEST(TabletMovementCatchUpCheckpointTest, LeavesCatchingCheckpointWhenRaftBounda
           .has_value());
   auto latest = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(latest.has_value());
-  ASSERT_TRUE(latest->has_value());
-  auto recovered = raft::recover_tablet_movement_generation(**latest);
+  const auto& latest_generation = *latest;
+  if (!latest_generation.has_value()) {
+    FAIL() << "expected latest tablet movement generation";
+  }
+  auto recovered = raft::recover_tablet_movement_generation(*latest_generation);
   ASSERT_TRUE(recovered.has_value());
 
   auto rejected = checkpoint_recovered_tablet_movement_catch_up(
@@ -290,9 +317,12 @@ TEST(TabletMovementCatchUpCheckpointTest, LeavesCatchingCheckpointWhenRaftBounda
   EXPECT_EQ(recovered->movement.record().phase, raft::TabletMovementPhase::kCatchingUp);
   auto still_first = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(still_first.has_value());
-  ASSERT_TRUE(still_first->has_value());
+  const auto& first_generation = *still_first;
+  if (!first_generation.has_value()) {
+    FAIL() << "expected original tablet movement generation";
+  }
   EXPECT_EQ(std::visit([](const auto& value) { return value.checkpoint_generation; },
-                       (**still_first).generation),
+                       first_generation->generation),
             1U);
 }
 
