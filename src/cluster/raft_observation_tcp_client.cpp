@@ -50,7 +50,7 @@ public:
   // Socket precedes carrier so reverse destruction releases TLS before its borrowed descriptor.
   network::TcpSocket socket;
   RaftObservationTcpClientConfig config;
-  TimePoint connect_deadline{};
+  TimePoint connect_deadline;
   std::optional<RaftObservationTlsClient> carrier;
   RaftObservationTcpClientState client_state{RaftObservationTcpClientState::kConnecting};
   common::Status client_failure{common::StatusCode::kInternal,
@@ -139,7 +139,9 @@ RaftObservationTlsInterest RaftObservationTcpClient::interest() const noexcept {
     return {};
   if (implementation_->client_state == RaftObservationTcpClientState::kConnecting)
     return {.want_write = true};
-  return implementation_->carrier->interest();
+  const auto* carrier = implementation_->carrier.transform([](const auto& value) { return &value; })
+                            .value_or(nullptr);
+  return carrier != nullptr ? carrier->interest() : RaftObservationTlsInterest{};
 }
 
 int RaftObservationTcpClient::descriptor() const noexcept {
@@ -154,14 +156,23 @@ RaftObservationTcpClient::deadline() const noexcept {
   }
   if (implementation_->client_state == RaftObservationTcpClientState::kConnecting)
     return implementation_->connect_deadline;
-  return implementation_->carrier->deadline();
+  const auto* carrier = implementation_->carrier.transform([](const auto& value) { return &value; })
+                            .value_or(nullptr);
+  if (carrier == nullptr)
+    return std::nullopt;
+  return carrier->deadline();
 }
 
 common::Result<raft::RaftGroupObservation> RaftObservationTcpClient::result() const {
   if (!implementation_ || implementation_->client_state != RaftObservationTcpClientState::kComplete)
     return common::make_unexpected(
         status(common::StatusCode::kInvalidArgument, "Raft observation TCP result is unavailable"));
-  return implementation_->carrier->result();
+  const auto* carrier = implementation_->carrier.transform([](const auto& value) { return &value; })
+                            .value_or(nullptr);
+  if (carrier == nullptr)
+    return common::make_unexpected(
+        status(common::StatusCode::kInternal, "Raft observation TCP carrier is unavailable"));
+  return carrier->result();
 }
 
 const common::Status& RaftObservationTcpClient::failure() const noexcept {

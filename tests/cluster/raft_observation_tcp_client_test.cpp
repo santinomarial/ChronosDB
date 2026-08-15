@@ -95,6 +95,9 @@ TEST(RaftObservationTcpClientTest, OwnsRealConnectTlsAndCorrelatedExchange) {
   auto client = RaftObservationTcpClient::begin(
       config(listener->bound_endpoint(), *client_context, authenticator, authorizer), start);
   ASSERT_TRUE(client.has_value()) << client.error().to_string();
+  EXPECT_TRUE(client->interest().want_write);
+  EXPECT_FALSE(client->interest().want_read);
+  EXPECT_EQ(client->result().error().code(), common::StatusCode::kInvalidArgument);
 
   std::optional<network::TcpSocket> accepted;
   std::optional<network::TlsSocket> server;
@@ -117,40 +120,51 @@ TEST(RaftObservationTcpClientTest, OwnsRealConnectTlsAndCorrelatedExchange) {
     if (!accepted.has_value()) {
       auto next = listener->accept_one();
       ASSERT_TRUE(next.has_value()) << next.error().to_string();
-      if (next->has_value()) {
-        accepted.emplace(std::move(**next));
+      auto* next_socket = next->transform([](auto& value) { return &value; }).value_or(nullptr);
+      if (next_socket != nullptr) {
+        accepted.emplace(std::move(*next_socket));
         auto tls = network::TlsSocket::accept(*server_context, accepted->descriptor());
         ASSERT_TRUE(tls.has_value()) << tls.error().to_string();
         server.emplace(std::move(*tls));
       }
-    } else if (!server->handshake_complete()) {
-      auto progress = server->handshake();
-      ASSERT_TRUE(progress.has_value()) << progress.error().to_string();
-    } else if (!response.has_value()) {
-      auto progress = server->read(scratch);
-      ASSERT_TRUE(progress.has_value()) << progress.error().to_string();
-      if (progress->state == network::TlsIoState::kComplete) {
-        auto step =
-            request_reader.consume(common::ByteView{scratch}.first(progress->bytes_transferred));
-        ASSERT_TRUE(step.has_value()) << step.error().to_string();
-        if (step->request.has_value()) {
-          EXPECT_EQ(step->request->target_node_id, 2U);
-          auto encoded =
-              encode_raft_observation_response_v1({.source_node_id = 2U,
-                                                   .target_node_id = 1U,
-                                                   .group_id = group(),
-                                                   .correlation_id = 19U,
-                                                   .status_code = common::StatusCode::kOk,
-                                                   .observation = observation()});
-          ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
-          response.emplace(RaftObservationFrameWriteCursor::create(std::move(*encoded)).value());
+    } else {
+      auto* server_socket = server.transform([](auto& value) { return &value; }).value_or(nullptr);
+      ASSERT_NE(server_socket, nullptr);
+      if (!server_socket->handshake_complete()) {
+        auto progress = server_socket->handshake();
+        ASSERT_TRUE(progress.has_value()) << progress.error().to_string();
+      } else if (!response.has_value()) {
+        auto progress = server_socket->read(scratch);
+        ASSERT_TRUE(progress.has_value()) << progress.error().to_string();
+        if (progress->state == network::TlsIoState::kComplete) {
+          auto step =
+              request_reader.consume(common::ByteView{scratch}.first(progress->bytes_transferred));
+          ASSERT_TRUE(step.has_value()) << step.error().to_string();
+          const auto* decoded_request =
+              step->request.transform([](const auto& value) { return &value; }).value_or(nullptr);
+          if (decoded_request != nullptr) {
+            EXPECT_EQ(decoded_request->target_node_id, 2U);
+            auto encoded =
+                encode_raft_observation_response_v1({.source_node_id = 2U,
+                                                     .target_node_id = 1U,
+                                                     .group_id = group(),
+                                                     .correlation_id = 19U,
+                                                     .status_code = common::StatusCode::kOk,
+                                                     .observation = observation()});
+            ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+            response.emplace(RaftObservationFrameWriteCursor::create(std::move(*encoded)).value());
+          }
+        }
+      } else {
+        auto* writer = response.transform([](auto& value) { return &value; }).value_or(nullptr);
+        ASSERT_NE(writer, nullptr);
+        if (!writer->complete()) {
+          auto progress = server_socket->write(writer->pending_write());
+          ASSERT_TRUE(progress.has_value()) << progress.error().to_string();
+          if (progress->state == network::TlsIoState::kComplete)
+            ASSERT_TRUE(writer->consume_written(progress->bytes_transferred).is_ok());
         }
       }
-    } else if (!response->complete()) {
-      auto progress = server->write(response->pending_write());
-      ASSERT_TRUE(progress.has_value()) << progress.error().to_string();
-      if (progress->state == network::TlsIoState::kComplete)
-        ASSERT_TRUE(response->consume_written(progress->bytes_transferred).is_ok());
     }
     if (client->state() == RaftObservationTcpClientState::kComplete)
       break;
@@ -158,6 +172,9 @@ TEST(RaftObservationTcpClientTest, OwnsRealConnectTlsAndCorrelatedExchange) {
 
   ASSERT_EQ(client->state(), RaftObservationTcpClientState::kComplete);
   EXPECT_TRUE(authenticator.saw_fingerprint);
+  EXPECT_FALSE(client->interest().want_read);
+  EXPECT_FALSE(client->interest().want_write);
+  EXPECT_FALSE(client->deadline().has_value());
   auto acquired = client->result();
   ASSERT_TRUE(acquired.has_value()) << acquired.error().to_string();
   EXPECT_EQ(*acquired, observation());
@@ -180,14 +197,19 @@ TEST(RaftObservationTcpClientTest, RejectsRouteMismatchAndExpiresConnectExactly)
   const auto start = RaftObservationTcpClient::TimePoint{};
   auto client = RaftObservationTcpClient::begin(value, start);
   ASSERT_TRUE(client.has_value()) << client.error().to_string();
-  ASSERT_TRUE(client->deadline().has_value());
-  EXPECT_EQ(*client->deadline(), start + std::chrono::milliseconds{5});
+  const auto connect_deadline = client->deadline();
+  ASSERT_TRUE(connect_deadline.has_value());
+  EXPECT_EQ(connect_deadline.value_or(RaftObservationTcpClient::TimePoint::min()),
+            start + std::chrono::milliseconds{5});
   EXPECT_TRUE(client->on_ready(false, false, start + std::chrono::milliseconds{4}).is_ok());
   const auto failure = client->on_ready(false, false, start + std::chrono::milliseconds{5});
   EXPECT_EQ(failure.code(), common::StatusCode::kUnavailable);
   EXPECT_EQ(client->state(), RaftObservationTcpClientState::kFailed);
   EXPECT_EQ(client->descriptor(), -1);
+  EXPECT_FALSE(client->interest().want_read);
+  EXPECT_FALSE(client->interest().want_write);
   EXPECT_FALSE(client->deadline().has_value());
+  EXPECT_EQ(client->result().error().code(), common::StatusCode::kInvalidArgument);
   EXPECT_EQ(client->on_ready(true, true, start + std::chrono::milliseconds{6}), failure);
 }
 
