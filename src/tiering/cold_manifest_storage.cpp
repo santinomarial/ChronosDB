@@ -114,7 +114,7 @@ public:
                            : unavailable("cold manifest storage is poisoned: " + poison_.message());
   }
 
-  [[nodiscard]] common::Status cleanup_temporaries() {
+  [[nodiscard]] common::Status cleanup_temporaries() const {
     auto entries = directory_.list_entries();
     if (!entries.has_value())
       return entries.error();

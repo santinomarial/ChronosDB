@@ -51,7 +51,7 @@ TieredTemporalPartImage::TieredTemporalPartImage(const TieredPartSource source,
                                                  manifest::TemporalPartDescriptor descriptor,
                                                  Storage storage,
                                                  TieredDatabaseStorageSnapshot snapshot) noexcept
-    : source_(source), descriptor_(std::move(descriptor)), storage_(std::move(storage)),
+    : source_(source), descriptor_(descriptor), storage_(std::move(storage)),
       snapshot_(std::move(snapshot)) {}
 
 TieredPartSource TieredTemporalPartImage::source() const noexcept {

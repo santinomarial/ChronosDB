@@ -98,9 +98,14 @@ public:
   [[nodiscard]] std::size_t encoded_size() const noexcept;
 
 private:
-  DecodedColdLocationManifest(std::uint64_t generation, std::uint64_t previous_generation,
-                              std::uint64_t base_manifest_generation,
-                              manifest::DatabaseId database_id, common::Uuid object_store_id,
+  struct GenerationLineage {
+    std::uint64_t generation{};
+    std::uint64_t previous_generation{};
+    std::uint64_t base_manifest_generation{};
+  };
+
+  DecodedColdLocationManifest(GenerationLineage lineage, manifest::DatabaseId database_id,
+                              common::Uuid object_store_id,
                               std::vector<ColdPartLocationDescriptor> locations,
                               std::size_t encoded_size) noexcept;
 

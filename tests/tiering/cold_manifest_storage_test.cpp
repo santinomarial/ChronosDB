@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <memory>
 #include <optional>
 #include <string>
 #include <sys/stat.h>
@@ -250,8 +251,13 @@ TEST(ColdLocationManifestStorageTest, InstallsIdempotentlyAndRecoversHighestBoun
 
     auto selected = storage->load_selected(*base6);
     ASSERT_TRUE(selected.has_value()) << selected.error().to_string();
-    ASSERT_TRUE(selected->has_value());
-    EXPECT_EQ((*selected)->manifest().generation(), 2U);
+    const auto* selected_manifest = selected
+                                        ->transform([](const LoadedColdLocationManifest& loaded) {
+                                          return std::addressof(loaded);
+                                        })
+                                        .value_or(nullptr);
+    ASSERT_NE(selected_manifest, nullptr);
+    EXPECT_EQ(selected_manifest->manifest().generation(), 2U);
     EXPECT_EQ(storage->metrics().install_attempts, 3U);
     EXPECT_EQ(storage->metrics().installed_generations, 2U);
     EXPECT_EQ(storage->metrics().file_syncs, 2U);
@@ -262,8 +268,13 @@ TEST(ColdLocationManifestStorageTest, InstallsIdempotentlyAndRecoversHighestBoun
   ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
   auto selected = reopened->load_selected(*base6);
   ASSERT_TRUE(selected.has_value()) << selected.error().to_string();
-  ASSERT_TRUE(selected->has_value());
-  EXPECT_EQ((*selected)->manifest().generation(), 2U);
+  const auto* selected_manifest = selected
+                                      ->transform([](const LoadedColdLocationManifest& loaded) {
+                                        return std::addressof(loaded);
+                                      })
+                                      .value_or(nullptr);
+  ASSERT_NE(selected_manifest, nullptr);
+  EXPECT_EQ(selected_manifest->manifest().generation(), 2U);
   EXPECT_EQ(reopened->load_selected(*base5).error().code(), common::StatusCode::kUnavailable);
 }
 
@@ -412,9 +423,14 @@ TEST(ColdLocationManifestStorageTest, DropsOnlyRoutesRetiredByANewerBaseManifest
   ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
   auto selected = advanced_storage->load_selected(*base6);
   ASSERT_TRUE(selected.has_value());
-  ASSERT_TRUE(selected->has_value());
-  ASSERT_EQ((*selected)->manifest().locations().size(), 1U);
-  EXPECT_EQ((*selected)->manifest().locations().front(), successor.locations.front());
+  const auto* selected_manifest = selected
+                                      ->transform([](const LoadedColdLocationManifest& loaded) {
+                                        return std::addressof(loaded);
+                                      })
+                                      .value_or(nullptr);
+  ASSERT_NE(selected_manifest, nullptr);
+  ASSERT_EQ(selected_manifest->manifest().locations().size(), 1U);
+  EXPECT_EQ(selected_manifest->manifest().locations().front(), successor.locations.front());
 }
 
 TEST(ColdLocationManifestStorageTest, PoisonsAfterUncertainDirectorySync) {

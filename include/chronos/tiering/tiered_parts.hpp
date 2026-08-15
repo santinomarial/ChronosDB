@@ -28,7 +28,7 @@ struct ColdPartDescriptor {
 struct TieringLimits {
   std::size_t maximum_parts{1U << 20U};
   std::size_t maximum_object_bytes{std::size_t{4U} * 1024U * 1024U * 1024U};
-  std::size_t maximum_cache_bytes{256U * 1024U * 1024U};
+  std::size_t maximum_cache_bytes{std::size_t{256U} * 1024U * 1024U};
   std::size_t maximum_cache_entries{1024U};
 };
 

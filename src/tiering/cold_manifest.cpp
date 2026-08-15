@@ -132,11 +132,12 @@ validate_locations(const std::span<const ColdPartLocationDescriptor> locations) 
   const std::uint64_t locations_offset = cold_manifest_format::kHeaderLength;
   const auto descriptor_bytes = common::checked_multiply(
       location_count, static_cast<std::uint64_t>(cold_manifest_format::kDescriptorLength));
-  const auto keys_offset = descriptor_bytes.has_value()
-                               ? common::checked_add(locations_offset, *descriptor_bytes)
-                               : std::nullopt;
-  const auto keys_end =
-      keys_offset.has_value() ? common::checked_add(*keys_offset, keys_length) : std::nullopt;
+  if (!descriptor_bytes.has_value())
+    return common::make_unexpected(exhausted("cold-location manifest layout overflowed"));
+  const auto keys_offset = common::checked_add(locations_offset, *descriptor_bytes);
+  if (!keys_offset.has_value())
+    return common::make_unexpected(exhausted("cold-location manifest layout overflowed"));
+  const auto keys_end = common::checked_add(*keys_offset, keys_length);
   if (!keys_end.has_value())
     return common::make_unexpected(exhausted("cold-location manifest layout overflowed"));
   auto trailer_offset = common::checked_align_up(*keys_end, cold_manifest_format::kAlignment);
@@ -207,12 +208,10 @@ std::size_t EncodedColdLocationManifest::size() const noexcept {
 }
 
 DecodedColdLocationManifest::DecodedColdLocationManifest(
-    const std::uint64_t generation, const std::uint64_t previous_generation,
-    const std::uint64_t base_manifest_generation, manifest::DatabaseId database_id,
-    common::Uuid object_store_id, std::vector<ColdPartLocationDescriptor> locations,
-    const std::size_t encoded_size) noexcept
-    : generation_(generation), previous_generation_(previous_generation),
-      base_manifest_generation_(base_manifest_generation), database_id_(database_id),
+    const GenerationLineage lineage, manifest::DatabaseId database_id, common::Uuid object_store_id,
+    std::vector<ColdPartLocationDescriptor> locations, const std::size_t encoded_size) noexcept
+    : generation_(lineage.generation), previous_generation_(lineage.previous_generation),
+      base_manifest_generation_(lineage.base_manifest_generation), database_id_(database_id),
       object_store_id_(object_store_id), locations_(std::move(locations)),
       encoded_size_(encoded_size) {}
 
@@ -490,15 +489,17 @@ decode_cold_location_manifest_v1_prefix(const common::ByteView bytes,
           digest.begin());
       const common::ByteView key_view = generation_bytes.subspan(
           static_cast<std::size_t>(layout->keys_offset + key_offset), key_length);
+      // Character types may inspect any object's representation; the manifest preserves key bytes.
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
       const std::string key{reinterpret_cast<const char*>(key_view.data()), key_view.size()};
       locations.push_back({*part_id, file_length, ingest::Sha256Digest{digest}, key});
       expected_key_offset += key_length;
     }
     if (expected_key_offset != layout->keys_length || !validate_locations(locations).is_ok())
       return std::unexpected(corruption("cold manifest descriptor model is invalid"));
-    return DecodedColdLocationManifest{generation,
-                                       previous,
-                                       base_generation,
+    return DecodedColdLocationManifest{{.generation = generation,
+                                        .previous_generation = previous,
+                                        .base_manifest_generation = base_generation},
                                        *database_id,
                                        object_store_id,
                                        std::move(locations),

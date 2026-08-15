@@ -176,7 +176,7 @@ TEST(TieredPartManagerTest, ConcurrentReadersShareBoundedEvictingCacheSafely) {
   }
 
   std::atomic_bool failed{};
-  std::vector<std::jthread> readers;
+  std::vector<std::thread> readers;
   for (std::size_t worker = 0U; worker < 8U; ++worker) {
     readers.emplace_back([&, worker] {
       for (std::size_t iteration = 0U; iteration < 100U; ++iteration) {
@@ -189,7 +189,8 @@ TEST(TieredPartManagerTest, ConcurrentReadersShareBoundedEvictingCacheSafely) {
       }
     });
   }
-  readers.clear();
+  for (auto& reader : readers)
+    reader.join();
 
   EXPECT_FALSE(failed.load(std::memory_order_relaxed));
   EXPECT_LE(manager->cached_entries(), 2U);
