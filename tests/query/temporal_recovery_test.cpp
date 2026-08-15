@@ -72,6 +72,11 @@ template <typename Identifier> [[nodiscard]] Identifier first_byte_id(const std:
   return Identifier::from_bytes(bytes).value();
 }
 
+template <typename Value>
+[[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
 template <typename Integer>
 void append_little_endian(std::vector<std::byte>& bytes, Integer value) {
   using Unsigned = std::make_unsigned_t<Integer>;
@@ -92,15 +97,21 @@ void establish_manifest_layout(const std::filesystem::path& root) {
 void write_bytes(const std::filesystem::path& path, const common::ByteView bytes) {
   std::ofstream output{path, std::ios::binary | std::ios::trunc};
   ASSERT_TRUE(output.good());
-  output.write(reinterpret_cast<const char*>(bytes.data()),
-               static_cast<std::streamsize>(bytes.size()));
+  for (const std::byte value : bytes) {
+    output.put(static_cast<char>(std::to_integer<unsigned char>(value)));
+  }
   ASSERT_TRUE(output.good());
 }
 
+struct TemporalStorageSchemaSeeds {
+  std::uint8_t table{2U};
+  std::uint8_t schema{4U};
+  std::uint8_t column{5U};
+};
+
 [[nodiscard]] std::shared_ptr<const schema::TableSchema>
-temporal_storage_schema(const std::uint8_t table_seed = 2U, const std::uint8_t schema_seed = 4U,
-                        const std::uint8_t column_seed = 5U) {
-  const schema::ColumnId event_id = first_byte_id<schema::ColumnId>(column_seed);
+temporal_storage_schema(const TemporalStorageSchemaSeeds seeds = {}) {
+  const schema::ColumnId event_id = first_byte_id<schema::ColumnId>(seeds.column);
   std::vector<schema::ColumnDefinition> columns;
   columns.push_back(schema::ColumnDefinition::create(
                         event_id, "event_time",
@@ -108,14 +119,15 @@ temporal_storage_schema(const std::uint8_t table_seed = 2U, const std::uint8_t s
                         false)
                         .value());
   return std::make_shared<const schema::TableSchema>(
-      schema::TableSchema::create(
-          first_byte_id<schema::TableId>(table_seed), first_byte_id<schema::SchemaId>(schema_seed),
-          schema::SchemaVersion::initial(), std::nullopt, std::move(columns),
-          {.event_time_column = event_id,
-           .physical_ordering_key = {event_id},
-           .partition_columns = {event_id},
-           .shard_key = {event_id},
-           .deduplication_key = {event_id}})
+      schema::TableSchema::create(first_byte_id<schema::TableId>(seeds.table),
+                                  first_byte_id<schema::SchemaId>(seeds.schema),
+                                  schema::SchemaVersion::initial(), std::nullopt,
+                                  std::move(columns),
+                                  {.event_time_column = event_id,
+                                   .physical_ordering_key = {event_id},
+                                   .partition_columns = {event_id},
+                                   .shard_key = {event_id},
+                                   .deduplication_key = {event_id}})
           .value());
 }
 
@@ -214,7 +226,9 @@ TEST(TemporalRecoveryTest, ReplaysVerifiedHistoryAndContinuesTheWalSequence) {
 
   auto writer = recovered->release_writer();
   ASSERT_TRUE(writer.has_value()) << writer.error().to_string();
-  EXPECT_FALSE(recovered->release_writer().has_value());
+  const auto second_release = recovered->release_writer();
+  ASSERT_FALSE(second_release.has_value());
+  EXPECT_EQ(second_release.error().code(), common::StatusCode::kInvalidArgument);
   auto next = writer->next_record_sequence();
   ASSERT_TRUE(next.has_value());
   EXPECT_EQ(*next, 3U);
@@ -283,7 +297,7 @@ TEST(TemporalManifestWalRecoveryTest, RestoresMultipleTabletsAndReplaysOnlyTheir
   ASSERT_TRUE(suffix.has_value()) << suffix.error().to_string();
   EXPECT_EQ(suffix->record_sequence, 10U);
   const std::shared_ptr<const schema::TableSchema> second_schema =
-      temporal_storage_schema(12U, 14U, 15U);
+      temporal_storage_schema({.table = 12U, .schema = 14U, .column = 15U});
   const EncodedTemporalCommand second_suffix =
       temporal_command(second_schema, 40, 'c', 400, TemporalMutationKind::kOriginal, 400);
   auto second_append = writer.append_application_entry(second_suffix.bytes());
@@ -411,8 +425,10 @@ TEST(TemporalManifestWalRecoveryTest, RestoresMultipleTabletsAndReplaysOnlyTheir
   ASSERT_FALSE(disagreement.has_value());
   EXPECT_EQ(disagreement.error().code(), common::StatusCode::kCorruption);
 
-  auto recovered =
-      recover_manifest_temporal_wal(startup_config(writer_config, part->minimum_system_time));
+  TemporalManifestWalStartupConfig selected_startup =
+      startup_config(writer_config, part->minimum_system_time);
+  selected_startup.reclaim_checkpointed_wal_segments = true;
+  auto recovered = recover_manifest_temporal_wal(std::move(selected_startup));
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   EXPECT_EQ(recovered->report().selected_generation, 1U);
   EXPECT_EQ(recovered->report().checkpoint.record_sequence, 7U);
@@ -429,6 +445,10 @@ TEST(TemporalManifestWalRecoveryTest, RestoresMultipleTabletsAndReplaysOnlyTheir
   EXPECT_EQ(recovered->report().applied_suffix_command_count, 2U);
   EXPECT_EQ(recovered->report().part_count, 1U);
   EXPECT_EQ(recovered->report().durable_version_count, 2U);
+  const wal::WalSegmentReclamationReport* const reclamation =
+      optional_pointer(recovered->report().wal_reclamation);
+  ASSERT_NE(reclamation, nullptr);
+  EXPECT_EQ(reclamation->removed_segment_count, 0U);
   EXPECT_EQ(recovered->selected_manifest().generation(), 1U);
 
   EXPECT_EQ(recovered->table_count(), 2U);

@@ -42,6 +42,16 @@ namespace {
   return common::Status{common::StatusCode::kNotSupported, std::move(message)};
 }
 
+template <typename Value>
+[[nodiscard]] Value* optional_pointer(std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
+template <typename Value>
+[[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
 [[nodiscard]] common::Status replay_error(const common::Status& status) {
   switch (status.code()) {
   case common::StatusCode::kInvalidArgument:
@@ -229,12 +239,13 @@ std::size_t RecoveredTemporalState::table_count() const noexcept {
 }
 
 common::Result<wal::WalWriter> RecoveredTemporalState::release_writer() {
-  if (!implementation_->writer_.has_value()) {
+  wal::WalWriter* writer = optional_pointer(implementation_->writer_);
+  if (writer == nullptr) {
     return common::make_unexpected(invalid("recovered temporal WAL writer was already released"));
   }
-  wal::WalWriter writer = std::move(*implementation_->writer_);
+  wal::WalWriter output = std::move(*writer);
   implementation_->writer_.reset();
-  return writer;
+  return output;
 }
 
 common::Result<RecoveredTemporalState>
@@ -353,17 +364,17 @@ recover_manifest_temporal_wal(TemporalManifestWalStartupConfig config) {
       return common::make_unexpected(
           unsupported("Manifest temporal WAL startup requires at least one WAL tablet"));
     }
-    if (!selected->wal_reclaim_checkpoint().has_value()) {
+    const manifest::TemporalWalReclaimCheckpoint* manifest_checkpoint =
+        optional_pointer(selected->wal_reclaim_checkpoint());
+    if (manifest_checkpoint == nullptr) {
       return common::make_unexpected(unsupported(
           "Manifest temporal WAL startup requires one durable global replay checkpoint"));
     }
-    const manifest::TemporalWalReclaimCheckpoint& manifest_checkpoint =
-        *selected->wal_reclaim_checkpoint();
     const wal::WalReplayCheckpoint checkpoint{
-        .wal_id = manifest_checkpoint.wal_id,
-        .record_sequence = manifest_checkpoint.coordinate.record_sequence,
-        .segment_number = manifest_checkpoint.coordinate.segment_number,
-        .byte_offset = manifest_checkpoint.coordinate.byte_offset};
+        .wal_id = manifest_checkpoint->wal_id,
+        .record_sequence = manifest_checkpoint->coordinate.record_sequence,
+        .segment_number = manifest_checkpoint->coordinate.segment_number,
+        .byte_offset = manifest_checkpoint->coordinate.byte_offset};
 
     std::vector<RecoveredTemporalState::Impl::TableEntry> tables;
     tables.reserve(selected->tablets().size());
@@ -375,7 +386,7 @@ recover_manifest_temporal_wal(TemporalManifestWalStartupConfig config) {
         return common::make_unexpected(
             unsupported("Manifest temporal WAL startup cannot replay a Raft tablet"));
       }
-      if (manifest_checkpoint.coordinate.record_sequence > tablet.durable_position) {
+      if (manifest_checkpoint->coordinate.record_sequence > tablet.durable_position) {
         return common::make_unexpected(
             corruption("Manifest temporal WAL checkpoint is ahead of a tablet durable boundary"));
       }
@@ -512,8 +523,13 @@ recover_manifest_temporal_wal(TemporalManifestWalStartupConfig config) {
     }
     std::optional<wal::WalSegmentReclamationReport> wal_reclamation;
     if (config.reclaim_checkpointed_wal_segments) {
+      wal::WalWriter* recovered_writer = optional_pointer(temporal.implementation_->writer_);
+      if (recovered_writer == nullptr) {
+        return common::make_unexpected(
+            internal("Manifest temporal WAL startup lost its reopened writer"));
+      }
       common::Result<wal::WalSegmentReclamationReport> reclaimed =
-          temporal.implementation_->writer_->reclaim_checkpointed_segments(checkpoint);
+          recovered_writer->reclaim_checkpointed_segments(checkpoint);
       if (!reclaimed.has_value()) {
         return common::make_unexpected(reclaimed.error());
       }
