@@ -111,6 +111,11 @@ TEST(RaftTransportPeerPoolTest, ReturnsCompleteRetryFramesOnlyAfterCarrierFailur
   Authorizer authorizer;
   auto pool = RaftTransportPeerPool::create(1U, {.maximum_peers = 1U});
   ASSERT_TRUE(pool.has_value());
+  EXPECT_EQ(
+      pool->add_connected_peer({network::TcpSocket{}, make_client(2U, authenticator, authorizer)})
+          .code(),
+      common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(pool->peer_count(), 0U);
   ASSERT_TRUE(pool->add_peer(make_client(2U, authenticator, authorizer)).is_ok());
   auto routed = result_for({vote_response(2U)});
   const auto start = RaftTransportTlsClient::TimePoint{};

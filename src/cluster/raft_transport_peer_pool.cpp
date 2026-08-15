@@ -91,25 +91,25 @@ common::Status RaftTransportPeerPool::add_peer(RaftTransportTlsClient&& carrier)
   return status(common::StatusCode::kCorruption, "Raft peer pool accounting is inconsistent");
 }
 
-common::Status RaftTransportPeerPool::add_connected_peer(RaftTransportConnectedPeer&& connected) {
-  if (!connected.socket.valid())
+common::Status RaftTransportPeerPool::add_connected_peer(RaftTransportConnectedPeer&& peer) {
+  if (!peer.socket.valid())
     return status(common::StatusCode::kInvalidArgument,
                   "Raft connected peer has no TCP descriptor");
   if (!implementation_)
     return status(common::StatusCode::kInvalidArgument, "Raft peer pool is empty");
-  const raft::NodeId peer = connected.carrier.peer_node_id();
-  if (connected.carrier.local_node_id() != implementation_->local_ || peer == 0U)
+  const raft::NodeId peer_node_id = peer.carrier.peer_node_id();
+  if (peer.carrier.local_node_id() != implementation_->local_ || peer_node_id == 0U)
     return status(common::StatusCode::kInvalidArgument,
                   "Raft peer carrier route differs from pool ownership");
-  if (connected.carrier.state() == RaftTransportTlsClientState::kFailed)
+  if (peer.carrier.state() == RaftTransportTlsClientState::kFailed)
     return status(common::StatusCode::kUnavailable, "Raft peer carrier has already failed");
-  if (implementation_->find(peer) != nullptr)
+  if (implementation_->find(peer_node_id) != nullptr)
     return status(common::StatusCode::kAlreadyExists, "Raft peer already exists");
   if (implementation_->count_ == implementation_->peers_.size())
     return status(common::StatusCode::kResourceExhausted, "Raft peer pool is full");
   for (std::optional<Impl::Peer>& slot : implementation_->peers_) {
     if (!slot.has_value()) {
-      slot.emplace(Impl::Peer{std::move(connected.socket), peer, std::move(connected.carrier)});
+      slot.emplace(Impl::Peer{std::move(peer.socket), peer_node_id, std::move(peer.carrier)});
       ++implementation_->count_;
       return common::Status::ok();
     }
