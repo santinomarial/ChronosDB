@@ -7,18 +7,25 @@
 namespace chronos::service {
 namespace {
 
-[[nodiscard]] ReplicatedPeer peer(const raft::NodeId node_id, const std::uint8_t address,
-                                  const std::uint16_t port, const std::uint8_t fingerprint) {
+struct PeerEndpointSeed {
+  std::uint8_t address;
+  std::uint16_t port;
+  std::uint8_t fingerprint;
+};
+
+[[nodiscard]] ReplicatedPeer peer(const raft::NodeId node_id, const PeerEndpointSeed seed) {
   ReplicatedPeer value{.node_id = node_id,
-                       .endpoint = {{127U, 0U, 0U, address}, port},
+                       .endpoint = {{127U, 0U, 0U, seed.address}, seed.port},
                        .tls_server_identity = "node.example.test"};
-  value.certificate_sha256.fill(fingerprint);
+  value.certificate_sha256.fill(seed.fingerprint);
   return value;
 }
 
 TEST(ReplicatedPeerAuthorityTest, AuthenticatesAndAuthorizesOneExactConfiguredNode) {
   auto authority = ReplicatedPeerAuthority::create(
-      2U, {peer(1U, 1U, 7001U, 11U), peer(2U, 2U, 7002U, 22U), peer(3U, 3U, 7003U, 33U)});
+      2U, {peer(1U, {.address = 1U, .port = 7001U, .fingerprint = 11U}),
+           peer(2U, {.address = 2U, .port = 7002U, .fingerprint = 22U}),
+           peer(3U, {.address = 3U, .port = 7003U, .fingerprint = 33U})});
   ASSERT_TRUE(authority.has_value()) << authority.error().to_string();
   EXPECT_EQ(authority->local_node_id(), 2U);
   EXPECT_EQ(authority->local_peer().endpoint.port, 7002U);
@@ -44,8 +51,9 @@ TEST(ReplicatedPeerAuthorityTest, AuthenticatesAndAuthorizesOneExactConfiguredNo
 }
 
 TEST(ReplicatedPeerAuthorityTest, RejectsUnverifiedUnknownAndWrongAddressPeers) {
-  ReplicatedPeer remote = peer(2U, 2U, 7002U, 22U);
-  auto authority = ReplicatedPeerAuthority::create(1U, {peer(1U, 1U, 7001U, 11U), remote});
+  ReplicatedPeer remote = peer(2U, {.address = 2U, .port = 7002U, .fingerprint = 22U});
+  auto authority = ReplicatedPeerAuthority::create(
+      1U, {peer(1U, {.address = 1U, .port = 7001U, .fingerprint = 11U}), remote});
   ASSERT_TRUE(authority.has_value());
   auto unverified = authority->authenticate({.ipv4_address = remote.endpoint.address});
   ASSERT_FALSE(unverified.has_value());
@@ -68,17 +76,24 @@ TEST(ReplicatedPeerAuthorityTest, RejectsUnverifiedUnknownAndWrongAddressPeers) 
 }
 
 TEST(ReplicatedPeerAuthorityTest, RejectsMissingLocalAndAmbiguousConfiguration) {
-  EXPECT_FALSE(ReplicatedPeerAuthority::create(0U, {peer(1U, 1U, 7001U, 11U)}).has_value());
-  EXPECT_FALSE(ReplicatedPeerAuthority::create(2U, {peer(1U, 1U, 7001U, 11U)}).has_value());
-  EXPECT_FALSE(
-      ReplicatedPeerAuthority::create(1U, {peer(2U, 2U, 7002U, 22U), peer(1U, 1U, 7001U, 11U)})
-          .has_value());
-  EXPECT_FALSE(
-      ReplicatedPeerAuthority::create(1U, {peer(1U, 1U, 7001U, 11U), peer(2U, 1U, 7001U, 22U)})
-          .has_value());
-  EXPECT_FALSE(
-      ReplicatedPeerAuthority::create(1U, {peer(1U, 1U, 7001U, 11U), peer(2U, 2U, 7002U, 11U)})
-          .has_value());
+  EXPECT_FALSE(ReplicatedPeerAuthority::create(
+                   0U, {peer(1U, {.address = 1U, .port = 7001U, .fingerprint = 11U})})
+                   .has_value());
+  EXPECT_FALSE(ReplicatedPeerAuthority::create(
+                   2U, {peer(1U, {.address = 1U, .port = 7001U, .fingerprint = 11U})})
+                   .has_value());
+  EXPECT_FALSE(ReplicatedPeerAuthority::create(
+                   1U, {peer(2U, {.address = 2U, .port = 7002U, .fingerprint = 22U}),
+                        peer(1U, {.address = 1U, .port = 7001U, .fingerprint = 11U})})
+                   .has_value());
+  EXPECT_FALSE(ReplicatedPeerAuthority::create(
+                   1U, {peer(1U, {.address = 1U, .port = 7001U, .fingerprint = 11U}),
+                        peer(2U, {.address = 1U, .port = 7001U, .fingerprint = 22U})})
+                   .has_value());
+  EXPECT_FALSE(ReplicatedPeerAuthority::create(
+                   1U, {peer(1U, {.address = 1U, .port = 7001U, .fingerprint = 11U}),
+                        peer(2U, {.address = 2U, .port = 7002U, .fingerprint = 11U})})
+                   .has_value());
 }
 
 } // namespace

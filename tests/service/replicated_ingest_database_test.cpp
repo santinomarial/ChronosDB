@@ -78,8 +78,8 @@ private:
           .maximum_sealed_generations = 2U,
           .variable_column_bytes = 8U,
           .maximum_retry_entries = 8U,
-          .wal_segment_target_bytes = 64U * 1024U,
-          .raft_segment_target_bytes = 64U * 1024U};
+          .wal_segment_target_bytes = std::uint64_t{64U} * 1024U,
+          .raft_segment_target_bytes = std::uint64_t{64U} * 1024U};
 }
 
 [[nodiscard]] std::vector<raft::RaftGroupConfiguration> groups() {
@@ -218,9 +218,13 @@ void elect_and_provision(ReplicatedIngestRuntime& owner, const bool include_remo
 [[nodiscard]] network::NetworkTask await_response(ReplicatedIngestRuntime& owner) {
   for (std::size_t attempt = 0U; attempt < 10'000U; ++attempt) {
     auto response = owner.coordinator()->poll();
-    EXPECT_TRUE(response.has_value());
-    if (response.has_value() && response->has_value())
-      return std::move(**response);
+    if (!response.has_value()) {
+      ADD_FAILURE() << response.error().to_string();
+      return {};
+    }
+    auto& available_response = *response;
+    if (available_response.has_value())
+      return std::move(*available_response);
     std::this_thread::yield();
   }
   ADD_FAILURE() << "replicated database response timed out";
@@ -319,9 +323,13 @@ TEST(ReplicatedIngestDatabaseTest, PinsCommittedWholeTableQueryStateBeyondOwnerS
   ASSERT_TRUE(polled.has_value());
   ASSERT_TRUE(polled->response_enqueued);
   auto native_result = responses.try_pop();
-  ASSERT_TRUE(native_result.has_value());
-  ASSERT_EQ(native_result->frame.header.message_type, network::MessageType::kQueryResult);
-  auto batch = network::decode_query_result_batch(native_result->frame.payload);
+  if (!native_result.has_value()) {
+    ADD_FAILURE() << "expected native query result batch";
+    return;
+  }
+  const network::NetworkTask& native_batch = *native_result;
+  ASSERT_EQ(native_batch.frame.header.message_type, network::MessageType::kQueryResult);
+  auto batch = network::decode_query_result_batch(native_batch.frame.payload);
   ASSERT_TRUE(batch.has_value()) << batch.error().to_string();
   common::ByteReader native_count{batch->cell(0U, 0U)->value};
   EXPECT_EQ(native_count.read_i64_le().value(), 2);
@@ -329,7 +337,10 @@ TEST(ReplicatedIngestDatabaseTest, PinsCommittedWholeTableQueryStateBeyondOwnerS
   ASSERT_TRUE(polled.has_value());
   ASSERT_TRUE(polled->response_enqueued);
   native_result = responses.try_pop();
-  ASSERT_TRUE(native_result.has_value());
+  if (!native_result.has_value()) {
+    ADD_FAILURE() << "expected native query end";
+    return;
+  }
   EXPECT_EQ(native_result->frame.header.message_type, network::MessageType::kQueryEnd);
   EXPECT_EQ(native_service->metrics().query_requests, 1U);
   EXPECT_EQ(native_service->metrics().response_backpressure, 1U);
@@ -353,14 +364,16 @@ TEST(ReplicatedIngestDatabaseTest, PinsCommittedWholeTableQueryStateBeyondOwnerS
       database->ingest_runtime()->tablet_application()->snapshot(tablet_group());
   ASSERT_TRUE(catalog_publication.has_value());
   ASSERT_TRUE(tablet_publication.has_value());
-  ASSERT_TRUE(tablet_publication->applied_position().has_value());
+  const auto applied_position = tablet_publication->applied_position();
+  if (!applied_position.has_value()) {
+    ADD_FAILURE() << "expected a published tablet applied position";
+    return;
+  }
   std::vector<raft::GroupReadBarrier> barriers{
       {metadata_group(),
        {.term = 1U, .context = 1U, .read_index = (*catalog_publication)->applied_index}},
       {tablet_group(),
-       {.term = 1U,
-        .context = 2U,
-        .read_index = tablet_publication->applied_position()->record_sequence}}};
+       {.term = 1U, .context = 2U, .read_index = applied_position->record_sequence}}};
   auto confirmed = database->acquire_query_snapshot(barriers);
   ASSERT_TRUE(confirmed.has_value()) << confirmed.error().to_string();
   ++barriers.back().barrier.read_index;
@@ -381,7 +394,7 @@ TEST(ReplicatedIngestDatabaseTest, PinsCommittedWholeTableQueryStateBeyondOwnerS
   ASSERT_TRUE(database->shutdown().is_ok());
 
   query::QueryResourceContext resources =
-      query::QueryResourceContext::create(8U * 1024U * 1024U).value();
+      query::QueryResourceContext::create(std::size_t{8U} * 1024U * 1024U).value();
   const auto schema = columnar::test::batch_schema();
   auto pipeline = snapshot->instantiate_table_pipeline(resources, schema->table_id(),
                                                        schema->schema_id(), *lowered);
@@ -424,7 +437,7 @@ TEST(ReplicatedIngestDatabaseTest, RejectsAQueryOverAPartiallyResidentTable) {
   auto lowered = query::lower_bound_sql_select(*bound);
   ASSERT_TRUE(lowered.has_value());
   query::QueryResourceContext resources =
-      query::QueryResourceContext::create(1024U * 1024U).value();
+      query::QueryResourceContext::create(std::size_t{1024U} * 1024U).value();
   const auto schema = columnar::test::batch_schema();
   auto pipeline = snapshot->instantiate_table_pipeline(resources, schema->table_id(),
                                                        schema->schema_id(), *lowered);

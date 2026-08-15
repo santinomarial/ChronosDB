@@ -75,17 +75,21 @@ private:
   return {encoded.bytes().begin(), encoded.bytes().end()};
 }
 
-[[nodiscard]] network::NetworkTask quorum_request(const std::uint64_t connection_id,
-                                                  const std::uint64_t request_id,
-                                                  const std::uint8_t seed) {
+struct QuorumRequestIdentity {
+  std::uint64_t connection_id;
+  std::uint64_t request_id;
+  std::uint8_t seed;
+};
+
+[[nodiscard]] network::NetworkTask quorum_request(const QuorumRequestIdentity identity) {
   const network::IngestProtocolContext context{.protocol_major = network::kProtocolV2Major,
                                                .protocol_minor = network::kProtocolV2LatestMinor,
                                                .feature_bits =
                                                    network::kProtocolV2QuorumSyncFeature};
-  auto payload =
-      network::encode_ingest_request(network::DurabilityMode::kQuorumSync, command(seed), context)
-          .value();
-  return {.connection_id = connection_id,
+  auto payload = network::encode_ingest_request(network::DurabilityMode::kQuorumSync,
+                                                command(identity.seed), context)
+                     .value();
+  return {.connection_id = identity.connection_id,
           .principal_id = 9U,
           .protocol = {.protocol_major = context.protocol_major,
                        .protocol_minor = context.protocol_minor,
@@ -94,7 +98,7 @@ private:
           .frame = {.header = {.protocol_major = context.protocol_major,
                                .protocol_minor = context.protocol_minor,
                                .message_type = network::MessageType::kIngestRequest,
-                               .request_id = request_id,
+                               .request_id = identity.request_id,
                                .payload_size = static_cast<std::uint32_t>(payload.size())},
                     .payload = std::move(payload)}};
 }
@@ -188,8 +192,9 @@ void publish_route(raft::AsyncDurableMultiRaftRuntime& runtime,
     auto polled = operation.poll();
     if (!polled.has_value())
       return common::make_unexpected(polled.error());
-    if (polled->has_value())
-      return std::move(**polled);
+    auto& completed = *polled;
+    if (completed.has_value())
+      return *completed;
     std::this_thread::yield();
   }
   return common::make_unexpected(
@@ -264,9 +269,17 @@ TEST(ReplicatedIngestCoordinatorTest, BoundsCancelsCompletesAndTimesOutCorrelate
       {.maximum_pending_requests = 2U, .request_timeout = std::chrono::milliseconds{100}});
   ASSERT_TRUE(coordinator.has_value()) << coordinator.error().to_string();
   const auto start = std::chrono::steady_clock::time_point{std::chrono::seconds{10}};
-  EXPECT_TRUE(coordinator->admit(quorum_request(10U, 1U, 1U), start).is_ok());
-  EXPECT_TRUE(coordinator->admit(quorum_request(11U, 1U, 2U), start).is_ok());
-  EXPECT_EQ(coordinator->admit(quorum_request(12U, 1U, 3U), start).code(),
+  EXPECT_TRUE(
+      coordinator
+          ->admit(quorum_request({.connection_id = 10U, .request_id = 1U, .seed = 1U}), start)
+          .is_ok());
+  EXPECT_TRUE(
+      coordinator
+          ->admit(quorum_request({.connection_id = 11U, .request_id = 1U, .seed = 2U}), start)
+          .is_ok());
+  EXPECT_EQ(coordinator
+                ->admit(quorum_request({.connection_id = 12U, .request_id = 1U, .seed = 3U}), start)
+                .code(),
             common::StatusCode::kResourceExhausted);
   EXPECT_TRUE(coordinator->cancel(11U, 1U));
   EXPECT_FALSE(coordinator->cancel(11U, 1U));
@@ -278,21 +291,33 @@ TEST(ReplicatedIngestCoordinatorTest, BoundsCancelsCompletesAndTimesOutCorrelate
     response = std::move(*polled);
     std::this_thread::yield();
   }
-  ASSERT_TRUE(response.has_value());
-  EXPECT_EQ(response->connection_id, 10U);
-  EXPECT_EQ(response->frame.header.request_id, 1U);
-  EXPECT_EQ(response->frame.header.message_type,
+  if (!response.has_value()) {
+    ADD_FAILURE() << "expected a completed replicated ingest response";
+    return;
+  }
+  const network::NetworkTask& completed_response = *response;
+  EXPECT_EQ(completed_response.connection_id, 10U);
+  EXPECT_EQ(completed_response.frame.header.request_id, 1U);
+  EXPECT_EQ(completed_response.frame.header.message_type,
             network::MessageType::kQuorumSyncIngestAcknowledgement);
-  EXPECT_TRUE(
-      network::decode_quorum_sync_ingest_acknowledgement(response->frame.payload).has_value());
+  EXPECT_TRUE(network::decode_quorum_sync_ingest_acknowledgement(completed_response.frame.payload)
+                  .has_value());
 
-  EXPECT_TRUE(coordinator->admit(quorum_request(13U, 7U, 4U), start).is_ok());
+  EXPECT_TRUE(
+      coordinator
+          ->admit(quorum_request({.connection_id = 13U, .request_id = 7U, .seed = 4U}), start)
+          .is_ok());
   auto timed_out = coordinator->poll(start + std::chrono::milliseconds{101});
   ASSERT_TRUE(timed_out.has_value()) << timed_out.error().to_string();
-  ASSERT_TRUE(timed_out->has_value());
-  EXPECT_EQ((**timed_out).connection_id, 13U);
-  EXPECT_EQ((**timed_out).frame.header.message_type, network::MessageType::kError);
-  const auto error = network::decode_error_message((**timed_out).frame.payload);
+  auto& timed_out_response = *timed_out;
+  if (!timed_out_response.has_value()) {
+    ADD_FAILURE() << "expected a timed-out replicated ingest response";
+    return;
+  }
+  const network::NetworkTask& timeout = *timed_out_response;
+  EXPECT_EQ(timeout.connection_id, 13U);
+  EXPECT_EQ(timeout.frame.header.message_type, network::MessageType::kError);
+  const auto error = network::decode_error_message(timeout.frame.payload);
   ASSERT_TRUE(error.has_value());
   EXPECT_EQ(error->code, network::ProtocolErrorCode::kCancelled);
   const auto metrics = coordinator->metrics();
@@ -316,7 +341,7 @@ TEST(ReplicatedIngestCoordinatorTest, RejectsTaskWithoutNegotiatedQuorumFeature)
   auto coordinator = ReplicatedIngestCoordinator::create(*runtime, *applications->tablets,
                                                          *applications->metadata);
   ASSERT_TRUE(coordinator.has_value());
-  auto request = quorum_request(10U, 1U, 1U);
+  auto request = quorum_request({.connection_id = 10U, .request_id = 1U, .seed = 1U});
   request.protocol.feature_bits = 0U;
   EXPECT_EQ(coordinator->admit(std::move(request)).code(), common::StatusCode::kInvalidArgument);
   EXPECT_EQ(coordinator->metrics().pending_requests, 0U);
@@ -335,7 +360,8 @@ TEST(ReplicatedIngestCoordinatorTest, RejectsAPlacedTabletWithoutAnAuthoritative
   auto coordinator = ReplicatedIngestCoordinator::create(*runtime, *applications->tablets,
                                                          *applications->metadata);
   ASSERT_TRUE(coordinator.has_value());
-  EXPECT_EQ(coordinator->admit(quorum_request(10U, 1U, 1U)).code(),
+  EXPECT_EQ(coordinator->admit(quorum_request({.connection_id = 10U, .request_id = 1U, .seed = 1U}))
+                .code(),
             common::StatusCode::kUnavailable);
   EXPECT_EQ(coordinator->metrics().pending_requests, 0U);
   EXPECT_TRUE(runtime->shutdown().is_ok());
@@ -353,7 +379,8 @@ TEST(ReplicatedIngestCoordinatorTest, RequiresTheCommittedActiveSchemaBeforeRout
   auto coordinator = ReplicatedIngestCoordinator::create(*runtime, *applications->tablets,
                                                          *applications->metadata);
   ASSERT_TRUE(coordinator.has_value());
-  EXPECT_EQ(coordinator->admit(quorum_request(10U, 1U, 1U)).code(),
+  EXPECT_EQ(coordinator->admit(quorum_request({.connection_id = 10U, .request_id = 1U, .seed = 1U}))
+                .code(),
             common::StatusCode::kUnavailable);
   EXPECT_EQ(coordinator->metrics().pending_requests, 0U);
   EXPECT_TRUE(runtime->shutdown().is_ok());
@@ -371,7 +398,8 @@ TEST(ReplicatedIngestCoordinatorTest, RejectsACommandForAnInactiveCommittedSchem
   auto coordinator = ReplicatedIngestCoordinator::create(*runtime, *applications->tablets,
                                                          *applications->metadata);
   ASSERT_TRUE(coordinator.has_value());
-  EXPECT_EQ(coordinator->admit(quorum_request(10U, 1U, 1U)).code(),
+  EXPECT_EQ(coordinator->admit(quorum_request({.connection_id = 10U, .request_id = 1U, .seed = 1U}))
+                .code(),
             common::StatusCode::kInvalidArgument);
   EXPECT_EQ(coordinator->metrics().pending_requests, 0U);
   EXPECT_TRUE(runtime->shutdown().is_ok());
@@ -392,7 +420,9 @@ TEST(ReplicatedIngestCoordinatorTest, RevalidatesActiveSchemaAfterTheOrderedObse
   auto coordinator = ReplicatedIngestCoordinator::create(*runtime, *applications->tablets,
                                                          *applications->metadata);
   ASSERT_TRUE(coordinator.has_value());
-  EXPECT_TRUE(coordinator->admit(quorum_request(10U, 1U, 1U)).is_ok());
+  EXPECT_TRUE(
+      coordinator->admit(quorum_request({.connection_id = 10U, .request_id = 1U, .seed = 1U}))
+          .is_ok());
 
   auto successor = runtime->try_submit(
       {{metadata_group_id(), schema_proposal(columnar::test::successor_batch_schema())}});
@@ -406,9 +436,13 @@ TEST(ReplicatedIngestCoordinatorTest, RevalidatesActiveSchemaAfterTheOrderedObse
     response = std::move(*polled);
     std::this_thread::yield();
   }
-  ASSERT_TRUE(response.has_value());
-  EXPECT_EQ(response->frame.header.message_type, network::MessageType::kError);
-  const auto error = network::decode_error_message(response->frame.payload);
+  if (!response.has_value()) {
+    ADD_FAILURE() << "expected schema revalidation response";
+    return;
+  }
+  const network::NetworkTask& revalidation_response = *response;
+  EXPECT_EQ(revalidation_response.frame.header.message_type, network::MessageType::kError);
+  const auto error = network::decode_error_message(revalidation_response.frame.payload);
   ASSERT_TRUE(error.has_value());
   EXPECT_EQ(error->code, network::ProtocolErrorCode::kInvalidRequest);
   auto observed = runtime->try_observe_group(group_id());
@@ -416,8 +450,12 @@ TEST(ReplicatedIngestCoordinatorTest, RevalidatesActiveSchemaAfterTheOrderedObse
   auto result = observed->wait();
   ASSERT_TRUE(result.has_value());
   ASSERT_EQ(result->size(), 1U);
-  ASSERT_TRUE(result->front().observation.has_value());
-  EXPECT_EQ(result->front().observation->last_log_index, 0U);
+  const auto& observation = result->front().observation;
+  if (!observation.has_value()) {
+    ADD_FAILURE() << "expected an ordered group observation";
+    return;
+  }
+  EXPECT_EQ(observation->last_log_index, 0U);
   EXPECT_TRUE(runtime->shutdown().is_ok());
 }
 
@@ -436,7 +474,9 @@ TEST(ReplicatedIngestCoordinatorTest, FailsClosedWithoutLocalStablePlacementLead
   auto coordinator = ReplicatedIngestCoordinator::create(*runtime, *applications->tablets,
                                                          *applications->metadata);
   ASSERT_TRUE(coordinator.has_value());
-  EXPECT_TRUE(coordinator->admit(quorum_request(10U, 1U, 1U)).is_ok());
+  EXPECT_TRUE(
+      coordinator->admit(quorum_request({.connection_id = 10U, .request_id = 1U, .seed = 1U}))
+          .is_ok());
   std::optional<network::NetworkTask> response;
   for (std::size_t attempt = 0U; attempt < 10'000U && !response.has_value(); ++attempt) {
     auto polled = coordinator->poll();
@@ -444,9 +484,13 @@ TEST(ReplicatedIngestCoordinatorTest, FailsClosedWithoutLocalStablePlacementLead
     response = std::move(*polled);
     std::this_thread::yield();
   }
-  ASSERT_TRUE(response.has_value());
-  EXPECT_EQ(response->frame.header.message_type, network::MessageType::kError);
-  const auto error = network::decode_error_message(response->frame.payload);
+  if (!response.has_value()) {
+    ADD_FAILURE() << "expected unstable-leadership response";
+    return;
+  }
+  const network::NetworkTask& leadership_response = *response;
+  EXPECT_EQ(leadership_response.frame.header.message_type, network::MessageType::kError);
+  const auto error = network::decode_error_message(leadership_response.frame.payload);
   ASSERT_TRUE(error.has_value());
   EXPECT_EQ(error->code, network::ProtocolErrorCode::kExecutionFailure);
   EXPECT_TRUE(runtime->shutdown().is_ok());
@@ -473,7 +517,7 @@ TEST(ReplicatedIngestCoordinatorTest, RedirectsToOrderedStableRemoteLeaderWhenNe
   auto coordinator = ReplicatedIngestCoordinator::create(*runtime, *applications->tablets,
                                                          *applications->metadata);
   ASSERT_TRUE(coordinator.has_value());
-  auto redirected_request = quorum_request(10U, 1U, 1U);
+  auto redirected_request = quorum_request({.connection_id = 10U, .request_id = 1U, .seed = 1U});
   redirected_request.protocol.feature_bits |= network::kProtocolV2LeaderRedirectFeature;
   EXPECT_TRUE(coordinator->admit(std::move(redirected_request)).is_ok());
 
@@ -484,9 +528,13 @@ TEST(ReplicatedIngestCoordinatorTest, RedirectsToOrderedStableRemoteLeaderWhenNe
     response = std::move(*polled);
     std::this_thread::yield();
   }
-  ASSERT_TRUE(response.has_value());
-  ASSERT_EQ(response->frame.header.message_type, network::MessageType::kLeaderRedirect);
-  const auto redirect = network::decode_leader_redirect(response->frame.payload);
+  if (!response.has_value()) {
+    ADD_FAILURE() << "expected leader redirect response";
+    return;
+  }
+  const network::NetworkTask& redirect_response = *response;
+  ASSERT_EQ(redirect_response.frame.header.message_type, network::MessageType::kLeaderRedirect);
+  const auto redirect = network::decode_leader_redirect(redirect_response.frame.payload);
   ASSERT_TRUE(redirect.has_value()) << redirect.error().to_string();
   EXPECT_EQ(redirect->group_id, group_id());
   EXPECT_EQ(redirect->leader_node_id, 2U);
@@ -494,7 +542,9 @@ TEST(ReplicatedIngestCoordinatorTest, RedirectsToOrderedStableRemoteLeaderWhenNe
   EXPECT_EQ(redirect->placement_epoch, 1U);
   EXPECT_EQ(coordinator->metrics().redirected_requests, 1U);
 
-  EXPECT_TRUE(coordinator->admit(quorum_request(11U, 2U, 2U)).is_ok());
+  EXPECT_TRUE(
+      coordinator->admit(quorum_request({.connection_id = 11U, .request_id = 2U, .seed = 2U}))
+          .is_ok());
   response.reset();
   for (std::size_t attempt = 0U; attempt < 10'000U && !response.has_value(); ++attempt) {
     auto polled = coordinator->poll();
@@ -502,7 +552,10 @@ TEST(ReplicatedIngestCoordinatorTest, RedirectsToOrderedStableRemoteLeaderWhenNe
     response = std::move(*polled);
     std::this_thread::yield();
   }
-  ASSERT_TRUE(response.has_value());
+  if (!response.has_value()) {
+    ADD_FAILURE() << "expected non-negotiated redirect response";
+    return;
+  }
   EXPECT_EQ(response->frame.header.message_type, network::MessageType::kError);
   EXPECT_EQ(coordinator->metrics().redirected_requests, 1U);
   EXPECT_TRUE(runtime->shutdown().is_ok());
