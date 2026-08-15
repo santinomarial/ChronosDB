@@ -23,18 +23,27 @@ TEST(SpscNetworkTaskQueueTest, PreservesFifoAndMakesSaturationExplicit) {
   EXPECT_TRUE(queue.try_push(task(2U)));
   EXPECT_FALSE(queue.try_push(task(3U)));
   auto value = queue.try_pop();
-  ASSERT_TRUE(value.has_value());
-  EXPECT_EQ(value->connection_id, 1U); // NOLINT(bugprone-unchecked-optional-access)
+  if (!value.has_value()) {
+    ADD_FAILURE() << "expected the first queued task";
+    return;
+  }
+  EXPECT_EQ(value->connection_id, 1U);
   EXPECT_EQ(value->protocol.protocol_major, kProtocolV2Major);
   EXPECT_EQ(value->protocol.feature_bits, std::uint64_t{1U} << 9U);
   EXPECT_EQ(value->protocol.maximum_payload_size, 4096U);
   EXPECT_TRUE(queue.try_push(task(3U)));
   value = queue.try_pop();
-  ASSERT_TRUE(value.has_value());
-  EXPECT_EQ(value->connection_id, 2U); // NOLINT(bugprone-unchecked-optional-access)
+  if (!value.has_value()) {
+    ADD_FAILURE() << "expected the second queued task";
+    return;
+  }
+  EXPECT_EQ(value->connection_id, 2U);
   value = queue.try_pop();
-  ASSERT_TRUE(value.has_value());
-  EXPECT_EQ(value->connection_id, 3U); // NOLINT(bugprone-unchecked-optional-access)
+  if (!value.has_value()) {
+    ADD_FAILURE() << "expected the wrapped queued task";
+    return;
+  }
+  EXPECT_EQ(value->connection_id, 3U);
   EXPECT_FALSE(queue.try_pop().has_value());
 }
 
@@ -49,7 +58,10 @@ TEST(SpscNetworkTaskQueueTest, PreservingPushDoesNotConsumeAFullQueueRetry) {
   ASSERT_TRUE(queue.try_pop().has_value());
   EXPECT_TRUE(queue.try_push_preserving(retained));
   const auto delivered = queue.try_pop();
-  ASSERT_TRUE(delivered.has_value());
+  if (!delivered.has_value()) {
+    ADD_FAILURE() << "expected the preserved task";
+    return;
+  }
   EXPECT_EQ(delivered->connection_id, 2U);
   EXPECT_EQ(delivered->frame.payload.size(), 2U);
 }

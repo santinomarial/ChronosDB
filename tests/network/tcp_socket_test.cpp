@@ -74,8 +74,9 @@ void wait_for_connection(TcpListener& listener, TcpSocket& client,
     if ((descriptors[0].revents & POLLIN) != 0) {
       auto next = listener.accept_one();
       ASSERT_TRUE(next.has_value()) << next.error().message();
-      if (next->has_value())
-        accepted.emplace(std::move(**next));
+      auto& available = *next;
+      if (available.has_value())
+        accepted.emplace(std::move(*available));
     }
   }
 }
@@ -95,7 +96,11 @@ TEST(TcpSocketTest, EstablishesOwnedNonblockingLoopbackConnection) {
   ASSERT_TRUE(client.has_value()) << client.error().message();
   std::optional<TcpSocket> accepted;
   wait_for_connection(*listener, *client, accepted);
-  ASSERT_TRUE(accepted.has_value());
+  if (!accepted.has_value()) {
+    ADD_FAILURE() << "listener did not accept the loopback connection";
+    return;
+  }
+  TcpSocket& server = *accepted;
   if (client->connect_state() == TcpConnectState::kInProgress) {
     auto finished = client->finish_connect();
     ASSERT_TRUE(finished.has_value()) << finished.error().message();
@@ -104,8 +109,8 @@ TEST(TcpSocketTest, EstablishesOwnedNonblockingLoopbackConnection) {
 
   const auto client_local = client->local_endpoint();
   const auto client_peer = client->peer_endpoint();
-  const auto server_local = accepted->local_endpoint();
-  const auto server_peer = accepted->peer_endpoint();
+  const auto server_local = server.local_endpoint();
+  const auto server_peer = server.peer_endpoint();
   ASSERT_TRUE(client_local.has_value());
   ASSERT_TRUE(client_peer.has_value());
   ASSERT_TRUE(server_local.has_value());
@@ -114,12 +119,11 @@ TEST(TcpSocketTest, EstablishesOwnedNonblockingLoopbackConnection) {
   EXPECT_EQ(*server_local, bound);
   EXPECT_EQ(*server_peer, *client_local);
 
-  for (const int descriptor :
-       {listener->descriptor(), client->descriptor(), accepted->descriptor()}) {
+  for (const int descriptor : {listener->descriptor(), client->descriptor(), server.descriptor()}) {
     EXPECT_NE(::fcntl(descriptor, F_GETFL, 0) & O_NONBLOCK, 0);
     EXPECT_NE(::fcntl(descriptor, F_GETFD, 0) & FD_CLOEXEC, 0);
   }
-  for (const int descriptor : {client->descriptor(), accepted->descriptor()}) {
+  for (const int descriptor : {client->descriptor(), server.descriptor()}) {
     int no_delay{};
     socklen_t size = sizeof(no_delay);
     ASSERT_EQ(::getsockopt(descriptor, IPPROTO_TCP, TCP_NODELAY, &no_delay, &size), 0);
@@ -129,10 +133,10 @@ TEST(TcpSocketTest, EstablishesOwnedNonblockingLoopbackConnection) {
   constexpr std::array<std::byte, 3> sent{std::byte{'t'}, std::byte{'c'}, std::byte{'p'}};
   ASSERT_EQ(::send(client->descriptor(), sent.data(), sent.size(), 0),
             static_cast<ssize_t>(sent.size()));
-  pollfd readable{.fd = accepted->descriptor(), .events = POLLIN};
+  pollfd readable{.fd = server.descriptor(), .events = POLLIN};
   ASSERT_GT(::poll(&readable, 1U, 100), 0);
   std::array<std::byte, 3> received{};
-  ASSERT_EQ(::recv(accepted->descriptor(), received.data(), received.size(), 0),
+  ASSERT_EQ(::recv(server.descriptor(), received.data(), received.size(), 0),
             static_cast<ssize_t>(received.size()));
   EXPECT_EQ(received, sent);
 }
