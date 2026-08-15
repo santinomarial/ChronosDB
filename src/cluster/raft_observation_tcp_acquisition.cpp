@@ -145,6 +145,14 @@ public:
   explicit Impl(RaftObservationTcpAcquisitionConfig configured)
       : config(std::move(configured)), next_backoff(config.retry.initial_backoff) {}
 
+  [[nodiscard]] RaftObservationTcpClient* active_client() noexcept {
+    return client.has_value() ? &client.operator*() : nullptr;
+  }
+
+  [[nodiscard]] const RaftObservationTcpClient* active_client() const noexcept {
+    return client.has_value() ? &client.operator*() : nullptr;
+  }
+
   [[nodiscard]] common::Status fail(common::Status failure) {
     client.reset();
     acquisition_metrics.active_attempts = 0U;
@@ -200,11 +208,16 @@ public:
   }
 
   [[nodiscard]] common::Status publish_or_retry(const TimePoint now) {
-    if (client->state() == RaftObservationTcpClientState::kFailed)
-      return schedule_failure(client->failure(), now);
-    if (client->state() != RaftObservationTcpClientState::kComplete)
+    RaftObservationTcpClient* active = active_client();
+    if (active == nullptr) {
+      return fail(status(common::StatusCode::kCorruption,
+                         "Raft observation acquisition lost its active attempt"));
+    }
+    if (active->state() == RaftObservationTcpClientState::kFailed)
+      return schedule_failure(active->failure(), now);
+    if (active->state() != RaftObservationTcpClientState::kComplete)
       return common::Status::ok();
-    auto observed = client->result();
+    auto observed = active->result();
     if (!observed.has_value())
       return schedule_failure(observed.error(), now);
     acquisition_result.emplace(std::move(*observed));
@@ -304,7 +317,7 @@ RaftObservationTcpAcquisition::poll_once(const std::chrono::milliseconds maximum
       if (now < *impl.next_attempt_not_before)
         return common::Status::ok();
     }
-    const common::Status started = impl.start_attempt(now);
+    common::Status started = impl.start_attempt(now);
     if (!started.is_ok() ||
         impl.acquisition_state != RaftObservationTcpAcquisitionState::kRunning) {
       return started;
@@ -313,12 +326,15 @@ RaftObservationTcpAcquisition::poll_once(const std::chrono::milliseconds maximum
       return common::Status::ok();
   }
 
-  const auto interest = impl.client->interest();
-  pollfd descriptor{.fd = impl.client->descriptor(),
+  RaftObservationTcpClient* active = impl.active_client();
+  if (active == nullptr)
+    return common::Status::ok();
+  const auto interest = active->interest();
+  pollfd descriptor{.fd = active->descriptor(),
                     .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
                                                  (interest.want_write ? POLLOUT : 0))};
   auto wait = maximum_wait;
-  const auto deadline = impl.client->deadline();
+  const auto deadline = active->deadline();
   if (deadline.has_value())
     wait = bounded_wait(wait, now, *deadline);
   const int ready = ::poll(&descriptor, 1U, static_cast<int>(wait.count()));
@@ -336,8 +352,8 @@ RaftObservationTcpAcquisition::poll_once(const std::chrono::milliseconds maximum
         status(common::StatusCode::kUnavailable, "Raft observation connection became unavailable"),
         now);
   }
-  const common::Status progress = impl.client->on_ready(readable, writable, now);
-  if (!progress.is_ok() && impl.client->state() != RaftObservationTcpClientState::kFailed)
+  const common::Status progress = active->on_ready(readable, writable, now);
+  if (!progress.is_ok() && active->state() != RaftObservationTcpClientState::kFailed)
     return impl.fail(progress);
   return impl.publish_or_retry(now);
 }
@@ -374,15 +390,15 @@ RaftObservationTcpAcquisitionMetrics RaftObservationTcpAcquisition::metrics() co
 }
 
 int RaftObservationTcpAcquisition::descriptor() const noexcept {
-  return implementation_ && implementation_->client.has_value()
-             ? implementation_->client->descriptor()
-             : -1;
+  const RaftObservationTcpClient* active =
+      implementation_ ? implementation_->active_client() : nullptr;
+  return active != nullptr ? active->descriptor() : -1;
 }
 
 RaftObservationTlsInterest RaftObservationTcpAcquisition::interest() const noexcept {
-  return implementation_ && implementation_->client.has_value()
-             ? implementation_->client->interest()
-             : RaftObservationTlsInterest{};
+  const RaftObservationTcpClient* active =
+      implementation_ ? implementation_->active_client() : nullptr;
+  return active != nullptr ? active->interest() : RaftObservationTlsInterest{};
 }
 
 std::optional<RaftObservationTcpClient::TimePoint>
@@ -391,8 +407,8 @@ RaftObservationTcpAcquisition::wake_deadline() const noexcept {
       implementation_->acquisition_state != RaftObservationTcpAcquisitionState::kRunning) {
     return std::nullopt;
   }
-  if (implementation_->client.has_value())
-    return implementation_->client->deadline();
+  if (const RaftObservationTcpClient* active = implementation_->active_client(); active != nullptr)
+    return active->deadline();
   return implementation_->next_attempt_not_before;
 }
 
@@ -404,13 +420,15 @@ common::Result<raft::RaftGroupObservation> RaftObservationTcpAcquisition::result
       implementation_->acquisition_state == RaftObservationTcpAcquisitionState::kCancelled) {
     return common::make_unexpected(implementation_->acquisition_failure);
   }
+  const std::optional<raft::RaftGroupObservation>& acquisition_result =
+      implementation_->acquisition_result;
   if (implementation_->acquisition_state != RaftObservationTcpAcquisitionState::kComplete ||
-      !implementation_->acquisition_result.has_value()) {
+      !acquisition_result.has_value()) {
     return common::make_unexpected(status(common::StatusCode::kInvalidArgument,
                                           "Raft observation acquisition result is unavailable"));
   }
   try {
-    return *implementation_->acquisition_result;
+    return acquisition_result.value();
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
                                           "Raft observation acquisition result allocation failed"));

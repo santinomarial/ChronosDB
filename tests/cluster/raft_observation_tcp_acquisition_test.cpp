@@ -137,6 +137,10 @@ TEST(RaftObservationTcpAcquisitionTest, RotatesAddressesWithinOneFiniteRequestBu
   auto acquired = acquisition->result();
   ASSERT_TRUE(acquired.has_value()) << acquired.error().to_string();
   EXPECT_EQ(*acquired, observation());
+  EXPECT_EQ(acquisition->descriptor(), -1);
+  EXPECT_FALSE(acquisition->interest().want_read);
+  EXPECT_FALSE(acquisition->interest().want_write);
+  EXPECT_FALSE(acquisition->wake_deadline().has_value());
   EXPECT_EQ(service.calls, 1U);
   const auto metrics = acquisition->metrics();
   EXPECT_EQ(metrics.attempts_started, 2U);
@@ -174,6 +178,10 @@ TEST(RaftObservationTcpAcquisitionTest, RejectsAmbiguousRoutesAndCancelsActiveAt
   EXPECT_EQ(cancelled.code(), common::StatusCode::kCancelled);
   EXPECT_EQ(acquisition->state(), RaftObservationTcpAcquisitionState::kCancelled);
   EXPECT_EQ(acquisition->metrics().active_attempts, 0U);
+  EXPECT_EQ(acquisition->descriptor(), -1);
+  EXPECT_FALSE(acquisition->interest().want_read);
+  EXPECT_FALSE(acquisition->interest().want_write);
+  EXPECT_FALSE(acquisition->wake_deadline().has_value());
   EXPECT_EQ(acquisition->result().error(), cancelled);
   EXPECT_EQ(acquisition->poll_once(std::chrono::milliseconds{0}), cancelled);
 }
