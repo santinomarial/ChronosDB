@@ -3,12 +3,22 @@
 > **Purpose:** execution plan for Phase 18. Nothing listed here has passed merely because it is
 > listed. This ledger records work deliberately not performed during the feature-completion pass.
 
+## Local evidence snapshot
+
+The [2026-08-15 local hardening audit](../reviews/phase-18-local-hardening-audit.md) records one
+Apple-silicon macOS revision passing the complete Debug, Release, ASan/UBSan, and TSan suites plus
+the configured repository static analysis. That bounded result does not close the cross-platform,
+leak-detection, sustained-fault, benchmark, security, packaging, or production-deployment work
+below, and no Phase 18 exit is claimed.
+
 ## Cross-cutting
 
-- Full Debug and Release builds and the complete 900+ test repository suite after the final diff.
+- Repeat full Debug and Release builds and the complete repository suite on the Linux reference and
+  on the final release candidate; the linked local macOS audit passes this boundary at `03fc940`.
 - Full unit, integration, regression, API, dead-code, documentation-reconciliation, install/export,
   and external-consumer review for every new public target.
-- ASan, UBSan, and TSan matrices; GCC, Clang, AppleClang, Linux, macOS, x86-64, and arm64 validation.
+- Complete LeakSanitizer and the GCC, Clang, AppleClang, Linux, macOS, x86-64, and arm64 matrix; the
+  linked local arm64 AppleClang audit passes ASan/UBSan and TSan with leak detection disabled.
 - Sustained fuzzing, property testing, deterministic allocation-failure sweeps, corruption testing,
   crash testing, long-duration soak, chaos testing, and reproducible fault campaigns.
 - Full benchmark suite, allocation profiling, CPU/I/O profiles, flame graphs, p50/p95/p99/p99.9,

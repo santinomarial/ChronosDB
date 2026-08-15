@@ -384,6 +384,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   boundary, Linux portability and validation evidence, nonblocking risks, and the phase decision.
 - [Feature completion pass review](reviews/feature-completion-pass.md): truthful Phase 11–17
   architecture slices, focused evidence, limitations, risks, and recommended next order.
+- [Phase 18 local hardening audit](reviews/phase-18-local-hardening-audit.md): revision-bound Debug,
+  Release, static-analysis, ASan/UBSan, and TSan evidence with explicit platform and exit-gate limits.
 - [Shared snapshot publication credit](learning/shared-snapshot-publication-credit.md): implemented
   one-query/one-epoch publication admission across part images, backed chunks, complete tablet scans,
   and ASOF aliases while retaining exact local image/output credit and last-owner cleanup.
