@@ -64,7 +64,7 @@ public:
         applications(std::move(application_storage)), descriptors(std::move(descriptor_storage)),
         owners(std::move(owner_storage)) {}
 
-  [[nodiscard]] common::Status fail(common::Status failure) noexcept {
+  [[nodiscard]] common::Status fail(common::Status failure) {
     if (failure_status.is_ok())
       failure_status = std::move(failure);
     runtime_metrics.failed = true;
@@ -75,12 +75,15 @@ public:
     if (result.submission_sequence == 0U || result.submission_sequence <= last_submission_sequence)
       return fail(status(common::StatusCode::kCorruption,
                          "Raft transport completion FIFO identity is invalid"));
+    if (results[result_tail].has_value())
+      return fail(status(common::StatusCode::kCorruption,
+                         "Raft transport result ring ownership is inconsistent"));
+    const std::uint64_t submission_sequence = result.submission_sequence;
     results[result_tail].emplace(PendingResult{std::move(result), false});
     result_tail = (result_tail + 1U) % results.size();
     ++result_count;
     runtime_metrics.pending_results = result_count;
-    last_submission_sequence =
-        results[(result_tail + results.size() - 1U) % results.size()]->value.submission_sequence;
+    last_submission_sequence = submission_sequence;
     return common::Status::ok();
   }
 
@@ -129,32 +132,52 @@ public:
 
   [[nodiscard]] std::optional<std::size_t> next_ready_application() const noexcept {
     std::optional<std::size_t> next;
+    std::uint64_t next_sequence = std::numeric_limits<std::uint64_t>::max();
     for (std::size_t index = 0U; index < applications.size(); ++index) {
-      if (!applications[index].has_value() || !applications[index]->completion.is_ready())
+      const PendingApplication* pending =
+          applications[index]
+              .transform([](const PendingApplication& value) { return &value; })
+              .value_or(nullptr);
+      if (pending == nullptr || !pending->completion.is_ready())
         continue;
-      if (!next.has_value() || applications[index]->completion.submission_sequence() <
-                                   applications[*next]->completion.submission_sequence())
+      const std::uint64_t sequence = pending->completion.submission_sequence();
+      if (sequence < next_sequence) {
         next = index;
+        next_sequence = sequence;
+      }
     }
     return next;
   }
 
   [[nodiscard]] common::Result<RaftTransportRuntimeResult>
   take_application(const std::size_t index) {
-    PendingApplication& pending = *applications[index];
-    const std::uint64_t sequence = pending.completion.submission_sequence();
-    auto batch = pending.completion.wait();
+    if (index >= applications.size())
+      return common::make_unexpected(
+          status(common::StatusCode::kCorruption, "Raft application slot identity is invalid"));
+    PendingApplication* pending = applications[index]
+                                      .transform([](PendingApplication& value) { return &value; })
+                                      .value_or(nullptr);
+    if (pending == nullptr)
+      return common::make_unexpected(status(common::StatusCode::kCorruption,
+                                            "Raft application slot ownership is inconsistent"));
+    const std::uint64_t sequence = pending->completion.submission_sequence();
+    auto batch = pending->completion.wait();
     if (!batch.has_value())
       return common::make_unexpected(batch.error());
+    raft::RaftGroupObservation* observation =
+        batch->size() == 2U
+            ? (*batch)[1]
+                  .observation.transform([](raft::RaftGroupObservation& value) { return &value; })
+                  .value_or(nullptr)
+            : nullptr;
     if (batch->size() != 2U || !(*batch)[1].status.is_ok() || (*batch)[1].transition.has_value() ||
-        !(*batch)[1].observation.has_value() ||
-        (*batch)[1].observation->group_id != pending.group_id) {
+        observation == nullptr || observation->group_id != pending->group_id) {
       return common::make_unexpected(
           status(common::StatusCode::kCorruption,
                  "Raft application batch lacks its ordered group observation"));
     }
-    raft::RaftGroupObservation observation = std::move(*(*batch)[1].observation);
-    const raft::GroupId group_id = pending.group_id;
+    raft::RaftGroupObservation owned_observation = std::move(*observation);
+    const raft::GroupId group_id = pending->group_id;
     raft::DurableRaftResult result = std::move((*batch)[0]);
     applications[index].reset();
     --application_count;
@@ -165,7 +188,7 @@ public:
                                       std::nullopt,
                                       std::nullopt,
                                       std::move(result),
-                                      std::move(observation)};
+                                      std::move(owned_observation)};
   }
 
   [[nodiscard]] common::Status intake(const TimePoint now) {
@@ -174,10 +197,16 @@ public:
       const auto inbound_sequence = inbound.next_completed_sequence();
       const auto timer_sequence = timer_driver.next_completed_sequence();
       const std::optional<std::size_t> application = next_ready_application();
+      const std::size_t application_index = application.value_or(applications.size());
+      const PendingApplication* pending_application =
+          application_index < applications.size()
+              ? applications[application_index]
+                    .transform([](const PendingApplication& value) { return &value; })
+                    .value_or(nullptr)
+              : nullptr;
       const std::optional<std::uint64_t> application_sequence =
-          application.has_value()
-              ? std::optional<std::uint64_t>{applications[*application]
-                                                 ->completion.submission_sequence()}
+          pending_application != nullptr
+              ? std::optional<std::uint64_t>{pending_application->completion.submission_sequence()}
               : std::nullopt;
       if (!inbound_sequence.has_value() && !timer_sequence.has_value() &&
           !application_sequence.has_value())
@@ -188,10 +217,14 @@ public:
         auto completed = inbound.take_completed();
         if (!completed.has_value())
           return fail(completed.error());
-        if (!completed->has_value() || (**completed).submission_sequence != *inbound_sequence)
+        RaftTransportCompletedReceive* received_value =
+            completed->transform([](RaftTransportCompletedReceive& value) { return &value; })
+                .value_or(nullptr);
+        if (received_value == nullptr ||
+            received_value->submission_sequence != inbound_sequence.value_or(0U))
           return fail(status(common::StatusCode::kCorruption,
                              "Raft inbound completion changed during ordered pickup"));
-        RaftTransportCompletedReceive received = std::move(**completed);
+        RaftTransportCompletedReceive received = std::move(*received_value);
         if (received.observation.has_value()) {
           const common::Status activity = timer_driver.note_activity(*received.observation, now);
           if (!activity.is_ok())
@@ -220,10 +253,13 @@ public:
         if (!stored.is_ok())
           return stored;
       } else {
-        auto completed = take_application(*application);
+        if (application_index >= applications.size() || !application_sequence.has_value())
+          return fail(status(common::StatusCode::kCorruption,
+                             "Raft application completion selection is inconsistent"));
+        auto completed = take_application(application_index);
         if (!completed.has_value())
           return fail(completed.error());
-        if (completed->submission_sequence != *application_sequence)
+        if (completed->submission_sequence != application_sequence.value_or(0U))
           return fail(status(common::StatusCode::kCorruption,
                              "Raft application completion changed during ordered pickup"));
         increment(runtime_metrics.application_results);
@@ -237,20 +273,25 @@ public:
 
   [[nodiscard]] common::Status route_pending(const TimePoint now) {
     for (std::size_t offset = 0U; offset < result_count; ++offset) {
-      PendingResult& pending = *results[(result_head + offset) % results.size()];
-      if (pending.routed)
+      PendingResult* pending = results[(result_head + offset) % results.size()]
+                                   .transform([](PendingResult& value) { return &value; })
+                                   .value_or(nullptr);
+      if (pending == nullptr)
+        return fail(status(common::StatusCode::kCorruption,
+                           "Raft transport result ring ownership is inconsistent"));
+      if (pending->routed)
         continue;
-      if (!pending.value.result.status.is_ok()) {
-        pending.routed = true;
+      if (!pending->value.result.status.is_ok()) {
+        pending->routed = true;
         continue;
       }
-      if (!pending.value.result.transition.has_value())
+      if (!pending->value.result.transition.has_value())
         return fail(status(common::StatusCode::kCorruption,
                            "successful Raft runtime result lacks its transition"));
       const common::Status routed =
-          outbound.route_result(pending.value.group_id, pending.value.result, now);
+          outbound.route_result(pending->value.group_id, pending->value.result, now);
       if (routed.is_ok()) {
-        pending.routed = true;
+        pending->routed = true;
         increment(runtime_metrics.routed_results);
         continue;
       }
@@ -347,7 +388,12 @@ public:
 
   [[nodiscard]] int poll_timeout(const std::chrono::milliseconds maximum_wait,
                                  const TimePoint now) const noexcept {
-    if (result_count != 0U && results[result_head]->routed)
+    const PendingResult* pending =
+        result_count != 0U ? results[result_head]
+                                 .transform([](const PendingResult& value) { return &value; })
+                                 .value_or(nullptr)
+                           : nullptr;
+    if (pending != nullptr && pending->routed)
       return 0;
     auto wait = maximum_wait;
     const auto deadline = next_deadline();
@@ -428,7 +474,7 @@ public:
   std::size_t application_count{};
   std::uint64_t last_submission_sequence{};
   RaftTransportRuntimeMetrics runtime_metrics;
-  common::Status failure_status{};
+  common::Status failure_status;
 };
 
 RaftTransportRuntime::RaftTransportRuntime(std::unique_ptr<Impl> implementation) noexcept
@@ -523,13 +569,26 @@ common::Result<RaftTransportRuntimeResult> RaftTransportRuntime::take_completed(
     return common::make_unexpected(
         status(common::StatusCode::kInvalidArgument, "Raft transport runtime is empty"));
   Impl& impl = *implementation_;
-  if (impl.result_count == 0U || !impl.results[impl.result_head]->routed) {
+  if (impl.result_count == 0U) {
     if (!impl.failure_status.is_ok())
       return common::make_unexpected(impl.failure_status);
     return common::make_unexpected(
         status(common::StatusCode::kUnavailable, "Raft transport result is not ready"));
   }
-  RaftTransportRuntimeResult result = std::move(impl.results[impl.result_head]->value);
+  Impl::PendingResult* pending = impl.results[impl.result_head]
+                                     .transform([](Impl::PendingResult& value) { return &value; })
+                                     .value_or(nullptr);
+  if (pending == nullptr) {
+    return common::make_unexpected(impl.fail(status(
+        common::StatusCode::kCorruption, "Raft transport result ring ownership is inconsistent")));
+  }
+  if (!pending->routed) {
+    if (!impl.failure_status.is_ok())
+      return common::make_unexpected(impl.failure_status);
+    return common::make_unexpected(
+        status(common::StatusCode::kUnavailable, "Raft transport result is not ready"));
+  }
+  RaftTransportRuntimeResult result = std::move(pending->value);
   impl.results[impl.result_head].reset();
   impl.result_head = (impl.result_head + 1U) % impl.results.size();
   --impl.result_count;

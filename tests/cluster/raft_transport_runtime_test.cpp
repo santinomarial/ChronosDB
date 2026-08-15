@@ -165,12 +165,19 @@ TEST(RaftTransportRuntimeTest, PollsDeadlineAndDurableWakeupIntoOwnedTimerResult
     EXPECT_EQ(result->submission_sequence, 1U);
     EXPECT_EQ(result->origin, RaftTransportRuntimeResultOrigin::kTimer);
     EXPECT_EQ(result->group_id, group());
-    ASSERT_TRUE(result->timer_action.has_value());
-    EXPECT_EQ(result->timer_action->kind, raft::RaftTimerActionKind::kStartElection);
+    const raft::RaftTimerAction* timer_action =
+        result->timer_action.transform([](const raft::RaftTimerAction& value) { return &value; })
+            .value_or(nullptr);
+    ASSERT_NE(timer_action, nullptr);
+    EXPECT_EQ(timer_action->kind, raft::RaftTimerActionKind::kStartElection);
     ASSERT_TRUE(result->result.status.is_ok());
     ASSERT_TRUE(result->result.transition.has_value());
-    ASSERT_TRUE(result->observation.has_value());
-    EXPECT_EQ(result->observation->role, raft::Role::kLeader);
+    const raft::RaftGroupObservation* timer_observation =
+        result->observation
+            .transform([](const raft::RaftGroupObservation& value) { return &value; })
+            .value_or(nullptr);
+    ASSERT_NE(timer_observation, nullptr);
+    EXPECT_EQ(timer_observation->role, raft::Role::kLeader);
     EXPECT_GE(transport->metrics().durable_wakeups, 1U);
     EXPECT_EQ(transport->metrics().completed_results, 1U);
 
@@ -198,13 +205,21 @@ TEST(RaftTransportRuntimeTest, PollsDeadlineAndDurableWakeupIntoOwnedTimerResult
         application_result.emplace(std::move(*next));
     }
     ASSERT_TRUE(application_result.has_value());
-    EXPECT_EQ(application_result->origin, RaftTransportRuntimeResultOrigin::kApplication);
-    EXPECT_EQ(application_result->group_id, group());
-    ASSERT_TRUE(application_result->result.status.is_ok())
-        << application_result->result.status.to_string();
-    ASSERT_TRUE(application_result->result.transition.has_value());
-    ASSERT_TRUE(application_result->observation.has_value());
-    EXPECT_EQ(application_result->observation->group_id, group());
+    const RaftTransportRuntimeResult* proposal_result =
+        application_result.transform([](const RaftTransportRuntimeResult& value) { return &value; })
+            .value_or(nullptr);
+    ASSERT_NE(proposal_result, nullptr);
+    EXPECT_EQ(proposal_result->origin, RaftTransportRuntimeResultOrigin::kApplication);
+    EXPECT_EQ(proposal_result->group_id, group());
+    ASSERT_TRUE(proposal_result->result.status.is_ok())
+        << proposal_result->result.status.to_string();
+    ASSERT_TRUE(proposal_result->result.transition.has_value());
+    const raft::RaftGroupObservation* proposal_observation =
+        proposal_result->observation
+            .transform([](const raft::RaftGroupObservation& value) { return &value; })
+            .value_or(nullptr);
+    ASSERT_NE(proposal_observation, nullptr);
+    EXPECT_EQ(proposal_observation->group_id, group());
 
     auto barrier = transport->try_submit_application({group(), raft::BeginReadBarrierOperation{}});
     ASSERT_TRUE(barrier.has_value()) << barrier.error().to_string();
@@ -222,15 +237,29 @@ TEST(RaftTransportRuntimeTest, PollsDeadlineAndDurableWakeupIntoOwnedTimerResult
         application_result.emplace(std::move(*next));
     }
     ASSERT_TRUE(application_result.has_value());
-    EXPECT_EQ(application_result->origin, RaftTransportRuntimeResultOrigin::kApplication);
-    ASSERT_TRUE(application_result->result.status.is_ok())
-        << application_result->result.status.to_string();
-    ASSERT_TRUE(application_result->result.transition.has_value());
-    ASSERT_TRUE(application_result->result.transition->read_barrier_ready.has_value());
-    EXPECT_EQ(application_result->result.transition->read_barrier_ready->group_id, group());
-    ASSERT_TRUE(application_result->observation.has_value());
-    EXPECT_LT(application_result->observation->applied_index,
-              application_result->result.transition->read_barrier_ready->barrier.read_index);
+    const RaftTransportRuntimeResult* barrier_result =
+        application_result.transform([](const RaftTransportRuntimeResult& value) { return &value; })
+            .value_or(nullptr);
+    ASSERT_NE(barrier_result, nullptr);
+    EXPECT_EQ(barrier_result->origin, RaftTransportRuntimeResultOrigin::kApplication);
+    ASSERT_TRUE(barrier_result->result.status.is_ok()) << barrier_result->result.status.to_string();
+    const raft::MultiRaftTransition* barrier_transition =
+        barrier_result->result.transition
+            .transform([](const raft::MultiRaftTransition& value) { return &value; })
+            .value_or(nullptr);
+    ASSERT_NE(barrier_transition, nullptr);
+    const raft::GroupReadBarrier* ready_barrier =
+        barrier_transition->read_barrier_ready
+            .transform([](const raft::GroupReadBarrier& value) { return &value; })
+            .value_or(nullptr);
+    ASSERT_NE(ready_barrier, nullptr);
+    EXPECT_EQ(ready_barrier->group_id, group());
+    const raft::RaftGroupObservation* barrier_observation =
+        barrier_result->observation
+            .transform([](const raft::RaftGroupObservation& value) { return &value; })
+            .value_or(nullptr);
+    ASSERT_NE(barrier_observation, nullptr);
+    EXPECT_LT(barrier_observation->applied_index, ready_barrier->barrier.read_index);
     EXPECT_EQ(transport->metrics().application_results, 2U);
     EXPECT_EQ(transport->metrics().pending_application_requests, 0U);
   }
@@ -380,18 +409,29 @@ TEST(RaftTransportRuntimeTest, RoutesDurableInboundResponseThroughUnifiedPollOwn
       if (!node1_response.has_value()) {
         auto next = server1->take_completed();
         ASSERT_TRUE(next.has_value()) << next.error().to_string();
-        if (next->has_value())
-          node1_response = std::move(**next);
+        node1_response = std::move(*next);
       }
     }
     ASSERT_TRUE(node2_result.has_value());
-    EXPECT_EQ(node2_result->origin, RaftTransportRuntimeResultOrigin::kInbound);
-    EXPECT_EQ(node2_result->remote_source_node_id, 1U);
-    ASSERT_TRUE(node2_result->observation.has_value());
-    EXPECT_EQ(node2_result->observation->current_term, 1U);
+    const RaftTransportRuntimeResult* inbound_result =
+        node2_result.transform([](const RaftTransportRuntimeResult& value) { return &value; })
+            .value_or(nullptr);
+    ASSERT_NE(inbound_result, nullptr);
+    EXPECT_EQ(inbound_result->origin, RaftTransportRuntimeResultOrigin::kInbound);
+    EXPECT_EQ(inbound_result->remote_source_node_id, 1U);
+    const raft::RaftGroupObservation* inbound_observation =
+        inbound_result->observation
+            .transform([](const raft::RaftGroupObservation& value) { return &value; })
+            .value_or(nullptr);
+    ASSERT_NE(inbound_observation, nullptr);
+    EXPECT_EQ(inbound_observation->current_term, 1U);
     ASSERT_TRUE(node1_response.has_value());
-    EXPECT_EQ(node1_response->source_node_id, 2U);
-    EXPECT_TRUE(node1_response->result.status.is_ok());
+    const RaftTransportCompletedReceive* response =
+        node1_response.transform([](const RaftTransportCompletedReceive& value) { return &value; })
+            .value_or(nullptr);
+    ASSERT_NE(response, nullptr);
+    EXPECT_EQ(response->source_node_id, 2U);
+    EXPECT_TRUE(response->result.status.is_ok());
     EXPECT_GE(transport2->metrics().routed_results, 1U);
   }
   ASSERT_TRUE(server1->shutdown().is_ok());
