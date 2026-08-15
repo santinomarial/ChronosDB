@@ -144,6 +144,8 @@ TEST(DistributedQueryTcpServerTest, ServesRealTcpMutualTlsQuery) {
        .connect_timeout = std::chrono::milliseconds{1000}},
       start);
   ASSERT_TRUE(client.has_value());
+  EXPECT_FALSE(client->interest().want_read);
+  EXPECT_TRUE(client->interest().want_write);
 
   for (std::size_t iteration = 0U; iteration < 1024U; ++iteration) {
     const auto interest = client->interest();
@@ -163,12 +165,16 @@ TEST(DistributedQueryTcpServerTest, ServesRealTcpMutualTlsQuery) {
   }
 
   ASSERT_EQ(client->state(), DistributedQueryTcpClientState::kComplete);
+  EXPECT_FALSE(client->interest().want_read);
+  EXPECT_FALSE(client->interest().want_write);
   auto response = client->response_bytes();
   ASSERT_TRUE(response.has_value());
   ASSERT_TRUE(
       sender->accept_response(*response, DistributedQuerySender::TimePoint::clock::now()).is_ok());
   ASSERT_TRUE(sender->result().has_value());
-  EXPECT_EQ(sender->result()->partial.sum, 11.0);
+  EXPECT_EQ(sender->result().transform(
+                [](const query::ExchangeMessage& result) { return result.partial.sum; }),
+            std::optional{11.0});
   EXPECT_EQ(worker.calls, 1U);
   EXPECT_TRUE(client_authenticator.saw_fingerprint);
   EXPECT_TRUE(server_authenticator.saw_fingerprint);
@@ -206,8 +212,10 @@ TEST(DistributedQueryTcpServerTest, BoundsAdmissionAndValidatesConfiguration) {
     for (network::TcpSocket* socket : {&*first, &*second}) {
       if (socket->valid() && socket->connect_state() == network::TcpConnectState::kInProgress) {
         pollfd descriptor{.fd = socket->descriptor(), .events = POLLOUT};
-        if (::poll(&descriptor, 1U, 0) > 0)
-          (void)socket->finish_connect();
+        if (::poll(&descriptor, 1U, 0) > 0) {
+          const auto connected = socket->finish_connect();
+          ASSERT_TRUE(connected.has_value()) << connected.error().to_string();
+        }
       }
     }
   }
@@ -250,12 +258,16 @@ TEST(DistributedQueryTcpClientTest, ValidatesConfigurationAndExpiresConnectExact
        .connect_timeout = std::chrono::milliseconds{5}},
       start);
   ASSERT_TRUE(client.has_value());
+  EXPECT_FALSE(client->interest().want_read);
+  EXPECT_TRUE(client->interest().want_write);
   EXPECT_TRUE(client->on_ready(false, false, start + std::chrono::milliseconds{4}).is_ok());
   const common::Status timed_out =
       client->on_ready(false, false, start + std::chrono::milliseconds{5});
   EXPECT_EQ(timed_out.code(), common::StatusCode::kUnavailable);
   EXPECT_EQ(client->state(), DistributedQueryTcpClientState::kFailed);
   EXPECT_EQ(client->descriptor(), -1);
+  EXPECT_FALSE(client->interest().want_read);
+  EXPECT_FALSE(client->interest().want_write);
   EXPECT_EQ(client->on_ready(true, true, start + std::chrono::milliseconds{6}), timed_out);
 }
 

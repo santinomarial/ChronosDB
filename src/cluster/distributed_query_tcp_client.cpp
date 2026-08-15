@@ -20,6 +20,10 @@ namespace {
   return {common::StatusCode::kResourceExhausted, message};
 }
 
+[[nodiscard]] common::Status internal(const char* message) {
+  return {common::StatusCode::kInternal, message};
+}
+
 [[nodiscard]] bool valid_timeout(const std::chrono::milliseconds timeout) noexcept {
   const auto maximum = std::chrono::duration_cast<std::chrono::milliseconds>(
       DistributedQueryTcpClient::TimePoint::duration::max());
@@ -59,7 +63,7 @@ public:
   network::TcpSocket socket;
   DistributedQueryAttempt attempt;
   DistributedQueryTcpClientConfig config;
-  TimePoint connect_deadline{};
+  TimePoint connect_deadline;
   std::optional<DistributedQueryTlsClient> carrier;
   DistributedQueryTcpClientState client_state{DistributedQueryTcpClientState::kConnecting};
   common::Status client_failure{common::StatusCode::kInternal,
@@ -153,7 +157,9 @@ DistributedQueryTlsInterest DistributedQueryTcpClient::interest() const noexcept
   }
   if (implementation_->client_state == DistributedQueryTcpClientState::kConnecting)
     return {.want_write = true};
-  return implementation_->carrier->interest();
+  return implementation_->carrier
+      .transform([](const DistributedQueryTlsClient& carrier) { return carrier.interest(); })
+      .value_or(DistributedQueryTlsInterest{});
 }
 
 int DistributedQueryTcpClient::descriptor() const noexcept {
@@ -165,7 +171,10 @@ common::Result<common::ByteView> DistributedQueryTcpClient::response_bytes() con
       implementation_->client_state != DistributedQueryTcpClientState::kComplete)
     return common::make_unexpected(
         invalid("distributed query TCP response is unavailable before completion"));
-  return implementation_->carrier->response_bytes();
+  return implementation_->carrier
+      .transform([](const DistributedQueryTlsClient& carrier) { return carrier.response_bytes(); })
+      .value_or(common::make_unexpected(
+          internal("completed distributed query TCP client has no TLS carrier")));
 }
 
 const common::Status& DistributedQueryTcpClient::failure() const noexcept {
