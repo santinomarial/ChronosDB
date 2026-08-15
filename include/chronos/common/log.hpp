@@ -3,6 +3,7 @@
 
 #include "chronos/common/result.hpp"
 #include "chronos/common/status.hpp"
+#include "chronos/common/time_source.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -39,7 +40,7 @@ inline constexpr std::size_t kMaximumLogRecordTextBytes = std::size_t{64U} * 102
 
 struct LogRecord {
   std::chrono::sys_time<std::chrono::milliseconds> timestamp{
-      std::chrono::floor<std::chrono::milliseconds>(std::chrono::system_clock::now())};
+      std::chrono::floor<std::chrono::milliseconds>(system_time_source().wall_now())};
   LogSeverity severity{LogSeverity::kInfo};
   std::string_view component;
   std::string_view event;

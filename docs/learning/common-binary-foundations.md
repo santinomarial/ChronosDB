@@ -87,6 +87,20 @@ atomic in-process log lines, not durable storage: successful return means the C 
 accepted and flushed the bytes, not that a filesystem or collector persisted them. Logging is not a
 data acknowledgment and cannot participate in WAL or Raft durability claims.
 
+## Injectable time domains
+
+`TimeSource` separates civil wall time from monotonic elapsed time. `wall_now()` is appropriate for
+diagnostic timestamps but may move backward or forward and cannot define commit order, retention
+authority, or timeouts. `monotonic_now()` is appropriate for in-process ages and deadlines but has
+no portable civil meaning and is never serialized as authority. `SystemTimeSource` delegates to the
+standard system and steady clocks; `system_time_source()` exposes one thread-safe process-lifetime
+instance.
+
+Injected implementations must make both `noexcept` calls safe for every calling thread. Consumers
+borrow an injected source, so it must outlive all retained consumer state. This permits allocation-
+free deterministic clocks while keeping ownership visible; it does not supply sleeps, event-loop
+timers, time-zone conversion, or a mapping between the two clock domains.
+
 ## Examples
 
 Encoding and decoding a fixed layout remains explicit:
@@ -129,9 +143,10 @@ performed after unchecked addition, and interpreting a CRC32C value as cryptogra
 Fixed-width reads/writes and checked arithmetic use constant time and constant auxiliary space.
 Copying or zero-filling `n` bytes is `O(n)` time and `O(1)` auxiliary space. CRC32C is `O(n)` time,
 uses a fixed 1 KiB table, and allocates nothing. Views and sub-readers are constant-size, zero-copy
-objects. The byte-at-a-time codec and table-driven checksum prioritize portability, auditability,
-and defined behavior over peak throughput; future optimization requires a benchmark and an
-equivalence test against this path.
+objects. A time-source read is allocation-free and constant-space; its latency is the underlying
+platform clock's contract, not a database performance claim. The byte-at-a-time codec and
+table-driven checksum prioritize portability, auditability, and defined behavior over peak
+throughput; future optimization requires a benchmark and an equivalence test against this path.
 
 ## Likely interview questions
 
@@ -145,3 +160,5 @@ equivalence test against this path.
 - What evidence is needed before adding a hardware-accelerated checksum backend?
 - Why must caller-supplied log fields be bounded and forbidden from shadowing built-in keys?
 - What does flushing a structured log line guarantee, and what durability does it not guarantee?
+- Why must elapsed-time decisions use a monotonic source instead of wall time?
+- What lifetime and synchronization obligations accompany an injected `TimeSource`?

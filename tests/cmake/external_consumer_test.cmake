@@ -49,6 +49,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/columnar/columnar_batch_format.hpp>
 #include <chronos/columnar/column_vector.hpp>
 #include <chronos/common/log.hpp>
+#include <chronos/common/time_source.hpp>
 #ifdef CHRONOS_TEST_HAS_INTEROP
 #include <chronos/interop/arrow_parquet.hpp>
 #endif
@@ -218,6 +219,9 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 int main() {
   const auto installed_log = chronos::common::encode_json_log(
       {.component = "external-consumer", .event = "installed", .message = "ready"});
+  const auto installed_monotonic_time =
+      chronos::common::system_time_source().monotonic_now();
+  static_cast<void>(installed_monotonic_time);
   const auto encode_distributed_query_request =
       &chronos::cluster::encode_distributed_query_request_v1;
   const auto decode_distributed_query_response =

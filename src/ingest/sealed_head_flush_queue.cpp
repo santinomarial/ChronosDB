@@ -30,10 +30,6 @@ namespace {
   return common::Status{common::StatusCode::kUnavailable, std::move(message)};
 }
 
-[[nodiscard]] std::chrono::steady_clock::time_point steady_now(void*) noexcept {
-  return std::chrono::steady_clock::now();
-}
-
 enum class SlotPhase : std::uint8_t {
   kFree,
   kReserved,
@@ -54,10 +50,8 @@ namespace detail {
 
 class SealedHeadFlushQueueState : public std::enable_shared_from_this<SealedHeadFlushQueueState> {
 public:
-  using Clock = std::chrono::steady_clock::time_point (*)(void*) noexcept;
-
-  SealedHeadFlushQueueState(const std::size_t capacity, Clock clock, void* clock_context)
-      : slots_(capacity), clock_(clock), clock_context_(clock_context) {}
+  SealedHeadFlushQueueState(const std::size_t capacity, const common::TimeSource& time_source)
+      : slots_(capacity), time_source_(&time_source) {}
 
   [[nodiscard]] common::Result<SealedHeadFlushReservation> reserve() {
     std::scoped_lock lock{mutex_};
@@ -106,7 +100,7 @@ public:
     if (!target.snapshot.has_value()) {
       std::terminate();
     }
-    target.enqueued_at = clock_(clock_context_);
+    target.enqueued_at = time_source_->monotonic_now();
     target.phase = SlotPhase::kReady;
     --reserved_;
     ++ready_;
@@ -195,7 +189,7 @@ public:
     }
     std::chrono::nanoseconds age{};
     if (oldest.has_value()) {
-      const std::chrono::steady_clock::time_point now = clock_(clock_context_);
+      const std::chrono::steady_clock::time_point now = time_source_->monotonic_now();
       if (now > *oldest) {
         age = std::chrono::duration_cast<std::chrono::nanoseconds>(now - *oldest);
       }
@@ -228,8 +222,7 @@ private:
 
   mutable std::mutex mutex_;
   std::vector<QueueSlot> slots_;
-  Clock clock_;
-  void* clock_context_;
+  const common::TimeSource* time_source_;
   std::uint64_t next_sequence_{1U};
   std::size_t occupied_{};
   std::size_t reserved_{};
@@ -396,21 +389,17 @@ SealedHeadFlushQueue::~SealedHeadFlushQueue() = default;
 
 common::Result<std::shared_ptr<SealedHeadFlushQueue>>
 SealedHeadFlushQueue::create(const SealedHeadFlushQueueConfig config) {
-  return create_with_clock(config, &steady_now, nullptr);
+  return create_with_time_source(config, common::system_time_source());
 }
 
 common::Result<std::shared_ptr<SealedHeadFlushQueue>>
-SealedHeadFlushQueue::create_with_clock(const SealedHeadFlushQueueConfig config, const Clock clock,
-                                        void* const clock_context) {
+SealedHeadFlushQueue::create_with_time_source(const SealedHeadFlushQueueConfig config,
+                                              const common::TimeSource& time_source) {
   if (config.capacity == 0U) {
     return common::make_unexpected(invalid("sealed-head flush queue capacity must be nonzero"));
   }
-  if (clock == nullptr) {
-    return common::make_unexpected(invalid("sealed-head flush queue requires a clock"));
-  }
   try {
-    auto state =
-        std::make_shared<detail::SealedHeadFlushQueueState>(config.capacity, clock, clock_context);
+    auto state = std::make_shared<detail::SealedHeadFlushQueueState>(config.capacity, time_source);
     return std::shared_ptr<SealedHeadFlushQueue>{
         new SealedHeadFlushQueue{std::move(state)}}; // NOLINT(cppcoreguidelines-owning-memory)
   } catch (const std::bad_alloc&) {

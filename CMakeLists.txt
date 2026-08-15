@@ -115,6 +115,7 @@ add_library(
   src/common/crc32c.cpp
   src/common/log.cpp
   src/common/status.cpp
+  src/common/time_source.cpp
   src/common/uuid_generator.cpp
   src/common/version.cpp
 )
@@ -858,6 +859,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/common/result_header_self_contained.cpp
     tests/common/status_header_self_contained.cpp
     tests/common/status_result_test.cpp
+    tests/common/time_source_header_self_contained.cpp
+    tests/common/time_source_test.cpp
     tests/common/uuid_header_self_contained.cpp
     tests/common/uuid_test.cpp
     tests/common/uuid_generator_header_self_contained.cpp

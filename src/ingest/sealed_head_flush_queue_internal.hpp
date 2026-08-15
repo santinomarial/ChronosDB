@@ -44,11 +44,9 @@ private:
 
 class SealedHeadFlushQueueTestAccess {
 public:
-  using Clock = std::chrono::steady_clock::time_point (*)(void*) noexcept;
-
   [[nodiscard]] static common::Result<std::shared_ptr<SealedHeadFlushQueue>>
-  create(SealedHeadFlushQueueConfig config, Clock clock, void* context) {
-    return SealedHeadFlushQueue::create_with_clock(config, clock, context);
+  create(SealedHeadFlushQueueConfig config, const common::TimeSource& time_source) {
+    return SealedHeadFlushQueue::create_with_time_source(config, time_source);
   }
 
   [[nodiscard]] static common::Result<SealedHeadFlushReservation>

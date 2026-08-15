@@ -3,6 +3,7 @@
 
 #include "chronos/common/result.hpp"
 #include "chronos/common/status.hpp"
+#include "chronos/common/time_source.hpp"
 #include "chronos/head/mutable_head.hpp"
 
 #include <chrono>
@@ -97,11 +98,9 @@ public:
   [[nodiscard]] SealedHeadFlushQueueMetrics metrics() const noexcept;
 
 private:
-  using Clock = std::chrono::steady_clock::time_point (*)(void*) noexcept;
-
   explicit SealedHeadFlushQueue(std::shared_ptr<detail::SealedHeadFlushQueueState> state) noexcept;
   [[nodiscard]] static common::Result<std::shared_ptr<SealedHeadFlushQueue>>
-  create_with_clock(SealedHeadFlushQueueConfig config, Clock clock, void* clock_context);
+  create_with_time_source(SealedHeadFlushQueueConfig config, const common::TimeSource& time_source);
   [[nodiscard]] common::Result<detail::SealedHeadFlushReservation> reserve();
 
   std::shared_ptr<detail::SealedHeadFlushQueueState> state_;

@@ -113,13 +113,17 @@ retirement_receipt(const head::HeadSnapshot& snapshot) {
       snapshot_wal_id, minimum_sequence, maximum_sequence);
 }
 
-struct ManualClock {
+class ManualClock final : public common::TimeSource {
+public:
   std::atomic<std::int64_t> nanoseconds;
 
-  [[nodiscard]] static std::chrono::steady_clock::time_point now(void* context) noexcept {
-    const auto* const clock = static_cast<ManualClock*>(context);
+  [[nodiscard]] common::WallTimePoint wall_now() const noexcept override {
+    return common::WallTimePoint{};
+  }
+
+  [[nodiscard]] common::MonotonicTimePoint monotonic_now() const noexcept override {
     return std::chrono::steady_clock::time_point{
-        std::chrono::nanoseconds{clock->nanoseconds.load(std::memory_order_acquire)}};
+        std::chrono::nanoseconds{nanoseconds.load(std::memory_order_acquire)}};
   }
 };
 
@@ -162,8 +166,7 @@ TEST(SealedHeadFlushQueueTest, ReservationOrderPreventsLaterProducerFromOvertaki
 TEST(SealedHeadFlushQueueTest, MetricsTrackOldestAgeAcrossRetryAndCompletion) {
   ManualClock clock;
   const auto queue =
-      detail::SealedHeadFlushQueueTestAccess::create({.capacity = 2U}, &ManualClock::now, &clock)
-          .value();
+      detail::SealedHeadFlushQueueTestAccess::create({.capacity = 2U}, clock).value();
   auto first = detail::SealedHeadFlushQueueTestAccess::reserve(*queue).value();
   clock.nanoseconds.store(10, std::memory_order_release);
   publish(first, sealed_snapshot({.tablet_seed = 71U, .generation = 1U, .record_sequence = 1U}));

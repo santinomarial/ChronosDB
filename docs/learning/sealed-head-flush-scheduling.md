@@ -27,6 +27,11 @@ completion.
 - `metrics` reports capacity, occupied/reserved/ready/in-flight counts, accepted/completed/retry and
   capacity-rejection counters, and the monotonic age of the oldest ready or in-flight item.
 
+Production queues borrow the process-lifetime `SystemTimeSource`. Deterministic tests inject a
+typed source whose lifetime exceeds the queue and every reservation/work object retaining its
+shared state. Only the monotonic domain is consulted; wall-clock adjustment cannot make queue age
+negative or expire durable authority.
+
 Public accessors on a moved, completed, or released work object remain safe: `is_valid` is false and
 `snapshot` returns null. Queue work and metrics do not borrow the `SealedHeadFlushQueue` wrapper;
 their internal shared state remains alive independently.
