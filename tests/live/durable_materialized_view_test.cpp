@@ -72,13 +72,17 @@ TEST(DurableMaterializedViewTest, CheckpointsWatermarkAndReplaysCommittedSuffixA
   {
     auto view = DurableWindowedMaterializedView::create_new(config(directory));
     ASSERT_TRUE(view.has_value()) << view.error().to_string();
+    EXPECT_EQ(view->checkpoint_generation(), 0U);
+    EXPECT_EQ(view->durable_record_sequence(), 0U);
     ASSERT_TRUE(view->apply_committed(SourcePosition{tablet_id(), wal_id(), 1U},
                                       MaterializedViewInput{{1U, 1, 1U, 10.0, 1.0}, false})
                     .has_value());
+    EXPECT_EQ(view->checkpoint_generation(), 0U);
     EXPECT_EQ(view->durable_record_sequence(), 0U);
     auto first = view->checkpoint();
     ASSERT_TRUE(first.has_value()) << first.error().to_string();
     EXPECT_EQ(first->checkpoint_generation, 1U);
+    EXPECT_EQ(view->checkpoint_generation(), 1U);
     EXPECT_EQ(view->durable_record_sequence(), 1U);
     auto repeated = view->checkpoint();
     ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
@@ -86,6 +90,8 @@ TEST(DurableMaterializedViewTest, CheckpointsWatermarkAndReplaysCommittedSuffixA
     EXPECT_TRUE(repeated->already_present);
 
     ASSERT_TRUE(view->advance_watermark(12).has_value());
+    EXPECT_EQ(view->checkpoint_generation(), 1U);
+    EXPECT_EQ(view->durable_record_sequence(), 1U);
     auto watermarked = view->checkpoint();
     ASSERT_TRUE(watermarked.has_value()) << watermarked.error().to_string();
     EXPECT_EQ(watermarked->checkpoint_generation, 2U);

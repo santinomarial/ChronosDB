@@ -28,13 +28,18 @@ namespace {
 
 class DurableWindowedMaterializedView::Impl {
 public:
+  struct DurabilityState {
+    std::uint64_t generation{};
+    std::uint64_t durable_sequence{};
+    bool dirty{true};
+  };
+
   Impl(MaterializedViewCheckpointIdentity configured_identity,
        MaterializedViewCheckpointStorage configured_storage,
-       WindowedMaterializedView configured_view, const std::uint64_t configured_generation,
-       const std::uint64_t configured_durable_sequence, const bool configured_dirty) noexcept
-      : identity(std::move(configured_identity)), storage(std::move(configured_storage)),
-        view(std::move(configured_view)), generation(configured_generation),
-        durable_sequence(configured_durable_sequence), dirty(configured_dirty) {}
+       WindowedMaterializedView configured_view, const DurabilityState configured_state) noexcept
+      : identity(configured_identity), storage(std::move(configured_storage)),
+        view(std::move(configured_view)), generation(configured_state.generation),
+        durable_sequence(configured_state.durable_sequence), dirty(configured_state.dirty) {}
 
   MaterializedViewCheckpointIdentity identity;
   MaterializedViewCheckpointStorage storage;
@@ -75,8 +80,8 @@ DurableWindowedMaterializedView::create_new(DurableWindowedMaterializedViewConfi
           common::Status{common::StatusCode::kAlreadyExists,
                          "new durable materialized-view directory already contains a checkpoint"});
     }
-    return DurableWindowedMaterializedView{
-        std::make_unique<Impl>(identity, std::move(*storage), std::move(*view), 0U, 0U, true)};
+    return DurableWindowedMaterializedView{std::make_unique<Impl>(
+        identity, std::move(*storage), std::move(*view), Impl::DurabilityState{})};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("durable materialized-view allocation failed"));
   }
@@ -94,17 +99,18 @@ DurableWindowedMaterializedView::open_existing(DurableWindowedMaterializedViewCo
     if (!latest.has_value()) {
       return common::make_unexpected(latest.error());
     }
-    if (!latest->has_value()) {
+    auto loaded = std::move(*latest);
+    if (!loaded.has_value()) {
       auto view =
           WindowedMaterializedView::create(config.tablet_id, config.wal_id, config.definition);
       if (!view.has_value()) {
         return common::make_unexpected(view.error());
       }
-      return DurableWindowedMaterializedView{
-          std::make_unique<Impl>(identity, std::move(*storage), std::move(*view), 0U, 0U, true)};
+      return DurableWindowedMaterializedView{std::make_unique<Impl>(
+          identity, std::move(*storage), std::move(*view), Impl::DurabilityState{})};
     }
 
-    BoundMaterializedViewCheckpoint checkpoint = std::move((*latest)->checkpoint);
+    BoundMaterializedViewCheckpoint checkpoint = std::move(loaded).value().checkpoint;
     if (checkpoint.identity != identity ||
         checkpoint.state.position.tablet_id != config.tablet_id ||
         checkpoint.state.position.wal_id != config.wal_id ||
@@ -119,8 +125,10 @@ DurableWindowedMaterializedView::open_existing(DurableWindowedMaterializedViewCo
       return common::make_unexpected(view.error());
     }
     return DurableWindowedMaterializedView{
-        std::make_unique<Impl>(identity, std::move(*storage), std::move(*view), generation,
-                               durable_sequence, generation == 0U)};
+        std::make_unique<Impl>(identity, std::move(*storage), std::move(*view),
+                               Impl::DurabilityState{.generation = generation,
+                                                     .durable_sequence = durable_sequence,
+                                                     .dirty = generation == 0U})};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(
         exhausted("durable materialized-view recovery allocation failed"));
@@ -130,7 +138,7 @@ DurableWindowedMaterializedView::open_existing(DurableWindowedMaterializedViewCo
 common::Result<std::vector<MaterializedViewChange>>
 DurableWindowedMaterializedView::apply_committed(const SourcePosition position,
                                                  MaterializedViewInput input) {
-  auto applied = impl_->view.apply_committed(position, std::move(input));
+  auto applied = impl_->view.apply_committed(position, input);
   if (applied.has_value()) {
     impl_->dirty = true;
   }
