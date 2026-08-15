@@ -275,8 +275,7 @@ decode_bound_materialized_view_checkpoint_v1(const common::ByteView bytes,
   if (!state.has_value()) {
     return common::make_unexpected(state.error());
   }
-  return BoundMaterializedViewCheckpoint{std::move(identity), checkpoint_generation,
-                                         std::move(*state)};
+  return BoundMaterializedViewCheckpoint{identity, checkpoint_generation, std::move(*state)};
 }
 
 } // namespace chronos::live

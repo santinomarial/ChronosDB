@@ -124,6 +124,8 @@ TEST(MaterializedViewCheckpointTest, BoundEnvelopeRejectsCrossViewIdentityLoss) 
   ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
   auto decoded = decode_bound_materialized_view_checkpoint_v1(*encoded);
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(decoded->identity, original.identity);
+  EXPECT_EQ(decoded->checkpoint_generation, original.checkpoint_generation);
   EXPECT_EQ(*decoded, original);
 
   std::fill_n(encoded->begin() + 32, 16U, std::byte{0U});
