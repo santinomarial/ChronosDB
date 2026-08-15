@@ -103,11 +103,16 @@ TEST(TabletMovementCheckpointRecoveryTest, RecoversCheckpointBoundaryWhenChunksA
   EXPECT_EQ(interior.error().code(), common::StatusCode::kInvalidArgument);
   auto latest = checkpoint_storage->load_latest_any();
   ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
-  ASSERT_TRUE(latest->has_value());
-  auto without_chunks = recover_tablet_movement_generation(**latest);
+  auto& latest_generation = *latest;
+  if (!latest_generation.has_value()) {
+    ADD_FAILURE() << "expected an installed movement checkpoint generation";
+    return;
+  }
+  const auto& loaded_generation = *latest_generation;
+  auto without_chunks = recover_tablet_movement_generation(loaded_generation);
   ASSERT_FALSE(without_chunks.has_value());
   EXPECT_EQ(without_chunks.error().code(), common::StatusCode::kNotSupported);
-  auto recovered = recover_tablet_movement_generation(**latest, *chunk_storage);
+  auto recovered = recover_tablet_movement_generation(loaded_generation, *chunk_storage);
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   EXPECT_TRUE(recovered->used_external_prefix);
   EXPECT_EQ(recovered->movement.record().received_bytes, 2U);

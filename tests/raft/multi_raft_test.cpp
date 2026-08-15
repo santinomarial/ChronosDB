@@ -113,14 +113,16 @@ TEST(MultiRaftTest, ReopensPersistedGroupStateAtSharedPhysicalSequence) {
   ASSERT_TRUE(elected->persistence.has_value());
   auto proposal = runtime->propose(group, 1U, {std::byte{1U}});
   ASSERT_TRUE(proposal.has_value());
-  ASSERT_TRUE(proposal->persistence.has_value());
+  const auto& persistence = proposal->persistence;
+  if (!persistence.has_value()) {
+    ADD_FAILURE() << "expected proposal persistence";
+    return;
+  }
 
   auto reopened = MultiRaftRuntime::create(1U);
   ASSERT_TRUE(reopened.has_value());
-  EXPECT_TRUE(reopened
-                  ->add_group(group, {1U}, proposal->persistence->state,
-                              proposal->persistence->physical_sequence)
-                  .is_ok());
+  EXPECT_TRUE(
+      reopened->add_group(group, {1U}, persistence->state, persistence->physical_sequence).is_ok());
   EXPECT_EQ(reopened->find_group(group)->commit_index(), 1U);
   EXPECT_EQ(reopened->find_group(group)->last_log_index(), 1U);
 }
@@ -167,8 +169,12 @@ TEST(MultiRaftTest, RoutesReadBarrierProbeAndGroupScopedCompletion) {
 
   auto completed = runtime->receive(group, 2U, ReadBarrierResponse{1U, context, true});
   ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
-  ASSERT_TRUE(completed->read_barrier_ready.has_value());
-  EXPECT_EQ(*completed->read_barrier_ready,
+  const auto& ready = completed->read_barrier_ready;
+  if (!ready.has_value()) {
+    ADD_FAILURE() << "expected group-scoped read-barrier completion";
+    return;
+  }
+  EXPECT_EQ(*ready,
             (GroupReadBarrier{.group_id = group,
                               .barrier = {.term = 1U, .context = context, .read_index = 1U}}));
 }
