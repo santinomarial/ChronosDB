@@ -309,7 +309,7 @@ public:
     auto decoded = decode_reclaimed_marker(bytes, config_.codec_limits);
     if (!decoded.has_value())
       return common::make_unexpected(decoded.error());
-    return std::optional<TabletPhysicalPartTransferSession>{std::move(*decoded)};
+    return std::optional<TabletPhysicalPartTransferSession>{*decoded};
   }
 
   [[nodiscard]] common::Result<bool> install_reclaimed_marker() {
@@ -317,7 +317,8 @@ public:
     if (!existing.has_value())
       return common::make_unexpected(existing.error());
     if (existing->has_value()) {
-      if (**existing != config_.session)
+      const TabletPhysicalPartTransferSession marker_session = existing->value_or(config_.session);
+      if (marker_session != config_.session)
         return common::make_unexpected(
             corruption("physical receipt marker belongs to another session"));
       reclaimed_ = true;
@@ -493,7 +494,9 @@ TabletPhysicalPartChunkStorage::open(TabletPhysicalPartChunkStorageConfig config
     if (!marker.has_value())
       status = marker.error();
     else if (marker->has_value()) {
-      if (**marker != implementation->config_.session)
+      const TabletPhysicalPartTransferSession marker_session =
+          marker->value_or(implementation->config_.session);
+      if (marker_session != implementation->config_.session)
         status = corruption("physical receipt marker belongs to another session");
       else
         implementation->reclaimed_ = true;

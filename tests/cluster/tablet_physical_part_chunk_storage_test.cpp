@@ -228,6 +228,12 @@ TEST(TabletPhysicalPartChunkStorageTest, ReclaimsDurablyAndResumesADeletedSuffix
   EXPECT_TRUE(std::filesystem::exists(directory.path() / "RECLAIMED"));
   EXPECT_FALSE(
       std::filesystem::exists(directory.path() / *tablet_physical_part_chunk_file_name(0U)));
+  auto wrong_owner = owner;
+  wrong_owner.placement_epoch++;
+  EXPECT_EQ(TabletPhysicalPartChunkStorage::open_existing(config(directory.path(), wrong_owner))
+                .error()
+                .code(),
+            common::StatusCode::kCorruption);
 
   // A marker plus a contiguous prefix is the only possible interrupted-delete recovery state.
   write_bytes(directory.path() / *tablet_physical_part_chunk_file_name(0U), encoded_first);
