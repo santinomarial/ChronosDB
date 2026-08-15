@@ -152,25 +152,25 @@ NativeClientSession::queue_subscription_resume(const common::Uuid& subscription_
   return request_id;
 }
 
-common::Status
-NativeClientSession::queue_subscription_acknowledgement(const std::uint64_t request_id,
-                                                        const std::uint64_t delivery_sequence) {
+common::Status NativeClientSession::queue_subscription_acknowledgement(
+    const std::uint64_t request_id, const SubscriptionAcknowledgement& acknowledgement) {
   if (phase_ != ClientSessionPhase::kActive)
     return invalid("client session is not active");
   const auto found = std::ranges::find_if(
       active_, [&](const ActiveRequest& item) { return item.id == request_id; });
   if (found == active_.end() || found->type != MessageType::kSubscribeRequest ||
-      !found->subscription_ready || found->cancellation_requested || delivery_sequence == 0U ||
-      delivery_sequence < found->subscription_last_acknowledged ||
-      delivery_sequence > found->subscription_last_delivery)
+      !found->subscription_ready || found->cancellation_requested ||
+      acknowledgement.delivery_sequence == 0U ||
+      acknowledgement.delivery_sequence < found->subscription_last_acknowledged ||
+      acknowledgement.delivery_sequence > found->subscription_last_delivery)
     return invalid("client subscription acknowledgement state is invalid");
-  auto payload = encode_subscription_acknowledgement({delivery_sequence});
+  auto payload = encode_subscription_acknowledgement(acknowledgement);
   if (!payload.has_value())
     return payload.error();
   const common::Status status =
       queue_frame(MessageType::kSubscriptionAcknowledge, request_id, *payload);
   if (status.is_ok())
-    found->subscription_last_acknowledged = delivery_sequence;
+    found->subscription_last_acknowledged = acknowledgement.delivery_sequence;
   return status;
 }
 

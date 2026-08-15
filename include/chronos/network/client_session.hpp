@@ -39,8 +39,9 @@ public:
   queue_subscription(const common::Uuid& subscription_id, std::string_view sql);
   [[nodiscard]] common::Result<std::uint64_t>
   queue_subscription_resume(const common::Uuid& subscription_id, common::ByteView resume_token);
-  [[nodiscard]] common::Status queue_subscription_acknowledgement(std::uint64_t request_id,
-                                                                  std::uint64_t delivery_sequence);
+  [[nodiscard]] common::Status
+  queue_subscription_acknowledgement(std::uint64_t request_id,
+                                     const SubscriptionAcknowledgement& acknowledgement);
   [[nodiscard]] common::Result<std::uint64_t>
   queue_ingest(DurabilityMode durability, common::ByteView encoded_columnar_append);
   [[nodiscard]] common::Status queue_cancel(std::uint64_t request_id);

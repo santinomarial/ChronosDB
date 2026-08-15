@@ -300,7 +300,10 @@ TEST(NativeClientSessionTest, DrivesNegotiatedAtLeastOnceSubscriptionLifecycle) 
   ASSERT_TRUE(
       client.receive(server_frame(MessageType::kSubscriptionChange, request_id, *change, 0U, 1U))
           .has_value());
-  EXPECT_TRUE(client.queue_subscription_acknowledgement(request_id, 1U).is_ok());
+  EXPECT_TRUE(client
+                  .queue_subscription_acknowledgement(
+                      request_id, SubscriptionAcknowledgement{.delivery_sequence = 1U})
+                  .is_ok());
   const auto acknowledge_frame = decode_frame(take_pending(client));
   ASSERT_TRUE(acknowledge_frame.has_value());
   EXPECT_EQ(acknowledge_frame->header.message_type, MessageType::kSubscriptionAcknowledge);
