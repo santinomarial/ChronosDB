@@ -391,7 +391,7 @@ encode_distributed_query_response_v1(const DistributedQueryResponse& response) {
     auto encoded = query::encode_exchange_message(*response.message);
     if (!encoded.has_value())
       return common::make_unexpected(encoded.error());
-    payload = std::move(*encoded);
+    payload = *encoded;
   }
   auto status_code = encode_status(response.status_code);
   if (!status_code.has_value())
@@ -547,13 +547,18 @@ decode_distributed_query_response_v1(const common::ByteView bytes) {
       return common::make_unexpected(
           corruption("distributed query response payload is not correlated"));
     }
-    message = std::move(*decoded);
+    message = *decoded;
   }
   std::optional<DistributedQueryLeaderHint> leader_hint;
   if (has_hint)
     leader_hint = DistributedQueryLeaderHint{*leader_node, *placement_epoch};
-  return DistributedQueryResponse{
-      *source, *target, *query_id, *tablet_id, *status, std::move(message), leader_hint};
+  return DistributedQueryResponse{.source_node_id = *source,
+                                  .target_node_id = *target,
+                                  .query_id = *query_id,
+                                  .tablet_id = *tablet_id,
+                                  .status_code = *status,
+                                  .message = message,
+                                  .leader_hint = leader_hint};
 }
 
 DistributedQueryReceiver::DistributedQueryReceiver(DistributedQueryReceiverConfig config) noexcept
@@ -593,22 +598,22 @@ DistributedQueryReceiver::receive(const common::ByteView request_bytes,
       result.has_value() ? common::StatusCode::kOk : result.error().code();
   std::optional<query::ExchangeMessage> message;
   if (result.has_value())
-    message = std::move(*result);
+    message = *result;
   else if (!leader_hint.has_value() && code == common::StatusCode::kUnavailable &&
            config_.leader_hint_provider != nullptr) {
     auto resolved = config_.leader_hint_provider->current_leader_hint(
         tablet_id, request->dispatch.raft_group_id);
     if (!resolved.has_value())
       return common::make_unexpected(resolved.error());
-    leader_hint = std::move(*resolved);
+    leader_hint = *resolved;
   }
   return encode_distributed_query_response_v1({.source_node_id = config_.local_node_id,
                                                .target_node_id = request->source_node_id,
                                                .query_id = query_id,
                                                .tablet_id = tablet_id,
                                                .status_code = code,
-                                               .message = std::move(message),
-                                               .leader_hint = std::move(leader_hint)});
+                                               .message = message,
+                                               .leader_hint = leader_hint});
 }
 
 common::Result<DistributedQueryRequestReadStep>
@@ -703,8 +708,7 @@ DistributedQueryResponseReader::consume(const common::ByteView bytes) {
   }
   buffered_bytes_ = 0U;
   expected_frame_bytes_.reset();
-  return DistributedQueryResponseReadStep{.consumed_bytes = consumed,
-                                          .response = std::move(*decoded)};
+  return DistributedQueryResponseReadStep{.consumed_bytes = consumed, .response = *decoded};
 }
 
 std::size_t DistributedQueryResponseReader::buffered_bytes() const noexcept {
@@ -839,7 +843,7 @@ common::Status DistributedQuerySender::accept_response(const common::ByteView re
   suggested_leader_ = response->leader_hint;
   if (response->status_code == common::StatusCode::kOk) {
     last_status_code_ = common::StatusCode::kOk;
-    result_ = std::move(response->message);
+    result_ = response->message;
     state_ = DistributedQuerySenderState::kSucceeded;
     next_attempt_not_before_.reset();
     return common::Status::ok();

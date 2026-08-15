@@ -161,8 +161,15 @@ TEST(DistributedQueryTransportCodecTest, RoundTripsCorrelatedRequestAndResponses
   const auto decoded_success = decode_distributed_query_response_v1(*encoded_success);
   ASSERT_TRUE(decoded_success.has_value()) << decoded_success.error().to_string();
   ASSERT_TRUE(decoded_success->message.has_value());
-  EXPECT_EQ(decoded_success->message->partial.count, 1U);
-  EXPECT_EQ(decoded_success->message->partial.sum, 2.5);
+  const query::ExchangeMessage decoded_message = decoded_success->message.value_or(message());
+  EXPECT_EQ(decoded_message.query_id, success.query_id);
+  EXPECT_EQ(decoded_message.tablet_id, success.tablet_id);
+  EXPECT_EQ(decoded_message.sequence, 1U);
+  EXPECT_TRUE(decoded_message.terminal);
+  EXPECT_EQ(decoded_message.partial.count, 1U);
+  EXPECT_EQ(decoded_message.partial.sum, 2.5);
+  EXPECT_EQ(decoded_message.partial.minimum, 2.5);
+  EXPECT_EQ(decoded_message.partial.maximum, 2.5);
   EXPECT_EQ(decoded_success->leader_hint, success.leader_hint);
 
   const DistributedQueryResponse failure{.source_node_id = 2U,
@@ -329,15 +336,19 @@ TEST(DistributedQueryStreamTest, RequestReaderHandlesEverySplitAndCoalescedFrame
     EXPECT_EQ(first->consumed_bytes, split);
     if (split == encoded.size()) {
       ASSERT_TRUE(first->request.has_value());
-      EXPECT_EQ(first->request->dispatch.fragment.query_id, uuid(1U));
+      const DistributedQueryRequest completed_request =
+          first->request.value_or(DistributedQueryRequest{1U, 2U, dispatch()});
+      EXPECT_EQ(completed_request.dispatch.fragment.query_id, uuid(1U));
       continue;
     }
     EXPECT_FALSE(first->request.has_value());
     const auto second = reader.consume(common::ByteView{encoded}.subspan(split));
     ASSERT_TRUE(second.has_value()) << "split " << split;
     ASSERT_TRUE(second->request.has_value());
+    const DistributedQueryRequest completed_request =
+        second->request.value_or(DistributedQueryRequest{1U, 2U, dispatch()});
     EXPECT_EQ(second->consumed_bytes, encoded.size() - split);
-    EXPECT_EQ(second->request->dispatch.raft_group_id, uuid(9U));
+    EXPECT_EQ(completed_request.dispatch.raft_group_id, uuid(9U));
   }
 
   std::vector<std::byte> coalesced = encoded;
@@ -381,7 +392,12 @@ TEST(DistributedQueryStreamTest, ResponseReaderHandlesBothLengthsEverySplit) {
       const auto second = reader.consume(common::ByteView{frame}.subspan(split));
       ASSERT_TRUE(second.has_value()) << "size " << frame.size() << " split " << split;
       ASSERT_TRUE(second->response.has_value());
-      EXPECT_EQ(second->response->query_id, uuid(1U));
+      const DistributedQueryResponse completed_response = second->response.value_or(
+          DistributedQueryResponse{.source_node_id = 2U,
+                                   .target_node_id = 1U,
+                                   .query_id = uuid(1U),
+                                   .tablet_id = id<schema::TabletId>(4U)});
+      EXPECT_EQ(completed_response.query_id, uuid(1U));
     }
   }
 
@@ -395,7 +411,12 @@ TEST(DistributedQueryStreamTest, ResponseReaderHandlesBothLengthsEverySplit) {
   const auto second = reader.consume(common::ByteView{coalesced}.subspan(first->consumed_bytes));
   ASSERT_TRUE(second.has_value());
   ASSERT_TRUE(second->response.has_value());
-  EXPECT_EQ(second->response->status_code, common::StatusCode::kUnavailable);
+  const DistributedQueryResponse completed_response =
+      second->response.value_or(DistributedQueryResponse{.source_node_id = 2U,
+                                                         .target_node_id = 1U,
+                                                         .query_id = uuid(1U),
+                                                         .tablet_id = id<schema::TabletId>(4U)});
+  EXPECT_EQ(completed_response.status_code, common::StatusCode::kUnavailable);
 }
 
 TEST(DistributedQueryStreamTest, ReaderFailuresAreStickyAndWriteCursorOwnsOneFrame) {
@@ -520,7 +541,8 @@ TEST(DistributedQuerySenderTest, RetriesTheImmutableDispatchAndCorrelatesTermina
   ASSERT_TRUE(sender->accept_response(success, start).is_ok());
   EXPECT_EQ(sender->state(), DistributedQuerySenderState::kSucceeded);
   ASSERT_TRUE(sender->result().has_value());
-  EXPECT_EQ(sender->result()->partial.sum, 2.5);
+  const query::ExchangeMessage accepted = sender->result().value_or(message());
+  EXPECT_EQ(accepted.partial.sum, 2.5);
   EXPECT_EQ(sender->attempts_started(), 3U);
   EXPECT_EQ(sender->last_status_code(), common::StatusCode::kOk);
 }
