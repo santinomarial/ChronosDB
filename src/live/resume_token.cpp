@@ -32,10 +32,13 @@ inline constexpr std::array<std::byte, 8U> kMagic{
                                                             const ResumeTokenMacKey& key) {
   ResumeTokenMacKey output{};
   std::size_t output_size = 0U;
-  if (EVP_Q_mac(nullptr, "HMAC", nullptr, "SHA256", nullptr, key.data(), key.size(),
-                reinterpret_cast<const unsigned char*>(bytes.data()), bytes.size(),
-                reinterpret_cast<unsigned char*>(output.data()), output.size(),
-                &output_size) == nullptr ||
+  // OpenSSL models octet buffers as unsigned char while ChronosDB uses std::byte.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  const auto* input_bytes = reinterpret_cast<const unsigned char*>(bytes.data());
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  auto* output_bytes = reinterpret_cast<unsigned char*>(output.data());
+  if (EVP_Q_mac(nullptr, "HMAC", nullptr, "SHA256", nullptr, key.data(), key.size(), input_bytes,
+                bytes.size(), output_bytes, output.size(), &output_size) == nullptr ||
       output_size != output.size()) {
     return common::make_unexpected(
         common::Status{common::StatusCode::kInternal, "OpenSSL HMAC-SHA256 failed"});
@@ -83,14 +86,15 @@ common::Result<std::vector<std::byte>> encode_resume_token_v1(const ResumeToken&
   if (!authenticated_size.has_value()) {
     return common::make_unexpected(invalid("resume token size overflows"));
   }
+  const std::size_t authenticated_bytes = authenticated_size.value();
   const auto total_size =
-      common::checked_add<std::size_t>(*authenticated_size, kResumeTokenMacSize);
+      common::checked_add<std::size_t>(authenticated_bytes, kResumeTokenMacSize);
   if (!total_size.has_value() || *total_size > std::numeric_limits<std::uint32_t>::max()) {
     return common::make_unexpected(invalid("resume token size exceeds v1 encoding"));
   }
 
   std::vector<std::byte> encoded(*total_size);
-  common::ByteWriter writer{common::MutableByteView{encoded.data(), *authenticated_size}};
+  common::ByteWriter writer{common::MutableByteView{encoded.data(), authenticated_bytes}};
   auto status = writer.write_exact(kMagic);
   if (status.is_ok()) {
     status = writer.write_u16_le(kResumeTokenFormatMajor);
@@ -147,12 +151,12 @@ common::Result<std::vector<std::byte>> encode_resume_token_v1(const ResumeToken&
             : std::move(status));
   }
 
-  auto mac = compute_mac(common::ByteView{encoded.data(), *authenticated_size}, key);
+  auto mac = compute_mac(common::ByteView{encoded.data(), authenticated_bytes}, key);
   if (!mac.has_value()) {
     return common::make_unexpected(mac.error());
   }
   std::copy(mac->begin(), mac->end(),
-            encoded.begin() + static_cast<std::ptrdiff_t>(*authenticated_size));
+            encoded.begin() + static_cast<std::ptrdiff_t>(authenticated_bytes));
   return encoded;
 }
 

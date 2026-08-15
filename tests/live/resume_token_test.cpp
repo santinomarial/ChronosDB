@@ -70,6 +70,13 @@ TEST(ResumeTokenTest, RejectsTamperingBeforeUsingSemanticFields) {
   const auto decoded = decode_resume_token_v1(*encoded, key());
   ASSERT_FALSE(decoded.has_value());
   EXPECT_EQ(decoded.error().code(), common::StatusCode::kUnauthenticated);
+
+  encoded = encode_resume_token_v1(token, key());
+  ASSERT_TRUE(encoded.has_value());
+  encoded->back() ^= std::byte{1};
+  const auto mac_tampered = decode_resume_token_v1(*encoded, key());
+  ASSERT_FALSE(mac_tampered.has_value());
+  EXPECT_EQ(mac_tampered.error().code(), common::StatusCode::kUnauthenticated);
 }
 
 TEST(ResumeTokenTest, RejectsZeroMacKeyAndExcessiveDecoderBound) {
@@ -77,6 +84,10 @@ TEST(ResumeTokenTest, RejectsZeroMacKeyAndExcessiveDecoderBound) {
   const auto decoded = decode_resume_token_v1({}, zero);
   ASSERT_FALSE(decoded.has_value());
   EXPECT_EQ(decoded.error().code(), common::StatusCode::kInvalidArgument);
+
+  const auto excessive = decode_resume_token_v1({}, key(), kMaximumResumeTokenSources + 1U);
+  ASSERT_FALSE(excessive.has_value());
+  EXPECT_EQ(excessive.error().code(), common::StatusCode::kInvalidArgument);
 }
 
 } // namespace
