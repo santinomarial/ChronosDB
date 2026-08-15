@@ -70,11 +70,12 @@ valid_definition_limits(const SubscriptionPlanDefinitionLimits& limits) noexcept
   if (name.size() != expected || !name.starts_with(kPlanPrefix) ||
       !(temporary ? name.ends_with(kTemporarySuffix) : name.ends_with(kPlanSuffix)))
     return false;
-  const std::string_view hex = name.substr(kPlanPrefix.size(), kFingerprintHexSize);
+  const std::string_view hex{name.data() + kPlanPrefix.size(), kFingerprintHexSize};
   if (!std::ranges::all_of(hex, is_lower_hex))
     return false;
   const std::size_t suffix_offset = kPlanPrefix.size() + kFingerprintHexSize;
-  return name.substr(suffix_offset).starts_with(kPlanSuffix);
+  const std::string_view suffix{name.data() + suffix_offset, name.size() - suffix_offset};
+  return suffix.starts_with(kPlanSuffix);
 }
 
 [[nodiscard]] std::string temporary_name(const std::string_view final_name) {
@@ -108,7 +109,7 @@ public:
     return status;
   }
 
-  [[nodiscard]] common::Status cleanup_temporaries() {
+  [[nodiscard]] common::Status cleanup_temporaries() const {
     auto entries = directory.list_entries();
     if (!entries.has_value())
       return entries.error();

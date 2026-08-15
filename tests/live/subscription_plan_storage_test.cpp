@@ -115,5 +115,25 @@ TEST(SubscriptionPlanStorageTest, RejectsCorruptInstalledDefinition) {
   EXPECT_EQ(loaded.error().code(), common::StatusCode::kCorruption);
 }
 
+TEST(SubscriptionPlanStorageTest, RejectsRecognizedNoncanonicalTemporaryOnReopen) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  query::test::SnapshotTabletScanFixture fixture{0U};
+  {
+    auto storage = SubscriptionPlanStorage::create(config(directory, fixture));
+    ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+  }
+  const std::filesystem::path malformed = directory.path() / "plan-bad.subp.tmp";
+  {
+    std::ofstream output{malformed, std::ios::binary | std::ios::trunc};
+    output.put('x');
+  }
+
+  const auto reopened = SubscriptionPlanStorage::open_existing(config(directory, fixture));
+  ASSERT_FALSE(reopened.has_value());
+  EXPECT_EQ(reopened.error().code(), common::StatusCode::kCorruption);
+  EXPECT_TRUE(std::filesystem::exists(malformed));
+}
+
 } // namespace
 } // namespace chronos::live
