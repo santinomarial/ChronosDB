@@ -23,14 +23,20 @@ namespace {
   return value;
 }
 
+[[nodiscard]] TemporalWalReclaimCheckpoint wal_checkpoint(const wal::WalId& wal,
+                                                          const std::uint64_t record_sequence,
+                                                          const std::uint64_t byte_offset) {
+  return {wal,
+          {.record_sequence = record_sequence, .segment_number = 1U, .byte_offset = byte_offset}};
+}
+
 struct Fixture {
   DatabaseId database_id{test::make_id<DatabaseId>(1U)};
   wal::WalId wal{wal_id(2U)};
   schema::TableId table_id{test::make_id<schema::TableId>(3U)};
   schema::TabletId tablet_id{test::make_id<schema::TabletId>(4U)};
   schema::SchemaId schema_id{test::make_id<schema::SchemaId>(5U)};
-  std::optional<TemporalWalReclaimCheckpoint> checkpoint{TemporalWalReclaimCheckpoint{
-      wal, {.record_sequence = 5U, .segment_number = 1U, .byte_offset = 128U}}};
+  std::optional<TemporalWalReclaimCheckpoint> checkpoint{wal_checkpoint(wal, 5U, 128U)};
   std::vector<TemporalTabletDescriptor> tablets{{
       .table_id = table_id,
       .tablet_id = tablet_id,
@@ -87,7 +93,7 @@ struct Fixture {
     tablets[0].durable_position = 6U;
     tablets[0].part_count = 2U;
     tablets[0].durable_version_count = 3U;
-    checkpoint->coordinate = {.record_sequence = 6U, .segment_number = 1U, .byte_offset = 192U};
+    checkpoint = wal_checkpoint(wal, 6U, 192U);
     parts.push_back({
         .part_id = test::make_id<cseg::PartId>(7U),
         .table_id = table_id,
@@ -246,7 +252,7 @@ TEST(TemporalManifestTransitionTest, RejectsGenerationDatabaseAndWalCheckpointCh
             common::StatusCode::kInvalidArgument);
 
   changed = predecessor;
-  changed.checkpoint->coordinate.byte_offset = 192U;
+  changed.checkpoint = wal_checkpoint(changed.wal, 5U, 192U);
   pair = decode_pair(predecessor, changed);
   EXPECT_EQ(validate_manifest_v2_temporal_transition(pair.predecessor, pair.next, bindings).code(),
             common::StatusCode::kInvalidArgument);
@@ -275,7 +281,7 @@ TEST(TemporalManifestTransitionTest, RejectsSourceReclaimAndSchemaRegression) {
   changed = predecessor;
   const wal::WalId other_wal = wal_id(22U);
   changed.wal = other_wal;
-  changed.checkpoint->wal_id = other_wal;
+  changed.checkpoint = wal_checkpoint(other_wal, 5U, 128U);
   changed.tablets[0].source_id = common::Uuid{other_wal.bytes};
   changed.parts[0].source_id = common::Uuid{other_wal.bytes};
   changed.retries[0].source_id = common::Uuid{other_wal.bytes};
