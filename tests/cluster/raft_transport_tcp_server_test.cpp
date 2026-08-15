@@ -151,24 +151,34 @@ TEST(RaftTransportTcpServerTest, AcceptsPersistentTlsAndPublishesPostSyncResult)
     ASSERT_TRUE(server->drive(server_now).is_ok());
   }
   ASSERT_TRUE(server->next_completed_sequence().has_value());
-  ASSERT_TRUE(server->on_transport_closed(server_interests->front().connection_id).is_ok());
+  const std::uint64_t connection_id = server_interests->front().connection_id;
+  ASSERT_TRUE(server->on_transport_closed(connection_id).is_ok());
   EXPECT_EQ(server->metrics().active_connections, 1U);
   auto next = server->take_completed();
   ASSERT_TRUE(next.has_value()) << next.error().to_string();
-  ASSERT_TRUE(next->has_value());
-  RaftTransportCompletedReceive completed = std::move(**next);
+  std::optional<RaftTransportCompletedReceive>& completed_result = next.value();
+  if (!completed_result.has_value())
+    FAIL() << "Raft TCP server did not retain its completed receive";
+  RaftTransportCompletedReceive completed = std::move(completed_result.value());
   EXPECT_EQ(completed.submission_sequence, 1U);
   EXPECT_EQ(completed.group_id, group());
   EXPECT_EQ(completed.source_node_id, 1U);
   ASSERT_TRUE(completed.result.status.is_ok());
-  ASSERT_TRUE(completed.result.transition.has_value());
-  ASSERT_TRUE(completed.observation.has_value());
-  EXPECT_EQ(completed.observation->group_id, group());
-  EXPECT_EQ(completed.observation->current_term, 1U);
-  ASSERT_EQ(completed.result.transition->outbound.size(), 1U);
-  EXPECT_EQ(completed.result.transition->outbound.front().outbound.destination, 1U);
+  const auto& transition = completed.result.transition;
+  if (!transition.has_value())
+    FAIL() << "Raft TCP server result did not retain its transition";
+  const auto& observation = completed.observation;
+  if (!observation.has_value())
+    FAIL() << "Raft TCP server result did not retain its observation";
+  EXPECT_EQ(observation.value().group_id, group());
+  EXPECT_EQ(observation.value().current_term, 1U);
+  ASSERT_EQ(transition.value().outbound.size(), 1U);
+  EXPECT_EQ(transition.value().outbound.front().outbound.destination, 1U);
   EXPECT_EQ(server->metrics().completed_results, 1U);
   EXPECT_EQ(server->metrics().active_connections, 0U);
+  EXPECT_EQ(server->on_ready(connection_id, true, true, std::chrono::steady_clock::now()).code(),
+            common::StatusCode::kNotFound);
+  EXPECT_EQ(server->on_transport_closed(connection_id).code(), common::StatusCode::kNotFound);
   EXPECT_FALSE(server->next_deadline().has_value());
   ASSERT_TRUE(server->drive(std::chrono::steady_clock::now()).is_ok());
   ASSERT_TRUE(server->shutdown().is_ok());

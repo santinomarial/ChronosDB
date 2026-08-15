@@ -70,14 +70,15 @@ public:
         ++metrics.accept_errors;
         return next.error();
       }
-      if (!next->has_value())
+      std::optional<network::TcpSocket>& accepted = next.value();
+      if (!accepted.has_value())
         return common::Status::ok();
       if (connections.size() == config.maximum_connections ||
           next_connection_id == std::numeric_limits<std::uint64_t>::max()) {
         ++metrics.rejected_connections;
         continue;
       }
-      network::TcpSocket socket = std::move(**next);
+      network::TcpSocket socket = std::move(accepted.value());
       auto peer = socket.peer_endpoint();
       if (!peer.has_value()) {
         ++metrics.rejected_connections;
@@ -228,7 +229,7 @@ common::Status RaftTransportTcpServer::on_ready(const std::uint64_t connection_i
     Impl::Connection& connection = *implementation_->connections[index];
     if (connection.id != connection_id)
       continue;
-    const common::Status progress = connection.carrier.on_ready(readable, writable, now);
+    common::Status progress = connection.carrier.on_ready(readable, writable, now);
     if (!progress.is_ok() || connection.carrier.state() == RaftTransportTlsServerState::kFailed) {
       implementation_->remove(index);
       return common::Status::ok();
@@ -257,13 +258,14 @@ common::Status RaftTransportTcpServer::drive(const TimePoint now) {
     const std::size_t index = remaining - 1U;
     Impl::Connection& connection = *implementation_->connections[index];
     const common::Status progress = connection.carrier.on_ready(false, false, now);
-    if (!progress.is_ok() || connection.carrier.state() == RaftTransportTlsServerState::kFailed) {
+    const RaftTransportTlsServerState state = connection.carrier.state();
+    const bool failed = !progress.is_ok() || state == RaftTransportTlsServerState::kFailed;
+    const bool closed_without_result =
+        connection.transport_closed &&
+        state != RaftTransportTlsServerState::kAwaitingDurableResult &&
+        state != RaftTransportTlsServerState::kResultReady;
+    if (failed || closed_without_result)
       implementation_->remove(index);
-    } else if (connection.transport_closed &&
-               connection.carrier.state() != RaftTransportTlsServerState::kAwaitingDurableResult &&
-               connection.carrier.state() != RaftTransportTlsServerState::kResultReady) {
-      implementation_->remove(index);
-    }
   }
   return common::Status::ok();
 }
