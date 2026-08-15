@@ -39,7 +39,9 @@ TEST(SubscriptionPlanTest, PreparesDeterministicSchemaBoundExecutableIdentity) {
       first->source(subscription_id, query::test::SnapshotTabletScanFixture::tablet_id(),
                     fixture.snapshot().wal_id(), key);
   EXPECT_EQ(source.plan_fingerprint, first->fingerprint());
+  EXPECT_EQ(source.table_id, fixture.schema_ptr()->table_id());
   EXPECT_EQ(source.schema_id, fixture.schema_ptr()->schema_id());
+  EXPECT_EQ(source.schema_version, fixture.schema_ptr()->version());
 
   auto textually_distinct = prepare_subscription_plan(
       "SUBSCRIBE  SELECT event_time FROM metrics ORDER BY event_time", catalog(fixture));

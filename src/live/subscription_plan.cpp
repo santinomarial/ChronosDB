@@ -48,15 +48,15 @@ encode_u64(const std::uint64_t value) noexcept {
     versions.reserve(bound.sources().size());
     std::vector<common::ByteView> fragments;
     fragments.reserve(4U + bound.sources().size() * 3U);
-    fragments.push_back(kFingerprintDomain);
-    fragments.push_back(sql_size);
-    fragments.push_back(source_count);
-    fragments.push_back(std::as_bytes(std::span{sql.data(), sql.size()}));
+    fragments.emplace_back(kFingerprintDomain);
+    fragments.emplace_back(sql_size);
+    fragments.emplace_back(source_count);
+    fragments.emplace_back(std::as_bytes(std::span{sql.data(), sql.size()}));
     for (const query::BoundSqlSource& source : bound.sources()) {
-      fragments.push_back(source.schema_ptr()->table_id().bytes());
-      fragments.push_back(source.schema_ptr()->schema_id().bytes());
+      fragments.emplace_back(source.schema_ptr()->table_id().bytes());
+      fragments.emplace_back(source.schema_ptr()->schema_id().bytes());
       versions.push_back(encode_u64(source.schema_ptr()->version().value()));
-      fragments.push_back(versions.back());
+      fragments.emplace_back(versions.back());
     }
     auto digest = ingest::sha256(fragments);
     if (!digest.has_value())
