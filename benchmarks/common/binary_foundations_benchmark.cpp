@@ -10,6 +10,12 @@
 
 namespace {
 
+void benchmark_harness_iteration(benchmark::State& state) {
+  for (auto iteration : state)
+    benchmark::DoNotOptimize(iteration);
+  state.SetLabel("local measurement only; harness iteration and optimization barrier");
+}
+
 void benchmark_crc32c(benchmark::State& state) {
   const auto size = static_cast<std::size_t>(state.range(0));
   std::vector<std::byte> buffer(size);
@@ -78,6 +84,8 @@ void benchmark_byte_writer_u64(benchmark::State& state) {
 }
 
 // Google Benchmark intentionally registers functions during static initialization.
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(benchmark_harness_iteration);
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_crc32c)->Arg(64)->Arg(1024)->Arg(65536);
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)

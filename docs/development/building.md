@@ -178,8 +178,8 @@ scripts/benchmark-wal.sh /new/path/outside/the/repository/wal-run --mode LOCAL_S
 
 See [WAL benchmarks](../benchmarks/wal-benchmarks.md) before interpreting or publishing output.
 
-The optional benchmark preset builds Release-mode CRC32C, ByteReader, ByteWriter, and harness
-microbenchmarks:
+The optional benchmark preset builds Release-mode CRC32C, ByteReader, ByteWriter, version
+serialization, and explicit harness-iteration microbenchmarks:
 
 ```sh
 cmake --preset benchmark
@@ -190,7 +190,9 @@ build/benchmark/chronos_cseg_benchmarks
 
 The executable labels results as local measurements only. Record the command, compiler, host,
 revision, and full output when using a run as evidence. A smoke run is neither a stable result nor a
-database performance claim.
+database performance claim. `benchmark_harness_iteration` measures the framework iteration plus an
+optimization barrier; it is a lower-bound harness proxy, not a correction to subtract from other
+cases.
 
 ## Fuzz targets
 
