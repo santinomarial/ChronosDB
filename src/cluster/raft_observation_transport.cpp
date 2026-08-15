@@ -769,7 +769,7 @@ RaftObservationRequestReader::consume(const common::ByteView bytes) {
   }
   buffered_bytes_ = 0U;
   expected_frame_bytes_.reset();
-  return RaftObservationRequestReadStep{.consumed_bytes = consumed, .request = std::move(*decoded)};
+  return RaftObservationRequestReadStep{.consumed_bytes = consumed, .request = *decoded};
 }
 
 std::size_t RaftObservationRequestReader::buffered_bytes() const noexcept {

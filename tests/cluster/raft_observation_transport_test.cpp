@@ -191,7 +191,12 @@ TEST(RaftObservationStreamTest, ReadersHandleEverySplitAndCoalescedFrames) {
     auto second = reader.consume(common::ByteView{request}.subspan(split));
     ASSERT_TRUE(second.has_value()) << "request split " << split;
     ASSERT_TRUE(second->request.has_value());
-    EXPECT_EQ(second->request->correlation_id, 19U);
+    const RaftObservationRequest completed_request =
+        second->request.value_or(RaftObservationRequest{});
+    EXPECT_EQ(completed_request.source_node_id, 1U);
+    EXPECT_EQ(completed_request.target_node_id, 2U);
+    EXPECT_EQ(completed_request.group_id, group());
+    EXPECT_EQ(completed_request.correlation_id, 19U);
   }
 
   const RaftObservationResponse success{.source_node_id = 2U,
@@ -221,7 +226,9 @@ TEST(RaftObservationStreamTest, ReadersHandleEverySplitAndCoalescedFrames) {
       auto second = reader.consume(common::ByteView{response}.subspan(split));
       ASSERT_TRUE(second.has_value()) << "response size " << response.size() << " split " << split;
       ASSERT_TRUE(second->response.has_value());
-      EXPECT_EQ(second->response->source_node_id, 2U);
+      const RaftObservationResponse completed_response =
+          second->response.value_or(RaftObservationResponse{});
+      EXPECT_EQ(completed_response.source_node_id, 2U);
     }
   }
 
@@ -235,7 +242,9 @@ TEST(RaftObservationStreamTest, ReadersHandleEverySplitAndCoalescedFrames) {
   auto second = reader.consume(common::ByteView{coalesced}.subspan(first->consumed_bytes));
   ASSERT_TRUE(second.has_value());
   ASSERT_TRUE(second->response.has_value());
-  EXPECT_EQ(second->response->status_code, common::StatusCode::kUnavailable);
+  const RaftObservationResponse completed_response =
+      second->response.value_or(RaftObservationResponse{});
+  EXPECT_EQ(completed_response.status_code, common::StatusCode::kUnavailable);
 }
 
 TEST(RaftObservationStreamTest, RejectsHeadersBeforeAllocationAndOwnsShortWrites) {
@@ -260,7 +269,7 @@ TEST(RaftObservationStreamTest, RejectsHeadersBeforeAllocationAndOwnsShortWrites
   auto oversized = encode_raft_observation_response_v1(response).value();
   constexpr std::uint64_t kOversizedDefaultResponse =
       kRaftObservationResponseHeaderSize + kRaftObservationFrameTrailerSize +
-      kRaftObservationPayloadHeaderSize + 4U * 31U * sizeof(raft::NodeId) + 1U;
+      kRaftObservationPayloadHeaderSize + std::uint64_t{4U} * 31U * sizeof(raft::NodeId) + 1U;
   store_u64(oversized, 16U, kOversizedDefaultResponse);
   store_u64(oversized, 76U,
             kOversizedDefaultResponse - kRaftObservationResponseHeaderSize -
@@ -280,6 +289,8 @@ TEST(RaftObservationStreamTest, RejectsHeadersBeforeAllocationAndOwnsShortWrites
   ASSERT_TRUE(partial.has_value());
   EXPECT_FALSE(partial->response.has_value());
   RaftObservationResponseReader moved_reader = std::move(partial_reader);
+  // This type explicitly defines a reusable empty moved-from state; the assertion is its contract.
+  // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
   EXPECT_EQ(partial_reader.buffered_bytes(), 0U);
   auto completed = moved_reader.consume(common::ByteView{encoded_response}.subspan(103U));
   ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
