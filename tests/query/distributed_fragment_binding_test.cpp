@@ -8,6 +8,7 @@
 #include "chronos/schema/schema_lineage.hpp"
 
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -286,20 +287,18 @@ TEST(DistributedFragmentBindingTest, BindsVectorPlanOnlyThroughExactCommittedAut
   EXPECT_EQ(dispatch->plan, plan.intent);
   EXPECT_TRUE(encode_distributed_vector_fragment_dispatch(*dispatch).has_value());
 
-  DistributedVectorResultSchema result_schema{
+  const DistributedVectorResultSchema result_schema{
       .columns = {{"event_time", schema_value.columns()[0].type(), false},
                   {"total", schema_value.columns()[1].type(), true}}};
-  const auto dispatch_v2 =
-      bind_distributed_vector_fragment_v2(vector_binding(), std::move(result_schema));
+  const auto dispatch_v2 = bind_distributed_vector_fragment_v2(vector_binding(), result_schema);
   ASSERT_TRUE(dispatch_v2.has_value()) << dispatch_v2.error().to_string();
   EXPECT_TRUE(encode_distributed_vector_fragment_dispatch_v2(*dispatch_v2).has_value());
 
-  DistributedVectorResultSchema mismatched{
+  const DistributedVectorResultSchema mismatched{
       .columns = {{"event_time", schema_value.columns()[0].type(), false},
                   {"total", schema_value.columns()[1].type(), false}}};
-  EXPECT_EQ(
-      bind_distributed_vector_fragment_v2(vector_binding(), std::move(mismatched)).error().code(),
-      common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(bind_distributed_vector_fragment_v2(vector_binding(), mismatched).error().code(),
+            common::StatusCode::kInvalidArgument);
 
   plan.intent.aggregates.front().input_index = 0U;
   EXPECT_EQ(bind_distributed_vector_fragment(vector_binding()).error().code(),
@@ -630,11 +629,13 @@ TEST(DistributedFragmentBindingTest, ResolvesCommittedMetadataAndCurrentReplicaP
                                                            .applied_index = 20U,
                                                            .voters = {12U, 14U},
                                                            .committed_voters = {12U, 14U}}};
+  const raft::ReadBarrier first_barrier{2U, 3U, 10U};
+  const raft::ReadBarrier second_barrier{4U, 5U, 20U};
   const std::array proofs{
       DistributedAggregateReplicaProof{.observation = std::cref(observations[0]),
-                                       .linearizable_barrier = raft::ReadBarrier{2U, 3U, 10U}},
+                                       .linearizable_barrier = first_barrier},
       DistributedAggregateReplicaProof{.observation = std::cref(observations[1]),
-                                       .linearizable_barrier = raft::ReadBarrier{4U, 5U, 20U}}};
+                                       .linearizable_barrier = second_barrier}};
   const std::array group_authorities{
       DistributedAggregateGroupReadAuthority{.barrier = {uuid(1U), raft::ReadBarrier{1U, 1U, 1U}},
                                              .observation = {.group_id = uuid(1U),
@@ -647,12 +648,10 @@ TEST(DistributedFragmentBindingTest, ResolvesCommittedMetadataAndCurrentReplicaP
                                                              .applied_index = 1U,
                                                              .voters = {15U},
                                                              .committed_voters = {15U}}},
-      DistributedAggregateGroupReadAuthority{
-          .barrier = {specs[0].group_id, *proofs[0].linearizable_barrier},
-          .observation = observations[0]},
-      DistributedAggregateGroupReadAuthority{
-          .barrier = {specs[1].group_id, *proofs[1].linearizable_barrier},
-          .observation = observations[1]}};
+      DistributedAggregateGroupReadAuthority{.barrier = {specs[0].group_id, first_barrier},
+                                             .observation = observations[0]},
+      DistributedAggregateGroupReadAuthority{.barrier = {specs[1].group_id, second_barrier},
+                                             .observation = observations[1]}};
   const std::array<std::uint32_t, 2U> projection{0U, 1U};
 
   auto group_bound =
@@ -833,7 +832,7 @@ TEST(DistributedFragmentBindingTest, RejectsStaleOrReconfiguringMetadataBackedPr
   EXPECT_EQ(bind().error().code(), common::StatusCode::kUnavailable);
   observation.joint_membership_active = false;
   observation.joint_old_voters.clear();
-  observation.role = static_cast<raft::Role>(0U);
+  observation.role = std::bit_cast<raft::Role>(std::uint8_t{0U});
   EXPECT_EQ(bind().error().code(), common::StatusCode::kCorruption);
   observation.role = raft::Role::kLeader;
   catalog.tablet_group_bindings.clear();

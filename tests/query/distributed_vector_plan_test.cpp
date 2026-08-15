@@ -42,8 +42,7 @@ TEST(DistributedVectorPlanTest, RoundTripsRowsAggregatesOrderingAndPresentZeroLi
   const auto decoded = decode_distributed_vector_plan_intent_exact(encoded->bytes());
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   EXPECT_EQ(*decoded, grouped);
-  ASSERT_TRUE(decoded->limit.has_value());
-  EXPECT_EQ(*decoded->limit, 0U);
+  EXPECT_EQ(decoded->limit, 0U);
 
   const DistributedVectorPlanIntent rows{.mode = DistributedVectorPlanMode::kRows,
                                          .row_output_indices = {2U, 0U, 2U},
