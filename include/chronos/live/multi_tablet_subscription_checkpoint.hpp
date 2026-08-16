@@ -12,8 +12,10 @@
 namespace chronos::live {
 
 inline constexpr std::size_t kMultiTabletSubscriptionCheckpointHeaderSize = 128U;
-inline constexpr std::size_t kMultiTabletSubscriptionCheckpointSourceSize = 48U;
-inline constexpr std::size_t kMultiTabletSubscriptionCheckpointChangeEnvelopeSize = 80U;
+inline constexpr std::size_t kMultiTabletSubscriptionCheckpointV1SourceSize = 48U;
+inline constexpr std::size_t kMultiTabletSubscriptionCheckpointV1ChangeEnvelopeSize = 80U;
+inline constexpr std::size_t kMultiTabletSubscriptionCheckpointV2SourceSize = 56U;
+inline constexpr std::size_t kMultiTabletSubscriptionCheckpointV2ChangeEnvelopeSize = 88U;
 inline constexpr std::size_t kMultiTabletSubscriptionCheckpointTrailerSize = 4U;
 inline constexpr std::size_t kBoundMultiTabletSubscriptionCheckpointHeaderSize = 64U;
 inline constexpr std::size_t kBoundMultiTabletSubscriptionCheckpointTrailerSize = 4U;
@@ -44,6 +46,19 @@ struct BoundMultiTabletSubscriptionCheckpoint {
 decode_multi_tablet_subscription_checkpoint_v1(
     common::ByteView bytes, MultiTabletSubscriptionCheckpointCodecLimits limits = {});
 
+[[nodiscard]] common::Result<std::vector<std::byte>> encode_multi_tablet_subscription_checkpoint_v2(
+    const MultiTabletSubscriptionCheckpoint& checkpoint,
+    MultiTabletSubscriptionCheckpointCodecLimits limits = {});
+
+[[nodiscard]] common::Result<MultiTabletSubscriptionCheckpoint>
+decode_multi_tablet_subscription_checkpoint_v2(
+    common::ByteView bytes, MultiTabletSubscriptionCheckpointCodecLimits limits = {});
+
+// Compatibility decoder for Checkpoint v1 and v2. New durable generations use v2.
+[[nodiscard]] common::Result<MultiTabletSubscriptionCheckpoint>
+decode_multi_tablet_subscription_checkpoint(
+    common::ByteView bytes, MultiTabletSubscriptionCheckpointCodecLimits limits = {});
+
 [[nodiscard]] common::Result<std::vector<std::byte>>
 encode_bound_multi_tablet_subscription_checkpoint_v1(
     const BoundMultiTabletSubscriptionCheckpoint& checkpoint,
@@ -51,6 +66,20 @@ encode_bound_multi_tablet_subscription_checkpoint_v1(
 
 [[nodiscard]] common::Result<BoundMultiTabletSubscriptionCheckpoint>
 decode_bound_multi_tablet_subscription_checkpoint_v1(
+    common::ByteView bytes, MultiTabletSubscriptionCheckpointCodecLimits limits = {});
+
+[[nodiscard]] common::Result<std::vector<std::byte>>
+encode_bound_multi_tablet_subscription_checkpoint_v2(
+    const BoundMultiTabletSubscriptionCheckpoint& checkpoint,
+    MultiTabletSubscriptionCheckpointCodecLimits limits = {});
+
+[[nodiscard]] common::Result<BoundMultiTabletSubscriptionCheckpoint>
+decode_bound_multi_tablet_subscription_checkpoint_v2(
+    common::ByteView bytes, MultiTabletSubscriptionCheckpointCodecLimits limits = {});
+
+// Compatibility decoder for generation envelopes v1 and v2. New installations use v2.
+[[nodiscard]] common::Result<BoundMultiTabletSubscriptionCheckpoint>
+decode_bound_multi_tablet_subscription_checkpoint(
     common::ByteView bytes, MultiTabletSubscriptionCheckpointCodecLimits limits = {});
 
 } // namespace chronos::live

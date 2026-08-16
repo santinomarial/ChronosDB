@@ -585,7 +585,7 @@ current_subscription_members(const chronos::manifest::DatabaseStorageSnapshot& s
               invalid("single-node subscription tablet has no durable boundary"));
         sequence = durable->durable_record_sequence;
       }
-      members.push_back({tablet.tablet_id(), snapshot.wal_id(), sequence});
+      members.emplace_back(tablet.tablet_id(), snapshot.wal_id(), sequence);
     }
     if (members.empty())
       return chronos::common::make_unexpected(
@@ -670,7 +670,7 @@ configure_subscription(SingleNodeDatabase& database, SingleNodeCommittedAppendRo
   std::vector<chronos::live::MultiTabletSubscriptionCheckpointSourceIdentity> identities;
   identities.reserve(members->size());
   for (const auto& member : *members)
-    identities.push_back({member.tablet_id, member.wal_id});
+    identities.emplace_back(member.tablet_id, member.wal_id);
   chronos::live::DurableMultiTabletSubscriptionConfig coordinator_config{
       .storage = {.directory_path = state_path.string(),
                   .identity = {database.bootstrap().database_id, plan->schema_ptr()->table_id(),
@@ -700,7 +700,7 @@ configure_subscription(SingleNodeDatabase& database, SingleNodeCommittedAppendRo
     if (found == members->end())
       return chronos::common::make_unexpected(
           invalid("subscription checkpoint source is no longer local"));
-    current.push_back({found->tablet_id, found->wal_id, found->committed_record_sequence});
+    current.emplace_back(found->tablet_id, found->wal_id, found->committed_record_sequence);
   }
   auto restored = coordinator->latest_positions();
   if (!restored.has_value())

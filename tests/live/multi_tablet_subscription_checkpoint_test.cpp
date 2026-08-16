@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <vector>
 
 namespace chronos::live {
 namespace {
@@ -67,6 +68,12 @@ template <typename Identifier> [[nodiscard]] Identifier identifier(const std::by
   return value;
 }
 
+void rewrite_crc(std::vector<std::byte>& bytes) {
+  const std::uint32_t crc = common::crc32c(common::ByteView{bytes}.first(bytes.size() - 4U));
+  for (std::size_t index = 0U; index < 4U; ++index)
+    bytes[bytes.size() - 4U + index] = static_cast<std::byte>((crc >> (index * 8U)) & 0xffU);
+}
+
 TEST(MultiTabletSubscriptionCheckpointTest, HasStableBytesAndRoundTripsExactState) {
   const MultiTabletSubscriptionCheckpoint checkpoint = fixture();
   const auto encoded = encode_multi_tablet_subscription_checkpoint_v1(checkpoint);
@@ -76,6 +83,57 @@ TEST(MultiTabletSubscriptionCheckpointTest, HasStableBytesAndRoundTripsExactStat
   const auto decoded = decode_multi_tablet_subscription_checkpoint_v1(*encoded);
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   EXPECT_EQ(*decoded, checkpoint);
+  EXPECT_EQ(decode_multi_tablet_subscription_checkpoint(*encoded), decoded);
+  EXPECT_EQ(decode_multi_tablet_subscription_checkpoint_v2(*encoded).error().code(),
+            common::StatusCode::kNotSupported);
+}
+
+TEST(MultiTabletSubscriptionCheckpointTest, V2RoundTripsMixedWalAndRaftState) {
+  MultiTabletSubscriptionCheckpoint checkpoint = fixture();
+  const common::Uuid raft_group = uuid(std::byte{4});
+  checkpoint.sources[1].latest_position =
+      SourcePosition::raft(checkpoint.sources[1].latest_position.tablet_id, raft_group, 1U);
+  checkpoint.retained_changes[1].position =
+      SourcePosition::raft(checkpoint.retained_changes[1].position.tablet_id, raft_group, 1U);
+
+  const auto encoded = encode_multi_tablet_subscription_checkpoint_v2(checkpoint);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  EXPECT_EQ(encoded->size(), 514U);
+  EXPECT_EQ(fnv1a(*encoded), 3'703'796'810'124'028'601ULL);
+  ASSERT_GT(encoded->size(), 347U);
+  EXPECT_EQ((*encoded)[7], std::byte{'2'});
+  EXPECT_EQ((*encoded)[144], std::byte{1});
+  EXPECT_EQ((*encoded)[200], std::byte{2});
+  EXPECT_EQ((*encoded)[256], std::byte{1});
+  EXPECT_EQ((*encoded)[346], std::byte{2});
+
+  const auto decoded = decode_multi_tablet_subscription_checkpoint_v2(*encoded);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(*decoded, checkpoint);
+  EXPECT_EQ(decode_multi_tablet_subscription_checkpoint(*encoded), decoded);
+  EXPECT_EQ(decode_multi_tablet_subscription_checkpoint_v1(*encoded).error().code(),
+            common::StatusCode::kNotSupported);
+
+  auto unsupported_kind = *encoded;
+  unsupported_kind[200] = std::byte{3};
+  rewrite_crc(unsupported_kind);
+  EXPECT_EQ(decode_multi_tablet_subscription_checkpoint(unsupported_kind).error().code(),
+            common::StatusCode::kNotSupported);
+  auto unsupported_flags = *encoded;
+  unsupported_flags[201] = std::byte{1};
+  rewrite_crc(unsupported_flags);
+  EXPECT_EQ(decode_multi_tablet_subscription_checkpoint(unsupported_flags).error().code(),
+            common::StatusCode::kNotSupported);
+  auto unknown_version = *encoded;
+  unknown_version[8] = std::byte{3};
+  EXPECT_EQ(decode_multi_tablet_subscription_checkpoint(unknown_version).error().code(),
+            common::StatusCode::kNotSupported);
+
+  const BoundMultiTabletSubscriptionCheckpoint bound{7U, checkpoint};
+  const auto bound_bytes = encode_bound_multi_tablet_subscription_checkpoint_v2(bound);
+  ASSERT_TRUE(bound_bytes.has_value()) << bound_bytes.error().to_string();
+  EXPECT_EQ((*bound_bytes)[7], std::byte{'2'});
+  EXPECT_EQ(decode_bound_multi_tablet_subscription_checkpoint(*bound_bytes).value(), bound);
 }
 
 TEST(MultiTabletSubscriptionCheckpointTest, RejectsCorruptionAndDiscontinuousState) {

@@ -43,8 +43,8 @@ namespace {
       config.source.members.size() != identity.sources.size())
     return false;
   for (std::size_t index = 0U; index < identity.sources.size(); ++index) {
-    if (config.source.members[index].tablet_id != identity.sources[index].tablet_id ||
-        config.source.members[index].wal_id != identity.sources[index].wal_id)
+    if (!config.source.members[index].is_valid() || !identity.sources[index].is_valid() ||
+        !config.source.members[index].position().same_source(identity.sources[index].position()))
       return false;
   }
   return true;
@@ -55,9 +55,9 @@ retention_frontiers(const MultiTabletSubscriptionCheckpoint& checkpoint) {
   std::vector<SourcePosition> frontiers;
   frontiers.reserve(checkpoint.sources.size());
   for (const MultiTabletSubscriptionCheckpointSource& source : checkpoint.sources) {
-    frontiers.push_back(SourcePosition::wal(source.latest_position.tablet_id,
-                                            source.latest_position.wal_id,
-                                            source.expired_through_sequence));
+    SourcePosition frontier = source.latest_position;
+    frontier.record_sequence = source.expired_through_sequence;
+    frontiers.push_back(frontier);
   }
   return frontiers;
 }

@@ -82,7 +82,8 @@ SubscriptionRetentionCoordinator::create(SubscriptionRetentionConfig config) {
         return common::make_unexpected(
             invalid("subscription retention owner identity or source count disagrees"));
       for (std::size_t source_index = 0U; source_index < config.members.size(); ++source_index) {
-        if (source.members[source_index].tablet_id != config.members[source_index].tablet_id ||
+        if (source.members[source_index].source_kind != SubscriptionSourceKind::kWal ||
+            source.members[source_index].tablet_id != config.members[source_index].tablet_id ||
             source.members[source_index].wal_id != config.members[source_index].wal_id)
           return common::make_unexpected(
               invalid("subscription retention owner source lineage disagrees"));

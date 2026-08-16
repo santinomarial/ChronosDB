@@ -54,6 +54,14 @@ public:
     wal::WalId wal_id;
     std::uint64_t latest_sequence{};
     std::uint64_t expired_through_sequence{};
+    SubscriptionSourceKind source_kind{SubscriptionSourceKind::kWal};
+    common::Uuid raft_group_id;
+
+    [[nodiscard]] SourcePosition position(const std::uint64_t sequence) const noexcept {
+      if (source_kind == SubscriptionSourceKind::kRaft)
+        return SourcePosition::raft(tablet_id, raft_group_id, sequence);
+      return SourcePosition::wal(tablet_id, wal_id, sequence);
+    }
   };
 
   struct State {
@@ -78,7 +86,7 @@ public:
     std::vector<SourcePosition> result;
     result.reserve(sources.size());
     for (const SourceState& state : sources)
-      result.push_back(SourcePosition::wal(state.tablet_id, state.wal_id, state.latest_sequence));
+      result.push_back(state.position(state.latest_sequence));
     return result;
   }
 
@@ -148,8 +156,7 @@ public:
     if (positions.size() != sources.size())
       return false;
     for (std::size_t index = 0U; index < sources.size(); ++index) {
-      if (!positions[index].same_source(SourcePosition::wal(
-              sources[index].tablet_id, sources[index].wal_id, sources[index].latest_sequence)))
+      if (!positions[index].same_source(sources[index].position(sources[index].latest_sequence)))
         return false;
     }
     return true;
@@ -189,15 +196,15 @@ MultiTabletSubscriptionManager::create(MultiTabletSubscriptionSource source,
     std::map<schema::TabletId, std::size_t> indexes;
     states.reserve(source.members.size());
     for (const MultiTabletSubscriptionMember& member : source.members) {
-      if (member.tablet_id.uuid().is_nil() || !member.wal_id.is_valid() ||
-          indexes.contains(member.tablet_id)) {
+      if (!member.is_valid() || indexes.contains(member.tablet_id)) {
         return common::make_unexpected(
             invalid("multi-tablet subscription member is invalid or duplicated"));
       }
       const std::size_t index = states.size();
       indexes.emplace(member.tablet_id, index);
       states.push_back({member.tablet_id, member.wal_id, member.committed_record_sequence,
-                        member.committed_record_sequence});
+                        member.committed_record_sequence, member.source_kind,
+                        member.raft_group_id});
     }
     return MultiTabletSubscriptionManager{
         std::make_unique<Impl>(std::move(source), limits, std::move(states), std::move(indexes))};
@@ -233,8 +240,7 @@ MultiTabletSubscriptionManager::restore(MultiTabletSubscriptionSource source,
     for (std::size_t index = 0U; index < impl.sources.size(); ++index) {
       const MultiTabletSubscriptionCheckpointSource& saved = checkpoint.sources[index];
       const Impl::SourceState& current = impl.sources[index];
-      if (!saved.latest_position.same_source(
-              SourcePosition::wal(current.tablet_id, current.wal_id, current.latest_sequence)) ||
+      if (!saved.latest_position.same_source(current.position(current.latest_sequence)) ||
           saved.latest_position.record_sequence != current.latest_sequence ||
           saved.expired_through_sequence > current.latest_sequence)
         return common::make_unexpected(
@@ -250,9 +256,8 @@ MultiTabletSubscriptionManager::restore(MultiTabletSubscriptionSource source,
         return common::make_unexpected(
             invalid("subscription checkpoint change has an unknown source"));
       const std::size_t index = source_index->second;
-      if (!change.position.same_source(SourcePosition::wal(impl.sources[index].tablet_id,
-                                                           impl.sources[index].wal_id,
-                                                           impl.sources[index].latest_sequence)) ||
+      if (!change.position.same_source(
+              impl.sources[index].position(impl.sources[index].latest_sequence)) ||
           expected_sequences[index] == std::numeric_limits<std::uint64_t>::max() ||
           change.position.record_sequence != expected_sequences[index] + 1U ||
           change.position.record_sequence > impl.sources[index].latest_sequence ||
@@ -429,8 +434,7 @@ common::Status MultiTabletSubscriptionManager::publish_committed(CommittedChange
   if (source == impl_->source_indexes.end())
     return invalid("committed change belongs to an unconfigured tablet");
   Impl::SourceState& source_state = impl_->sources[source->second];
-  if (!change.position.same_source(SourcePosition::wal(source_state.tablet_id, source_state.wal_id,
-                                                       source_state.latest_sequence)) ||
+  if (!change.position.same_source(source_state.position(source_state.latest_sequence)) ||
       source_state.latest_sequence == std::numeric_limits<std::uint64_t>::max() ||
       change.position.record_sequence != source_state.latest_sequence + 1U)
     return invalid("committed change does not follow its exact source lineage and sequence");
@@ -487,8 +491,7 @@ common::Status MultiTabletSubscriptionManager::mark_continuity_lost(const Source
   if (source == impl_->source_indexes.end())
     return invalid("lost subscription continuity belongs to an unconfigured tablet");
   Impl::SourceState& source_state = impl_->sources[source->second];
-  if (!position.same_source(SourcePosition::wal(source_state.tablet_id, source_state.wal_id,
-                                                source_state.latest_sequence)) ||
+  if (!position.same_source(source_state.position(source_state.latest_sequence)) ||
       source_state.latest_sequence == std::numeric_limits<std::uint64_t>::max() ||
       position.record_sequence != source_state.latest_sequence + 1U)
     return invalid("lost subscription continuity does not follow the exact source sequence");
@@ -529,8 +532,7 @@ common::Status MultiTabletSubscriptionManager::mark_replay_unavailable_through(
   for (std::size_t index = 0U; index < positions.size(); ++index) {
     const SourcePosition& position = positions[index];
     const Impl::SourceState& source = impl_->sources[index];
-    if (!position.same_source(
-            SourcePosition::wal(source.tablet_id, source.wal_id, source.latest_sequence)) ||
+    if (!position.same_source(source.position(source.latest_sequence)) ||
         position.record_sequence < source.latest_sequence)
       return invalid("replay rebase changes source identity or moves a position backward");
   }
@@ -666,8 +668,7 @@ MultiTabletSubscriptionManager::checkpoint() const {
     checkpoint.sources.reserve(impl_->sources.size());
     for (const Impl::SourceState& source : impl_->sources) {
       checkpoint.sources.push_back(
-          {SourcePosition::wal(source.tablet_id, source.wal_id, source.latest_sequence),
-           source.expired_through_sequence});
+          {source.position(source.latest_sequence), source.expired_through_sequence});
     }
     checkpoint.retained_changes.reserve(impl_->retained_changes.size());
     for (const auto& change : impl_->retained_changes)

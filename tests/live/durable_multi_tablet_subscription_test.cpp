@@ -107,7 +107,55 @@ struct Fixture {
             .result_key = {std::byte{static_cast<unsigned char>(sequence)}},
             .payload = {std::byte{static_cast<unsigned char>(sequence + 16U)}}};
   }
+
+  [[nodiscard]] DurableMultiTabletSubscriptionConfig
+  mixed_config(const std::filesystem::path& directory, const common::Uuid& raft_group) const {
+    DurableMultiTabletSubscriptionConfig result = config(directory);
+    result.storage.identity.sources[1] =
+        MultiTabletSubscriptionCheckpointSourceIdentity::raft(tablet_b, raft_group);
+    result.source.members[0] = MultiTabletSubscriptionMember::raft(tablet_b, raft_group, 0U);
+    return result;
+  }
+
+  [[nodiscard]] CommittedChange raft_change(const common::Uuid& raft_group,
+                                            const std::uint64_t index) const {
+    CommittedChange result = change(tablet_b, wal_b, index);
+    result.position = SourcePosition::raft(tablet_b, raft_group, index);
+    return result;
+  }
 };
+
+TEST(DurableMultiTabletSubscriptionTest, CheckpointsAndRecoversMixedWalAndRaftSources) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  Fixture fixture;
+  const common::Uuid raft_group = uuid(std::byte{6});
+  {
+    auto owner = DurableMultiTabletSubscription::create_new(
+        fixture.mixed_config(directory.path(), raft_group));
+    ASSERT_TRUE(owner.has_value()) << owner.error().to_string();
+    ASSERT_TRUE(
+        owner->publish_committed(fixture.change(fixture.tablet_a, fixture.wal_a, 1U)).is_ok());
+    ASSERT_TRUE(owner->publish_committed(fixture.raft_change(raft_group, 1U)).is_ok());
+    const auto installed = owner->checkpoint();
+    ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+    EXPECT_EQ(installed->checkpoint_generation, 1U);
+  }
+
+  auto reopened = DurableMultiTabletSubscription::open_existing(
+      fixture.mixed_config(directory.path(), raft_group));
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  EXPECT_EQ(reopened->checkpoint_generation(), 1U);
+  const auto positions = reopened->latest_positions();
+  ASSERT_TRUE(positions.has_value()) << positions.error().to_string();
+  ASSERT_EQ(positions->size(), 2U);
+  EXPECT_EQ((*positions)[0].source_kind, SubscriptionSourceKind::kWal);
+  EXPECT_EQ((*positions)[1].source_kind, SubscriptionSourceKind::kRaft);
+  EXPECT_EQ((*positions)[1].raft_group_id, raft_group);
+  const auto repeated = reopened->checkpoint();
+  ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
+  EXPECT_TRUE(repeated->already_present);
+}
 
 TEST(DurableMultiTabletSubscriptionTest, OpensEmptyExistingDirectoryAsDirtyNewState) {
   TemporaryDirectory directory;

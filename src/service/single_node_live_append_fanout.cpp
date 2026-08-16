@@ -24,7 +24,8 @@ namespace {
                                    const wal::WalId& wal_id) noexcept {
   return std::ranges::any_of(source.members,
                              [&](const live::MultiTabletSubscriptionMember& member) {
-                               return member.tablet_id == tablet_id && member.wal_id == wal_id;
+                               return member.source_kind == live::SubscriptionSourceKind::kWal &&
+                                      member.tablet_id == tablet_id && member.wal_id == wal_id;
                              });
 }
 

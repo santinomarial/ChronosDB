@@ -1,5 +1,9 @@
 # Multi-tablet Subscription Checkpoint v1
 
+> **Compatibility status:** frozen WAL-only format. New durable generations use
+> [Checkpoint v2](multi-tablet-subscription-checkpoint-v2.md); v1 generations remain readable and
+> exact-byte idempotent.
+
 ## Status and byte order
 
 This document freezes major version 1. Minor 0 is the initial layout and minor 1 adds terminal plan-

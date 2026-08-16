@@ -68,7 +68,51 @@ struct Fixture {
             .result_key = {std::byte{static_cast<unsigned char>(sequence)}},
             .payload = {std::byte{static_cast<unsigned char>(sequence + 16U)}}};
   }
+
+  [[nodiscard]] CommittedChange raft_change(const schema::TabletId& tablet,
+                                            const common::Uuid& group,
+                                            const std::uint64_t index) const {
+    CommittedChange result = change(tablet, wal_a, index);
+    result.position = SourcePosition::raft(tablet, group, index);
+    return result;
+  }
 };
+
+TEST(MultiTabletSubscriptionTest, PreservesMixedWalAndRaftLineagesAcrossCheckpointRestore) {
+  Fixture fixture;
+  const common::Uuid raft_group = uuid(std::byte{4});
+  MultiTabletSubscriptionSource source = fixture.source(10U, 0U);
+  source.members[0] = MultiTabletSubscriptionMember::raft(fixture.tablet_b, raft_group, 20U);
+  auto manager = MultiTabletSubscriptionManager::create(source);
+  ASSERT_TRUE(manager.has_value()) << manager.error().to_string();
+  const auto registration = manager->register_subscription(fixture.request());
+  ASSERT_TRUE(registration.has_value()) << registration.error().to_string();
+  ASSERT_EQ(registration->snapshot_boundaries.size(), 2U);
+  EXPECT_EQ(registration->snapshot_boundaries[0].source_kind, SubscriptionSourceKind::kWal);
+  EXPECT_EQ(registration->snapshot_boundaries[1].source_kind, SubscriptionSourceKind::kRaft);
+  EXPECT_EQ(registration->snapshot_boundaries[1].raft_group_id, raft_group);
+
+  ASSERT_TRUE(
+      manager->publish_committed(fixture.change(fixture.tablet_a, fixture.wal_a, 11U)).is_ok());
+  ASSERT_TRUE(
+      manager->publish_committed(fixture.raft_change(fixture.tablet_b, raft_group, 21U)).is_ok());
+  const auto checkpoint = manager->checkpoint();
+  ASSERT_TRUE(checkpoint.has_value()) << checkpoint.error().to_string();
+  EXPECT_EQ(checkpoint->sources[1].latest_position.source_kind, SubscriptionSourceKind::kRaft);
+  EXPECT_EQ(checkpoint->retained_changes[1].position.raft_group_id, raft_group);
+
+  source.members[0] = MultiTabletSubscriptionMember::raft(fixture.tablet_b, raft_group, 21U);
+  source.members[1].committed_record_sequence = 11U;
+  auto restored = MultiTabletSubscriptionManager::restore(source, *checkpoint);
+  ASSERT_TRUE(restored.has_value()) << restored.error().to_string();
+  EXPECT_EQ(restored->latest_positions().value(), manager->latest_positions().value());
+
+  MultiTabletSubscriptionSource aliased = source;
+  aliased.members[0] = {fixture.tablet_b, wal_id(std::byte{4}), 21U};
+  const auto rejected = MultiTabletSubscriptionManager::restore(aliased, *checkpoint);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+}
 
 TEST(MultiTabletSubscriptionTest, CapturesVectorAndReplaysRecordedCrossTabletOrder) {
   Fixture fixture;

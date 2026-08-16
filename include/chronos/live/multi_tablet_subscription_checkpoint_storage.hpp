@@ -13,8 +13,36 @@
 namespace chronos::live {
 
 struct MultiTabletSubscriptionCheckpointSourceIdentity {
+  MultiTabletSubscriptionCheckpointSourceIdentity(schema::TabletId tablet, wal::WalId wal) noexcept
+      : tablet_id(tablet), wal_id(wal) {}
+
   schema::TabletId tablet_id;
   wal::WalId wal_id;
+  SubscriptionSourceKind source_kind{SubscriptionSourceKind::kWal};
+  common::Uuid raft_group_id;
+
+  [[nodiscard]] static MultiTabletSubscriptionCheckpointSourceIdentity
+  raft(schema::TabletId tablet, common::Uuid group_id) noexcept {
+    return {tablet, group_id};
+  }
+
+  [[nodiscard]] bool is_valid() const noexcept {
+    if (source_kind == SubscriptionSourceKind::kWal)
+      return SourcePosition::wal(tablet_id, wal_id, 0U).is_valid();
+    return source_kind == SubscriptionSourceKind::kRaft &&
+           SourcePosition::raft(tablet_id, raft_group_id, 0U).is_valid();
+  }
+
+  [[nodiscard]] SourcePosition position() const noexcept {
+    if (source_kind == SubscriptionSourceKind::kRaft)
+      return SourcePosition::raft(tablet_id, raft_group_id, 0U);
+    return SourcePosition::wal(tablet_id, wal_id, 0U);
+  }
+
+private:
+  MultiTabletSubscriptionCheckpointSourceIdentity(schema::TabletId tablet,
+                                                  common::Uuid group_id) noexcept
+      : tablet_id(tablet), source_kind(SubscriptionSourceKind::kRaft), raft_group_id(group_id) {}
 };
 
 struct MultiTabletSubscriptionCheckpointStorageIdentity {

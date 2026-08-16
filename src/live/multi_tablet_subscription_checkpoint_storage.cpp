@@ -58,7 +58,7 @@ constexpr std::size_t kGenerationDigits = 20U;
     return false;
   for (std::size_t index = 0U; index < identity.sources.size(); ++index) {
     const auto& source = identity.sources[index];
-    if (source.tablet_id.uuid().is_nil() || !source.wal_id.is_valid() ||
+    if (!source.is_valid() ||
         (index != 0U && identity.sources[index - 1U].tablet_id >= source.tablet_id))
       return false;
   }
@@ -90,8 +90,7 @@ valid_codec_limits(const MultiTabletSubscriptionCheckpointCodecLimits& limits) n
       actual.sources.size() != expected.sources.size())
     return false;
   for (std::size_t index = 0U; index < expected.sources.size(); ++index) {
-    if (!actual.sources[index].latest_position.same_source(SourcePosition::wal(
-            expected.sources[index].tablet_id, expected.sources[index].wal_id, 0U)))
+    if (!actual.sources[index].latest_position.same_source(expected.sources[index].position()))
       return false;
   }
   return true;
@@ -184,8 +183,7 @@ public:
       if (*read != bytes.size())
         return common::make_unexpected(
             corruption("installed subscription checkpoint ended before its exact size"));
-      auto decoded =
-          decode_bound_multi_tablet_subscription_checkpoint_v1(bytes, config_.codec_limits);
+      auto decoded = decode_bound_multi_tablet_subscription_checkpoint(bytes, config_.codec_limits);
       if (!decoded.has_value())
         return common::make_unexpected(decoded.error());
       if (decoded->checkpoint_generation != expected_generation ||
@@ -285,17 +283,19 @@ MultiTabletSubscriptionCheckpointStorage::install(
     return common::make_unexpected(std::move(usable));
   if (!matches(impl_->config_.identity, checkpoint.state))
     return common::make_unexpected(invalid("subscription checkpoint belongs to another owner"));
-  auto encoded =
-      encode_bound_multi_tablet_subscription_checkpoint_v1(checkpoint, impl_->config_.codec_limits);
-  if (!encoded.has_value())
-    return common::make_unexpected(encoded.error());
   auto final_name =
       multi_tablet_subscription_checkpoint_generation_file_name(checkpoint.checkpoint_generation);
   if (!final_name.has_value())
     return common::make_unexpected(final_name.error());
   auto existing = impl_->load_file(*final_name, checkpoint.checkpoint_generation);
   if (existing.has_value()) {
-    if (existing->bytes != *encoded)
+    auto encoded_v1 = encode_bound_multi_tablet_subscription_checkpoint_v1(
+        checkpoint, impl_->config_.codec_limits);
+    auto encoded_v2 = encode_bound_multi_tablet_subscription_checkpoint_v2(
+        checkpoint, impl_->config_.codec_limits);
+    const bool exact_v1 = encoded_v1.has_value() && existing->bytes == *encoded_v1;
+    const bool exact_v2 = encoded_v2.has_value() && existing->bytes == *encoded_v2;
+    if (!exact_v1 && !exact_v2)
       return common::make_unexpected(
           corruption("checkpoint generation already has different durable bytes"));
     return InstalledMultiTabletSubscriptionCheckpoint{checkpoint.checkpoint_generation, *final_name,
@@ -303,6 +303,10 @@ MultiTabletSubscriptionCheckpointStorage::install(
   }
   if (existing.error().code() != common::StatusCode::kNotFound)
     return common::make_unexpected(existing.error());
+  auto encoded =
+      encode_bound_multi_tablet_subscription_checkpoint_v2(checkpoint, impl_->config_.codec_limits);
+  if (!encoded.has_value())
+    return common::make_unexpected(encoded.error());
   auto latest = load_latest();
   if (!latest.has_value())
     return common::make_unexpected(latest.error());
@@ -345,7 +349,7 @@ MultiTabletSubscriptionCheckpointStorage::install(
       return common::make_unexpected(
           read.has_value() ? corruption("checkpoint readback is incomplete") : read.error());
     auto decoded =
-        decode_bound_multi_tablet_subscription_checkpoint_v1(readback, impl_->config_.codec_limits);
+        decode_bound_multi_tablet_subscription_checkpoint(readback, impl_->config_.codec_limits);
     if (!decoded.has_value() || *decoded != checkpoint)
       return common::make_unexpected(decoded.has_value() ? corruption("checkpoint readback changed")
                                                          : decoded.error());

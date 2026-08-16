@@ -372,8 +372,11 @@ existence of a design document alone is not implementation evidence.
   canonical latest/expiry vectors, retained admission-order capture, strict suffix validation, and
   token-based replay after logical coordinator reconstruction.
 - [Multi-tablet Subscription Checkpoint v1](formats/multi-tablet-subscription-checkpoint-v1.md):
-  frozen portable coordinator bytes, exact identity/source/change layout, limits, CRC32C, and
-  validation order.
+  frozen WAL-only coordinator bytes, exact identity/source/change layout, limits, CRC32C, and
+  compatibility policy.
+- [Multi-tablet Subscription Checkpoint
+  v2](formats/multi-tablet-subscription-checkpoint-v2.md): source-tagged WAL/Raft coordinator and
+  retained-change positions, exact v1 recovery compatibility, and new-generation v2 installation.
 - [Durable multi-tablet subscription checkpoint generations](adr/0100-durable-subscription-checkpoint-generations.md):
   lock ownership, exact next-generation installation, synchronized no-replace publication, and
   fail-closed reopen/latest selection.

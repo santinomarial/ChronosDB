@@ -14,11 +14,41 @@
 namespace chronos::live {
 
 struct MultiTabletSubscriptionMember {
+  MultiTabletSubscriptionMember(schema::TabletId tablet, wal::WalId wal,
+                                std::uint64_t record_sequence) noexcept
+      : tablet_id(tablet), wal_id(wal), committed_record_sequence(record_sequence) {}
+
   schema::TabletId tablet_id;
   wal::WalId wal_id;
   // The committed source boundary already represented when this coordinator is created. Earlier
   // positions are not assumed retained by this owner.
   std::uint64_t committed_record_sequence{};
+  SubscriptionSourceKind source_kind{SubscriptionSourceKind::kWal};
+  common::Uuid raft_group_id;
+
+  [[nodiscard]] static MultiTabletSubscriptionMember
+  raft(schema::TabletId tablet, common::Uuid group_id, std::uint64_t log_index) noexcept {
+    return {tablet, log_index, group_id};
+  }
+
+  [[nodiscard]] bool is_valid() const noexcept {
+    if (source_kind == SubscriptionSourceKind::kWal)
+      return SourcePosition::wal(tablet_id, wal_id, committed_record_sequence).is_valid();
+    return source_kind == SubscriptionSourceKind::kRaft &&
+           SourcePosition::raft(tablet_id, raft_group_id, committed_record_sequence).is_valid();
+  }
+
+  [[nodiscard]] SourcePosition position() const noexcept {
+    if (source_kind == SubscriptionSourceKind::kRaft)
+      return SourcePosition::raft(tablet_id, raft_group_id, committed_record_sequence);
+    return SourcePosition::wal(tablet_id, wal_id, committed_record_sequence);
+  }
+
+private:
+  MultiTabletSubscriptionMember(schema::TabletId tablet, std::uint64_t log_index,
+                                common::Uuid group_id) noexcept
+      : tablet_id(tablet), committed_record_sequence(log_index),
+        source_kind(SubscriptionSourceKind::kRaft), raft_group_id(group_id) {}
 };
 
 struct MultiTabletSubscriptionSource {

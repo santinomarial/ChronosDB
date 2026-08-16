@@ -1,5 +1,6 @@
 #include "chronos/live/multi_tablet_subscription_checkpoint_storage.hpp"
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -116,6 +117,10 @@ TEST(MultiTabletSubscriptionCheckpointStorageTest, InstallsSelectsAndReopensExac
     const auto installed = storage->install(fixture.checkpoint(1U));
     ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
     EXPECT_FALSE(installed->already_present);
+    const auto loaded = storage->load_generation(1U);
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().to_string();
+    ASSERT_GT(loaded->bytes.size(), 7U);
+    EXPECT_EQ(loaded->bytes[7], std::byte{'2'});
     const auto repeated = storage->install(fixture.checkpoint(1U));
     ASSERT_TRUE(repeated.has_value());
     EXPECT_TRUE(repeated->already_present);
@@ -144,6 +149,49 @@ TEST(MultiTabletSubscriptionCheckpointStorageTest, InstallsSelectsAndReopensExac
   const auto loaded = reopened->load_generation(1U);
   ASSERT_TRUE(loaded.has_value()) << loaded.error().to_string();
   EXPECT_EQ(loaded->checkpoint, fixture.checkpoint(1U));
+}
+
+TEST(MultiTabletSubscriptionCheckpointStorageTest, ReopensV1AndWritesFollowingGenerationAsV2) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  Fixture fixture;
+  {
+    auto storage =
+        MultiTabletSubscriptionCheckpointStorage::create(fixture.config(directory.path()));
+    ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+  }
+  const auto legacy = encode_bound_multi_tablet_subscription_checkpoint_v1(fixture.checkpoint(1U));
+  ASSERT_TRUE(legacy.has_value()) << legacy.error().to_string();
+  const auto legacy_name = multi_tablet_subscription_checkpoint_generation_file_name(1U).value();
+  {
+    std::ofstream output(directory.path() / legacy_name, std::ios::binary);
+    output.write(std::bit_cast<const char*>(legacy->data()),
+                 static_cast<std::streamsize>(legacy->size()));
+  }
+
+  auto storage =
+      MultiTabletSubscriptionCheckpointStorage::open_existing(fixture.config(directory.path()));
+  ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+  const auto loaded = storage->load_latest();
+  ASSERT_TRUE(loaded.has_value()) << loaded.error().to_string();
+  ASSERT_TRUE(loaded->has_value());
+  EXPECT_EQ(loaded->transform([](const LoadedMultiTabletSubscriptionCheckpoint& selected) {
+    return selected.checkpoint;
+  }),
+            std::optional<BoundMultiTabletSubscriptionCheckpoint>{fixture.checkpoint(1U)});
+  const auto repeated = storage->install(fixture.checkpoint(1U));
+  ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
+  EXPECT_TRUE(repeated->already_present);
+
+  const auto next = storage->install(fixture.checkpoint(2U));
+  ASSERT_TRUE(next.has_value()) << next.error().to_string();
+  const auto current = storage->load_latest();
+  ASSERT_TRUE(current.has_value()) << current.error().to_string();
+  ASSERT_TRUE(current->has_value());
+  EXPECT_EQ(current->transform([](const LoadedMultiTabletSubscriptionCheckpoint& selected) {
+    return selected.bytes.size() > 7U && selected.bytes[7] == std::byte{'2'};
+  }),
+            std::optional<bool>{true});
 }
 
 TEST(MultiTabletSubscriptionCheckpointStorageTest, RejectsCorruptInstalledGeneration) {

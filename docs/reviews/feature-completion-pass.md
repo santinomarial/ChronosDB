@@ -34,8 +34,8 @@ their full roadmap exit gates or that ChronosDB is a production three-node datab
   revisions, consecutive committed progress, and finite row/window bounds;
 - plan-bound single-tablet snapshot execution, schema-bound `SUBSCRIBE SELECT` identity, and a
   durable exact-SQL registry that reprepares and verifies executable fingerprints after restart;
-- canonical multi-tablet delivery order, exact logical checkpoint/restore, and frozen checksummed
-  checkpoint-generation bytes; and
+- canonical multi-tablet delivery order, exact source-tagged logical checkpoint/restore,
+  Checkpoint v2 generation issuance, and v1 WAL-generation recovery compatibility; and
 - lock-owning, exact-next-generation filesystem installation, fail-closed latest selection, and a
   durable coordinator owner that publishes retention frontiers only after synchronized install;
   plus exact multi-tablet historical execution through one global physical pipeline, started
@@ -358,7 +358,8 @@ Important APIs include `SubscriptionManager`, `WindowedMaterializedView`,
 `MetadataStateMachine`, `TabletMovement`, `BoundedExchange`, `DistributedAggregateCoordinator`,
 `ObjectStore`, `TieredPartManager`, `Reactor`, and `apply_current_thread_placement`.
 
-Accepted formats added during and after the pass include authenticated Resume Token v1,
+Accepted formats added during and after the pass include authenticated Resume Token v1/v2 and
+source-tagged Multi-tablet Subscription Checkpoint v2,
 Multiplexed Raft Persistent-State Record v1, Raft transport, distributed exchange, temporal
 CSEG/Manifest v2, cold-location authority, tablet and metadata application snapshots, and the
 node-wide Raft recovery anchor. Native Protocol 2.0 adds feature-gated QUORUM_SYNC without

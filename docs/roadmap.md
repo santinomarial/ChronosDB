@@ -628,7 +628,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   exact schema-bound SHA-256 plan identity, and plan-bound single-tablet registration/resume.
   Multi-tablet coordinators can now checkpoint and restore an exact validated retained admission
   order and per-source expiry vector before token-based replay. Multi-tablet Subscription Checkpoint
-  v1 now freezes bounded, checksummed portable bytes for that state. A lock-owning filesystem owner
+  v1 freezes the WAL-only layout; Checkpoint v2 and Generation Envelope v2 now preserve explicit
+  WAL/Raft source tags while compatibility decoders recover existing v1 generations. A lock-owning
+  filesystem owner
   now exact-validates, synchronizes, no-replace installs, reopens, and selects contiguous immutable
   coordinator checkpoint generations. A durable coordinator owner restores that exact generation,
   resumes token suffixes, accepts consecutive post-checkpoint replay, and publishes source-retention
@@ -648,9 +650,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   all-WAL prevalidation. A deterministic Release microbenchmark suite now covers logical handoff,
   fan-out, slow-consumer overflow, resume replay, late aggregate correction, and logical aggregate
   recovery scaling without publishing unreviewed numbers. Source-neutral in-memory positions and
-  Resume Token v2 now distinguish WAL IDs from Raft group UUIDs without aliasing; Raft checkpoint/
-  protocol integration, prefix mapping, and the remaining exit evidence remain deferred. The phase
-  exit gate is not claimed.
+  Resume Token v2, coordinator membership, and Checkpoint v2 now distinguish WAL IDs from Raft
+  group UUIDs without aliasing. Raft Protocol delivery, snapshot integration, prefix mapping and
+  reclamation, and the remaining exit evidence remain deferred. The phase exit gate is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.

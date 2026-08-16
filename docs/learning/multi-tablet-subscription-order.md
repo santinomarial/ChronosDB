@@ -1,9 +1,10 @@
 # Multi-tablet subscription order
 
-`MultiTabletSubscriptionManager` coordinates one fixed, plan-bound source set. It sorts tablet/WAL
-identities into a canonical vector, captures that vector for historical execution, and accepts only
-the next committed sequence independently for each tablet. One owner thread invokes publication,
-so the cross-tablet invocation order becomes a recorded delivery order.
+`MultiTabletSubscriptionManager` coordinates one fixed, plan-bound source set. It sorts tagged
+tablet/WAL-or-Raft identities into a canonical vector, captures that vector for historical
+execution, and accepts only the next committed sequence or log index independently for each tablet.
+One owner thread invokes publication, so the cross-tablet invocation order becomes a recorded
+delivery order.
 
 That distinction matters. Tablet A sequence 100 and tablet B sequence 2 cannot be compared as a
 database commit coordinate. Sorting them would either reorder a later arrival or wait indefinitely
@@ -17,7 +18,7 @@ acknowledgement removes one delivery prefix and advances only the components rep
 prefix. The Resume Token therefore combines one safe delivery ordinal with an exact source vector.
 
 Retained changes remain in coordinator admission order. Resume exact-checks database, plan, schema,
-tablet membership, WAL lineage, and every component against current committed state. It skips a
+tablet membership, tagged source lineage, and every component against current committed state. It skips a
 retained change only when that change is already covered by its own source component. If retention
 has evicted a required change from any one tablet, the whole resume fails; silently delivering a
 partial suffix would violate the snapshot-to-stream contract.
@@ -26,6 +27,10 @@ The logical checkpoint copies each source's latest and expiry frontier plus that
 the same admission order. Restore does not attempt to infer an interleaving: it proves every
 per-source retained suffix is consecutive through the declared latest vector, then reinstalls the
 recorded order. Subscriber buffers are reconstructed only from an authenticated safe Resume Token.
+Checkpoint v2 and Resume Token v2 carry the source tag and selected identity explicitly; equal WAL
+ID and Raft group UUID bytes remain different lineages. Durable compatibility decoders recover
+frozen WAL-only v1 generations, while new generation installation emits v2 without rewriting old
+immutable files.
 
 A schema change is not retention overflow. The first consecutive committed change from a different
 schema terminally invalidates the old plan, clears its complete cross-tablet suffix, and expires each
@@ -53,7 +58,7 @@ sequence. The owner exposes checkpoint expiry components to a future retention m
 the generation file and directory have synchronized. If installation fails, the prior durable
 frontier remains unchanged even though newer state is still live in memory.
 
-For the historical half, `MultiTabletSnapshotSubscription` validates every registered vector
+For the historical half, the current WAL-only `MultiTabletSnapshotSubscription` validates every registered vector
 component against one aggregate storage publication. Raw tablet scans are concatenated before the
 physical plan is instantiated, so a global aggregate, sort, latest, or limit observes the complete
 source set rather than one independently finalized result per tablet. READY is impossible until
@@ -72,10 +77,12 @@ through END_STREAM, READY, live delivery, acknowledgement checkpoint, cancellati
 A full response ring retains one exact encoded task and freezes further service progress until the
 task transfers, so backpressure cannot create an invisible cursor advance.
 
-Upstream log deletion uses a separate `SubscriptionRetentionCoordinator`. It intersects the
+Upstream WAL deletion uses a separate `SubscriptionRetentionCoordinator`. It intersects the
 storage/Raft-safe vector with every registered plan owner's durably installed expiry, then verifies
 the committed metadata placement epoch and local replica membership before invoking the physical
 source reclaimer. The logical subscription coordinate is never guessed into a WAL byte offset.
+Raft-backed physical snapshot execution and prefix reclamation remain explicit later integrations;
+the source-neutral manager and checkpoint do not claim those boundaries are implemented.
 
 For WAL-backed sources, `WalSubscriptionSourceReclaimer` binds the canonical tablet/epoch set to
 borrowed open writers. It validates and resolves the complete request batch before deletion. When
