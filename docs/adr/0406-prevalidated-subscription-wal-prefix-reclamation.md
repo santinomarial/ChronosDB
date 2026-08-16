@@ -53,3 +53,9 @@ tablets sharing one real WAL, idempotent repeat, complete prevalidation across t
 first unlink, and direct integration from the topology authority through physical segment removal.
 Raft-source mapping, dynamic plan-owner retirement, crash cuts across multiple WAL directories, and
 the broader Phase 11 exit evidence remain incomplete.
+
+## Retrospective note (2026-08-15)
+
+[ADR 0410](0410-raft-subscription-snapshot-and-prefix-reclamation.md) completed the separate
+Raft-source path with application-snapshot coverage and node-wide shared-log checkpointing. The WAL
+batch semantics accepted here are unchanged.

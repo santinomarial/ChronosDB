@@ -74,6 +74,12 @@ public:
                  const manifest::DatabaseStoragePublisher& publisher,
                  const schema::SchemaLineage& lineage, SnapshotSubscriptionLimits limits = {});
 
+  [[nodiscard]] common::Result<MultiTabletSnapshotSubscription>
+  start_raft_snapshot(const PreparedSubscriptionPlan& plan, common::Uuid subscription_id,
+                      const query::QueryResourceContext& resources,
+                      const ingest::AsyncRaftTabletApplication& application,
+                      const schema::SchemaLineage& lineage, SnapshotSubscriptionLimits limits = {});
+
   [[nodiscard]] common::Result<InstalledMultiTabletSubscriptionCheckpoint> checkpoint();
   [[nodiscard]] common::Result<std::optional<std::vector<SourcePosition>>>
   durable_retention_frontiers() const;

@@ -58,12 +58,11 @@ SubscriptionRetentionCoordinator::create(SubscriptionRetentionConfig config) {
     initial.reserve(config.members.size());
     for (std::size_t index = 0U; index < config.members.size(); ++index) {
       const SubscriptionRetentionMember& member = config.members[index];
-      if (member.tablet_id.uuid().is_nil() || !member.wal_id.is_valid() ||
-          member.placement_epoch == 0U ||
+      if (!member.is_valid() ||
           (index != 0U && config.members[index - 1U].tablet_id >= member.tablet_id))
         return common::make_unexpected(
             invalid("subscription retention source topology is invalid"));
-      initial.emplace_back(member.tablet_id, member.wal_id, 0U);
+      initial.push_back(member.position());
     }
     for (std::size_t owner_index = 0U; owner_index < config.subscription_owners.size();
          ++owner_index) {
@@ -82,9 +81,8 @@ SubscriptionRetentionCoordinator::create(SubscriptionRetentionConfig config) {
         return common::make_unexpected(
             invalid("subscription retention owner identity or source count disagrees"));
       for (std::size_t source_index = 0U; source_index < config.members.size(); ++source_index) {
-        if (source.members[source_index].source_kind != SubscriptionSourceKind::kWal ||
-            source.members[source_index].tablet_id != config.members[source_index].tablet_id ||
-            source.members[source_index].wal_id != config.members[source_index].wal_id)
+        if (!source.members[source_index].position().same_source(
+                config.members[source_index].position()))
           return common::make_unexpected(
               invalid("subscription retention owner source lineage disagrees"));
       }
@@ -110,7 +108,7 @@ common::Result<SubscriptionRetentionReport> SubscriptionRetentionCoordinator::ad
   for (std::size_t index = 0U; index < impl_->config.members.size(); ++index) {
     const SubscriptionRetentionMember& member = impl_->config.members[index];
     const SourcePosition& storage = storage_safe_frontiers[index];
-    if (!storage.same_source(SourcePosition::wal(member.tablet_id, member.wal_id, 0U)) ||
+    if (!storage.same_source(member.position()) ||
         storage.record_sequence < impl_->frontiers[index].record_sequence)
       return common::make_unexpected(
           invalid("subscription retention storage frontier regressed or changed lineage"));
@@ -120,6 +118,13 @@ common::Result<SubscriptionRetentionReport> SubscriptionRetentionCoordinator::ad
         !std::ranges::contains(placement->replicas, impl_->config.local_node_id))
       return common::make_unexpected(
           topology_changed("subscription retention placement epoch or local replica changed"));
+    if (member.source_kind == SubscriptionSourceKind::kRaft) {
+      const raft::TabletGroupBindingMetadata* binding =
+          metadata.find_tablet_group_binding(member.tablet_id);
+      if (binding == nullptr || binding->group_id != member.raft_group_id)
+        return common::make_unexpected(
+            topology_changed("subscription retention Raft group binding changed"));
+    }
   }
 
   try {

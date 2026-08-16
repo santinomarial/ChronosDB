@@ -11,6 +11,7 @@
 #include "chronos/query/physical_plan.hpp"
 #include "chronos/query/resource_context.hpp"
 #include "chronos/query/snapshot_pipeline.hpp"
+#include "chronos/query/tablet_state_pipeline.hpp"
 #include "chronos/schema/schema_lineage.hpp"
 
 #include <cstddef>
@@ -35,6 +36,7 @@ struct SnapshotSubscriptionOutput {
 
 struct SnapshotSubscriptionLimits {
   query::SnapshotTabletPipelineLimits pipeline{};
+  query::TabletStatePipelineLimits raft_pipeline{};
   network::QueryResultLimits result{};
   network::SubscriptionMessageLimits subscription{};
 };

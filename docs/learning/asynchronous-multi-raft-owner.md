@@ -41,6 +41,13 @@ membership facts. It contains no retained log payload or borrowed worker memory.
 not create a transition or physical-log synchronization, but it is ordered after earlier admitted
 work and is not released ahead of any synchronization required by earlier operations in its batch.
 
+`try_checkpoint_and_reclaim` submits a distinct node-wide maintenance task through the same bounded
+FIFO. It returns a typed single-consumer completion carrying the installed recovery anchor and
+reclaimed-segment counts. The worker calls the synchronous owner's complete all-group checkpoint;
+application hooks do not run because the task contains no logical transition. Dedicated metrics
+separate reclamation admission/results from ordinary Raft batches. A caller must not wait from a
+worker extension, for the same reason it must not wait on a submitted batch there.
+
 ## Data structures and invariants
 
 The runtime retains one FIFO of owning task objects. Admission counts every accepted batch and
@@ -78,9 +85,10 @@ wait on a completion submitted to this same runtime; the sole worker would be wa
 ## Failure behavior
 
 Capacity rejection changes no Raft or disk state. Per-operation statuses remain ordinary successful
-batch results. A top-level durable failure or unexpected exception is ambiguous with respect to
-partial in-memory progress, so the worker fails closed, gives all remaining accepted work the same
-terminal failure, and stops. Shutdown returns the retained storage/worker failure.
+batch results. A top-level durable batch or checkpoint/reclamation failure is ambiguous with respect
+to partial in-memory or filesystem progress, so the worker fails closed, gives all remaining
+accepted work the same terminal failure, and stops. Shutdown returns the retained storage/worker
+failure.
 Initialization failure prevents admission and still invokes extension shutdown for partial cleanup.
 For a composed extension, that cleanup includes the child whose initialization returned failure;
 shutdown continues through earlier children even when a later child returns an error or throws.
@@ -98,4 +106,5 @@ single log; fairness is FIFO and only bounded by maximum batch size.
 - Which mutex edges publish tasks and results?
 - Why is a top-level execution exception terminal rather than retryable?
 - Why does shutdown drain normal work but reject queued work after a terminal failure?
+- Why does physical-log reclamation require an all-group checkpoint on the owning worker?
 - When must a reactor avoid calling `wait`?

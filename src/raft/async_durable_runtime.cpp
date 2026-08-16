@@ -23,6 +23,7 @@ namespace chronos::raft {
 namespace {
 
 using BatchResult = common::Result<std::vector<DurableRaftResult>>;
+using ReclamationResult = common::Result<RaftPersistentLogReclamation>;
 
 void saturating_increment(std::uint64_t& value) noexcept {
   if (value != std::numeric_limits<std::uint64_t>::max())
@@ -103,13 +104,58 @@ private:
   bool consumed_{};
 };
 
+class AsyncRaftLogReclamationCompletionState {
+public:
+  void complete(ReclamationResult result) {
+    {
+      const std::lock_guard lock{mutex_};
+      result_.emplace(std::move(result));
+    }
+    condition_.notify_all();
+  }
+
+  [[nodiscard]] bool is_ready() const {
+    const std::lock_guard lock{mutex_};
+    return result_.has_value() && !consumed_;
+  }
+
+  [[nodiscard]] ReclamationResult wait() {
+    std::unique_lock lock{mutex_};
+    condition_.wait(lock, [this] { return result_.has_value() || consumed_; });
+    if (consumed_) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInvalidArgument,
+                         "asynchronous Raft log-reclamation completion was already consumed"});
+    }
+    if (!result_.has_value()) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInternal,
+                         "asynchronous Raft log-reclamation completion has no result"});
+    }
+    consumed_ = true;
+    ReclamationResult result = std::move(result_).value();
+    result_.reset();
+    return result;
+  }
+
+private:
+  mutable std::mutex mutex_;
+  mutable std::condition_variable condition_;
+  std::optional<ReclamationResult> result_;
+  bool consumed_{};
+};
+
 } // namespace detail
 
 class AsyncDurableMultiRaftRuntime::Impl {
 public:
   struct Task {
+    enum class Kind : std::uint8_t { kBatch, kCheckpointAndReclaim };
+
+    Kind kind{Kind::kBatch};
     std::vector<DurableRaftRequest> requests;
     std::shared_ptr<detail::AsyncDurableRaftCompletionState> completion;
+    std::shared_ptr<detail::AsyncRaftLogReclamationCompletionState> reclamation_completion;
     std::size_t operation_count{};
   };
 
@@ -157,7 +203,8 @@ public:
     try {
       auto completion = std::make_shared<detail::AsyncDurableRaftCompletionState>();
       const std::size_t operation_count = requests.size();
-      auto task = std::make_unique<Task>(Task{std::move(requests), completion, operation_count});
+      auto task = std::make_unique<Task>(
+          Task{Task::Kind::kBatch, std::move(requests), completion, nullptr, operation_count});
       std::unique_lock lock{mutex_};
       if (!metrics_.accepting) {
         saturating_increment(metrics_.rejected_batches);
@@ -195,6 +242,54 @@ public:
     } catch (const std::bad_alloc&) {
       return reject(common::Status{common::StatusCode::kResourceExhausted,
                                    "cannot allocate asynchronous durable Multi-Raft request"});
+    }
+  }
+
+  [[nodiscard]] common::Result<AsyncRaftLogReclamationCompletion> try_checkpoint_and_reclaim() {
+    try {
+      auto completion = std::make_shared<detail::AsyncRaftLogReclamationCompletionState>();
+      auto task = std::make_unique<Task>(
+          Task{Task::Kind::kCheckpointAndReclaim, {}, nullptr, completion, std::size_t{1U}});
+      std::unique_lock lock{mutex_};
+      if (!metrics_.accepting) {
+        saturating_increment(metrics_.rejected_reclamations);
+        return common::make_unexpected(
+            terminal_status_.is_ok()
+                ? common::Status{common::StatusCode::kUnavailable,
+                                 "asynchronous durable Multi-Raft admission is closed"}
+                : terminal_status_);
+      }
+      if (metrics_.pending_batches >= limits_.maximum_pending_batches ||
+          metrics_.pending_operations >= limits_.maximum_pending_operations) {
+        saturating_increment(metrics_.rejected_reclamations);
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kResourceExhausted,
+                           "asynchronous durable Multi-Raft admission capacity is full"});
+      }
+      if (next_submission_sequence_ == std::numeric_limits<std::uint64_t>::max()) {
+        saturating_increment(metrics_.rejected_reclamations);
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kResourceExhausted,
+                           "asynchronous durable Multi-Raft submission sequence is exhausted"});
+      }
+      queue_.push_back(std::move(task));
+      const std::uint64_t submission_sequence = next_submission_sequence_++;
+      ++metrics_.pending_batches;
+      ++metrics_.pending_operations;
+      metrics_.high_water_pending_batches =
+          std::max(metrics_.high_water_pending_batches, metrics_.pending_batches);
+      metrics_.high_water_pending_operations =
+          std::max(metrics_.high_water_pending_operations, metrics_.pending_operations);
+      saturating_increment(metrics_.admitted_reclamations);
+      lock.unlock();
+      condition_.notify_one();
+      return AsyncRaftLogReclamationCompletion{std::move(completion), submission_sequence};
+    } catch (const std::bad_alloc&) {
+      const std::lock_guard lock{mutex_};
+      saturating_increment(metrics_.rejected_reclamations);
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kResourceExhausted,
+                         "cannot allocate asynchronous Raft log-reclamation request"});
     }
   }
 
@@ -283,10 +378,16 @@ private:
     }
     --metrics_.pending_batches;
     metrics_.pending_operations -= task.operation_count;
-    if (succeeded)
-      saturating_increment(metrics_.completed_batches);
-    else
-      saturating_increment(metrics_.failed_batches);
+    if (task.kind == Task::Kind::kBatch) {
+      if (succeeded)
+        saturating_increment(metrics_.completed_batches);
+      else
+        saturating_increment(metrics_.failed_batches);
+    } else if (succeeded) {
+      saturating_increment(metrics_.completed_reclamations);
+    } else {
+      saturating_increment(metrics_.failed_reclamations);
+    }
   }
 
   void fail_pending(const common::Status& status) {
@@ -301,8 +402,13 @@ private:
       for (const auto& task : failed)
         release_admission(*task, false);
     }
-    for (auto& task : failed)
-      task->completion->complete(common::make_unexpected(terminal_status()));
+    for (auto& task : failed) {
+      if (task->kind == Task::Kind::kBatch) {
+        task->completion->complete(common::make_unexpected(terminal_status()));
+      } else {
+        task->reclamation_completion->complete(common::make_unexpected(terminal_status()));
+      }
+    }
     if (!failed.empty())
       static_cast<void>(signal_completion());
   }
@@ -341,6 +447,25 @@ private:
     } catch (...) {
       return common::make_unexpected(common::Status{
           common::StatusCode::kInternal, "durable Multi-Raft worker caught an unknown exception"});
+    }
+  }
+
+  [[nodiscard]] ReclamationResult checkpoint_and_reclaim() {
+    try {
+      return runtime_.checkpoint_and_reclaim();
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kResourceExhausted,
+          "durable Multi-Raft worker exhausted memory while reclaiming its physical log"});
+    } catch (const std::exception& error) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kInternal,
+          std::string{"durable Raft log reclamation caught an unexpected exception: "} +
+              error.what()});
+    } catch (...) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInternal,
+                         "durable Raft log reclamation caught an unknown exception"});
     }
   }
 
@@ -429,20 +554,37 @@ private:
         queue_.pop_front();
       }
 
-      BatchResult result = execute(*task);
-      const bool succeeded = result.has_value();
-      const common::Status failure = succeeded ? common::Status::ok() : result.error();
+      BatchResult batch_result = common::make_unexpected(
+          common::Status{common::StatusCode::kInternal, "Raft batch task was not executed"});
+      ReclamationResult reclamation_result = common::make_unexpected(common::Status{
+          common::StatusCode::kInternal, "Raft log-reclamation task was not executed"});
+      if (task->kind == Task::Kind::kBatch)
+        batch_result = execute(*task);
+      else
+        reclamation_result = checkpoint_and_reclaim();
+      const bool succeeded = task->kind == Task::Kind::kBatch ? batch_result.has_value()
+                                                              : reclamation_result.has_value();
+      const common::Status failure =
+          succeeded ? common::Status::ok()
+                    : (task->kind == Task::Kind::kBatch ? batch_result.error()
+                                                        : reclamation_result.error());
       {
         const std::lock_guard lock{mutex_};
         release_admission(*task, succeeded);
       }
       if (!succeeded) {
         fail_pending(failure);
-        task->completion->complete(std::move(result));
+        if (task->kind == Task::Kind::kBatch)
+          task->completion->complete(std::move(batch_result));
+        else
+          task->reclamation_completion->complete(std::move(reclamation_result));
         static_cast<void>(signal_completion());
         break;
       }
-      task->completion->complete(std::move(result));
+      if (task->kind == Task::Kind::kBatch)
+        task->completion->complete(std::move(batch_result));
+      else
+        task->reclamation_completion->complete(std::move(reclamation_result));
       const common::Status signaled = signal_completion();
       if (!signaled.is_ok()) {
         fail_pending(signaled);
@@ -498,6 +640,38 @@ BatchResult AsyncDurableRaftCompletion::wait() {
   if (state_ == nullptr) {
     return common::make_unexpected(common::Status{
         common::StatusCode::kInvalidArgument, "asynchronous durable Raft completion is invalid"});
+  }
+  return state_->wait();
+}
+
+AsyncRaftLogReclamationCompletion::AsyncRaftLogReclamationCompletion() noexcept = default;
+AsyncRaftLogReclamationCompletion::~AsyncRaftLogReclamationCompletion() = default;
+AsyncRaftLogReclamationCompletion::AsyncRaftLogReclamationCompletion(
+    AsyncRaftLogReclamationCompletion&&) noexcept = default;
+AsyncRaftLogReclamationCompletion& AsyncRaftLogReclamationCompletion::operator=(
+    AsyncRaftLogReclamationCompletion&&) noexcept = default;
+AsyncRaftLogReclamationCompletion::AsyncRaftLogReclamationCompletion(
+    std::shared_ptr<detail::AsyncRaftLogReclamationCompletionState> state,
+    const std::uint64_t submission_sequence) noexcept
+    : state_(std::move(state)), submission_sequence_(submission_sequence) {}
+
+bool AsyncRaftLogReclamationCompletion::is_valid() const noexcept {
+  return state_ != nullptr;
+}
+
+std::uint64_t AsyncRaftLogReclamationCompletion::submission_sequence() const noexcept {
+  return state_ == nullptr ? 0U : submission_sequence_;
+}
+
+bool AsyncRaftLogReclamationCompletion::is_ready() const {
+  return state_ != nullptr && state_->is_ready();
+}
+
+ReclamationResult AsyncRaftLogReclamationCompletion::wait() {
+  if (state_ == nullptr) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInvalidArgument,
+                       "asynchronous Raft log-reclamation completion is invalid"});
   }
   return state_->wait();
 }
@@ -590,6 +764,15 @@ AsyncDurableMultiRaftRuntime::try_submit(std::vector<DurableRaftRequest> request
 common::Result<AsyncDurableRaftCompletion>
 AsyncDurableMultiRaftRuntime::try_observe_group(const GroupId& group_id) {
   return try_submit({DurableRaftRequest{group_id, ObserveGroupOperation{}}});
+}
+
+common::Result<AsyncRaftLogReclamationCompletion>
+AsyncDurableMultiRaftRuntime::try_checkpoint_and_reclaim() {
+  if (impl_ == nullptr) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kUnavailable, "asynchronous durable Multi-Raft runtime is not open"});
+  }
+  return impl_->try_checkpoint_and_reclaim();
 }
 
 common::Status AsyncDurableMultiRaftRuntime::shutdown() {

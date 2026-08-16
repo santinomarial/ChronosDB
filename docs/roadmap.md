@@ -654,8 +654,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   recovery scaling without publishing unreviewed numbers. Source-neutral in-memory positions and
   Resume Token v2, coordinator membership, and Checkpoint v2 now distinguish WAL IDs from Raft
   group UUIDs without aliasing. Protocol 1.2 now delivers those tagged positions without changing
-  Protocol 1.1 or 2.0 bytes. Raft snapshot integration, prefix mapping and reclamation, and the
-  remaining exit evidence remain deferred. The phase exit gate is not claimed.
+  Protocol 1.1 or 2.0 bytes. Homogeneous Raft-backed subscriptions now acquire exact immutable
+  applied tablet snapshots after registration and execute one global historical pipeline. Their
+  topology-bound retention path requires matching application and durable Raft snapshot coverage,
+  then schedules one bounded worker-owned all-group checkpoint before reclaiming older shared-log
+  segments. Mixed WAL/Raft historical snapshots, dynamic plan-owner retirement, and the remaining
+  exit evidence remain deferred. The phase exit gate is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.

@@ -265,6 +265,7 @@ DurableMultiRaftRuntime::observe_group(const GroupId& group_id) const {
         .last_log_index = node->last_log_index(),
         .commit_index = node->commit_index(),
         .applied_index = node->applied_index(),
+        .snapshot_index = node->persistent_state().snapshot.last_included_index,
         .voters = std::vector<NodeId>{node->voters().begin(), node->voters().end()},
         .committed_voters =
             std::vector<NodeId>{node->committed_voters().begin(), node->committed_voters().end()},

@@ -56,3 +56,8 @@ Invariants 4, 10, 12, 14, and 17 apply. Tests preserve Protocol 1.1 WAL behavior
 kinds, negotiate 1.2 through server and client state machines, preserve Raft group bytes through the
 live bridge, and prove the service emits under retained negotiated context. Raft-backed historical
 snapshot execution and physical prefix reclamation remain separate follow-up work.
+
+## Retrospective note (2026-08-15)
+
+[ADR 0410](0410-raft-subscription-snapshot-and-prefix-reclamation.md) completes those historical
+snapshot and physical reclamation follow-ups without changing the Protocol 1.2 bytes accepted here.

@@ -58,11 +58,15 @@ sequence. The owner exposes checkpoint expiry components to a future retention m
 the generation file and directory have synchronized. If installation fails, the prior durable
 frontier remains unchanged even though newer state is still live in memory.
 
-For the historical half, the current WAL-only `MultiTabletSnapshotSubscription` validates every registered vector
-component against one aggregate storage publication. Raw tablet scans are concatenated before the
-physical plan is instantiated, so a global aggregate, sort, latest, or limit observes the complete
-source set rather than one independently finalized result per tablet. READY is impossible until
-that global pipeline has ended and END_STREAM has been emitted. Pre-READY failure uses idempotent
+For the historical half, `MultiTabletSnapshotSubscription` selects one of two homogeneous source
+adapters. WAL members validate every registered vector component against one aggregate storage
+publication. Raft members register first and then copy a pinned immutable `TabletSnapshot` from the
+worker-hosted application for each exact group; table, tablet, group, and applied log index must all
+match the registered vector. Raw tablet scans are concatenated before the physical plan is
+instantiated, so a global aggregate, sort, latest, or limit observes the complete source set rather
+than one independently finalized result per tablet. Mixing WAL and Raft historical adapters would
+invent an aggregate publication epoch, so it fails explicitly. READY is impossible until that
+global pipeline has ended and END_STREAM has been emitted. Pre-READY failure uses idempotent
 no-token abandonment, keeping local teardown independent of token-encoding allocation.
 
 The manager owns no threads and is not internally synchronized. Returned delivery records share
@@ -77,12 +81,11 @@ through END_STREAM, READY, live delivery, acknowledgement checkpoint, cancellati
 A full response ring retains one exact encoded task and freezes further service progress until the
 task transfers, so backpressure cannot create an invisible cursor advance.
 
-Upstream WAL deletion uses a separate `SubscriptionRetentionCoordinator`. It intersects the
+Upstream source deletion uses a separate `SubscriptionRetentionCoordinator`. It intersects the
 storage/Raft-safe vector with every registered plan owner's durably installed expiry, then verifies
 the committed metadata placement epoch and local replica membership before invoking the physical
 source reclaimer. The logical subscription coordinate is never guessed into a WAL byte offset.
-Raft-backed physical snapshot execution and prefix reclamation remain explicit later integrations;
-the source-neutral manager and checkpoint do not claim those boundaries are implemented.
+Raft members additionally verify the committed tablet-to-group binding before authorization.
 
 For WAL-backed sources, `WalSubscriptionSourceReclaimer` binds the canonical tablet/epoch set to
 borrowed open writers. It validates and resolves the complete request batch before deletion. When
@@ -91,8 +94,18 @@ choosing the maximum could delete a global WAL record still required by the slow
 distinct writer scans its complete retained suffix to obtain an exact record-end checkpoint before
 the first writer unlinks a segment. Cross-WAL cleanup is retry-convergent rather than atomic.
 
+For Raft-backed sources, `RaftSubscriptionSourceReclaimer` exact-binds canonical tablet/group/epoch
+members to one asynchronous runtime and the tablet application hosted by that worker. Before any
+log mutation it proves that each immutable application publication has applied through the
+authorized index and that FIFO group observation reports a durable Raft snapshot through the same
+index. It then enqueues one node-wide maintenance task. The sole worker writes and synchronizes a
+fresh full-state checkpoint for every resident group before the multiplexed-log owner removes older
+segments. This is intentionally not a logical-index-to-byte mapping: unrelated groups sharing a
+segment can keep the prefix alive, while application snapshot lag safely delays reclamation.
+
 Work is linear in active subscribers per publish, in the retained suffix per resume, and in retained
 state size per checkpoint. Useful review questions are: why are tablet record sequences
 incomparable, what exactly makes replay order authoritative, why does acknowledgement update a
-vector rather than one scalar, why must expiry of one component fail the complete resume, and why
-can retention advance only after checkpoint installation?
+vector rather than one scalar, why must expiry of one component fail the complete resume, why can
+retention advance only after checkpoint installation, and why must Raft reclamation prove both
+application and consensus snapshot coverage?

@@ -267,6 +267,25 @@ common::Result<MultiTabletSnapshotSubscription> DurableMultiTabletSubscription::
   }
 }
 
+common::Result<MultiTabletSnapshotSubscription> DurableMultiTabletSubscription::start_raft_snapshot(
+    const PreparedSubscriptionPlan& plan, const common::Uuid subscription_id,
+    const query::QueryResourceContext& resources,
+    const ingest::AsyncRaftTabletApplication& application, const schema::SchemaLineage& lineage,
+    const SnapshotSubscriptionLimits limits) {
+  try {
+    std::vector<SnapshotSubscriptionColumn> columns{plan.columns().begin(), plan.columns().end()};
+    return MultiTabletSnapshotSubscription::start_raft(
+        impl_->manager, plan.request(subscription_id), resources, application, lineage,
+        plan.schema_ptr()->schema_id(), plan.physical_plan(), std::move(columns), limits);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("durable Raft subscription snapshot allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("durable Raft subscription snapshot exceeds container limits"));
+  }
+}
+
 common::Result<InstalledMultiTabletSubscriptionCheckpoint>
 DurableMultiTabletSubscription::checkpoint() {
   if (impl_->dirty && impl_->generation == std::numeric_limits<std::uint64_t>::max())

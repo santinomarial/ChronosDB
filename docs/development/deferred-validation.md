@@ -37,8 +37,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   incremental SQL surface expands.
 - Plan-bound subscription snapshot execution: forced-allocation sweeps, cancellation at every
   pull/END_STREAM/READY transition, multi-chunk socket backpressure, reactor worker dispatch, and
-  real concurrent publication scheduling. Exercise every global operator over multi-tablet source
-  vectors and extend the exact snapshot boundary to Raft-backed publications.
+  real concurrent publication scheduling. Focused coverage now exercises one real Raft-applied
+  aggregate, exact-boundary rejection, and service routing through the worker-hosted immutable
+  publication adapter. Exercise every global operator over multi-tablet WAL and Raft source vectors
+  and sustained concurrent publication scheduling.
 - Committed columnar-batch vector source: forced-allocation sweeps, all logical types, cancellation
   at every column, hostile chunk limits, large batches, scalar/vector differential coverage, and
   memory/allocation profiles. Focused coverage now proves bounded canonical slicing and a checked
@@ -63,7 +65,8 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
 - Cross-tablet-owner wiring around the implemented canonical vector/admission-order coordinator,
   topology transitions, multi-plan retention registration/retirement, service SQL/plan-to-input
   suffix replay, concurrent post-checkpoint source-log replay, physical WAL/Raft coordinate mapping
-  behind the implemented topology-bound deletion authority, schema migration, process restart
+  failure/cancellation campaigns behind the implemented topology-bound WAL and Raft reclaimers,
+  schema migration, process restart
   integration, real-socket reactor/service threading, and obsolete-generation reclamation.
 - Real-socket Protocol 1.1/1.2 partial delivery, disconnect/reconnect, duplicate replay, schema-change
   termination and coordinator replacement, cancellation races, allocation faults, checkpoint

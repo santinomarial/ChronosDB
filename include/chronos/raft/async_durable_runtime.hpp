@@ -58,6 +58,10 @@ struct AsyncDurableMultiRaftMetrics {
   std::uint64_t rejected_batches{};
   std::uint64_t completed_batches{};
   std::uint64_t failed_batches{};
+  std::uint64_t admitted_reclamations{};
+  std::uint64_t rejected_reclamations{};
+  std::uint64_t completed_reclamations{};
+  std::uint64_t failed_reclamations{};
   std::size_t pending_batches{};
   std::size_t pending_operations{};
   std::size_t high_water_pending_batches{};
@@ -68,7 +72,8 @@ struct AsyncDurableMultiRaftMetrics {
 
 namespace detail {
 class AsyncDurableRaftCompletionState;
-}
+class AsyncRaftLogReclamationCompletionState;
+} // namespace detail
 
 // Owning single-consumer completion for one admitted batch. It may outlive the worker. wait() is
 // the acquire edge and moves the potentially large transition batch out exactly once.
@@ -91,6 +96,31 @@ private:
       std::shared_ptr<detail::AsyncDurableRaftCompletionState> state,
       std::uint64_t submission_sequence) noexcept;
   std::shared_ptr<detail::AsyncDurableRaftCompletionState> state_;
+  std::uint64_t submission_sequence_{};
+  friend class AsyncDurableMultiRaftRuntime;
+};
+
+// Single-consumer completion for one node-wide physical-log checkpoint/reclamation request.
+// wait() must not run on the durable worker. Dropping the owner does not cancel admitted work.
+class AsyncRaftLogReclamationCompletion {
+public:
+  AsyncRaftLogReclamationCompletion() noexcept;
+  ~AsyncRaftLogReclamationCompletion();
+  AsyncRaftLogReclamationCompletion(const AsyncRaftLogReclamationCompletion&) = delete;
+  AsyncRaftLogReclamationCompletion& operator=(const AsyncRaftLogReclamationCompletion&) = delete;
+  AsyncRaftLogReclamationCompletion(AsyncRaftLogReclamationCompletion&&) noexcept;
+  AsyncRaftLogReclamationCompletion& operator=(AsyncRaftLogReclamationCompletion&&) noexcept;
+
+  [[nodiscard]] bool is_valid() const noexcept;
+  [[nodiscard]] std::uint64_t submission_sequence() const noexcept;
+  [[nodiscard]] bool is_ready() const;
+  [[nodiscard]] common::Result<RaftPersistentLogReclamation> wait();
+
+private:
+  explicit AsyncRaftLogReclamationCompletion(
+      std::shared_ptr<detail::AsyncRaftLogReclamationCompletionState> state,
+      std::uint64_t submission_sequence) noexcept;
+  std::shared_ptr<detail::AsyncRaftLogReclamationCompletionState> state_;
   std::uint64_t submission_sequence_{};
   friend class AsyncDurableMultiRaftRuntime;
 };
@@ -124,6 +154,10 @@ public:
   // completion contains exactly one result with observation set and transition empty.
   [[nodiscard]] common::Result<AsyncDurableRaftCompletion>
   try_observe_group(const GroupId& group_id);
+
+  // Enqueues one worker-affine node-wide full-state checkpoint. The durable runtime installs and
+  // synchronizes the recovery anchor before removing older shared-log segments.
+  [[nodiscard]] common::Result<AsyncRaftLogReclamationCompletion> try_checkpoint_and_reclaim();
 
   // Idempotently stops admission, drains all accepted batches in FIFO order, closes the log, and
   // joins the worker. A terminal worker failure rejects all not-yet-executed accepted batches.

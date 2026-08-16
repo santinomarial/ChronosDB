@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <memory>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <unistd.h>
@@ -349,6 +350,107 @@ TEST(SubscriptionServiceTest, RejectsRaftResumeOnOnePointOneAndDeliversItOnOnePo
   EXPECT_EQ(decoded->source_kind, network::SubscriptionSourceKind::kRaft);
   EXPECT_TRUE(std::ranges::equal(decoded->source_id, group_id.bytes()));
   EXPECT_EQ(decoded->source_sequence, 2U);
+}
+
+TEST(SubscriptionServiceTest, RoutesNewRaftQueryThroughAppliedTabletSnapshotAdapter) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::filesystem::path raft_directory = directory.path() / "raft";
+  ASSERT_TRUE(std::filesystem::create_directory(raft_directory));
+  query::test::SnapshotTabletScanFixture snapshot{0U};
+  const std::vector<query::QueryCatalogTableInput> tables{
+      {.name = "metrics", .quoted = false, .schema = snapshot.schema_ptr()}};
+  auto catalog = std::make_shared<const query::QueryCatalogSnapshot>(
+      query::QueryCatalogSnapshot::create(1U, tables).value());
+  constexpr std::string_view kSql = "SUBSCRIBE SELECT count(*) AS total FROM metrics";
+  auto plan = prepare_subscription_plan(kSql, catalog);
+  ASSERT_TRUE(plan.has_value()) << plan.error().status().to_string();
+
+  const raft::GroupId group = uuid(std::byte{31U});
+  const schema::TabletId tablet = query::test::SnapshotTabletScanFixture::tablet_id();
+  auto tablet_state = ingest::TabletState::create(
+      snapshot.schema_ptr(), tablet,
+      {.head_capacity = {.row_capacity = 1U, .variable_value_bytes = {0U}},
+       .maximum_schema_versions = 1U,
+       .maximum_sealed_generations = 1U,
+       .maximum_retry_entries = 4U});
+  ASSERT_TRUE(tablet_state.has_value()) << tablet_state.error().to_string();
+  auto retries = ingest::RetryDirectory::create({.maximum_entries = 4U});
+  ASSERT_TRUE(retries.has_value()) << retries.error().to_string();
+  std::vector<ingest::AsyncRaftTabletApplicationConfig> application_config;
+  application_config.push_back({.group_id = group,
+                                .snapshot_storage = std::nullopt,
+                                .retry_directory = std::move(*retries),
+                                .tablet = std::move(*tablet_state),
+                                .retained_schemas = {snapshot.schema_ptr()},
+                                .decode_limits = {}});
+  auto application = ingest::AsyncRaftTabletApplication::create(std::move(application_config));
+  ASSERT_TRUE(application.has_value()) << application.error().to_string();
+  auto raft_runtime = raft::AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = raft_directory.string()}, {{group, {1U}}}, {}, *application);
+  ASSERT_TRUE(raft_runtime.has_value()) << raft_runtime.error().to_string();
+
+  ResumeTokenMacKey key{};
+  key.fill(std::byte{13U});
+  auto owner = DurableMultiTabletSubscription::create_new(
+      {.storage = {.directory_path = directory.path().string(),
+                   .identity = {snapshot.snapshot().database_id().uuid(),
+                                snapshot.schema_ptr()->table_id(),
+                                plan->fingerprint(),
+                                snapshot.schema_ptr()->schema_id(),
+                                snapshot.schema_ptr()->version(),
+                                {MultiTabletSubscriptionCheckpointSourceIdentity::raft(tablet,
+                                                                                       group)}}},
+       .source = {.database_id = snapshot.snapshot().database_id().uuid(),
+                  .table_id = snapshot.schema_ptr()->table_id(),
+                  .plan_fingerprint = plan->fingerprint(),
+                  .schema_id = snapshot.schema_ptr()->schema_id(),
+                  .schema_version = snapshot.schema_ptr()->version(),
+                  .members = {MultiTabletSubscriptionMember::raft(tablet, group, 0U)},
+                  .token_key = key}});
+  ASSERT_TRUE(owner.has_value()) << owner.error().to_string();
+  auto resources = query::QueryResourceContext::create(std::size_t{16U} * 1024U * 1024U).value();
+  auto requests = network::SpscNetworkTaskQueue::create(8U).value();
+  auto responses = network::SpscNetworkTaskQueue::create(8U).value();
+  auto service = SubscriptionService::create({.owner = &*owner,
+                                              .plan = &*plan,
+                                              .catalog = catalog,
+                                              .resources = &resources,
+                                              .raft_application = application->get(),
+                                              .lineage = &snapshot.lineage(),
+                                              .requests = &requests,
+                                              .responses = &responses});
+  ASSERT_TRUE(service.has_value()) << service.error().to_string();
+  const common::Uuid subscription_id = uuid(std::byte{32U});
+  auto payload = network::encode_subscription_request(
+      {.mode = network::SubscriptionStartMode::kNewQuery,
+       .subscription_id = subscription_id,
+       .body = std::as_bytes(std::span{kSql.data(), kSql.size()})});
+  ASSERT_TRUE(payload.has_value());
+  ASSERT_TRUE(requests.try_push(
+      request_task(3U, 1U, network::MessageType::kSubscribeRequest, std::move(*payload))));
+  ASSERT_TRUE(service->poll_once().is_ok());
+  EXPECT_TRUE(service->owns(3U, 1U));
+
+  ASSERT_TRUE(service->poll_once().is_ok());
+  auto aggregate = responses.try_pop();
+  ASSERT_TRUE(aggregate.has_value());
+  const network::NetworkTask aggregate_response =
+      std::move(aggregate).value_or(network::NetworkTask{});
+  EXPECT_EQ(aggregate_response.frame.header.message_type, network::MessageType::kQueryResult);
+  ASSERT_TRUE(service->poll_once().is_ok());
+  auto end = responses.try_pop();
+  ASSERT_TRUE(end.has_value());
+  const network::NetworkTask end_response = std::move(end).value_or(network::NetworkTask{});
+  EXPECT_EQ(end_response.frame.header.message_type, network::MessageType::kQueryResult);
+  EXPECT_NE(end_response.frame.header.flags & network::kFrameFlagEndStream, 0U);
+  ASSERT_TRUE(service->poll_once().is_ok());
+  auto ready = responses.try_pop();
+  ASSERT_TRUE(ready.has_value());
+  const network::NetworkTask ready_response = std::move(ready).value_or(network::NetworkTask{});
+  EXPECT_EQ(ready_response.frame.header.message_type, network::MessageType::kSubscriptionReady);
+  EXPECT_EQ(service->metrics().accepted_new_subscriptions, 1U);
+  EXPECT_TRUE(raft_runtime->shutdown().is_ok());
 }
 
 } // namespace

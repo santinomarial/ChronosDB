@@ -87,6 +87,7 @@ struct RaftGroupObservation {
   LogIndex last_log_index{};
   LogIndex commit_index{};
   LogIndex applied_index{};
+  LogIndex snapshot_index{};
   std::vector<NodeId> voters;
   std::vector<NodeId> committed_voters;
   std::vector<NodeId> joint_old_voters;

@@ -444,3 +444,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0407](0407-source-tagged-resume-token-v2.md) | Source-tagged Resume Token v2 | accepted |
 | [0408](0408-source-tagged-subscription-checkpoint-v2.md) | Source-tagged Subscription Checkpoint v2 | accepted |
 | [0409](0409-source-tagged-native-subscription-changes.md) | Source-tagged Native Subscription Changes | accepted |
+| [0410](0410-raft-subscription-snapshot-and-prefix-reclamation.md) | Raft subscription snapshot and prefix reclamation | accepted |

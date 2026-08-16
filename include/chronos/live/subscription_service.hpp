@@ -19,6 +19,7 @@ struct SubscriptionServiceConfig {
   const query::QueryResourceContext* resources{};
   const manifest::ManifestStorage* storage{};
   const manifest::DatabaseStoragePublisher* publisher{};
+  const ingest::AsyncRaftTabletApplication* raft_application{};
   const schema::SchemaLineage* lineage{};
   network::SpscNetworkTaskQueue* requests{};
   network::SpscNetworkTaskQueue* responses{};

@@ -1,7 +1,7 @@
 # Live Query Semantics
 
-> **Status: single-source core, durable views, and Protocol 1.2 delivery implemented; Raft-backed
-> snapshot and reclamation integration incomplete.** Source-tagged Resume Token v2 and durable
+> **Status: single-source core, durable views, Protocol 1.2 delivery, and fixed-topology Raft
+> snapshot/reclamation integration implemented.** Source-tagged Resume Token v2 and durable
 > Subscription Checkpoint v2
 > issuance with v1 WAL compatibility,
 > bounded register-before-boundary buffering,
@@ -12,8 +12,8 @@
 > replayable delivery order over exact per-tablet positions. An already-lowered single-tablet
 > physical plan now executes against the exact registered storage boundary and emits Protocol 1.1
 > snapshot batches through READY. Single-source `SUBSCRIBE SELECT` now has exact bounded planning
-> and schema-bound identity. Durable plan lookup and WAL-backed multi-tablet snapshot execution are
-> wired; the Raft-backed physical adapter remains pending. The contract provides at-least-once
+> and schema-bound identity. Durable plan lookup and homogeneous WAL- or Raft-backed multi-tablet
+> snapshot execution are wired. The contract provides at-least-once
 > external delivery, not exactly-once effects.
 
 Eligible SQL and row visibility follow [SQL v1](sql-v1.md), the [data model](data-model.md), and the [consistency contract](consistency-and-durability.md).
@@ -112,7 +112,11 @@ bytes, the Protocol 1.1 acknowledgement/checkpoint lifecycle, Protocol 1.2 sourc
 exact source-tagged logical coordinator restoration, and versioned Checkpoint v1/v2 generation
 bytes are implemented. Topology-bound
 subscription retention and
-verified physical WAL-prefix reclamation are implemented for fixed WAL-backed source sets; Raft
-prefix mapping/reclamation, snapshot execution, and dynamic plan-owner retirement remain deferred.
+verified physical WAL-prefix reclamation are implemented for fixed WAL-backed source sets. For
+fixed Raft-backed source sets, historical execution reads exact applied immutable tablet snapshots,
+and reclamation requires both application-snapshot and durable Raft-snapshot coverage before one
+worker-owned node-wide checkpoint removes older multiplexed-log segments. Mixed-source historical
+snapshots, dynamic plan-owner retirement, and broader crash/concurrency qualification remain
+deferred.
 Every later choice must preserve
 [invariant 17](../architecture/invariants.md).

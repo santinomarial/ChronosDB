@@ -14,9 +14,35 @@
 namespace chronos::live {
 
 struct SubscriptionRetentionMember {
+  SubscriptionRetentionMember(schema::TabletId tablet, wal::WalId wal, std::uint64_t epoch) noexcept
+      : tablet_id(tablet), wal_id(wal), placement_epoch(epoch) {}
+
   schema::TabletId tablet_id;
   wal::WalId wal_id;
   std::uint64_t placement_epoch{};
+  SubscriptionSourceKind source_kind{SubscriptionSourceKind::kWal};
+  common::Uuid raft_group_id;
+
+  [[nodiscard]] static SubscriptionRetentionMember
+  raft(schema::TabletId tablet, common::Uuid group_id, std::uint64_t epoch) noexcept {
+    return SubscriptionRetentionMember{tablet, group_id, epoch};
+  }
+
+  [[nodiscard]] SourcePosition position(std::uint64_t sequence = 0U) const noexcept {
+    return source_kind == SubscriptionSourceKind::kRaft
+               ? SourcePosition::raft(tablet_id, raft_group_id, sequence)
+               : SourcePosition::wal(tablet_id, wal_id, sequence);
+  }
+
+  [[nodiscard]] bool is_valid() const noexcept {
+    return placement_epoch != 0U && position().is_valid();
+  }
+
+private:
+  SubscriptionRetentionMember(schema::TabletId tablet, common::Uuid group_id,
+                              std::uint64_t epoch) noexcept
+      : tablet_id(tablet), placement_epoch(epoch), source_kind(SubscriptionSourceKind::kRaft),
+        raft_group_id(group_id) {}
 };
 
 struct SubscriptionSourceReclamation {

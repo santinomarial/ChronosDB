@@ -242,9 +242,29 @@ public:
           prepared->schema_ptr()->version() != config.plan->schema_ptr()->version())
         return publish_error(request,
                              invalid("subscription SQL does not match this durable coordinator"));
-      auto snapshot = config.owner->start_snapshot(
-          *config.plan, decoded->subscription_id, *config.resources, *config.storage,
-          *config.publisher, *config.lineage, snapshot_limits(request.protocol));
+      const MultiTabletSubscriptionSource& source = config.owner->source();
+      const bool all_raft = std::ranges::all_of(source.members, [](const auto& member) {
+        return member.source_kind == SubscriptionSourceKind::kRaft;
+      });
+      const bool all_wal = std::ranges::all_of(source.members, [](const auto& member) {
+        return member.source_kind == SubscriptionSourceKind::kWal;
+      });
+      if (!all_raft && !all_wal)
+        return publish_error(request,
+                             common::Status{common::StatusCode::kNotSupported,
+                                            "mixed-source historical subscription is unsupported"});
+      if (all_raft && config.raft_application == nullptr)
+        return publish_error(request,
+                             common::Status{common::StatusCode::kUnavailable,
+                                            "Raft historical subscription source is unavailable"});
+      common::Result<MultiTabletSnapshotSubscription> snapshot =
+          all_raft
+              ? config.owner->start_raft_snapshot(
+                    *config.plan, decoded->subscription_id, *config.resources,
+                    *config.raft_application, *config.lineage, snapshot_limits(request.protocol))
+              : config.owner->start_snapshot(*config.plan, decoded->subscription_id,
+                                             *config.resources, *config.storage, *config.publisher,
+                                             *config.lineage, snapshot_limits(request.protocol));
       if (!snapshot.has_value())
         return publish_error(request, snapshot.error());
       try {
@@ -523,13 +543,19 @@ SubscriptionService& SubscriptionService::operator=(SubscriptionService&&) noexc
 
 common::Result<SubscriptionService> SubscriptionService::create(SubscriptionServiceConfig config) {
   if (config.owner == nullptr || config.plan == nullptr || !config.catalog ||
-      config.resources == nullptr || config.storage == nullptr || config.publisher == nullptr ||
-      config.lineage == nullptr || config.requests == nullptr || config.responses == nullptr ||
-      config.requests == config.responses || config.maximum_active_subscriptions == 0U ||
-      config.maximum_live_poll_records == 0U || config.maximum_active_subscriptions > 1'048'576U ||
+      config.resources == nullptr || config.lineage == nullptr || config.requests == nullptr ||
+      config.responses == nullptr || config.requests == config.responses ||
+      config.maximum_active_subscriptions == 0U || config.maximum_live_poll_records == 0U ||
+      config.maximum_active_subscriptions > 1'048'576U ||
       config.maximum_live_poll_records > 1'048'576U)
     return common::make_unexpected(invalid("subscription service configuration is invalid"));
   const MultiTabletSubscriptionSource& source = config.owner->source();
+  const bool has_wal = std::ranges::any_of(source.members, [](const auto& member) {
+    return member.source_kind == SubscriptionSourceKind::kWal;
+  });
+  if (has_wal && (config.storage == nullptr || config.publisher == nullptr))
+    return common::make_unexpected(
+        invalid("subscription service has no historical source adapter"));
   if (source.plan_fingerprint != config.plan->fingerprint() ||
       source.table_id != config.plan->schema_ptr()->table_id() ||
       source.schema_id != config.plan->schema_ptr()->schema_id() ||

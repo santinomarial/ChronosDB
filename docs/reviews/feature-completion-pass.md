@@ -56,9 +56,12 @@ WAL offsets. The WAL-backed implementation now validates the complete topology-b
 each distinct durable writer frontier through a full retained-namespace scan, uses the minimum for
 tablets sharing a WAL, and only then performs idempotent whole-segment cleanup.
 
-Node-wide Raft physical prefix reclamation is now implemented after a complete all-group checkpoint.
-Mapping a particular durable subscription frontier into that node-wide scheduling policy and dynamic
-plan-owner retirement remain production composition work.
+Homogeneous Raft-backed historical subscriptions now register before acquiring exact immutable
+applied tablet snapshots and execute one global vector pipeline. The Raft reclaimer binds the fixed
+tablet/group/epoch topology to the worker-hosted application, requires both its publication and
+durable application-snapshot boundary to cover every authorized index, and then schedules the
+implemented node-wide all-group checkpoint/reclamation on the sole durable worker. Mixed-source
+historical execution and dynamic plan-owner retirement remain production composition work.
 
 ### Phase 12 — performance architecture and io_uring
 

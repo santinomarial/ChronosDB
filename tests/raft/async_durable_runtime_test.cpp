@@ -302,6 +302,49 @@ TEST(AsyncDurableMultiRaftRuntimeTest, RejectsInvalidAndOverCapacityBatchesWitho
   EXPECT_FALSE(invalid_completion.is_valid());
   EXPECT_EQ(invalid_completion.submission_sequence(), 0U);
   EXPECT_EQ(invalid_completion.wait().error().code(), common::StatusCode::kInvalidArgument);
+  AsyncRaftLogReclamationCompletion invalid_reclamation;
+  EXPECT_FALSE(invalid_reclamation.is_valid());
+  EXPECT_EQ(invalid_reclamation.submission_sequence(), 0U);
+  EXPECT_EQ(invalid_reclamation.wait().error().code(), common::StatusCode::kInvalidArgument);
+}
+
+TEST(AsyncDurableMultiRaftRuntimeTest, CheckpointsAndReclaimsSharedLogOnTheOwningWorker) {
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{0x25U});
+  const std::vector<RaftGroupConfiguration> groups{{group, {1U}}};
+  const RaftPersistentLogConfig log_config{.directory_path = directory.path().string(),
+                                           .target_segment_size = 2048U};
+  auto runtime = AsyncDurableMultiRaftRuntime::create_new(1U, log_config, groups);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  auto election = runtime->try_submit({{group, StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value());
+  ASSERT_TRUE(election->wait().has_value());
+  for (std::size_t index = 0U; index < 8U; ++index) {
+    auto proposal = runtime->try_submit(
+        {{group, ProposeOperation{.type = 1U, .payload = std::vector<std::byte>(128U)}}});
+    ASSERT_TRUE(proposal.has_value());
+    auto proposed = proposal->wait();
+    ASSERT_TRUE(proposed.has_value()) << proposed.error().to_string();
+  }
+
+  auto reclamation = runtime->try_checkpoint_and_reclaim();
+  ASSERT_TRUE(reclamation.has_value()) << reclamation.error().to_string();
+  EXPECT_TRUE(reclamation->is_valid());
+  const auto reclaimed = reclamation->wait();
+  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  EXPECT_GT(reclaimed->base_segment_number, 1U);
+  EXPECT_GT(reclaimed->reclaimed_segments, 0U);
+  EXPECT_EQ(runtime->metrics().admitted_reclamations, 1U);
+  EXPECT_EQ(runtime->metrics().completed_reclamations, 1U);
+  EXPECT_EQ(runtime->metrics().admitted_batches, 9U);
+  EXPECT_EQ(runtime->metrics().completed_batches, 9U);
+  EXPECT_FALSE(reclamation->is_ready());
+  EXPECT_EQ(reclamation->wait().error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(runtime->shutdown().is_ok());
+
+  auto reopened = DurableMultiRaftRuntime::open_existing(1U, log_config, {}, groups);
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  EXPECT_EQ(reopened->find_group(group)->commit_index(), 8U);
 }
 
 TEST(AsyncDurableMultiRaftRuntimeTest, FailsClosedAfterTerminalDurableRuntimeError) {

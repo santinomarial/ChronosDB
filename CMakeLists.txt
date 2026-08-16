@@ -546,6 +546,7 @@ add_library(
   src/live/multi_tablet_subscription_checkpoint.cpp
   src/live/multi_tablet_subscription_checkpoint_storage.cpp
   src/live/multi_tablet_snapshot_subscription.cpp
+  src/live/raft_subscription_reclaimer.cpp
   src/live/resume_token.cpp
   src/live/snapshot_subscription.cpp
   src/live/subscription.cpp
@@ -569,6 +570,7 @@ target_include_directories(
 target_link_libraries(
   chronos_live
   PUBLIC chronos::common
+         chronos::ingest
          chronos::manifest
          chronos::network
          chronos::query
@@ -1051,6 +1053,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/live/multi_tablet_subscription_test.cpp
     tests/live/multi_tablet_snapshot_subscription_header_self_contained.cpp
     tests/live/multi_tablet_snapshot_subscription_test.cpp
+    tests/live/raft_subscription_reclaimer_header_self_contained.cpp
+    tests/live/raft_subscription_reclaimer_test.cpp
     tests/live/materialized_view_checkpoint_header_self_contained.cpp
     tests/live/materialized_view_checkpoint_test.cpp
     tests/live/materialized_view_checkpoint_storage_header_self_contained.cpp

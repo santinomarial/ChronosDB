@@ -1,3 +1,5 @@
+#include "chronos/columnar/columnar_batch_codec.hpp"
+#include "chronos/ingest/columnar_append.hpp"
 #include "chronos/live/multi_tablet_snapshot_subscription.hpp"
 #include "chronos/network/messages.hpp"
 #include "chronos/network/subscription_messages.hpp"
@@ -5,13 +7,20 @@
 #include "chronos/query/catalog.hpp"
 #include "chronos/query/parser.hpp"
 #include "chronos/query/physical_lowering.hpp"
+#include "columnar/columnar_test_support.hpp"
+#include "ingest/ingest_test_support.hpp"
 #include "query/snapshot_tablet_scan_test_fixture.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <gtest/gtest.h>
 #include <memory>
+#include <optional>
+#include <string>
 #include <string_view>
+#include <system_error>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -29,10 +38,10 @@ struct BoundPlan {
   std::vector<SnapshotSubscriptionColumn> columns;
 };
 
-[[nodiscard]] BoundPlan lower(const query::test::SnapshotTabletScanFixture& fixture,
+[[nodiscard]] BoundPlan lower(const std::shared_ptr<const schema::TableSchema>& schema,
                               const std::string_view sql) {
   const std::vector<query::QueryCatalogTableInput> tables{
-      {.name = "metrics", .quoted = false, .schema = fixture.schema_ptr()}};
+      {.name = "metrics", .quoted = false, .schema = schema}};
   auto catalog = std::make_shared<const query::QueryCatalogSnapshot>(
       query::QueryCatalogSnapshot::create(1U, tables).value());
   auto parsed = query::parse_sql_v1_select(sql);
@@ -43,6 +52,69 @@ struct BoundPlan {
     columns.push_back({output.name, output.type, output.nullable});
   auto plan = query::lower_bound_sql_select(*bound);
   return {std::move(*plan), std::move(columns)};
+}
+
+[[nodiscard]] BoundPlan lower(const query::test::SnapshotTabletScanFixture& fixture,
+                              const std::string_view sql) {
+  return lower(fixture.schema_ptr(), sql);
+}
+
+class TemporaryDirectory {
+public:
+  TemporaryDirectory() {
+    std::string pattern =
+        (std::filesystem::temp_directory_path() / "chronos-raft-subscription-XXXXXX").string();
+    if (char* const created = ::mkdtemp(pattern.data()); created != nullptr)
+      path_ = created;
+  }
+
+  ~TemporaryDirectory() {
+    std::error_code ignored;
+    std::filesystem::remove_all(path_, ignored);
+  }
+
+  [[nodiscard]] const std::filesystem::path& path() const noexcept {
+    return path_;
+  }
+
+private:
+  std::filesystem::path path_;
+};
+
+[[nodiscard]] raft::GroupId raft_group_id() {
+  return uuid(std::byte{0x71U});
+}
+
+[[nodiscard]] schema::TabletId raft_tablet_id() {
+  return columnar::test::id<schema::TabletId>(81U);
+}
+
+[[nodiscard]] ingest::TabletState raft_tablet() {
+  return ingest::TabletState::create(
+             columnar::test::batch_schema(), raft_tablet_id(),
+             {.head_capacity = {.row_capacity = 8U, .variable_value_bytes = {0U, 8U, 0U}},
+              .maximum_schema_versions = 1U,
+              .maximum_sealed_generations = 2U,
+              .maximum_retry_entries = 8U})
+      .value();
+}
+
+[[nodiscard]] ingest::RetryDirectory retry_directory() {
+  return ingest::RetryDirectory::create({.maximum_entries = 8U}).value();
+}
+
+[[nodiscard]] std::vector<std::byte> raft_command() {
+  auto batch = columnar::OwnedColumnarBatch::create(columnar::test::batch_schema(),
+                                                    columnar::test::batch_columns())
+                   .value();
+  const auto encoded_batch = columnar::encode_columnar_batch_v1(batch).value();
+  const auto encoded = ingest::encode_columnar_append_v1(
+                           {.client_id = ingest::test::request_id<ingest::ClientId>(1U),
+                            .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(2U),
+                            .tablet_id = raft_tablet_id()},
+                           encoded_batch)
+                           .value();
+  return {encoded.bytes().begin(), encoded.bytes().end()};
 }
 
 [[nodiscard]] ResumeTokenMacKey token_key() {
@@ -159,6 +231,87 @@ TEST(MultiTabletSnapshotSubscriptionTest, CancelsWhenAnyTabletBoundaryDisagrees)
   ASSERT_TRUE(status.has_value());
   EXPECT_EQ(status->phase, SubscriptionPhase::kCancelled);
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(MultiTabletSnapshotSubscriptionTest,
+     ReadsExactRaftAppliedSnapshotAndRejectsAStaleRegistrationBoundary) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  std::vector<ingest::AsyncRaftTabletApplicationConfig> application_config;
+  application_config.push_back({.group_id = raft_group_id(),
+                                .snapshot_storage = std::nullopt,
+                                .retry_directory = retry_directory(),
+                                .tablet = raft_tablet(),
+                                .retained_schemas = {columnar::test::batch_schema()},
+                                .decode_limits = {}});
+  auto application = ingest::AsyncRaftTabletApplication::create(std::move(application_config));
+  ASSERT_TRUE(application.has_value()) << application.error().to_string();
+  auto runtime = raft::AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{raft_group_id(), {1U}}}, {},
+      *application);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  auto election = runtime->try_submit({{raft_group_id(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  ASSERT_TRUE(election->wait().has_value());
+  auto proposal = runtime->try_submit(
+      {{raft_group_id(),
+        raft::ProposeOperation{ingest::kRaftColumnarAppendEntryType, raft_command()}}});
+  ASSERT_TRUE(proposal.has_value()) << proposal.error().to_string();
+  auto proposed = proposal->wait();
+  ASSERT_TRUE(proposed.has_value()) << proposed.error().to_string();
+  ASSERT_EQ(proposed->size(), 1U);
+  ASSERT_TRUE(proposed->front().status.is_ok()) << proposed->front().status.to_string();
+
+  const auto schema = columnar::test::batch_schema();
+  auto lineage = schema::SchemaLineage::create(*schema);
+  ASSERT_TRUE(lineage.has_value());
+  BoundPlan bound = lower(schema, "SELECT count(*) AS total FROM metrics");
+  auto resources = query::QueryResourceContext::create(std::size_t{16U} * 1024U * 1024U).value();
+  const SubscriptionRequest subscription_request{uuid(std::byte{0x72U}), fingerprint(),
+                                                 schema->schema_id(), schema->version()};
+  MultiTabletSubscriptionSource current{
+      .database_id = uuid(std::byte{0x73U}),
+      .table_id = schema->table_id(),
+      .plan_fingerprint = fingerprint(),
+      .schema_id = schema->schema_id(),
+      .schema_version = schema->version(),
+      .members = {MultiTabletSubscriptionMember::raft(raft_tablet_id(), raft_group_id(), 1U)},
+      .token_key = token_key()};
+  auto manager = MultiTabletSubscriptionManager::create(current);
+  ASSERT_TRUE(manager.has_value()) << manager.error().to_string();
+  auto subscription = MultiTabletSnapshotSubscription::start_raft(
+      *manager, subscription_request, resources, **application, *lineage, schema->schema_id(),
+      bound.plan, std::move(bound.columns));
+  ASSERT_TRUE(subscription.has_value()) << subscription.error().to_string();
+  auto result = subscription->next();
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  const auto decoded = network::decode_query_result_batch(result->payload);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  ASSERT_EQ(decoded->row_count(), 1U);
+  ASSERT_NE(decoded->cell(0U, 0U), nullptr);
+  EXPECT_EQ(decode_u64(decoded->cell(0U, 0U)->value), 2U);
+  ASSERT_TRUE(subscription->next().has_value());
+  auto ready = subscription->next();
+  ASSERT_TRUE(ready.has_value()) << ready.error().to_string();
+  EXPECT_EQ(ready->message_type, network::MessageType::kSubscriptionReady);
+  EXPECT_TRUE(subscription->ready());
+
+  current.members.front() =
+      MultiTabletSubscriptionMember::raft(raft_tablet_id(), raft_group_id(), 0U);
+  auto stale_manager = MultiTabletSubscriptionManager::create(std::move(current));
+  ASSERT_TRUE(stale_manager.has_value()) << stale_manager.error().to_string();
+  BoundPlan stale_bound = lower(schema, "SELECT count(*) AS total FROM metrics");
+  const SubscriptionRequest stale_request{uuid(std::byte{0x74U}), fingerprint(),
+                                          schema->schema_id(), schema->version()};
+  auto stale = MultiTabletSnapshotSubscription::start_raft(
+      *stale_manager, stale_request, resources, **application, *lineage, schema->schema_id(),
+      stale_bound.plan, std::move(stale_bound.columns));
+  ASSERT_FALSE(stale.has_value());
+  EXPECT_EQ(stale.error().code(), common::StatusCode::kUnavailable);
+  const auto stale_status = stale_manager->status(stale_request.subscription_id);
+  ASSERT_TRUE(stale_status.has_value());
+  EXPECT_EQ(stale_status->phase, SubscriptionPhase::kCancelled);
+  EXPECT_TRUE(runtime->shutdown().is_ok());
 }
 
 TEST(MultiTabletSnapshotSubscriptionTest, AbandonsWithoutTokenEncodingWhenDriverIsDestroyed) {
