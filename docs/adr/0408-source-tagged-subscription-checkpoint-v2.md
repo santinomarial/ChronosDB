@@ -34,9 +34,10 @@ Retry of an already installed generation remains exact-byte idempotent: the stor
 the requested logical state under each supported generation format and accepts only an exact match
 to the installed bytes. It never rewrites a v1 generation as v2.
 
-This decision does not extend the WAL-only Native Protocol 1.1 change envelope, physical snapshot
-adapter, or WAL retention coordinator. Those boundaries continue to reject Raft sources until
-their separately versioned integrations are implemented.
+This decision does not reinterpret the WAL-only Native Protocol 1.1 change envelope, physical
+snapshot adapter, or WAL retention coordinator. ADR 0409 adds a separately negotiated Protocol 1.2
+change format; snapshot and reclamation boundaries continue to reject Raft sources until their
+separately versioned integrations are implemented.
 
 ## Consequences and alternatives
 
@@ -56,4 +57,5 @@ Invariants 4, 8, 10, 12, 14, 15, and 17 apply. Tests retain the exact v1 golden,
 mixed WAL/Raft v2 golden, reject v1 Raft input and cross-version decoding, preserve source kinds
 through coordinator checkpoint/restore, reject equal-byte cross-namespace aliases, recover a v1
 generation, install its v2 successor, and checkpoint/reopen a durable mixed-source coordinator.
-Protocol source tags and Raft-prefix reclamation remain follow-up work.
+Protocol source tags are implemented by ADR 0409. Raft snapshot integration and prefix reclamation
+remain follow-up work.

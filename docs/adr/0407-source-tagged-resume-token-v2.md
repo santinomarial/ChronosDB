@@ -51,5 +51,6 @@ otherwise safe outstanding client checkpoints during an upgrade.
 Invariants 4, 8, 12, 14, and 17 apply. Focused tests preserve v1 WAL round trips, prove v1 rejects a
 Raft source, round-trip one mixed WAL/Raft v2 vector, inspect the exact tags and identity bytes,
 authenticate before semantic decoding, reject cross-version decoding, and prove both versions pass
-through the compatibility decoder. Checkpoint v2, Protocol 1.2 Raft change positions, manager source
-generalization, and Raft-prefix reclamation remain follow-up work.
+through the compatibility decoder. Checkpoint v2, Protocol 1.2 Raft change positions, and manager
+source generalization are now implemented by follow-up ADRs 0408 and 0409. Raft-prefix reclamation
+remains follow-up work.

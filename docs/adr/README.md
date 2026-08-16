@@ -443,3 +443,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0406](0406-prevalidated-subscription-wal-prefix-reclamation.md) | Prevalidated subscription WAL prefix reclamation | accepted |
 | [0407](0407-source-tagged-resume-token-v2.md) | Source-tagged Resume Token v2 | accepted |
 | [0408](0408-source-tagged-subscription-checkpoint-v2.md) | Source-tagged Subscription Checkpoint v2 | accepted |
+| [0409](0409-source-tagged-native-subscription-changes.md) | Source-tagged Native Subscription Changes | accepted |

@@ -65,7 +65,7 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   suffix replay, concurrent post-checkpoint source-log replay, physical WAL/Raft coordinate mapping
   behind the implemented topology-bound deletion authority, schema migration, process restart
   integration, real-socket reactor/service threading, and obsolete-generation reclamation.
-- Real-socket Protocol 1.1 partial delivery, disconnect/reconnect, duplicate replay, schema-change
+- Real-socket Protocol 1.1/1.2 partial delivery, disconnect/reconnect, duplicate replay, schema-change
   termination and coordinator replacement, cancellation races, allocation faults, checkpoint
   minor-0/minor-1 mixed-version peers, and sustained network backpressure integration around the
   implemented subscription messages and lifecycle.

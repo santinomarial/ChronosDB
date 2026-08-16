@@ -28,6 +28,15 @@ template <typename Identifier> [[nodiscard]] Identifier identifier(const std::by
   return std::as_bytes(std::span{value.data(), value.size()});
 }
 
+[[nodiscard]] std::uint64_t fnv1a64(const common::ByteView value) noexcept {
+  std::uint64_t hash = 1'469'598'103'934'665'603ULL;
+  for (const std::byte byte : value) {
+    hash ^= std::to_integer<std::uint8_t>(byte);
+    hash *= 1'099'511'628'211ULL;
+  }
+  return hash;
+}
+
 TEST(SubscriptionMessageTest, RoundTripsRequestReadyAndCheckpointLifecycle) {
   const common::Uuid subscription = uuid(std::byte{1});
   const auto request = encode_subscription_request({.mode = SubscriptionStartMode::kNewQuery,
@@ -80,28 +89,34 @@ TEST(SubscriptionMessageTest, RoundTripsRequestReadyAndCheckpointLifecycle) {
 }
 
 TEST(SubscriptionMessageTest, RoundTripsCanonicalUpsertAndDeleteChanges) {
-  SubscriptionLogId log{};
+  SubscriptionSourceId log{};
   log.fill(std::byte{4});
   const std::array<std::byte, 2> key{std::byte{5}, std::byte{6}};
   const std::array<std::byte, 3> body{std::byte{7}, std::byte{8}, std::byte{9}};
-  const SubscriptionChangeView upsert{SubscriptionChangeOperation::kUpsert,
-                                      12U,
-                                      identifier<schema::TabletId>(std::byte{2}),
-                                      log,
-                                      33U,
-                                      identifier<schema::SchemaId>(std::byte{3}),
-                                      schema::SchemaVersion::initial(),
-                                      key,
-                                      body};
+  const SubscriptionChangeView upsert{.operation = SubscriptionChangeOperation::kUpsert,
+                                      .delivery_sequence = 12U,
+                                      .tablet_id = identifier<schema::TabletId>(std::byte{2}),
+                                      .source_kind = SubscriptionSourceKind::kWal,
+                                      .source_id = log,
+                                      .source_sequence = 33U,
+                                      .schema_id = identifier<schema::SchemaId>(std::byte{3}),
+                                      .schema_version = schema::SchemaVersion::initial(),
+                                      .result_key = key,
+                                      .payload = body};
   const auto encoded = encode_subscription_change(upsert);
   ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  EXPECT_EQ(encoded->size(), 89U);
+  EXPECT_EQ(fnv1a64(*encoded), 11'767'502'280'752'276'177ULL);
+  EXPECT_EQ((*encoded)[0], std::byte{1U});
+  EXPECT_EQ((*encoded)[3], std::byte{0U});
   const auto decoded = decode_subscription_change(*encoded);
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   EXPECT_EQ(decoded->operation, SubscriptionChangeOperation::kUpsert);
   EXPECT_EQ(decoded->delivery_sequence, 12U);
   EXPECT_EQ(decoded->tablet_id, upsert.tablet_id);
-  EXPECT_EQ(decoded->log_id, log);
-  EXPECT_EQ(decoded->record_sequence, 33U);
+  EXPECT_EQ(decoded->source_kind, SubscriptionSourceKind::kWal);
+  EXPECT_EQ(decoded->source_id, log);
+  EXPECT_EQ(decoded->source_sequence, 33U);
   EXPECT_EQ(decoded->schema_id, upsert.schema_id);
   EXPECT_TRUE(std::ranges::equal(decoded->result_key, key));
   EXPECT_TRUE(std::ranges::equal(decoded->payload, body));
@@ -112,6 +127,86 @@ TEST(SubscriptionMessageTest, RoundTripsCanonicalUpsertAndDeleteChanges) {
   EXPECT_TRUE(decode_subscription_change(*encode_subscription_change(deletion)).has_value());
   deletion.payload = body;
   EXPECT_FALSE(encode_subscription_change(deletion).has_value());
+}
+
+TEST(SubscriptionMessageTest, ProtocolOnePointTwoTagsWalAndRaftWithoutChangingEnvelopeSize) {
+  const SubscriptionProtocolContext context{.protocol_minor = 2U};
+  SubscriptionSourceId source{};
+  source.fill(std::byte{4});
+  const std::array<std::byte, 2> key{std::byte{5}, std::byte{6}};
+  const std::array<std::byte, 1> body{std::byte{7}};
+  SubscriptionChangeView change{.operation = SubscriptionChangeOperation::kUpsert,
+                                .delivery_sequence = 12U,
+                                .tablet_id = identifier<schema::TabletId>(std::byte{2}),
+                                .source_kind = SubscriptionSourceKind::kRaft,
+                                .source_id = source,
+                                .source_sequence = 33U,
+                                .schema_id = identifier<schema::SchemaId>(std::byte{3}),
+                                .schema_version = schema::SchemaVersion::initial(),
+                                .result_key = key,
+                                .payload = body};
+
+  const auto encoded = encode_subscription_change(change, context);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  ASSERT_EQ(encoded->size(), kSubscriptionChangeEnvelopeSize + key.size() + body.size());
+  EXPECT_EQ(fnv1a64(*encoded), 12'794'394'718'722'335'323ULL);
+  EXPECT_EQ((*encoded)[0], std::byte{2U});
+  EXPECT_EQ((*encoded)[1], std::byte{0U});
+  EXPECT_EQ((*encoded)[3], std::byte{2U});
+  EXPECT_TRUE(std::ranges::equal(source.begin(), source.end(), encoded->begin() + 28U,
+                                 encoded->begin() + 44U));
+
+  const auto decoded = decode_subscription_change(*encoded, context);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(decoded->source_kind, SubscriptionSourceKind::kRaft);
+  EXPECT_EQ(decoded->source_id, source);
+  EXPECT_EQ(decoded->source_sequence, 33U);
+
+  EXPECT_FALSE(decode_subscription_change(*encoded).has_value());
+  change.source_kind = SubscriptionSourceKind::kWal;
+  const auto wal = encode_subscription_change(change, context);
+  ASSERT_TRUE(wal.has_value());
+  EXPECT_EQ((*wal)[3], std::byte{1U});
+  EXPECT_FALSE(
+      decode_subscription_change(*encode_subscription_change(change), context).has_value());
+}
+
+TEST(SubscriptionMessageTest, FrozenProtocolsRejectRaftAndSourceTaggedPayloadsFailClosed) {
+  SubscriptionSourceId source{};
+  source.fill(std::byte{4});
+  const std::array<std::byte, 1> key{std::byte{5}};
+  const std::array<std::byte, 1> body{std::byte{6}};
+  const SubscriptionChangeView change{.operation = SubscriptionChangeOperation::kUpsert,
+                                      .delivery_sequence = 1U,
+                                      .tablet_id = identifier<schema::TabletId>(std::byte{2}),
+                                      .source_kind = SubscriptionSourceKind::kRaft,
+                                      .source_id = source,
+                                      .source_sequence = 3U,
+                                      .schema_id = identifier<schema::SchemaId>(std::byte{3}),
+                                      .schema_version = schema::SchemaVersion::initial(),
+                                      .result_key = key,
+                                      .payload = body};
+  EXPECT_FALSE(encode_subscription_change(change).has_value());
+  EXPECT_FALSE(encode_subscription_change(change, {.protocol_major = kProtocolV2Major,
+                                                   .protocol_minor = 0U,
+                                                   .feature_bits = kProtocolV1SubscriptionFeature})
+                   .has_value());
+  SubscriptionChangeView protocol_two_wal = change;
+  protocol_two_wal.source_kind = SubscriptionSourceKind::kWal;
+  const SubscriptionProtocolContext protocol_two{.protocol_major = kProtocolV2Major,
+                                                 .protocol_minor = 0U,
+                                                 .feature_bits = kProtocolV1SubscriptionFeature};
+  const auto frozen = encode_subscription_change(protocol_two_wal, protocol_two);
+  ASSERT_TRUE(frozen.has_value());
+  EXPECT_EQ((*frozen)[0], std::byte{1U});
+  EXPECT_EQ((*frozen)[3], std::byte{0U});
+  EXPECT_TRUE(decode_subscription_change(*frozen, protocol_two).has_value());
+
+  auto encoded = encode_subscription_change(change, {.protocol_minor = 2U}).value();
+  encoded[3] = std::byte{3U};
+  EXPECT_FALSE(decode_subscription_change(encoded, {.protocol_minor = 2U}).has_value());
+  EXPECT_FALSE(
+      encode_subscription_change(change, {.protocol_minor = 2U, .feature_bits = 0U}).has_value());
 }
 
 TEST(SubscriptionMessageTest, RejectsHostileLengthsReservedFieldsAndInvalidUtf8) {

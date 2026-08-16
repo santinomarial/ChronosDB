@@ -1,16 +1,20 @@
 # Live Query Semantics
 
-> **Status: single-source core, durable views, and Protocol 1.1 delivery implemented; service
-> integration incomplete.** Source-tagged Resume Token v2 and durable Subscription Checkpoint v2
+> **Status: single-source core, durable views, and Protocol 1.2 delivery implemented; Raft-backed
+> snapshot and reclamation integration incomplete.** Source-tagged Resume Token v2 and durable
+> Subscription Checkpoint v2
 > issuance with v1 WAL compatibility,
 > bounded register-before-boundary buffering,
 > poll/acknowledge/resume, overflow, incremental windows, exact durable view recovery, and negotiated
-> native subscription delivery are implemented. A plan-bound multi-tablet coordinator records one
+> native subscription delivery are implemented. Protocol 1.2 changes preserve explicit WAL/Raft
+> source namespaces while Protocol 1.1 and 2.0 remain WAL-only. A plan-bound multi-tablet
+> coordinator records one
 > replayable delivery order over exact per-tablet positions. An already-lowered single-tablet
 > physical plan now executes against the exact registered storage boundary and emits Protocol 1.1
 > snapshot batches through READY. Single-source `SUBSCRIBE SELECT` now has exact bounded planning
-> and schema-bound identity. Durable plan lookup and multi-tablet snapshot execution are not yet
-> wired. The contract provides at-least-once external delivery, not exactly-once effects.
+> and schema-bound identity. Durable plan lookup and WAL-backed multi-tablet snapshot execution are
+> wired; the Raft-backed physical adapter remains pending. The contract provides at-least-once
+> external delivery, not exactly-once effects.
 
 Eligible SQL and row visibility follow [SQL v1](sql-v1.md), the [data model](data-model.md), and the [consistency contract](consistency-and-durability.md).
 
@@ -103,12 +107,12 @@ A resume token is opaque, versioned, integrity-protected, and scoped to database
 Topology transitions, state-retention defaults, window trigger cadence, spill, and the complete
 eligible incremental SQL subset remain deferred. Durable fingerprint-to-plan lookup, multi-tablet
 snapshot execution, durable coordinator checkpoint installation, single-source SQL planning,
-single-tablet plan-bound snapshot execution, multi-tablet delivery ordering, Resume Token v1/v2 bytes,
-the Protocol 1.1 acknowledgement/checkpoint lifecycle, exact source-tagged logical coordinator
-restoration, and versioned Checkpoint v1/v2 generation bytes are implemented. Topology-bound
+single-tablet plan-bound snapshot execution, multi-tablet delivery ordering, Resume Token v1/v2
+bytes, the Protocol 1.1 acknowledgement/checkpoint lifecycle, Protocol 1.2 source-tagged changes,
+exact source-tagged logical coordinator restoration, and versioned Checkpoint v1/v2 generation
+bytes are implemented. Topology-bound
 subscription retention and
 verified physical WAL-prefix reclamation are implemented for fixed WAL-backed source sets; Raft
-protocol integration, prefix mapping/reclamation, snapshot execution, and dynamic plan-owner
-retirement remain deferred.
+prefix mapping/reclamation, snapshot execution, and dynamic plan-owner retirement remain deferred.
 Every later choice must preserve
 [invariant 17](../architecture/invariants.md).

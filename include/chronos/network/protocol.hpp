@@ -17,9 +17,10 @@ inline constexpr std::uint16_t kProtocolMajor = 1U;
 inline constexpr std::uint16_t kProtocolV2Major = 2U;
 inline constexpr std::uint16_t kProtocolLatestMajor = kProtocolV2Major;
 // Minor 0 is the frozen baseline emitted by callers that do not explicitly negotiate an
-// extension. Minor 1 adds the feature-gated subscription message family.
+// extension. Minor 1 adds the feature-gated subscription message family; minor 2 adds explicit
+// WAL/Raft source tags to subscription changes without changing the frame layout.
 inline constexpr std::uint16_t kProtocolMinor = 0U;
-inline constexpr std::uint16_t kProtocolLatestMinor = 1U;
+inline constexpr std::uint16_t kProtocolLatestMinor = 2U;
 inline constexpr std::uint16_t kProtocolV2LatestMinor = 0U;
 inline constexpr std::uint64_t kProtocolV1SubscriptionFeature = std::uint64_t{1U} << 0U;
 inline constexpr std::uint64_t kProtocolV1SupportedFeatureBits = kProtocolV1SubscriptionFeature;

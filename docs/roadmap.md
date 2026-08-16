@@ -618,8 +618,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   watermark/revision states at one source sequence. A durable application owner now creates or
   reopens exact view configuration, applies only the consecutive committed suffix, checkpoints
   watermark-only progress, and exposes a source-retention frontier only after durable installation.
-  Negotiated Native Protocol 1.1 now carries snapshot batches, ready tokens, committed changes,
-  acknowledgements, checkpoints, resumable termination, and manager-backed delivery. A plan-bound
+  Negotiated Native Protocol 1.1 now carries snapshot batches, ready tokens, WAL-only committed
+  changes, acknowledgements, checkpoints, resumable termination, and manager-backed delivery.
+  Protocol 1.2 preserves explicit WAL/Raft source tags in committed changes while retaining the
+  same bounded envelope size and rejecting cross-version payloads. A plan-bound
   multi-tablet coordinator now captures canonical source vectors, enforces each log independently,
   records cross-tablet delivery admission, and resumes the exact retained component-wise suffix.
   A single-tablet service owner now executes an already-lowered physical plan against the exact
@@ -640,7 +642,7 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   returns an executable fingerprint only after exact catalog-bound reprepare. Recovered plans now
   start exact global snapshots through the durable coordinator without exposing mutable manager
   state, and every pre-READY failure uses allocation-independent abandonment. A committed schema
-  incompatibility now terminates the old plan distinctly, emits the precise Protocol 1.1 reason,
+  incompatibility now terminates the old plan distinctly, emits the precise subscription reason,
   invalidates resume, and survives durable checkpoint/reopen. A bounded reactor-facing owner now
   drives new/resumed snapshots, READY, live delivery, acknowledgement, cancellation, exact
   response-ring retry, and resumable shutdown. A topology-bound retention authority now intersects
@@ -651,8 +653,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   fan-out, slow-consumer overflow, resume replay, late aggregate correction, and logical aggregate
   recovery scaling without publishing unreviewed numbers. Source-neutral in-memory positions and
   Resume Token v2, coordinator membership, and Checkpoint v2 now distinguish WAL IDs from Raft
-  group UUIDs without aliasing. Raft Protocol delivery, snapshot integration, prefix mapping and
-  reclamation, and the remaining exit evidence remain deferred. The phase exit gate is not claimed.
+  group UUIDs without aliasing. Protocol 1.2 now delivers those tagged positions without changing
+  Protocol 1.1 or 2.0 bytes. Raft snapshot integration, prefix mapping and reclamation, and the
+  remaining exit evidence remain deferred. The phase exit gate is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.

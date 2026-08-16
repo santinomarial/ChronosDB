@@ -321,7 +321,11 @@ common::Status NativeClientSession::accept_server_frame(const Frame& frame) {
     return common::Status::ok();
   case MessageType::kSubscriptionChange: {
     const auto change = decode_subscription_change(
-        frame.payload, {.protocol = {.maximum_payload_size = negotiated_maximum_payload_size_}});
+        frame.payload,
+        {.protocol_major = negotiated_major_,
+         .protocol_minor = negotiated_minor_,
+         .feature_bits = negotiated_feature_bits_},
+        {.protocol = {.maximum_payload_size = negotiated_maximum_payload_size_}});
     if (found->type != MessageType::kSubscribeRequest || !found->subscription_ready ||
         found->cancellation_requested || !change.has_value() ||
         (found->subscription_last_delivery != 0U &&

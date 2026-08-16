@@ -244,14 +244,20 @@ TEST(ServerConnectionStateTest, NegotiatesAndEnforcesSubscriptionLifecycle) {
                       frame(MessageType::kSubscriptionReady, 1U, *encode_subscription_ready(token)))
                   .is_ok());
 
-  SubscriptionLogId log{};
+  SubscriptionSourceId log{};
   log.fill(std::byte{4});
   const std::array<std::byte, 1> key{std::byte{5}};
   const std::array<std::byte, 1> body{std::byte{6}};
-  const auto change = encode_subscription_change({SubscriptionChangeOperation::kUpsert, 7U,
-                                                  identifier<schema::TabletId>(std::byte{2}), log,
-                                                  3U, identifier<schema::SchemaId>(std::byte{3}),
-                                                  schema::SchemaVersion::initial(), key, body});
+  const auto change =
+      encode_subscription_change({.operation = SubscriptionChangeOperation::kUpsert,
+                                  .delivery_sequence = 7U,
+                                  .tablet_id = identifier<schema::TabletId>(std::byte{2}),
+                                  .source_id = log,
+                                  .source_sequence = 3U,
+                                  .schema_id = identifier<schema::SchemaId>(std::byte{3}),
+                                  .schema_version = schema::SchemaVersion::initial(),
+                                  .result_key = key,
+                                  .payload = body});
   ASSERT_TRUE(change.has_value());
   EXPECT_TRUE(state.accept_response(frame(MessageType::kSubscriptionChange, 1U, *change)).is_ok());
   const auto acknowledgement = state.accept(frame(MessageType::kSubscriptionAcknowledge, 1U,
@@ -279,6 +285,60 @@ TEST(ServerConnectionStateTest, NegotiatesAndEnforcesSubscriptionLifecycle) {
                                                       .resume_token = token})))
                   .is_ok());
   EXPECT_EQ(state.in_flight_requests(), 0U);
+}
+
+TEST(ServerConnectionStateTest, ProtocolOnePointTwoRequiresSourceTaggedChanges) {
+  ServerConnectionState state = ServerConnectionState::create().value();
+  const auto handshake = state.accept(frame(
+      MessageType::kClientHello, 0U,
+      *encode_client_hello({.maximum_minor = 2U, .feature_bits = kProtocolV1SubscriptionFeature})));
+  ASSERT_TRUE(handshake.has_value()) << handshake.error().to_string();
+  EXPECT_EQ(handshake->negotiated_minor, 2U);
+  ASSERT_TRUE(state
+                  .accept(frame(MessageType::kSubscribeRequest, 1U,
+                                *encode_subscription_request(
+                                    {.mode = SubscriptionStartMode::kNewQuery,
+                                     .subscription_id = uuid(std::byte{1}),
+                                     .body = std::as_bytes(std::span{"SELECT 1", 8U})}),
+                                2U))
+                  .has_value());
+  ASSERT_TRUE(state
+                  .accept_response({.header = {.protocol_minor = 2U,
+                                               .message_type = MessageType::kQueryResult,
+                                               .flags = kFrameFlagEndStream,
+                                               .request_id = 1U},
+                                    .payload = {}})
+                  .is_ok());
+  const std::array<std::byte, 1> token{std::byte{9}};
+  ASSERT_TRUE(state
+                  .accept_response(frame(MessageType::kSubscriptionReady, 1U,
+                                         *encode_subscription_ready(token), 2U))
+                  .is_ok());
+
+  SubscriptionSourceId source{};
+  source.fill(std::byte{4});
+  const std::array<std::byte, 1> key{std::byte{5}};
+  const std::array<std::byte, 1> body{std::byte{6}};
+  SubscriptionChangeView change{.operation = SubscriptionChangeOperation::kUpsert,
+                                .delivery_sequence = 1U,
+                                .tablet_id = identifier<schema::TabletId>(std::byte{2}),
+                                .source_kind = SubscriptionSourceKind::kRaft,
+                                .source_id = source,
+                                .source_sequence = 3U,
+                                .schema_id = identifier<schema::SchemaId>(std::byte{3}),
+                                .schema_version = schema::SchemaVersion::initial(),
+                                .result_key = key,
+                                .payload = body};
+  change.source_kind = SubscriptionSourceKind::kWal;
+  EXPECT_FALSE(state
+                   .accept_response(frame(MessageType::kSubscriptionChange, 1U,
+                                          *encode_subscription_change(change), 2U))
+                   .is_ok());
+  change.source_kind = SubscriptionSourceKind::kRaft;
+  const auto tagged = encode_subscription_change(change, {.protocol_minor = 2U});
+  ASSERT_TRUE(tagged.has_value());
+  EXPECT_TRUE(
+      state.accept_response(frame(MessageType::kSubscriptionChange, 1U, *tagged, 2U)).is_ok());
 }
 
 TEST(ServerConnectionStateTest, RejectsSubscriptionWithoutNegotiatedMinorAndFeature) {

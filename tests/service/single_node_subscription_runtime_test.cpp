@@ -53,7 +53,13 @@ private:
                                                 std::vector<std::byte> payload = {}) {
   return {.connection_id = 1U,
           .principal_id = 7U,
-          .frame = {.header = {.message_type = type, .request_id = 11U},
+          .protocol = {.protocol_major = network::kProtocolMajor,
+                       .protocol_minor = 1U,
+                       .feature_bits = network::kProtocolV1SubscriptionFeature},
+          .frame = {.header = {.protocol_major = network::kProtocolMajor,
+                               .protocol_minor = 1U,
+                               .message_type = type,
+                               .request_id = 11U},
                     .payload = std::move(payload)}};
 }
 
@@ -159,7 +165,7 @@ TEST(SingleNodeSubscriptionRuntimeTest, ComposesSnapshotLiveAckAndShutdownAround
   ASSERT_EQ(change_response.frame.header.message_type, network::MessageType::kSubscriptionChange);
   auto change = network::decode_subscription_change(change_response.frame.payload);
   ASSERT_TRUE(change.has_value()) << change.error().to_string();
-  EXPECT_EQ(change->record_sequence, 2U);
+  EXPECT_EQ(change->source_sequence, 2U);
   EXPECT_EQ(change->delivery_sequence, 1U);
 
   auto acknowledgement = network::encode_subscription_acknowledgement({1U});

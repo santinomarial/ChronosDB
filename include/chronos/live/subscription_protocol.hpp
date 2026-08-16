@@ -12,9 +12,10 @@
 
 namespace chronos::live {
 
-// These helpers form the ownership boundary between shard-affine subscription state and Protocol
-// 1.1. They return complete canonical payloads; framing and socket backpressure remain owned by the
-// network reactor. Delivery stays at least once until an acknowledgement is accepted.
+// These helpers form the ownership boundary between shard-affine subscription state and the
+// negotiated native subscription protocol. They return complete canonical payloads; framing and
+// socket backpressure remain owned by the network reactor. Delivery stays at least once until an
+// acknowledgement is accepted.
 [[nodiscard]] common::Result<std::vector<std::byte>>
 encode_subscription_registration(const SubscriptionRegistration& registration,
                                  const network::SubscriptionMessageLimits& limits = {});
@@ -24,6 +25,10 @@ encode_subscription_registration(const MultiTabletSubscriptionRegistration& regi
 
 [[nodiscard]] common::Result<std::vector<std::byte>>
 encode_subscription_delivery(const DeliveryRecord& delivery,
+                             const network::SubscriptionMessageLimits& limits = {});
+[[nodiscard]] common::Result<std::vector<std::byte>>
+encode_subscription_delivery(const DeliveryRecord& delivery,
+                             const network::SubscriptionProtocolContext& context,
                              const network::SubscriptionMessageLimits& limits = {});
 
 [[nodiscard]] common::Result<std::vector<std::byte>>

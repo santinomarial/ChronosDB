@@ -36,12 +36,15 @@ their full roadmap exit gates or that ChronosDB is a production three-node datab
   durable exact-SQL registry that reprepares and verifies executable fingerprints after restart;
 - canonical multi-tablet delivery order, exact source-tagged logical checkpoint/restore,
   Checkpoint v2 generation issuance, and v1 WAL-generation recovery compatibility; and
+- negotiated Protocol 1.2 source-tagged WAL/Raft changes with frozen 1.1 and 2.0 WAL-only
+  compatibility, exact negotiated-context service propagation, and fail-closed cross-version
+  decoding; and
 - lock-owning, exact-next-generation filesystem installation, fail-closed latest selection, and a
   durable coordinator owner that publishes retention frontiers only after synchronized install;
   plus exact multi-tablet historical execution through one global physical pipeline, started
   directly from a durably recovered executable without mutable-manager escape. Snapshot teardown
   abandons state without token allocation, while client cancellation still returns a safe token;
-  and committed schema incompatibility has a distinct terminal phase, precise Protocol 1.1 reason,
+  and committed schema incompatibility has a distinct terminal phase, precise subscription reason,
   invalidated resume state, and durable checkpoint/reopen representation; and a bounded reactor-
   facing service owns SQL validation, snapshot/READY/live/ack/cancel/resume transitions, exact
   response-ring backpressure retry, disconnect cleanup, and resumable shutdown drain.
@@ -358,8 +361,9 @@ Important APIs include `SubscriptionManager`, `WindowedMaterializedView`,
 `MetadataStateMachine`, `TabletMovement`, `BoundedExchange`, `DistributedAggregateCoordinator`,
 `ObjectStore`, `TieredPartManager`, `Reactor`, and `apply_current_thread_placement`.
 
-Accepted formats added during and after the pass include authenticated Resume Token v1/v2 and
-source-tagged Multi-tablet Subscription Checkpoint v2,
+Accepted formats added during and after the pass include authenticated Resume Token v1/v2,
+source-tagged Multi-tablet Subscription Checkpoint v2, and Native Protocol 1.2 source-tagged
+subscription changes,
 Multiplexed Raft Persistent-State Record v1, Raft transport, distributed exchange, temporal
 CSEG/Manifest v2, cold-location authority, tablet and metadata application snapshots, and the
 node-wide Raft recovery anchor. Native Protocol 2.0 adds feature-gated QUORUM_SYNC without

@@ -88,7 +88,7 @@ TEST(ProtocolFrameTest, EmptyPayloadHasAnExactBoundedFrame) {
   EXPECT_EQ(decoded->header.payload_crc32c, common::crc32c({}));
 }
 
-TEST(ProtocolFrameTest, GatesSubscriptionTypesOnMinorOneWithoutChangingMinorZero) {
+TEST(ProtocolFrameTest, GatesSubscriptionTypesOnNegotiatedMinorsWithoutChangingMinorZero) {
   EXPECT_FALSE(encode_frame({.message_type = MessageType::kSubscribeRequest}, {}).has_value());
   const auto encoded = encode_frame(
       {.protocol_minor = 1U, .message_type = MessageType::kSubscribeRequest, .request_id = 1U}, {});
@@ -97,6 +97,11 @@ TEST(ProtocolFrameTest, GatesSubscriptionTypesOnMinorOneWithoutChangingMinorZero
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   EXPECT_EQ(decoded->header.protocol_minor, 1U);
   EXPECT_EQ(decoded->header.message_type, MessageType::kSubscribeRequest);
+  EXPECT_TRUE(encode_frame({.protocol_minor = 2U,
+                            .message_type = MessageType::kSubscriptionChange,
+                            .request_id = 2U},
+                           {})
+                  .has_value());
   EXPECT_FALSE(
       encode_frame(
           {.protocol_minor = kProtocolLatestMinor + 1U, .message_type = MessageType::kPing}, {})

@@ -167,8 +167,8 @@ existence of a design document alone is not implementation evidence.
 
 ## Network protocols
 
-- [Native Protocol v1](protocol/native-v1.md): fixed checksummed 1.0 framing plus negotiated 1.1
-  subscription delivery, finite limits, compatibility, and rejection rules.
+- [Native Protocol v1](protocol/native-v1.md): fixed checksummed 1.0 framing, negotiated 1.1
+  subscription delivery, and 1.2 source-tagged WAL/Raft changes with finite compatibility limits.
 - [Native Protocol v2](protocol/native-v2.md): explicitly negotiated 2.0 framing, feature-gated
   `QUORUM_SYNC` ingest, exact Raft receipt acknowledgement, and structured leader redirect.
 - [Remote Tablet Reconfiguration Request v1](protocol/remote-tablet-reconfiguration-v1.md):

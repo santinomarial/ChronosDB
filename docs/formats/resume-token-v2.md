@@ -51,5 +51,6 @@ Modification fails as unauthenticated.
 
 The compatibility decoder accepts authenticated v1 and v2 tokens. V1 positions are interpreted only
 as WAL positions and retain their frozen 40-byte layout. The v1 encoder rejects a Raft position.
-New issuance uses v2; this does not by itself add Raft positions to the WAL-only Native Protocol 1.1
-subscription-change envelope or Multi-tablet Subscription Checkpoint v1.
+New issuance uses v2; it does not reinterpret the WAL-only Native Protocol 1.1 change envelope or
+Multi-tablet Subscription Checkpoint v1. ADR 0409 separately adds Protocol 1.2 source-tagged change
+payloads, and Checkpoint v2 carries the durable source tags.

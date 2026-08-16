@@ -72,7 +72,8 @@ TEST(SubscriptionProtocolTest, BridgesManagerDeliveryAcknowledgementAndTerminati
   ASSERT_TRUE(change.has_value());
   EXPECT_EQ(change->delivery_sequence, 1U);
   EXPECT_EQ(change->tablet_id, tablet_id);
-  EXPECT_EQ(change->record_sequence, 1U);
+  EXPECT_EQ(change->source_kind, network::SubscriptionSourceKind::kWal);
+  EXPECT_EQ(change->source_sequence, 1U);
 
   const auto checkpoint_payload = acknowledge_subscription_delivery(*manager, subscription_id, 1U);
   ASSERT_TRUE(checkpoint_payload.has_value());
@@ -128,6 +129,27 @@ TEST(SubscriptionProtocolTest, ProtocolOnePointOneRejectsRaftSourceWithoutAliasi
   const auto encoded = encode_subscription_delivery({1U, change});
   ASSERT_FALSE(encoded.has_value());
   EXPECT_EQ(encoded.error().code(), common::StatusCode::kInvalidArgument);
+}
+
+TEST(SubscriptionProtocolTest, ProtocolOnePointTwoPreservesRaftSourceKindAndGroupBytes) {
+  const schema::TabletId tablet_id = identifier<schema::TabletId>(std::byte{3});
+  const schema::SchemaId schema_id = identifier<schema::SchemaId>(std::byte{7});
+  const common::Uuid group_id = uuid(std::byte{4});
+  const auto change = std::make_shared<const CommittedChange>(
+      CommittedChange{.position = SourcePosition::raft(tablet_id, group_id, 11U),
+                      .schema_id = schema_id,
+                      .schema_version = schema::SchemaVersion::initial(),
+                      .operation = LogicalChangeOperation::kUpsert,
+                      .result_key = {std::byte{8}},
+                      .payload = {std::byte{9}}});
+  const network::SubscriptionProtocolContext context{.protocol_minor = 2U};
+  const auto encoded = encode_subscription_delivery({1U, change}, context);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  const auto decoded = network::decode_subscription_change(*encoded, context);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(decoded->source_kind, network::SubscriptionSourceKind::kRaft);
+  EXPECT_TRUE(std::ranges::equal(decoded->source_id, group_id.bytes()));
+  EXPECT_EQ(decoded->source_sequence, 11U);
 }
 
 } // namespace

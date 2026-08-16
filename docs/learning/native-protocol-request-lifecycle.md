@@ -20,10 +20,11 @@ or finite query work before any query batch, then releases the request exactly o
 names a group, observed leader node/term, and placement epoch but deliberately omits an endpoint and
 does not grant a lease. Reactor-side validation repeats canonical decoding before enqueueing bytes.
 
-Protocol 1.0 remains the default. A client explicitly requests minor 1 and subscription feature bit
-0; the server intersects supported features, and both sides then require the exact selected minor
-on every post-handshake frame. Subscription state enforces finite snapshot `QUERY_RESULT` completion
-before READY, increasing live delivery sequences, acknowledgements no later than delivered state,
+Protocol 1.0 remains the default. A client explicitly requests subscription feature bit 0 and minor
+1 or 2; the server selects the highest common minor, and both sides then require that exact value on
+every post-handshake frame. Minor 2 also requires source-tagged changes and rejects format-1
+downgrade payloads. Subscription state enforces finite snapshot `QUERY_RESULT` completion before
+READY, increasing live delivery sequences, acknowledgements no later than delivered state,
 checkpoint confirmation no later than acknowledged state, and one terminal end.
 
 Lifecycle operations are linear in the configured active-request count, currently capped at

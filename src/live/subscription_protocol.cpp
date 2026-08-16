@@ -1,5 +1,6 @@
 #include "chronos/live/subscription_protocol.hpp"
 
+#include <ranges>
 #include <string>
 #include <utility>
 
@@ -55,22 +56,42 @@ encode_subscription_registration(const MultiTabletSubscriptionRegistration& regi
 common::Result<std::vector<std::byte>>
 encode_subscription_delivery(const DeliveryRecord& delivery,
                              const network::SubscriptionMessageLimits& limits) {
+  return encode_subscription_delivery(delivery, network::SubscriptionProtocolContext{}, limits);
+}
+
+common::Result<std::vector<std::byte>>
+encode_subscription_delivery(const DeliveryRecord& delivery,
+                             const network::SubscriptionProtocolContext& context,
+                             const network::SubscriptionMessageLimits& limits) {
   if (delivery.delivery_sequence == 0U || !delivery.change)
     return common::make_unexpected(invalid("subscription delivery owner is invalid"));
-  if (!delivery.change->position.is_valid() ||
-      delivery.change->position.source_kind != SubscriptionSourceKind::kWal) {
-    return common::make_unexpected(
-        invalid("Protocol 1.1 subscription delivery supports only WAL source positions"));
+  if (!delivery.change->position.is_valid())
+    return common::make_unexpected(invalid("subscription delivery source position is invalid"));
+  network::SubscriptionSourceId source_id{};
+  network::SubscriptionSourceKind source_kind{network::SubscriptionSourceKind::kWal};
+  if (delivery.change->position.source_kind == SubscriptionSourceKind::kWal) {
+    source_id = delivery.change->position.wal_id.bytes;
+  } else if (delivery.change->position.source_kind == SubscriptionSourceKind::kRaft) {
+    source_kind = network::SubscriptionSourceKind::kRaft;
+    std::ranges::copy(delivery.change->position.raft_group_id.bytes(), source_id.begin());
+  } else {
+    return common::make_unexpected(invalid("subscription delivery source kind is unassigned"));
   }
   const auto operation = wire_operation(delivery.change->operation);
   if (!operation.has_value())
     return common::make_unexpected(operation.error());
   return network::encode_subscription_change(
-      {*operation, delivery.delivery_sequence, delivery.change->position.tablet_id,
-       delivery.change->position.wal_id.bytes, delivery.change->position.record_sequence,
-       delivery.change->schema_id, delivery.change->schema_version, delivery.change->result_key,
-       delivery.change->payload},
-      limits);
+      {.operation = *operation,
+       .delivery_sequence = delivery.delivery_sequence,
+       .tablet_id = delivery.change->position.tablet_id,
+       .source_kind = source_kind,
+       .source_id = source_id,
+       .source_sequence = delivery.change->position.record_sequence,
+       .schema_id = delivery.change->schema_id,
+       .schema_version = delivery.change->schema_version,
+       .result_key = delivery.change->result_key,
+       .payload = delivery.change->payload},
+      context, limits);
 }
 
 common::Result<std::vector<std::byte>>

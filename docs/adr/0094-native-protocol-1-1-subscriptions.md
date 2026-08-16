@@ -6,7 +6,8 @@
 - **Extends:** [ADR 0060](0060-native-protocol-v1-framing.md),
   [ADR 0061](0061-native-protocol-handshake-and-request-lifecycle.md), and
   [ADR 0068](0068-live-handoff-and-resume-token-v1.md)
-- **Extended by:** [ADR 0095](0095-multi-tablet-subscription-delivery-order.md)
+- **Extended by:** [ADR 0095](0095-multi-tablet-subscription-delivery-order.md) and
+  [ADR 0409](0409-source-tagged-native-subscription-changes.md)
 
 ## Context
 

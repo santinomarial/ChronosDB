@@ -1,9 +1,11 @@
 # ChronosDB Native Protocol v1
 
-> **Status: accepted specification; Protocol 1.0 and feature-gated 1.1 subscriptions implemented.**
+> **Status: accepted specification; Protocol 1.0, feature-gated 1.1 subscriptions, and 1.2
+> source-tagged subscription changes implemented.**
 > This document controls the Protocol v1 byte layout and compatibility rules. ADR 0060 accepts the
-> frame contract and ADR 0094 accepts the minor-1 subscription extension. Protocol v1 never accepts
-> `QUORUM_SYNC`; the separately negotiated [Protocol v2](native-v2.md) owns that extension.
+> frame contract, ADR 0094 accepts the minor-1 subscription extension, and ADR 0409 accepts its
+> minor-2 source-tagged change payload. Protocol v1 never accepts `QUORUM_SYNC`; the separately
+> negotiated [Protocol v2](native-v2.md) owns that extension.
 
 ## Scope and normative language
 
@@ -21,7 +23,7 @@ opaque independently authenticated bytes carried by the subscription extension.
 | Name | Value |
 | --- | ---: |
 | Header size | 40 bytes |
-| Protocol baseline/latest minor | 1.0 / 1.1 |
+| Protocol baseline/latest minor | 1.0 / 1.2 |
 | Maximum payload | 16,777,216 bytes |
 | Maximum complete frame | 16,777,256 bytes |
 
@@ -59,12 +61,12 @@ length.
 | 20 | `QUERY_REQUEST` | client to server |
 | 21 | `QUERY_RESULT` | server to client |
 | 22 | `QUERY_END` | server to client |
-| 23 | `SUBSCRIBE_REQUEST` | client to server, negotiated 1.1 only |
-| 24 | `SUBSCRIPTION_READY` | server to client, negotiated 1.1 only |
-| 25 | `SUBSCRIPTION_CHANGE` | server to client, negotiated 1.1 only |
-| 26 | `SUBSCRIPTION_ACKNOWLEDGE` | client to server, negotiated 1.1 only |
-| 27 | `SUBSCRIPTION_CHECKPOINT` | server to client, negotiated 1.1 only |
-| 28 | `SUBSCRIPTION_END` | server to client, negotiated 1.1 only |
+| 23 | `SUBSCRIBE_REQUEST` | client to server, negotiated 1.1 or newer |
+| 24 | `SUBSCRIPTION_READY` | server to client, negotiated 1.1 or newer |
+| 25 | `SUBSCRIPTION_CHANGE` | server to client, negotiated 1.1 or newer |
+| 26 | `SUBSCRIPTION_ACKNOWLEDGE` | client to server, negotiated 1.1 or newer |
+| 27 | `SUBSCRIPTION_CHECKPOINT` | server to client, negotiated 1.1 or newer |
+| 28 | `SUBSCRIPTION_END` | server to client, negotiated 1.1 or newer |
 | 30 | `CANCEL` | client to server |
 | 31 | `ERROR` | server to client |
 | 40 | `PING` | either direction after handshake |
@@ -92,10 +94,11 @@ protocol error and never permits partial dispatch.
 ## Compatibility
 
 The default frame encoder and every Protocol 1.0 session emit major 1/minor 0. Implementations also
-accept minor 1; a session emits it only after the hello payload selects 1.1. Hello frames themselves
-use 1.0 framing so both versions can parse negotiation. Every post-handshake frame uses the selected
-minor exactly. Types 23–28 require selected minor 1 and feature bit 0. Unknown major versions, newer
-minor versions, header extensions, types, flags, or feature bits fail closed.
+accept minors 1 and 2; a session emits one only after the hello payload selects it. Hello frames
+themselves use 1.0 framing so every version can parse negotiation. Every post-handshake frame uses
+the selected minor exactly. Types 23–28 require selected minor 1 or newer and feature bit 0. Minor 2
+changes only the required `SUBSCRIPTION_CHANGE` payload format described below. Unknown major
+versions, newer minor versions, header extensions, types, flags, or feature bits fail closed.
 
 ## Security boundary
 
@@ -117,15 +120,15 @@ The first client frame MUST be `CLIENT_HELLO` with request ID zero. Its fixed 24
 | 2 | 2 | minimum major |
 | 4 | 2 | maximum major |
 | 6 | 2 | maximum minor |
-| 8 | 8 | requested feature bits; zero in 1.0, subscription bit 0 in 1.1 |
+| 8 | 8 | requested feature bits; zero in 1.0, subscription bit 0 in 1.1/1.2 |
 | 16 | 4 | requested maximum payload |
 | 20 | 4 | reserved zero |
 
 `SERVER_HELLO` uses the same size with selected major at offset 2, selected minor at 4, zero at 6,
 accepted feature bits at 8, effective maximum payload at 16, and reserved zero at 20. Protocol 1.0
-has zero feature bits. Protocol 1.1 assigns bit 0 to subscriptions. The server selects the highest
-common minor and the intersection of requested and supported features. No request is admitted before
-a compatible handshake.
+has zero feature bits. Protocol 1.1 and 1.2 assign bit 0 to subscriptions. The server selects the
+highest common minor and the intersection of requested and supported features. No request is
+admitted before a compatible handshake.
 
 Ingest/query/subscription IDs are positive and strictly increase per connection. They cannot be
 reused after completion or cancellation. The configured active-request limit fails immediately with
@@ -163,10 +166,11 @@ Unicode-scalar UTF-8 diagnostic. Codes cover malformed frames, unsupported versi
 duplicate/unknown requests, overload, cancellation, invalid request, execution failure,
 unauthorized access, and internal failure.
 
-## Protocol 1.1 subscription payloads
+## Protocol 1.1 and 1.2 subscription payloads
 
-All payloads below use format u16 `1`. Variable lengths are u32 and must exactly consume the
-remaining payload within negotiated limits.
+All payloads below use format u16 `1`, except the Protocol 1.2 change payload explicitly described
+as format 2. Variable lengths are u32 and must exactly consume the remaining payload within
+negotiated limits.
 
 `SUBSCRIBE_REQUEST` has a 28-byte envelope: format at 0, start mode u8 at 2 (`1` new query, `2`
 resume), zero u8 at 3, subscription UUID at 4, body length at 20, zero u32 at 24, then the body. A
@@ -176,16 +180,16 @@ The historical result uses ordinary `QUERY_RESULT` batches. Its final batch carr
 `SUBSCRIPTION_READY` then begins live state with format, zero u16, token length, and one nonempty
 initial Resume Token in an 8-byte envelope.
 
-`SUBSCRIPTION_CHANGE` has an 84-byte envelope:
+Under Protocol 1.1, `SUBSCRIPTION_CHANGE` payload format 1 has an 84-byte envelope:
 
 | Offset | Width | Field |
 | ---: | ---: | --- |
 | 0 | 2 | payload format `1` |
 | 2 | 1 | operation (`1` UPSERT, `2` DELETE) |
-| 3 | 1 | zero |
+| 3 | 1 | required zero |
 | 4 | 8 | nonzero delivery sequence |
 | 12 | 16 | tablet UUID |
-| 28 | 16 | WAL/log identity |
+| 28 | 16 | WAL ID |
 | 44 | 8 | nonzero committed record sequence |
 | 52 | 16 | schema UUID |
 | 68 | 8 | schema version |
@@ -196,6 +200,20 @@ initial Resume Token in an 8-byte envelope.
 DELETE requires an empty result payload. UPSERT payload interpretation belongs to the bound plan.
 The full source position and schema identity make replay validation explicit; the delivery sequence
 is the at-least-once deduplication order, not event time.
+
+Protocol 1.2 requires payload format 2 for every `SUBSCRIPTION_CHANGE`. The envelope and all offsets
+remain identical except:
+
+| Offset | Width | Field |
+| ---: | ---: | --- |
+| 0 | 2 | payload format `2` |
+| 3 | 1 | source kind (`1` WAL, `2` Raft) |
+| 28 | 16 | WAL ID for kind `1`; Raft group UUID for kind `2` |
+| 44 | 8 | nonzero committed WAL record sequence or Raft log index |
+
+The source identity is nonzero and belongs only to the selected namespace. Equal WAL-ID and Raft
+group-UUID bytes do not identify the same source. A 1.2 decoder rejects format 1, and 1.1 and 2.0
+decoders reject format 2. Protocol 2.0 retains the frozen 1.1 WAL-only subscription payload.
 
 `SUBSCRIPTION_ACKNOWLEDGE` is 12 bytes: format, zero u16, and nonzero delivery sequence. It uses the
 active subscription request ID and does not consume a new request ID. The sequence cannot move

@@ -29,8 +29,21 @@ namespace {
           "subscription protocol message allocation failed"};
 }
 
-[[nodiscard]] bool log_id_is_valid(const SubscriptionLogId& id) noexcept {
+[[nodiscard]] bool source_id_is_valid(const SubscriptionSourceId& id) noexcept {
   return std::ranges::any_of(id, [](const std::byte value) { return value != std::byte{0}; });
+}
+
+[[nodiscard]] bool valid_source_kind(const SubscriptionSourceKind kind) noexcept {
+  return kind == SubscriptionSourceKind::kWal || kind == SubscriptionSourceKind::kRaft;
+}
+
+[[nodiscard]] bool valid_subscription_context(const SubscriptionProtocolContext& context) noexcept {
+  const bool supported_version =
+      (context.protocol_major == kProtocolMajor && context.protocol_minor >= 1U &&
+       context.protocol_minor <= kProtocolLatestMinor) ||
+      (context.protocol_major == kProtocolV2Major &&
+       context.protocol_minor <= kProtocolV2LatestMinor);
+  return supported_version && (context.feature_bits & kProtocolV1SubscriptionFeature) != 0U;
 }
 
 [[nodiscard]] bool valid_mode(const SubscriptionStartMode mode) noexcept {
@@ -99,6 +112,12 @@ namespace {
 }
 
 } // namespace
+
+bool supports_source_tagged_subscription_changes(
+    const SubscriptionProtocolContext& context) noexcept {
+  return valid_subscription_context(context) && context.protocol_major == kProtocolMajor &&
+         context.protocol_minor >= 2U;
+}
 
 common::Status validate_subscription_message_limits(const SubscriptionMessageLimits& limits) {
   if (const common::Status status = validate_protocol_limits(limits.protocol); !status.is_ok())
@@ -230,12 +249,23 @@ decode_subscription_ready(const common::ByteView payload, const SubscriptionMess
 common::Result<std::vector<std::byte>>
 encode_subscription_change(const SubscriptionChangeView& change,
                            const SubscriptionMessageLimits& limits) {
+  return encode_subscription_change(change, SubscriptionProtocolContext{}, limits);
+}
+
+common::Result<std::vector<std::byte>>
+encode_subscription_change(const SubscriptionChangeView& change,
+                           const SubscriptionProtocolContext& context,
+                           const SubscriptionMessageLimits& limits) {
+  if (!valid_subscription_context(context))
+    return common::make_unexpected(invalid("subscription protocol context is invalid"));
+  const bool source_tagged = supports_source_tagged_subscription_changes(context);
   if (!valid_operation(change.operation) || change.delivery_sequence == 0U ||
-      change.tablet_id.uuid().is_nil() || !log_id_is_valid(change.log_id) ||
-      change.record_sequence == 0U || change.schema_id.uuid().is_nil() ||
-      change.schema_version.value() == 0U || change.result_key.empty() ||
-      change.result_key.size() > limits.maximum_result_key_bytes ||
-      (change.operation == SubscriptionChangeOperation::kDelete && !change.payload.empty())) {
+      change.tablet_id.uuid().is_nil() || !valid_source_kind(change.source_kind) ||
+      !source_id_is_valid(change.source_id) || change.source_sequence == 0U ||
+      change.schema_id.uuid().is_nil() || change.schema_version.value() == 0U ||
+      change.result_key.empty() || change.result_key.size() > limits.maximum_result_key_bytes ||
+      (change.operation == SubscriptionChangeOperation::kDelete && !change.payload.empty()) ||
+      (!source_tagged && change.source_kind != SubscriptionSourceKind::kWal)) {
     return common::make_unexpected(invalid("subscription change fields are invalid"));
   }
   auto size = variable_size(kSubscriptionChangeEnvelopeSize, change.result_key.size(),
@@ -246,20 +276,22 @@ encode_subscription_change(const SubscriptionChangeView& change,
   if (!bytes.has_value())
     return common::make_unexpected(bytes.error());
   common::ByteWriter writer{*bytes};
-  if (const common::Status status = writer.write_u16_le(1U); !status.is_ok())
+  if (const common::Status status = writer.write_u16_le(source_tagged ? 2U : 1U); !status.is_ok())
     return common::make_unexpected(status);
   if (const common::Status status = writer.write_u8(static_cast<std::uint8_t>(change.operation));
       !status.is_ok())
     return common::make_unexpected(status);
-  if (const common::Status status = writer.write_u8(0U); !status.is_ok())
+  if (const common::Status status =
+          writer.write_u8(source_tagged ? static_cast<std::uint8_t>(change.source_kind) : 0U);
+      !status.is_ok())
     return common::make_unexpected(status);
   if (const common::Status status = writer.write_u64_le(change.delivery_sequence); !status.is_ok())
     return common::make_unexpected(status);
   if (const common::Status status = writer.write_exact(change.tablet_id.bytes()); !status.is_ok())
     return common::make_unexpected(status);
-  if (const common::Status status = writer.write_exact(change.log_id); !status.is_ok())
+  if (const common::Status status = writer.write_exact(change.source_id); !status.is_ok())
     return common::make_unexpected(status);
-  if (const common::Status status = writer.write_u64_le(change.record_sequence); !status.is_ok())
+  if (const common::Status status = writer.write_u64_le(change.source_sequence); !status.is_ok())
     return common::make_unexpected(status);
   if (const common::Status status = writer.write_exact(change.schema_id.bytes()); !status.is_ok())
     return common::make_unexpected(status);
@@ -284,6 +316,15 @@ encode_subscription_change(const SubscriptionChangeView& change,
 common::Result<SubscriptionChangeView>
 decode_subscription_change(const common::ByteView payload,
                            const SubscriptionMessageLimits& limits) {
+  return decode_subscription_change(payload, SubscriptionProtocolContext{}, limits);
+}
+
+common::Result<SubscriptionChangeView>
+decode_subscription_change(const common::ByteView payload,
+                           const SubscriptionProtocolContext& context,
+                           const SubscriptionMessageLimits& limits) {
+  if (!valid_subscription_context(context))
+    return common::make_unexpected(invalid("subscription protocol context is invalid"));
   if (const common::Status status = validate_subscription_message_limits(limits); !status.is_ok())
     return common::make_unexpected(status);
   if (payload.size() < kSubscriptionChangeEnvelopeSize ||
@@ -292,20 +333,23 @@ decode_subscription_change(const common::ByteView payload,
   common::ByteReader reader{payload};
   const auto format = reader.read_u16_le();
   const auto raw_operation = reader.read_u8();
-  const auto reserved = reader.read_u8();
+  const auto raw_source_kind = reader.read_u8();
   const auto delivery = reader.read_u64_le();
   const auto tablet_bytes = reader.read_exact(common::Uuid::kSize);
-  const auto log_bytes = reader.read_exact(SubscriptionLogId{}.size());
+  const auto source_bytes = reader.read_exact(SubscriptionSourceId{}.size());
   const auto record = reader.read_u64_le();
   const auto schema_bytes = reader.read_exact(common::Uuid::kSize);
   const auto schema_version = reader.read_u64_le();
   const auto key_size = reader.read_u32_le();
   const auto body_size = reader.read_u32_le();
-  if (!format.has_value() || !raw_operation.has_value() || !reserved.has_value() ||
-      !delivery.has_value() || !tablet_bytes.has_value() || !log_bytes.has_value() ||
+  const bool source_tagged = supports_source_tagged_subscription_changes(context);
+  const std::uint16_t expected_format = source_tagged ? 2U : 1U;
+  if (!format.has_value() || !raw_operation.has_value() || !raw_source_kind.has_value() ||
+      !delivery.has_value() || !tablet_bytes.has_value() || !source_bytes.has_value() ||
       !record.has_value() || !schema_bytes.has_value() || !schema_version.has_value() ||
-      !key_size.has_value() || !body_size.has_value() || *format != 1U || *reserved != 0U ||
-      *key_size == 0U || *key_size > limits.maximum_result_key_bytes) {
+      !key_size.has_value() || !body_size.has_value() || *format != expected_format ||
+      (!source_tagged && *raw_source_kind != 0U) || *key_size == 0U ||
+      *key_size > limits.maximum_result_key_bytes) {
     return common::make_unexpected(corrupt("SUBSCRIPTION_CHANGE envelope is invalid"));
   }
   const auto variable = common::checked_add(static_cast<std::size_t>(*key_size),
@@ -315,19 +359,23 @@ decode_subscription_change(const common::ByteView payload,
   const auto tablet = tablet_from(*tablet_bytes);
   const auto schema_id = schema_from(*schema_bytes);
   const auto version = schema::SchemaVersion::from_value(*schema_version);
-  SubscriptionLogId log{};
-  std::ranges::copy(*log_bytes, log.begin());
+  SubscriptionSourceId source_id{};
+  std::ranges::copy(*source_bytes, source_id.begin());
+  const SubscriptionSourceKind source_kind =
+      source_tagged ? static_cast<SubscriptionSourceKind>(*raw_source_kind)
+                    : SubscriptionSourceKind::kWal;
   const SubscriptionChangeOperation operation =
       static_cast<SubscriptionChangeOperation>(*raw_operation);
   const common::ByteView key = *reader.read_exact(*key_size);
   const common::ByteView body = *reader.read_exact(*body_size);
   if (!valid_operation(operation) || *delivery == 0U || !tablet.has_value() ||
-      !log_id_is_valid(log) || *record == 0U || !schema_id.has_value() || !version.has_value() ||
+      !valid_source_kind(source_kind) || !source_id_is_valid(source_id) || *record == 0U ||
+      !schema_id.has_value() || !version.has_value() ||
       (operation == SubscriptionChangeOperation::kDelete && !body.empty())) {
     return common::make_unexpected(corrupt("SUBSCRIPTION_CHANGE semantics are invalid"));
   }
-  return SubscriptionChangeView{operation,  *delivery, *tablet, log, *record,
-                                *schema_id, *version,  key,     body};
+  return SubscriptionChangeView{operation, *delivery,  *tablet,  source_kind, source_id,
+                                *record,   *schema_id, *version, key,         body};
 }
 
 common::Result<std::vector<std::byte>>

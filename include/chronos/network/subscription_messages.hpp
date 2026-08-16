@@ -21,10 +21,11 @@ inline constexpr std::size_t kSubscriptionAcknowledgeSize = 12U;
 inline constexpr std::size_t kSubscriptionCheckpointEnvelopeSize = 20U;
 inline constexpr std::size_t kSubscriptionEndEnvelopeSize = 24U;
 
-using SubscriptionLogId = std::array<std::byte, 16U>;
+using SubscriptionSourceId = std::array<std::byte, 16U>;
 
 enum class SubscriptionStartMode : std::uint8_t { kNewQuery = 1, kResume = 2 };
 enum class SubscriptionChangeOperation : std::uint8_t { kUpsert = 1, kDelete = 2 };
+enum class SubscriptionSourceKind : std::uint8_t { kWal = 1, kRaft = 2 };
 enum class SubscriptionEndReason : std::uint8_t {
   kCancelled = 1,
   kSchemaChanged = 2,
@@ -37,6 +38,14 @@ struct SubscriptionMessageLimits {
   ProtocolLimits protocol;
   std::uint32_t maximum_resume_token_bytes{1024U * 1024U};
   std::uint32_t maximum_result_key_bytes{1024U * 1024U};
+};
+
+// Protocol 1.1 and 2.0 retain the frozen WAL-only change payload. Protocol 1.2 selects the
+// source-tagged payload. The subscription feature must have been negotiated in every context.
+struct SubscriptionProtocolContext {
+  std::uint16_t protocol_major{kProtocolMajor};
+  std::uint16_t protocol_minor{1U};
+  std::uint64_t feature_bits{kProtocolV1SubscriptionFeature};
 };
 
 // Every decoded *View borrows the payload passed to its decoder; that payload must outlive the view
@@ -56,8 +65,9 @@ struct SubscriptionChangeView {
   SubscriptionChangeOperation operation{SubscriptionChangeOperation::kUpsert};
   std::uint64_t delivery_sequence{};
   schema::TabletId tablet_id;
-  SubscriptionLogId log_id{};
-  std::uint64_t record_sequence{};
+  SubscriptionSourceKind source_kind{SubscriptionSourceKind::kWal};
+  SubscriptionSourceId source_id{};
+  std::uint64_t source_sequence{};
   schema::SchemaId schema_id;
   schema::SchemaVersion schema_version;
   common::ByteView result_key;
@@ -100,8 +110,18 @@ decode_subscription_ready(common::ByteView payload, const SubscriptionMessageLim
 [[nodiscard]] common::Result<std::vector<std::byte>>
 encode_subscription_change(const SubscriptionChangeView& change,
                            const SubscriptionMessageLimits& limits = {});
+[[nodiscard]] common::Result<std::vector<std::byte>>
+encode_subscription_change(const SubscriptionChangeView& change,
+                           const SubscriptionProtocolContext& context,
+                           const SubscriptionMessageLimits& limits = {});
 [[nodiscard]] common::Result<SubscriptionChangeView>
 decode_subscription_change(common::ByteView payload, const SubscriptionMessageLimits& limits = {});
+[[nodiscard]] common::Result<SubscriptionChangeView>
+decode_subscription_change(common::ByteView payload, const SubscriptionProtocolContext& context,
+                           const SubscriptionMessageLimits& limits = {});
+
+[[nodiscard]] bool
+supports_source_tagged_subscription_changes(const SubscriptionProtocolContext& context) noexcept;
 
 [[nodiscard]] common::Result<std::vector<std::byte>>
 encode_subscription_acknowledgement(const SubscriptionAcknowledgement& acknowledgement);

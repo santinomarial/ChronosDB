@@ -11,6 +11,7 @@
 #include <map>
 #include <new>
 #include <optional>
+#include <ranges>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -68,6 +69,7 @@ public:
   struct Active {
     common::Uuid subscription_id;
     std::uint64_t principal_id{};
+    network::NetworkTaskProtocolContext protocol;
     Phase phase{Phase::kSnapshot};
     std::optional<MultiTabletSnapshotSubscription> snapshot;
     std::vector<std::byte> resume_token;
@@ -83,15 +85,69 @@ public:
     }
   }
 
-  [[nodiscard]] static network::NetworkTask task(const Key& key, const std::uint64_t principal_id,
-                                                 const network::MessageType type,
-                                                 std::vector<std::byte> payload,
-                                                 const std::uint32_t flags = 0U) {
-    return {
-        .connection_id = key.connection_id,
-        .principal_id = principal_id,
-        .frame = {.header = {.message_type = type, .flags = flags, .request_id = key.request_id},
-                  .payload = std::move(payload)}};
+  [[nodiscard]] static network::NetworkTask
+  task(const Key& key, const std::uint64_t principal_id,
+       const network::NetworkTaskProtocolContext& protocol, const network::MessageType type,
+       std::vector<std::byte> payload, const std::uint32_t flags = 0U) {
+    return {.connection_id = key.connection_id,
+            .principal_id = principal_id,
+            .protocol = protocol,
+            .frame = {.header = {.protocol_major = protocol.protocol_major,
+                                 .protocol_minor = protocol.protocol_minor,
+                                 .message_type = type,
+                                 .flags = flags,
+                                 .request_id = key.request_id},
+                      .payload = std::move(payload)}};
+  }
+
+  [[nodiscard]] network::SubscriptionMessageLimits
+  subscription_limits(const network::NetworkTaskProtocolContext& protocol) const noexcept {
+    network::SubscriptionMessageLimits limits = config.snapshot_limits.subscription;
+    limits.protocol.maximum_payload_size =
+        std::min(limits.protocol.maximum_payload_size, protocol.maximum_payload_size);
+    return limits;
+  }
+
+  [[nodiscard]] network::QueryResultLimits
+  result_limits(const network::NetworkTaskProtocolContext& protocol) const noexcept {
+    network::QueryResultLimits limits = config.snapshot_limits.result;
+    limits.protocol.maximum_payload_size =
+        std::min(limits.protocol.maximum_payload_size, protocol.maximum_payload_size);
+    return limits;
+  }
+
+  [[nodiscard]] SnapshotSubscriptionLimits
+  snapshot_limits(const network::NetworkTaskProtocolContext& protocol) const noexcept {
+    SnapshotSubscriptionLimits limits = config.snapshot_limits;
+    limits.subscription = subscription_limits(protocol);
+    limits.result = result_limits(protocol);
+    return limits;
+  }
+
+  [[nodiscard]] static network::SubscriptionProtocolContext
+  subscription_context(const network::NetworkTaskProtocolContext& protocol) noexcept {
+    return {.protocol_major = protocol.protocol_major,
+            .protocol_minor = protocol.protocol_minor,
+            .feature_bits = protocol.feature_bits};
+  }
+
+  [[nodiscard]] static bool
+  valid_subscription_protocol(const network::NetworkTask& request) noexcept {
+    const network::NetworkTaskProtocolContext& protocol = request.protocol;
+    const bool version =
+        (protocol.protocol_major == network::kProtocolMajor && protocol.protocol_minor >= 1U &&
+         protocol.protocol_minor <= network::kProtocolLatestMinor) ||
+        (protocol.protocol_major == network::kProtocolV2Major &&
+         protocol.protocol_minor <= network::kProtocolV2LatestMinor);
+    const std::uint64_t supported_features = protocol.protocol_major == network::kProtocolV2Major
+                                                 ? network::kProtocolV2SupportedFeatureBits
+                                                 : network::kProtocolV1SupportedFeatureBits;
+    return version && protocol.maximum_payload_size != 0U &&
+           protocol.maximum_payload_size <= network::kDefaultMaximumPayloadSize &&
+           (protocol.feature_bits & ~supported_features) == 0U &&
+           (protocol.feature_bits & network::kProtocolV1SubscriptionFeature) != 0U &&
+           request.frame.header.protocol_major == protocol.protocol_major &&
+           request.frame.header.protocol_minor == protocol.protocol_minor;
   }
 
   [[nodiscard]] common::Status publish(network::NetworkTask response) {
@@ -113,20 +169,22 @@ public:
                                              const common::Status& cause) {
     ++stats.request_errors;
     auto payload = network::encode_error_message(wire_error(cause.code()), cause.message(),
-                                                 config.snapshot_limits.subscription.protocol);
+                                                 subscription_limits(request.protocol).protocol);
     if (!payload.has_value())
       return payload.error();
     return publish(task({request.connection_id, request.frame.header.request_id},
-                        request.principal_id, network::MessageType::kError, std::move(*payload)));
+                        request.principal_id, request.protocol, network::MessageType::kError,
+                        std::move(*payload)));
   }
 
-  [[nodiscard]] common::Result<std::vector<std::byte>> empty_snapshot() const {
+  [[nodiscard]] common::Result<std::vector<std::byte>>
+  empty_snapshot(const network::NetworkTaskProtocolContext& protocol) const {
     try {
       std::vector<network::QueryResultColumn> columns;
       columns.reserve(config.plan->columns().size());
       for (const SnapshotSubscriptionColumn& column : config.plan->columns())
         columns.push_back({column.name, column.type, column.nullable});
-      return network::encode_query_result_batch(0U, columns, {}, config.snapshot_limits.result);
+      return network::encode_query_result_batch(0U, columns, {}, result_limits(protocol));
     } catch (const std::bad_alloc&) {
       return common::make_unexpected(exhausted("subscription snapshot-end allocation failed"));
     }
@@ -158,8 +216,16 @@ public:
       return publish_error(request, invalid("subscription network identity is already active"));
     if (active.size() >= config.maximum_active_subscriptions)
       return publish_error(request, exhausted("subscription service capacity is exhausted"));
+    const network::SubscriptionProtocolContext protocol = subscription_context(request.protocol);
+    const bool has_raft_source =
+        std::ranges::any_of(config.owner->source().members, [](const auto& member) {
+          return member.source_kind == SubscriptionSourceKind::kRaft;
+        });
+    if (has_raft_source && !network::supports_source_tagged_subscription_changes(protocol))
+      return publish_error(
+          request, invalid("negotiated protocol cannot represent this subscription source set"));
     auto decoded = network::decode_subscription_request(request.frame.payload,
-                                                        config.snapshot_limits.subscription);
+                                                        subscription_limits(request.protocol));
     if (!decoded.has_value())
       return publish_error(request, decoded.error());
 
@@ -178,12 +244,13 @@ public:
                              invalid("subscription SQL does not match this durable coordinator"));
       auto snapshot = config.owner->start_snapshot(
           *config.plan, decoded->subscription_id, *config.resources, *config.storage,
-          *config.publisher, *config.lineage, config.snapshot_limits);
+          *config.publisher, *config.lineage, snapshot_limits(request.protocol));
       if (!snapshot.has_value())
         return publish_error(request, snapshot.error());
       try {
         active.emplace(key, Active{decoded->subscription_id,
                                    request.principal_id,
+                                   request.protocol,
                                    Phase::kSnapshot,
                                    std::move(*snapshot),
                                    {},
@@ -200,9 +267,9 @@ public:
       if (!registration.has_value())
         return publish_error(request, registration.error());
       try {
-        active.emplace(key,
-                       Active{decoded->subscription_id, request.principal_id, Phase::kResumeEnd,
-                              std::nullopt, std::move(registration->initial_resume_token), 0U});
+        active.emplace(key, Active{decoded->subscription_id, request.principal_id, request.protocol,
+                                   Phase::kResumeEnd, std::nullopt,
+                                   std::move(registration->initial_resume_token), 0U});
       } catch (const std::bad_alloc&) {
         config.owner->abandon(decoded->subscription_id);
         return publish_error(request, exhausted("subscription service resume allocation failed"));
@@ -246,13 +313,14 @@ public:
         {.reason = reason,
          .safe_delivery_sequence = status->last_acknowledged_sequence,
          .resume_token = *token},
-        config.snapshot_limits.subscription);
+        subscription_limits(state.protocol));
     if (!payload.has_value()) {
       erase(key);
       return payload.error();
     }
     network::NetworkTask response =
-        task(key, state.principal_id, network::MessageType::kSubscriptionEnd, std::move(*payload));
+        task(key, state.principal_id, state.protocol, network::MessageType::kSubscriptionEnd,
+             std::move(*payload));
     erase(key);
     ++stats.terminal_responses;
     return publish(std::move(response));
@@ -264,6 +332,8 @@ public:
     if (found == active.end())
       return publish_error(request, common::Status{common::StatusCode::kNotFound,
                                                    "subscription acknowledgement is inactive"});
+    if (request.protocol != found->second.protocol)
+      return reject_active(key, request, invalid("subscription protocol context changed"));
     auto acknowledgement = network::decode_subscription_acknowledgement(request.frame.payload);
     if (!acknowledgement.has_value())
       return reject_active(key, request, acknowledgement.error());
@@ -274,12 +344,12 @@ public:
     auto payload = network::encode_subscription_checkpoint(
         {.acknowledged_delivery_sequence = acknowledgement->delivery_sequence,
          .resume_token = *token},
-        config.snapshot_limits.subscription);
+        subscription_limits(found->second.protocol));
     if (!payload.has_value())
       return reject_active(key, request, payload.error());
     ++stats.checkpoint_responses;
-    return publish(task(key, request.principal_id, network::MessageType::kSubscriptionCheckpoint,
-                        std::move(*payload)));
+    return publish(task(key, request.principal_id, found->second.protocol,
+                        network::MessageType::kSubscriptionCheckpoint, std::move(*payload)));
   }
 
   [[nodiscard]] common::Status accept_cancel(const network::NetworkTask& request) {
@@ -288,6 +358,8 @@ public:
     if (found == active.end())
       return publish_error(request, common::Status{common::StatusCode::kNotFound,
                                                    "subscription cancellation is inactive"});
+    if (request.protocol != found->second.protocol)
+      return reject_active(key, request, invalid("subscription protocol context changed"));
     const auto status = config.owner->status(found->second.subscription_id);
     if (!status.has_value())
       return reject_active(key, request, status.error());
@@ -299,6 +371,8 @@ public:
   }
 
   [[nodiscard]] common::Status accept(network::NetworkTask request) {
+    if (!valid_subscription_protocol(request))
+      return invalid("subscription service task protocol context is invalid");
     switch (request.frame.header.message_type) {
     case network::MessageType::kSubscribeRequest:
       return accept_subscribe(std::move(request));
@@ -339,9 +413,13 @@ public:
       if (!output.has_value()) {
         const common::Status failure = output.error();
         config.owner->abandon(state.subscription_id);
-        const network::NetworkTask request{.connection_id = key.connection_id,
-                                           .principal_id = state.principal_id,
-                                           .frame = {.header = {.request_id = key.request_id}}};
+        const network::NetworkTask request{
+            .connection_id = key.connection_id,
+            .principal_id = state.principal_id,
+            .protocol = state.protocol,
+            .frame = {.header = {.protocol_major = state.protocol.protocol_major,
+                                 .protocol_minor = state.protocol.protocol_minor,
+                                 .request_id = key.request_id}}};
         erase(key);
         return publish_error(request, failure);
       }
@@ -350,28 +428,29 @@ public:
         state.snapshot.reset();
       }
       ++stats.snapshot_responses;
-      return publish(task(key, state.principal_id, output->message_type, std::move(output->payload),
-                          output->flags));
+      return publish(task(key, state.principal_id, state.protocol, output->message_type,
+                          std::move(output->payload), output->flags));
     }
     if (state.phase == Phase::kResumeEnd) {
-      auto payload = empty_snapshot();
+      auto payload = empty_snapshot(state.protocol);
       if (!payload.has_value())
         return reject_progress(key, payload.error());
       state.phase = Phase::kResumeReady;
       ++stats.snapshot_responses;
-      return publish(task(key, state.principal_id, network::MessageType::kQueryResult,
-                          std::move(*payload), network::kFrameFlagEndStream));
+      return publish(task(key, state.principal_id, state.protocol,
+                          network::MessageType::kQueryResult, std::move(*payload),
+                          network::kFrameFlagEndStream));
     }
     if (state.phase == Phase::kResumeReady) {
       auto payload = network::encode_subscription_ready(state.resume_token,
-                                                        config.snapshot_limits.subscription);
+                                                        subscription_limits(state.protocol));
       if (!payload.has_value())
         return reject_progress(key, payload.error());
       state.phase = Phase::kLive;
       state.resume_token.clear();
       ++stats.snapshot_responses;
-      return publish(task(key, state.principal_id, network::MessageType::kSubscriptionReady,
-                          std::move(*payload)));
+      return publish(task(key, state.principal_id, state.protocol,
+                          network::MessageType::kSubscriptionReady, std::move(*payload)));
     }
 
     auto deliveries = config.owner->poll(state.subscription_id, config.maximum_live_poll_records);
@@ -382,22 +461,27 @@ public:
     });
     if (delivery == deliveries->end())
       return common::Status::ok();
-    auto payload = encode_subscription_delivery(*delivery, config.snapshot_limits.subscription);
+    auto payload = encode_subscription_delivery(*delivery, subscription_context(state.protocol),
+                                                subscription_limits(state.protocol));
     if (!payload.has_value())
       return reject_progress(key, payload.error());
     state.last_enqueued_delivery = delivery->delivery_sequence;
     ++stats.live_change_responses;
-    return publish(task(key, state.principal_id, network::MessageType::kSubscriptionChange,
-                        std::move(*payload)));
+    return publish(task(key, state.principal_id, state.protocol,
+                        network::MessageType::kSubscriptionChange, std::move(*payload)));
   }
 
   [[nodiscard]] common::Status reject_progress(const Key& key, const common::Status& cause) {
     const auto found = active.find(key);
     if (found == active.end())
       return cause;
-    const network::NetworkTask request{.connection_id = key.connection_id,
-                                       .principal_id = found->second.principal_id,
-                                       .frame = {.header = {.request_id = key.request_id}}};
+    const network::NetworkTask request{
+        .connection_id = key.connection_id,
+        .principal_id = found->second.principal_id,
+        .protocol = found->second.protocol,
+        .frame = {.header = {.protocol_major = found->second.protocol.protocol_major,
+                             .protocol_minor = found->second.protocol.protocol_minor,
+                             .request_id = key.request_id}}};
     config.owner->abandon(found->second.subscription_id);
     erase(key);
     return publish_error(request, cause);

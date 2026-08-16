@@ -50,6 +50,10 @@ void exercise_message(const chronos::network::Frame& frame) {
     break;
   case MessageType::kSubscriptionChange:
     static_cast<void>(decode_subscription_change(frame.payload));
+    static_cast<void>(decode_subscription_change(frame.payload,
+                                                 {.protocol_major = frame.header.protocol_major,
+                                                  .protocol_minor = frame.header.protocol_minor,
+                                                  .feature_bits = kProtocolV1SubscriptionFeature}));
     break;
   case MessageType::kSubscriptionAcknowledge:
     static_cast<void>(decode_subscription_acknowledgement(frame.payload));

@@ -305,7 +305,11 @@ common::Status ServerConnectionState::accept_response(const Frame& frame) {
     return common::Status::ok();
   case MessageType::kSubscriptionChange: {
     const auto change = decode_subscription_change(
-        frame.payload, {.protocol = {.maximum_payload_size = negotiated_maximum_payload_size_}});
+        frame.payload,
+        {.protocol_major = negotiated_major_,
+         .protocol_minor = negotiated_minor_,
+         .feature_bits = negotiated_feature_bits_},
+        {.protocol = {.maximum_payload_size = negotiated_maximum_payload_size_}});
     if (request_type != MessageType::kSubscribeRequest || !subscription_ready_[offset] ||
         cancellation_requested_[offset] || !change.has_value() ||
         (subscription_last_delivery_[offset] != 0U &&

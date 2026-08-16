@@ -3,7 +3,8 @@
 - **Status:** accepted
 - **Date:** 2026-08-08
 - **Owners:** ChronosDB networking and protocol maintainers
-- **Extended by:** [ADR 0094](0094-native-protocol-1-1-subscriptions.md)
+- **Extended by:** [ADR 0094](0094-native-protocol-1-1-subscriptions.md) and
+  [ADR 0409](0409-source-tagged-native-subscription-changes.md)
 
 ## Context
 

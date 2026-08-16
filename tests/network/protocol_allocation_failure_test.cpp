@@ -5,6 +5,7 @@
 #include "chronos/network/messages.hpp"
 #include "chronos/network/protocol.hpp"
 #include "chronos/network/spsc_queue.hpp"
+#include "chronos/network/subscription_messages.hpp"
 #include "support/failing_allocator.hpp"
 
 #include <array>
@@ -15,6 +16,12 @@
 
 namespace chronos::network {
 namespace {
+
+template <typename Identifier> [[nodiscard]] Identifier identifier(const std::byte seed) {
+  common::Uuid::Bytes bytes{};
+  bytes.fill(seed);
+  return Identifier::from_bytes(bytes).value();
+}
 
 template <typename Operation>
 [[nodiscard]] auto run_failure(const std::size_t fail_after, Operation&& operation) {
@@ -94,6 +101,24 @@ TEST(ProtocolAllocationFailureTest, MessageEncodersClassifyEveryOwnedAllocation)
       [&] { return encode_query_result_batch(1U, columns, cells); });
   const std::vector<std::byte> encoded = *encode_query_result_batch(1U, columns, cells);
   expect_owned_allocation_is_classified([&] { return decode_query_result_batch(encoded); });
+
+  SubscriptionSourceId source_id{};
+  source_id.fill(std::byte{3});
+  const SubscriptionChangeView change{
+      .operation = SubscriptionChangeOperation::kUpsert,
+      .delivery_sequence = 1U,
+      .tablet_id = identifier<schema::TabletId>(std::byte{1}),
+      .source_kind = SubscriptionSourceKind::kRaft,
+      .source_id = source_id,
+      .source_sequence = 2U,
+      .schema_id = identifier<schema::SchemaId>(std::byte{2}),
+      .schema_version = schema::SchemaVersion::initial(),
+      .result_key = body,
+      .payload = body,
+  };
+  expect_owned_allocation_is_classified([&] {
+    return encode_subscription_change(change, SubscriptionProtocolContext{.protocol_minor = 2U});
+  });
 }
 
 TEST(ProtocolAllocationFailureTest, ConnectionCreationClassifiesItsOwnedRequestStorage) {

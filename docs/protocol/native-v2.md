@@ -5,8 +5,10 @@
 > applied-barrier SELECT execute.**
 
 Protocol 2.0 inherits the complete [Native Protocol v1](native-v1.md) framing, limits, type
-assignments, payloads, request lifecycle, security boundary, and subscription semantics except for
-the additions below. Existing Protocol 1 bytes never acquire Protocol 2 meaning.
+assignments, request lifecycle, security boundary, and Protocol 1.1 subscription payloads except
+for the additions below. Its subscription change remains payload format 1 and WAL-only; the later
+Protocol 1.2 source-tagged payload does not retroactively change accepted Protocol 2.0 bytes.
+Existing Protocol 1 bytes never acquire Protocol 2 meaning.
 
 ## Negotiation
 

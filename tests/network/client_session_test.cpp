@@ -288,14 +288,20 @@ TEST(NativeClientSessionTest, DrivesNegotiatedAtLeastOnceSubscriptionLifecycle) 
                                         *encode_subscription_ready(token), 0U, 1U))
                   .has_value());
 
-  SubscriptionLogId log{};
+  SubscriptionSourceId log{};
   log.fill(std::byte{4});
   const std::array<std::byte, 1> key{std::byte{5}};
   const std::array<std::byte, 1> body{std::byte{6}};
-  const auto change = encode_subscription_change({SubscriptionChangeOperation::kUpsert, 1U,
-                                                  identifier<schema::TabletId>(std::byte{2}), log,
-                                                  3U, identifier<schema::SchemaId>(std::byte{3}),
-                                                  schema::SchemaVersion::initial(), key, body});
+  const auto change =
+      encode_subscription_change({.operation = SubscriptionChangeOperation::kUpsert,
+                                  .delivery_sequence = 1U,
+                                  .tablet_id = identifier<schema::TabletId>(std::byte{2}),
+                                  .source_id = log,
+                                  .source_sequence = 3U,
+                                  .schema_id = identifier<schema::SchemaId>(std::byte{3}),
+                                  .schema_version = schema::SchemaVersion::initial(),
+                                  .result_key = key,
+                                  .payload = body});
   ASSERT_TRUE(change.has_value());
   ASSERT_TRUE(
       client.receive(server_frame(MessageType::kSubscriptionChange, request_id, *change, 0U, 1U))
@@ -328,6 +334,59 @@ TEST(NativeClientSessionTest, DrivesNegotiatedAtLeastOnceSubscriptionLifecycle) 
                       0U, 1U))
                   .has_value());
   EXPECT_EQ(client.in_flight_requests(), 0U);
+}
+
+TEST(NativeClientSessionTest, AcceptsProtocolOnePointTwoRaftSubscriptionChange) {
+  NativeClientSession client =
+      NativeClientSession::create(
+          {.maximum_protocol_minor = 2U, .requested_feature_bits = kProtocolV1SubscriptionFeature})
+          .value();
+  ASSERT_TRUE(client.queue_handshake().is_ok());
+  static_cast<void>(take_pending(client));
+  ASSERT_TRUE(client
+                  .receive(server_frame(
+                      MessageType::kServerHello, 0U,
+                      *encode_server_hello(
+                          {.selected_minor = 2U, .feature_bits = kProtocolV1SubscriptionFeature})))
+                  .has_value());
+  const std::uint64_t request_id =
+      client.queue_subscription(uuid(std::byte{1}), "SELECT 1").value();
+  static_cast<void>(take_pending(client));
+  const schema::LogicalType type =
+      schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  const std::array<QueryResultColumn, 1> columns{
+      QueryResultColumn{.name = "value", .type = type, .nullable = false}};
+  const auto empty_snapshot = encode_query_result_batch(0U, columns, {}).value();
+  ASSERT_TRUE(client
+                  .receive(server_frame(MessageType::kQueryResult, request_id, empty_snapshot,
+                                        kFrameFlagEndStream, 2U))
+                  .has_value());
+  const std::array<std::byte, 1> token{std::byte{8}};
+  ASSERT_TRUE(client
+                  .receive(server_frame(MessageType::kSubscriptionReady, request_id,
+                                        *encode_subscription_ready(token), 0U, 2U))
+                  .has_value());
+
+  SubscriptionSourceId source{};
+  source.fill(std::byte{4});
+  const std::array<std::byte, 1> key{std::byte{5}};
+  const std::array<std::byte, 1> body{std::byte{6}};
+  const auto change =
+      encode_subscription_change({.operation = SubscriptionChangeOperation::kUpsert,
+                                  .delivery_sequence = 1U,
+                                  .tablet_id = identifier<schema::TabletId>(std::byte{2}),
+                                  .source_kind = SubscriptionSourceKind::kRaft,
+                                  .source_id = source,
+                                  .source_sequence = 3U,
+                                  .schema_id = identifier<schema::SchemaId>(std::byte{3}),
+                                  .schema_version = schema::SchemaVersion::initial(),
+                                  .result_key = key,
+                                  .payload = body},
+                                 {.protocol_minor = 2U});
+  ASSERT_TRUE(change.has_value());
+  EXPECT_TRUE(
+      client.receive(server_frame(MessageType::kSubscriptionChange, request_id, *change, 0U, 2U))
+          .has_value());
 }
 
 TEST(NativeClientSessionTest, RefusesSubscriptionWithoutNegotiation) {

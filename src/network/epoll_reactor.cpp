@@ -577,7 +577,13 @@ public:
           (frame.header.message_type == MessageType::kSubscriptionReady &&
            decode_subscription_ready(frame.payload, subscription_limits).has_value()) ||
           (frame.header.message_type == MessageType::kSubscriptionChange &&
-           decode_subscription_change(frame.payload, subscription_limits).has_value()) ||
+           decode_subscription_change(
+               frame.payload,
+               {.protocol_major = found->second.state.negotiated_major(),
+                .protocol_minor = found->second.state.negotiated_minor(),
+                .feature_bits = found->second.state.negotiated_feature_bits()},
+               subscription_limits)
+               .has_value()) ||
           (frame.header.message_type == MessageType::kSubscriptionCheckpoint &&
            decode_subscription_checkpoint(frame.payload, subscription_limits).has_value()) ||
           (frame.header.message_type == MessageType::kSubscriptionEnd &&

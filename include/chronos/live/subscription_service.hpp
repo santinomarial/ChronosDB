@@ -41,7 +41,7 @@ struct SubscriptionServiceMetrics {
 };
 
 // One thread-affine reactor worker for one durable plan/coordinator. It consumes only subscription,
-// acknowledgement, and cancellation NetworkTasks and produces complete Protocol 1.1 response
+// acknowledgement, and cancellation NetworkTasks and produces complete negotiated response
 // tasks. At most one response is retained internally when the SPSC response ring is full; no
 // snapshot or live cursor advances again until that exact owned response is published.
 //

@@ -47,10 +47,17 @@ private:
 [[nodiscard]] network::NetworkTask request_task(const std::uint64_t connection,
                                                 const std::uint64_t request,
                                                 const network::MessageType type,
-                                                std::vector<std::byte> payload = {}) {
+                                                std::vector<std::byte> payload = {},
+                                                const std::uint16_t protocol_minor = 2U) {
   return {.connection_id = connection,
           .principal_id = 77U,
-          .frame = {.header = {.message_type = type, .request_id = request},
+          .protocol = {.protocol_major = network::kProtocolMajor,
+                       .protocol_minor = protocol_minor,
+                       .feature_bits = network::kProtocolV1SubscriptionFeature},
+          .frame = {.header = {.protocol_major = network::kProtocolMajor,
+                               .protocol_minor = protocol_minor,
+                               .message_type = type,
+                               .request_id = request},
                     .payload = std::move(payload)}};
 }
 
@@ -147,9 +154,13 @@ TEST(SubscriptionServiceTest, OwnsSnapshotResumeBackpressureCancellationAndShutd
   ASSERT_TRUE(live_task.has_value());
   const network::NetworkTask live_response = std::move(live_task).value_or(network::NetworkTask{});
   ASSERT_EQ(live_response.frame.header.message_type, network::MessageType::kSubscriptionChange);
-  const auto live = network::decode_subscription_change(live_response.frame.payload);
+  EXPECT_EQ(live_response.protocol.protocol_minor, 2U);
+  EXPECT_EQ(live_response.frame.header.protocol_minor, 2U);
+  const auto live =
+      network::decode_subscription_change(live_response.frame.payload, {.protocol_minor = 2U});
   ASSERT_TRUE(live.has_value());
   EXPECT_EQ(live->delivery_sequence, 1U);
+  EXPECT_EQ(live->source_kind, network::SubscriptionSourceKind::kWal);
 
   auto acknowledgement = network::encode_subscription_acknowledgement({1U});
   ASSERT_TRUE(acknowledgement.has_value());
@@ -231,6 +242,113 @@ TEST(SubscriptionServiceTest, OwnsSnapshotResumeBackpressureCancellationAndShutd
   EXPECT_EQ(shutdown->reason, network::SubscriptionEndReason::kServerShutdown);
   EXPECT_TRUE(service->drained());
   EXPECT_EQ(service->metrics().terminal_responses, 2U);
+}
+
+TEST(SubscriptionServiceTest, RejectsRaftResumeOnOnePointOneAndDeliversItOnOnePointTwo) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  query::test::SnapshotTabletScanFixture snapshot{1U};
+  const std::vector<query::QueryCatalogTableInput> tables{
+      {.name = "metrics", .quoted = false, .schema = snapshot.schema_ptr()}};
+  auto catalog = std::make_shared<const query::QueryCatalogSnapshot>(
+      query::QueryCatalogSnapshot::create(1U, tables).value());
+  constexpr std::string_view kSql = "SUBSCRIBE SELECT count(*) AS total FROM metrics";
+  auto plan = prepare_subscription_plan(kSql, catalog);
+  ASSERT_TRUE(plan.has_value()) << plan.error().status().to_string();
+
+  ResumeTokenMacKey token_key{};
+  token_key.fill(std::byte{13});
+  const schema::TabletId tablet = query::test::SnapshotTabletScanFixture::tablet_id();
+  const common::Uuid group_id = uuid(std::byte{21});
+  auto owner = DurableMultiTabletSubscription::create_new(
+      {.storage = {.directory_path = directory.path().string(),
+                   .identity = {snapshot.snapshot().database_id().uuid(),
+                                snapshot.schema_ptr()->table_id(),
+                                plan->fingerprint(),
+                                snapshot.schema_ptr()->schema_id(),
+                                snapshot.schema_ptr()->version(),
+                                {MultiTabletSubscriptionCheckpointSourceIdentity::raft(tablet,
+                                                                                       group_id)}}},
+       .source = {.database_id = snapshot.snapshot().database_id().uuid(),
+                  .table_id = snapshot.schema_ptr()->table_id(),
+                  .plan_fingerprint = plan->fingerprint(),
+                  .schema_id = snapshot.schema_ptr()->schema_id(),
+                  .schema_version = snapshot.schema_ptr()->version(),
+                  .members = {MultiTabletSubscriptionMember::raft(tablet, group_id, 1U)},
+                  .token_key = token_key}});
+  ASSERT_TRUE(owner.has_value()) << owner.error().to_string();
+
+  const common::Uuid subscription_id = uuid(std::byte{22});
+  auto registration = owner->register_subscription({subscription_id, plan->fingerprint(),
+                                                    snapshot.schema_ptr()->schema_id(),
+                                                    snapshot.schema_ptr()->version()});
+  ASSERT_TRUE(registration.has_value()) << registration.error().to_string();
+  ASSERT_TRUE(owner->complete_snapshot(subscription_id).is_ok());
+  ASSERT_TRUE(owner
+                  ->publish_committed({.position = SourcePosition::raft(tablet, group_id, 2U),
+                                       .schema_id = snapshot.schema_ptr()->schema_id(),
+                                       .schema_version = snapshot.schema_ptr()->version(),
+                                       .operation = LogicalChangeOperation::kUpsert,
+                                       .result_key = {std::byte{1}},
+                                       .payload = {std::byte{2}}})
+                  .is_ok());
+  std::vector<std::byte> resume_token = registration->initial_resume_token;
+  owner->abandon(subscription_id);
+
+  auto resources = query::QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+  auto requests = network::SpscNetworkTaskQueue::create(8U).value();
+  auto responses = network::SpscNetworkTaskQueue::create(8U).value();
+  auto service = SubscriptionService::create({.owner = &*owner,
+                                              .plan = &*plan,
+                                              .catalog = catalog,
+                                              .resources = &resources,
+                                              .storage = &snapshot.storage(),
+                                              .publisher = &snapshot.publisher(),
+                                              .lineage = &snapshot.lineage(),
+                                              .requests = &requests,
+                                              .responses = &responses});
+  ASSERT_TRUE(service.has_value()) << service.error().to_string();
+  const auto resume_payload =
+      network::encode_subscription_request({.mode = network::SubscriptionStartMode::kResume,
+                                            .subscription_id = subscription_id,
+                                            .body = resume_token});
+  ASSERT_TRUE(resume_payload.has_value());
+  ASSERT_TRUE(requests.try_push(
+      request_task(1U, 1U, network::MessageType::kSubscribeRequest, *resume_payload, 1U)));
+  ASSERT_TRUE(service->poll_once().is_ok());
+  auto rejected = responses.try_pop();
+  ASSERT_TRUE(rejected.has_value());
+  const network::NetworkTask rejected_response =
+      std::move(rejected).value_or(network::NetworkTask{});
+  EXPECT_EQ(rejected_response.frame.header.message_type, network::MessageType::kError);
+  EXPECT_FALSE(service->owns(1U, 1U));
+
+  ASSERT_TRUE(requests.try_push(
+      request_task(2U, 1U, network::MessageType::kSubscribeRequest, *resume_payload, 2U)));
+  ASSERT_TRUE(service->poll_once().is_ok());
+  EXPECT_TRUE(service->owns(2U, 1U));
+  ASSERT_TRUE(service->poll_once().is_ok());
+  auto snapshot_end = responses.try_pop();
+  ASSERT_TRUE(snapshot_end.has_value());
+  const network::NetworkTask snapshot_end_response =
+      std::move(snapshot_end).value_or(network::NetworkTask{});
+  EXPECT_EQ(snapshot_end_response.frame.header.message_type, network::MessageType::kQueryResult);
+  ASSERT_TRUE(service->poll_once().is_ok());
+  auto ready = responses.try_pop();
+  ASSERT_TRUE(ready.has_value());
+  const network::NetworkTask ready_response = std::move(ready).value_or(network::NetworkTask{});
+  EXPECT_EQ(ready_response.frame.header.message_type, network::MessageType::kSubscriptionReady);
+  ASSERT_TRUE(service->poll_once().is_ok());
+  auto change = responses.try_pop();
+  ASSERT_TRUE(change.has_value());
+  const network::NetworkTask change_response = std::move(change).value_or(network::NetworkTask{});
+  ASSERT_EQ(change_response.frame.header.message_type, network::MessageType::kSubscriptionChange);
+  const auto decoded =
+      network::decode_subscription_change(change_response.frame.payload, {.protocol_minor = 2U});
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(decoded->source_kind, network::SubscriptionSourceKind::kRaft);
+  EXPECT_TRUE(std::ranges::equal(decoded->source_id, group_id.bytes()));
+  EXPECT_EQ(decoded->source_sequence, 2U);
 }
 
 } // namespace
