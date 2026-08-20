@@ -99,6 +99,20 @@ public:
   [[nodiscard]] static common::Result<SubscriptionRetentionCoordinator>
   create(SubscriptionRetentionConfig config);
 
+  // Registers a durable plan before any service may admit or resume through it. Its configured
+  // source boundary may not precede already-authorized reclamation. An owner without a durable
+  // checkpoint is admitted but blocks advance until its first checkpoint is installed.
+  [[nodiscard]] common::Status
+  register_subscription_owner(const DurableMultiTabletSubscription& owner);
+
+  // Declares that every admission/resume service for this owner has drained and will not restart.
+  // The owner must remain alive through this call and may be destroyed after success. Retirement
+  // never changes an already-authorized frontier; a later advance recomputes the remaining minimum.
+  [[nodiscard]] common::Status
+  retire_subscription_owner(const DurableMultiTabletSubscription& owner);
+
+  [[nodiscard]] std::size_t subscription_owner_count() const noexcept;
+
   [[nodiscard]] common::Result<SubscriptionRetentionReport>
   advance(const raft::MetadataStateMachine& metadata,
           std::span<const SourcePosition> storage_safe_frontiers,

@@ -88,6 +88,9 @@ storage/Raft-safe vector with every registered plan owner's durably installed ex
 the committed metadata placement epoch and local replica membership before invoking the physical
 source reclaimer. The logical subscription coordinate is never guessed into a WAL byte offset.
 Raft members additionally verify the committed tablet-to-group binding before authorization.
+Plan owners register before their services become visible and may not begin behind prior authorized
+reclamation. Retirement occurs only after every admission/resume path drains; removal itself never
+advances authority, so physical cleanup still requires a later complete topology-validated attempt.
 
 For WAL-backed sources, `WalSubscriptionSourceReclaimer` binds the canonical tablet/epoch set to
 borrowed open writers. It validates and resolves the complete request batch before deletion. When

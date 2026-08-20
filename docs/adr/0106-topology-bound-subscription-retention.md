@@ -41,6 +41,10 @@ bound authority. Multiple plan coordinators constrain one source by their minimu
 Removing a plan owner or changing a source set is intentionally a higher-level lifecycle operation;
 it cannot be done silently through this fixed authority.
 
+**Retrospective update (ADR 0412):** the authority now exposes bounded explicit plan-owner
+registration and retirement while retaining its fixed source topology and monotonic authorized
+frontier. Service activation must follow registration, and service drain must precede retirement.
+
 Calling `WalWriter::reclaim_checkpointed_segments` with a fabricated byte offset was rejected.
 Using only the fastest subscription frontier was rejected because a slower plan could still resume.
 Ignoring metadata placement was rejected because a removed replica could delete state during

@@ -61,9 +61,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   one database-owned executor seam, and focused coverage proves that one applied mutation notifies
   while its matching retry does not. Fixed multiple-plan fan-out, evaluator/publication metrics,
   and continuity-loss containment are now composed at the service boundary. Dynamic plan
-  registration/retirement, disconnect races, replay/startup interleavings, and sustained observer
-  cost remain integration and Phase 18 work. Coordinator failure containment overflows old
-  sessions/tokens before allowing a fresh snapshot.
+  registration/retirement is now bounded by the retention authority's explicit register-before-
+  activation and retire-after-drain contract. Disconnect races, replay/startup interleavings,
+  process-level service/retention lifecycle scheduling, and sustained observer cost remain
+  integration and Phase 18 work. Coordinator failure containment overflows old sessions/tokens
+  before allowing a fresh snapshot.
 - Write-synchronous live checkpointing now prevents an online acknowledged append from outrunning
   configured coordinator recovery. Broader checkpoint latency/failure profiling, batched group
   installation, and exact post-checkpoint WAL replay are deferred; no asynchronous relaxation is

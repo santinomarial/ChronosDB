@@ -63,7 +63,8 @@ durable application-snapshot boundary to cover every authorized index, and then 
 implemented node-wide all-group checkpoint/reclamation on the sole durable worker. Mixed WAL/Raft
 historical execution now treats the registered continuation vector as the cross-authority product
 boundary and executes one global pipeline over canonical raw sources without inventing a scalar
-epoch. Dynamic plan-owner retirement remains production composition work.
+epoch. The retention authority now supports bounded dynamic plan registration before service
+activation and explicit retirement after service drain while preserving monotonic reclamation.
 
 ### Phase 12 — performance architecture and io_uring
 

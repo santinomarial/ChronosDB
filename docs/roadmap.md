@@ -660,8 +660,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   then schedules one bounded worker-owned all-group checkpoint before reclaiming older shared-log
   segments. Mixed WAL/Raft historical subscriptions now exact-bind the registered product vector,
   share one aggregate publication across WAL members, retain independent immutable Raft
-  publications, and run one global physical plan in canonical member order. Dynamic plan-owner
-  retirement and the remaining exit evidence remain deferred. The phase exit gate is not claimed.
+  publications, and run one global physical plan in canonical member order. The bounded retention
+  registry now admits plans only before service activation and at or beyond prior reclamation, then
+  retires them explicitly after service drain without advancing physical authority in the removal
+  call. The remaining exit evidence remains deferred. The phase exit gate is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.

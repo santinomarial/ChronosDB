@@ -23,6 +23,23 @@ namespace {
   return {common::StatusCode::kUnavailable, message};
 }
 
+[[nodiscard]] common::Status validate_owner_binding(const SubscriptionRetentionConfig& config,
+                                                    const std::span<const SourcePosition> frontiers,
+                                                    const DurableMultiTabletSubscription& owner) {
+  const MultiTabletSubscriptionSource& source = owner.source();
+  if (source.database_id != config.database_id || source.table_id != config.table_id ||
+      source.members.size() != config.members.size())
+    return invalid("subscription retention owner identity or source count disagrees");
+  for (std::size_t index = 0U; index < config.members.size(); ++index) {
+    const SourcePosition owner_position = source.members[index].position();
+    if (!owner_position.same_source(config.members[index].position()))
+      return invalid("subscription retention owner source lineage disagrees");
+    if (owner_position.record_sequence < frontiers[index].record_sequence)
+      return topology_changed("subscription retention owner begins behind authorized reclamation");
+  }
+  return common::Status::ok();
+}
+
 } // namespace
 
 class SubscriptionRetentionCoordinator::Impl {
@@ -75,23 +92,60 @@ SubscriptionRetentionCoordinator::create(SubscriptionRetentionConfig config) {
                             owner) !=
           config.subscription_owners.begin() + static_cast<std::ptrdiff_t>(owner_index))
         return common::make_unexpected(invalid("subscription retention owner is duplicated"));
-      const MultiTabletSubscriptionSource& source = owner->source();
-      if (source.database_id != config.database_id || source.table_id != config.table_id ||
-          source.members.size() != config.members.size())
-        return common::make_unexpected(
-            invalid("subscription retention owner identity or source count disagrees"));
-      for (std::size_t source_index = 0U; source_index < config.members.size(); ++source_index) {
-        if (!source.members[source_index].position().same_source(
-                config.members[source_index].position()))
-          return common::make_unexpected(
-              invalid("subscription retention owner source lineage disagrees"));
-      }
+      const common::Status valid = validate_owner_binding(config, initial, *owner);
+      if (!valid.is_ok())
+        return common::make_unexpected(valid);
+      const PlanFingerprint& fingerprint = owner->source().plan_fingerprint;
+      if (std::ranges::any_of(config.subscription_owners.begin(),
+                              config.subscription_owners.begin() +
+                                  static_cast<std::ptrdiff_t>(owner_index),
+                              [&fingerprint](const DurableMultiTabletSubscription* prior) {
+                                return prior->source().plan_fingerprint == fingerprint;
+                              }))
+        return common::make_unexpected(invalid("subscription retention owner plan is duplicated"));
     }
     return SubscriptionRetentionCoordinator{
         std::make_unique<Impl>(std::move(config), std::move(initial))};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("subscription retention allocation failed"));
   }
+}
+
+common::Status SubscriptionRetentionCoordinator::register_subscription_owner(
+    const DurableMultiTabletSubscription& owner) {
+  common::Status valid = validate_owner_binding(impl_->config, impl_->frontiers, owner);
+  if (!valid.is_ok())
+    return valid;
+  const PlanFingerprint& fingerprint = owner.source().plan_fingerprint;
+  if (std::ranges::any_of(impl_->config.subscription_owners,
+                          [&owner, &fingerprint](const DurableMultiTabletSubscription* current) {
+                            return current == &owner ||
+                                   current->source().plan_fingerprint == fingerprint;
+                          }))
+    return invalid("subscription retention owner is already registered");
+  if (impl_->config.subscription_owners.size() >= impl_->config.maximum_subscription_owners)
+    return exhausted("subscription retention owner capacity is exhausted");
+  try {
+    impl_->config.subscription_owners.push_back(&owner);
+    return common::Status::ok();
+  } catch (const std::bad_alloc&) {
+    return exhausted("subscription retention owner registration allocation failed");
+  } catch (const std::length_error&) {
+    return exhausted("subscription retention owner registration exceeds container limits");
+  }
+}
+
+common::Status SubscriptionRetentionCoordinator::retire_subscription_owner(
+    const DurableMultiTabletSubscription& owner) {
+  const auto found = std::ranges::find(impl_->config.subscription_owners, &owner);
+  if (found == impl_->config.subscription_owners.end())
+    return invalid("subscription retention owner is not registered");
+  impl_->config.subscription_owners.erase(found);
+  return common::Status::ok();
+}
+
+std::size_t SubscriptionRetentionCoordinator::subscription_owner_count() const noexcept {
+  return impl_->config.subscription_owners.size();
 }
 
 common::Result<SubscriptionRetentionReport> SubscriptionRetentionCoordinator::advance(
