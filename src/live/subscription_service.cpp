@@ -440,7 +440,8 @@ public:
             .protocol = state.protocol,
             .frame = {.header = {.protocol_major = state.protocol.protocol_major,
                                  .protocol_minor = state.protocol.protocol_minor,
-                                 .request_id = key.request_id}}};
+                                 .request_id = key.request_id},
+                      .payload = {}}};
         erase(key);
         return publish_error(request, failure);
       }
@@ -502,7 +503,8 @@ public:
         .protocol = found->second.protocol,
         .frame = {.header = {.protocol_major = found->second.protocol.protocol_major,
                              .protocol_minor = found->second.protocol.protocol_minor,
-                             .request_id = key.request_id}}};
+                             .request_id = key.request_id},
+                  .payload = {}}};
     config.owner->abandon(found->second.subscription_id);
     erase(key);
     return publish_error(request, cause);

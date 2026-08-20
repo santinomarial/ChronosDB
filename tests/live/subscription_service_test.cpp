@@ -207,6 +207,10 @@ TEST(SubscriptionServiceTest, OwnsSnapshotResumeBackpressureCancellationAndShutd
   const network::NetworkTask mismatch_response =
       std::move(mismatch_error).value_or(network::NetworkTask{});
   EXPECT_EQ(mismatch_response.frame.header.message_type, network::MessageType::kError);
+  const auto mismatch = network::decode_error_message(mismatch_response.frame.payload);
+  ASSERT_TRUE(mismatch.has_value()) << mismatch.error().to_string();
+  EXPECT_EQ(mismatch->code, network::ProtocolErrorCode::kInvalidRequest);
+  EXPECT_FALSE(mismatch->message.empty());
 
   auto resume_payload =
       network::encode_subscription_request({.mode = network::SubscriptionStartMode::kResume,
