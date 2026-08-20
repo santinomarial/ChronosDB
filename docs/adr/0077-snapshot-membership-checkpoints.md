@@ -22,9 +22,10 @@ recovered state.
 For a nonempty snapshot, the checkpoint voter set is the membership base for every retained suffix
 command and supersedes the process bootstrap list. It must be nonempty, sorted, unique, nonzero,
 bounded, and its configuration index cannot exceed the snapshot index. An empty snapshot cannot
-claim a checkpoint. This decision supplies only the durable prerequisite for snapshot compaction;
-snapshot transfer, application installation, and log-prefix reclamation require separate state
-transitions and tests.
+claim a checkpoint or any external snapshot identity: its term, manifest generation, part-set
+checksum, and configuration index are zero, and its voter set is empty. This decision supplies only
+the durable prerequisite for snapshot compaction; snapshot transfer, application installation, and
+log-prefix reclamation require separate state transitions and tests.
 
 ## Consequences and alternatives
 
@@ -41,5 +42,6 @@ reclamation.
 
 Invariants 1, 4, 8, 10, 14, and 18 apply. Focused tests cover v1.1 checkpoint round trip, legacy
 minor-0 decode, snapshot checkpoint precedence over bootstrap configuration, and rejection of a
-noncanonical checkpoint. Golden fixtures, corruption campaigns, mixed-version process tests,
+noncanonical checkpoint. Recovery coverage also rejects nonzero identity on an index-zero snapshot.
+Golden fixtures, corruption campaigns, mixed-version process tests,
 snapshot installation crash points, and reclamation remain deferred.

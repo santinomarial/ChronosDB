@@ -35,7 +35,8 @@ checksum. Minor 0 then stores log-entry count and four required-zero bytes, prod
 Minor 1 instead appends snapshot configuration index (8), snapshot voter count (4), four
 required-zero bytes, and ascending unique nonzero voter IDs (8 each), followed by log-entry count
 and four required-zero bytes. Its fixed portion is 112 bytes before voter IDs. An empty snapshot has
-configuration index zero and no voters. A nonempty snapshot checkpoint supplies the stable
+zero last term, Manifest generation, checksum bytes, and configuration index, with no voters. A
+term-zero persistent state has no recorded vote. A nonempty snapshot checkpoint supplies the stable
 membership base for suffix validation.
 
 Each log entry contains logical index (8), term (8), type (1), seven required-zero bytes, payload
@@ -51,7 +52,8 @@ The decoder validates header integrity before trusting lengths, then exact size 
 payload and full-record integrity, required-zero bytes, bounded entry count, and exact exhaustion.
 `RaftNode::create` performs the semantic validation: contiguous logical indexes, bounded entries,
 snapshot and retained-log terms no greater than the current term, valid vote/snapshot state,
-canonical bounded checkpoint voters, and `applied <= commit <= last`.
+canonical term-zero and empty-snapshot state, bounded checkpoint voters, and
+`applied <= commit <= last`.
 
 ## Segment v1 envelope
 

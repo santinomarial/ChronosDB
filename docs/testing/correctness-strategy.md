@@ -415,6 +415,10 @@ messages from impossible history. Failed AppendEntries responses require a nonze
 and bound any optional conflict term by the response term; direct candidate-state preservation plus
 encoder and checksum-repaired decoder cases cover both invalid combinations.
 
+Canonical empty-state recovery rejects a vote in term zero and requires an index-zero snapshot to
+have zero term, Manifest generation, part-set checksum, and configuration index with no voters.
+Focused cases exercise term-zero vote plus nonzero manifest and checksum identity.
+
 The implemented group-scoped transport envelope additionally has checksum-repaired hostile
 length/count/reserved/value matrices, exhaustive owned-allocation failure sweeps, and a bounded
 structure-aware libFuzzer target. Accepted arbitrary frames must exact-reencode, while generated

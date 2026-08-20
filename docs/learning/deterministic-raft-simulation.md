@@ -77,9 +77,10 @@ handling for a higher term. An impossible snapshot whose last-included term exce
 fails before the node observes that request term or publishes external installation work. Recovery
 also rejects such impossible snapshot history relative to current term. Failed append responses
 must name a nonzero conflict index, and their optional conflict term cannot exceed the response term,
-so malformed higher-term feedback cannot step down a candidate. Long seed campaigns, exhaustive
-schedules, timer clock changes, physical disk faults, and minimized corpus retention remain in the
-hardening ledger.
+so malformed higher-term feedback cannot step down a candidate. Recovered term-zero state has no
+vote, and an index-zero snapshot has no external or membership identity. Long seed campaigns,
+exhaustive schedules, timer clock changes, physical disk faults, and minimized corpus retention
+remain in the hardening ledger.
 
 Useful questions include: why can a queued message survive a sender crash; why must durable state be
 installed before outbound admission; why does replay use explicit message IDs; why is a snapshot

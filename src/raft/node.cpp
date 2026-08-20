@@ -348,13 +348,16 @@ common::Result<RaftNode> RaftNode::create(const NodeId node_id, std::vector<Node
   if (voters.front() == 0U || std::adjacent_find(voters.begin(), voters.end()) != voters.end()) {
     return common::make_unexpected(invalid("Raft voters must be unique and nonzero"));
   }
-  if (persistent.snapshot.last_included_index == 0U &&
-      persistent.snapshot.last_included_term != 0U) {
-    return common::make_unexpected(invalid("Raft snapshot zero index must have zero term"));
+  if (persistent.current_term == 0U && persistent.voted_for.has_value()) {
+    return common::make_unexpected(invalid("Raft term-zero state cannot contain a vote"));
   }
   if (persistent.snapshot.last_included_index == 0U &&
-      (persistent.snapshot.configuration_index != 0U || !persistent.snapshot.voters.empty())) {
-    return common::make_unexpected(invalid("Raft empty snapshot has a membership checkpoint"));
+      (persistent.snapshot.last_included_term != 0U ||
+       persistent.snapshot.manifest_generation != 0U ||
+       std::ranges::any_of(persistent.snapshot.part_set_checksum,
+                           [](const std::byte value) { return value != std::byte{0U}; }) ||
+       persistent.snapshot.configuration_index != 0U || !persistent.snapshot.voters.empty())) {
+    return common::make_unexpected(invalid("Raft empty snapshot metadata is noncanonical"));
   }
   if (persistent.snapshot.last_included_index == std::numeric_limits<LogIndex>::max()) {
     return common::make_unexpected(

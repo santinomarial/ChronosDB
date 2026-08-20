@@ -16,7 +16,8 @@ metadata. Runtime election timeouts call `start_election`; messages are value ty
 containing persistent state must be durably installed before its outbound messages. Majority commit
 uses the current-term restriction, and committed entries remain unavailable to application until
 `mark_applied`. Recovery rejects retained log entries or installed snapshot metadata whose term is
-newer than the checkpoint's current term.
+newer than the checkpoint's current term. Term zero cannot carry a vote, and an index-zero snapshot
+cannot carry term, manifest/checksum identity, configuration index, or voters.
 
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
@@ -40,8 +41,10 @@ replication/commit, failover, stale-term rejection, restart catch-up, independen
 different leaders, node loss, reopen, metadata order, record round trip, and corruption. Focused disk
 tests additionally cover rotation, reopen, explicit incomplete-tail repair, and corruption
 rejection. Recovery validation also rejects an installed snapshot term above current term before a
-node can emit messages from impossible history. Randomized simulation, partitions, application
-snapshot codecs, coordinated fsync batching/crash testing, and production transport remain deferred.
+node can emit messages from impossible history. Focused coverage rejects term-zero votes and every
+nonzero external identity tested on an empty snapshot. Randomized simulation, partitions,
+application snapshot codecs, coordinated fsync batching/crash testing, and production transport
+remain deferred.
 
 **Retrospective note (2026-08-12):** [ADR 0252](0252-replayable-deterministic-raft-fault-simulator.md)
 now supplies bounded explicit and seeded schedules for partitions, delay/reordering, duplication,

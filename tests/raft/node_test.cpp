@@ -175,6 +175,25 @@ TEST(RaftNodeTest, RejectsPersistentSnapshotNewerThanCurrentTerm) {
   EXPECT_EQ(node.error().code(), common::StatusCode::kInvalidArgument);
 }
 
+TEST(RaftNodeTest, RejectsNoncanonicalEmptyPersistentState) {
+  PersistentState term_zero_vote{};
+  term_zero_vote.voted_for = 2U;
+  PersistentState empty_snapshot_generation{};
+  empty_snapshot_generation.snapshot.manifest_generation = 1U;
+  PersistentState empty_snapshot_checksum{};
+  empty_snapshot_checksum.snapshot.part_set_checksum.front() = std::byte{1U};
+
+  for (PersistentState state :
+       {term_zero_vote, empty_snapshot_generation, empty_snapshot_checksum}) {
+    auto node = RaftNode::create(1U, {1U, 2U, 3U}, std::move(state));
+
+    EXPECT_FALSE(node.has_value());
+    if (node.has_value())
+      continue;
+    EXPECT_EQ(node.error().code(), common::StatusCode::kInvalidArgument);
+  }
+}
+
 TEST(RaftNodeTest, RejectsNoncanonicalTermsAndResponseStateBeforeObservingTerm) {
   SnapshotMetadata future_term_snapshot{};
   future_term_snapshot.last_included_index = 1U;

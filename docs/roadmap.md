@@ -797,7 +797,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   completion identity. Snapshot metadata whose last-included term exceeds its request term now
   fails direct-core and transport admission before higher-term observation. Recovered snapshots
   cannot exceed current term, and failed append feedback requires a nonzero conflict index with any
-  conflict term bounded by its response term. A bounded canonical
+  conflict term bounded by its response term. Recovered term-zero state cannot contain a vote, and
+  an index-zero snapshot cannot retain external or membership identity. A bounded canonical
   group/source/destination transport envelope now round-trips vote, append, snapshot, and read-
   barrier messages without introducing sockets into the deterministic core. Header-first bounded
   stream ownership now validates allocation-relevant fields before exact frame allocation and
