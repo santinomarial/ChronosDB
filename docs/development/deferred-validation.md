@@ -40,12 +40,12 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   sweeps, hostile SQL/catalog limits, registry crash/fault cut points, planner-upgrade compatibility,
   obsolete-definition reclamation, schema migration, and compatibility review when the supported
   incremental SQL surface expands.
-- Plan-bound subscription snapshot execution: Raft/mixed-source and service-level allocation
-  sweeps, multi-chunk socket backpressure, reactor worker dispatch, and real concurrent publication
-  scheduling. Deterministic allocator sweeps now fail every observed single- and multi-tablet WAL
-  owner allocation during registration/instantiation and the first chunk, END_STREAM, and READY
-  calls, requiring resource-exhausted classification, abandoned manager state, and released query
-  credit.
+- Plan-bound subscription snapshot execution: service-level allocation sweeps, multi-chunk socket
+  backpressure, reactor worker dispatch, and real concurrent publication scheduling. Deterministic
+  allocator sweeps now fail every observed single-tablet WAL and multi-tablet WAL/Raft/mixed owner
+  allocation during registration/acquisition/instantiation, plus the shared first chunk, END_STREAM,
+  and READY calls, requiring resource-exhausted classification, abandoned manager state, and
+  released query credit.
   Focused coverage now injects a committed change before the first pull and after every real one-row
   chunk, END_STREAM, and READY boundary, then proves the exact ordered live suffix; destruction
   before the first pull and after every chunk or END_STREAM abandons and releases the pre-READY

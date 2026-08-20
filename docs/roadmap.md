@@ -666,9 +666,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   call. A real multi-chunk WAL snapshot now preserves commits injected before the first pull and
   after every chunk, END_STREAM, and READY boundary, while each premature pre-READY teardown
   fail-closed abandons its buffered session. Deterministic allocation failure at every observed
-  single- and multi-tablet WAL owner allocation across start, chunk, END_STREAM, and READY is
-  classified as resource exhaustion and leaves no active session or query credit. The remaining
-  exit evidence remains deferred. The phase exit gate is not claimed.
+  single-tablet WAL and multi-tablet WAL/Raft/mixed owner allocation across start, chunk,
+  END_STREAM, and READY is classified as resource exhaustion and leaves no active session or query
+  credit. The remaining exit evidence remains deferred. The phase exit gate is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.
