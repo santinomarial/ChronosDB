@@ -222,6 +222,8 @@ TEST(RaftNodeTest, RejectsIndexExhaustionBeforeNextIndexCanWrap) {
 TEST(RaftNodeTest, CommitsMembershipChangeUnderJointQuorumsAndRemovesLeader) {
   auto node = RaftNode::create(1U, {1U, 2U, 3U});
   ASSERT_TRUE(node.has_value());
+  EXPECT_FALSE(node->joint_membership_active());
+  EXPECT_TRUE(std::ranges::equal(node->committed_voters(), std::vector<NodeId>{1U, 2U, 3U}));
   ASSERT_TRUE(node->start_election().has_value());
   auto elected = node->receive(2U, RequestVoteResponse{1U, true});
   ASSERT_TRUE(elected.has_value()) << elected.error().to_string();

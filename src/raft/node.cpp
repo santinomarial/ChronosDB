@@ -75,7 +75,8 @@ struct PendingReadBarrier {
 [[nodiscard]] common::Result<DerivedMembership>
 derive_membership(const std::vector<NodeId>& base_voters, const std::span<const LogEntry> log,
                   const LogIndex commit_index, const RaftLimits& limits) {
-  DerivedMembership derived{.committed_voters = base_voters, .active_voters = base_voters};
+  DerivedMembership derived{
+      .committed_voters = base_voters, .active_voters = base_voters, .joint = std::nullopt};
   for (const LogEntry& entry : log) {
     if (!is_membership_entry_type(entry.type))
       continue;
