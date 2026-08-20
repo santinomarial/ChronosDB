@@ -55,8 +55,10 @@ Invariants 2–8, 10, 11, 13, 14, and 18 apply. Implemented focused checks freez
 validate WAL/Raft source and operation domains, bound logical identities, prove checked
 metadata/page layout with the expanded suffix, round-trip v2 metadata, reject v1/v2 registry
 confusion, bind the exact table schema, deterministically compose complete files, classify every
-truncation, and fail closed on stored-page corruption. Golden fixtures, hostile corruption
-matrices, projected reading, Manifest v2 installation, current/as-of winner resolution, crash tests,
-fuzzing, and performance evidence remain subsequent work and Phase 18 validation. Temporal
-row/order validation is implemented with bounded page work and exact
+truncation, and fail closed on stored-page corruption. A canonical raw temporal file now freezes its
+exact 2,048-byte length and complete-file `0x3242794c` CRC32C through a tableless test oracle that is
+independent of the production checksum implementation. Additional field-level golden fixtures,
+hostile corruption matrices, crash tests, fuzzing, and performance evidence remain subsequent work
+and Phase 18 validation. Projected reading, Manifest v2 installation, current/as-of winner
+resolution, and temporal row/order validation are implemented with bounded work and exact
 corrupt-versus-unsupported value classification.

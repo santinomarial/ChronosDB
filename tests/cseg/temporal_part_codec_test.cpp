@@ -1,4 +1,5 @@
 #include "chronos/columnar/column_vector.hpp"
+#include "chronos/common/crc32c.hpp"
 #include "chronos/common/uuid.hpp"
 #include "chronos/cseg/part_codec.hpp"
 #include "chronos/cseg/projected_reader.hpp"
@@ -192,12 +193,35 @@ struct TemporalPartFixture {
                              : decoded.error().status();
 }
 
-TEST(TemporalPartCodecTest, ComposesAndDecodesCanonicalV2PartWithoutWeakeningV1) {
+[[nodiscard]] std::uint32_t independent_crc32c(const common::ByteView bytes) {
+  std::uint32_t crc = 0xffffffffU;
+  for (const std::byte byte : bytes) {
+    crc ^= std::to_integer<std::uint8_t>(byte);
+    for (std::size_t bit = 0U; bit < 8U; ++bit) {
+      const std::uint32_t mask = 0U - (crc & 1U);
+      crc = (crc >> 1U) ^ (0x82f63b78U & mask);
+    }
+  }
+  return ~crc;
+}
+
+TEST(TemporalPartCodecTest, EmitsGoldenCanonicalV2PartWithoutWeakeningV1) {
   TemporalPartFixture fixture;
   const auto first = encode_cseg_v2_temporal_part(fixture.input());
   const auto second = encode_cseg_v2_temporal_part(fixture.input());
   ASSERT_TRUE(first.has_value()) << first.error().to_string();
   ASSERT_TRUE(second.has_value()) << second.error().to_string();
+  ASSERT_EQ(first->size(), 2'048U);
+  constexpr std::array<std::byte, 16U> kGoldenPrefix{
+      std::byte{0x43U}, std::byte{0x48U}, std::byte{0x52U}, std::byte{0x4eU},
+      std::byte{0x43U}, std::byte{0x53U}, std::byte{0x45U}, std::byte{0x47U},
+      std::byte{0x02U}, std::byte{0x00U}, std::byte{0x00U}, std::byte{0x00U},
+      std::byte{0x00U}, std::byte{0x01U}, std::byte{0x00U}, std::byte{0x00U}};
+  EXPECT_TRUE(std::ranges::equal(first->bytes().first(kGoldenPrefix.size()), kGoldenPrefix));
+  // This tableless reflected-Castagnoli oracle is independent of the production CRC routine and
+  // fingerprints the complete temporal metadata, page order, stored bytes, and zero padding.
+  EXPECT_EQ(independent_crc32c(first->bytes()), 0x3242794cU);
+  EXPECT_EQ(common::crc32c(first->bytes()), 0x3242794cU);
   EXPECT_TRUE(std::ranges::equal(first->bytes(), second->bytes()));
 
   const auto decoded = decode_cseg_v2_temporal_part_exact(first->bytes());

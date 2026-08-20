@@ -156,11 +156,13 @@ use a different accepted format; it must not reinterpret these bytes in place.
 Focused tests cover canonical command application, exact and disagreeing checkpoint-overlap WALs,
 multi-tablet routed verification/application, retained and reclaimed pre-boundary rows,
 original/correction replay, historical lookup, scalar-winner vector materialization,
-impossible-history rejection, and continued WAL sequence ownership. Phase 18 retains golden bytes,
-fuzzing, allocation-failure sweeps beyond the implemented command-specific recovery and canonical
-empty/one-CSEG/two-CSEG one-tablet plus CSEG-backed/empty two-tablet Manifest startup paths, crash
-points, many-tablet skew, mixed-command dispatch, direct vector differential/lowering, long-history
-retention models, durable compaction, and performance measurement.
+impossible-history rejection, and continued WAL sequence ownership. The canonical CSEG v2 temporal
+file has a frozen full-file size/CRC fingerprint. Phase 18 retains additional field-level golden
+bytes, fuzzing, allocation-failure sweeps beyond the implemented command-specific recovery and
+canonical empty/one-CSEG/two-CSEG one-tablet plus CSEG-backed/empty two-tablet Manifest startup
+paths, crash points, many-tablet skew, mixed-command dispatch, direct vector
+differential/lowering, long-history retention models, durable compaction, and performance
+measurement.
 
 Useful design questions include:
 

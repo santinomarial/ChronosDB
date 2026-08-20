@@ -42,6 +42,11 @@ NONE/Zstandard page encodings. The decoder authenticates and interprets every st
 nonzero alignment padding and trailing bytes in exact mode, and reports the exact next required
 size for valid truncations.
 
+The canonical two-row raw temporal fixture freezes a 2,048-byte complete file and full-file CRC32C
+`0x3242794c`. The test computes that fingerprint with a tableless reflected-Castagnoli oracle as
+well as the production checksum routine, so changes to metadata, page order, stored bytes, or zero
+padding are visible even when the file still round-trips through the same implementation.
+
 Complete acceptance additionally binds the exact table schema/tablet, validates every system tuple,
 distinguishes corrupt zero values from unsupported assigned-domain extensions, bounds nonempty
 logical identities, recomputes granule and part event-time extrema, and requires strict ordering by
