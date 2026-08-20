@@ -210,6 +210,7 @@ decode_temporal_command_v1(const common::ByteView bytes, const TemporalCommandLi
       *minor != kMinor || *header_size != kTemporalCommandHeaderSize ||
       *total_size != body.size() || *count == 0U || *count > limits.maximum_mutations ||
       *metadata_size > limits.maximum_metadata_bytes || *reserved != 0U ||
+      *count > *metadata_size / (kTemporalMutationMetadataSize + 1U) ||
       *batch_size > body.size() - kTemporalCommandHeaderSize - kTemporalCommandTrailerSize ||
       *metadata_size !=
           body.size() - kTemporalCommandHeaderSize - *batch_size - kTemporalCommandTrailerSize) {

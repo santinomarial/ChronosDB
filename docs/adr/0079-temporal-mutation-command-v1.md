@@ -51,5 +51,8 @@ Invariants 1, 4, 6–10, 13, 14, and 18 apply. Focused tests cover exact round t
 identity, correction metadata, checksum damage, duplicate-identity rejection, physical-cell
 application, ordered original/correction replay, next-sequence reopen, and impossible-history
 rejection. Live tests cover a covering `LOCAL_SYNC` frontier, recovery equivalence, pre-WAL semantic
-rejection, sequence preservation, and post-admission fail-closed behavior. Golden fixtures, fuzzing,
-broad hostile-length matrices, mixed-version recovery, and crash injection are deferred to Phase 18.
+rejection, sequence preservation, and post-admission fail-closed behavior. Independently generated
+golden framing and CRC fixtures, a structure-aware sanitizer-backed fuzzer, and checksum-valid
+hostile outer framing, count, metadata, caller-limit, and nested-batch matrices are implemented.
+Sustained fuzzing, cross-compiler bytes, mixed-version recovery, allocation failure, and crash
+injection remain deferred to Phase 18.

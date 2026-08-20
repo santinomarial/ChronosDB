@@ -150,9 +150,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
 - Temporal Mutation Command v1 now has independently generated golden envelope/header and
   metadata/trailer bytes, a full-command CRC fixture, and a structure-aware ASan/UBSan libFuzzer
   target covering raw hostile bytes, canonical commands, caller-limit rejection,
-  checksum-repaired mutations, and nested-batch integrity. Sustained fuzzing, broader hostile
-  length/count and nested-batch corruption matrices, mixed versions, allocation failure, and
-  cross-compiler bytes remain deferred.
+  checksum-repaired mutations, and nested-batch integrity. Deterministic checksum-valid matrices
+  cover hostile outer length/count/limit fields, descriptor lengths/kinds/reserved bytes/identity
+  uniqueness, and nested-batch magic/version/layout/count/padding failures. Sustained fuzzing,
+  mixed versions, allocation failure, and cross-compiler bytes remain deferred.
 - Mixed `COLUMNAR_APPEND`/temporal recovery dispatch and application checkpoints; Manifest-backed
   multi-part/vector winner resolution beyond the implemented single-lineage scalar reference,
   strict metadata, full-part, bounded semantic-validation, and projected-granule paths;

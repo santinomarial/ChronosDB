@@ -1858,6 +1858,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/tablet_state_pipeline_header_self_contained.cpp
     tests/query/tablet_state_pipeline_test.cpp
     tests/query/temporal_command_header_self_contained.cpp
+    tests/query/temporal_command_corruption_test.cpp
     tests/query/temporal_command_test.cpp
     tests/query/temporal_command_executor_header_self_contained.cpp
     tests/query/temporal_command_executor_test.cpp
