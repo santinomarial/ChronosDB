@@ -35,10 +35,13 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   requiring resource-exhausted classification until exact success. It now also sweeps durable
   storage install, exact-generation load, and latest-generation selection; every failed install is
   retryable to the exact checkpoint, and allocation failure during canonical filename validation
-  remains resource exhaustion rather than false corruption. Sustained campaigns, filesystem fault
-  injection at every write/sync/rename cut point, process crash/reopen, token/checkpoint race
-  scheduling, obsolete-generation reclamation, cross-compiler golden verification, and retained-
-  state size/recovery measurements remain deferred.
+  remains resource exhaustion rather than false corruption. The durable coordinator owner is also
+  swept across every observed checkpoint allocation after bounded retention advances: failure
+  leaves its prior generation/frontiers published and dirty state retryable, while success advances
+  both only after exact installation. Sustained campaigns, filesystem fault injection at every
+  write/sync/rename cut point, process crash/reopen, token/checkpoint race scheduling, obsolete-
+  generation reclamation, cross-compiler golden verification, and retained-state size/recovery
+  measurements remain deferred.
 - Subscription plan identity: a dedicated sweep now fails every observed durable-registry install
   and load/reprepare allocation, requires resource-exhausted classification, retries every
   interrupted install to the exact executable fingerprint, and leaves the registry usable.
