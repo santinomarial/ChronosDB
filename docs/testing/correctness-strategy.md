@@ -400,6 +400,11 @@ snapshot changes no persistent state or pending identity, and completing the ori
 retains only the exact compatible suffix before its success response becomes eligible. An explicit
 negative completion clears that pending authority before local compaction is admitted.
 
+Snapshot request retransmission preserves the same single-owner rule: an exact duplicate publishes
+no second application task, a different request returns a negative response without replacing the
+first completion, and a higher-term competitor returns its term/vote persistence state before that
+response. Resolution of the old request permits a later retry.
+
 The implemented group-scoped transport envelope additionally has checksum-repaired hostile
 length/count/reserved/value matrices, exhaustive owned-allocation failure sweeps, and a bounded
 structure-aware libFuzzer target. Accepted arbitrary frames must exact-reencode, while generated

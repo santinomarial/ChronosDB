@@ -240,7 +240,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   transition before response publication. Pending remote installation now also excludes local
   compaction until explicit completion/rejection; focused coverage proves the rejected compaction
   changes no state, the original snapshot still installs with its exact retained suffix, and an
-  explicit negative completion releases local compaction.
+  explicit negative completion releases local compaction. Exact remote duplicates now coalesce,
+  competing requests receive negative responses without replacing pending identity, and a higher-
+  term competitor persists its term/vote transition before rejection and retry.
 - Persistent file owner, vote/log fsync ordering, crash/restart at every transition, idempotent
   recovery, application to tablet state, snapshot creation/install, and log compaction. Extend the
   implemented read barrier through production transport and tablet snapshot acquisition.

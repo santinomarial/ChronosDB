@@ -578,6 +578,82 @@ TEST(RaftNodeTest, SerializesPendingSnapshotInstallAgainstLocalCompaction) {
   EXPECT_EQ(rejected_follower->persistent_state().snapshot, local);
 }
 
+TEST(RaftNodeTest, CoalescesDuplicateAndRejectsCompetingPendingSnapshots) {
+  PersistentState state{};
+  state.current_term = 2U;
+  state.voted_for = 2U;
+  state.log = {LogEntry{1U, 1U, 1U, {std::byte{0x11}}}, LogEntry{2U, 2U, 1U, {std::byte{0x22}}}};
+  state.commit_index = 2U;
+  state.applied_index = 2U;
+
+  SnapshotMetadata first{};
+  first.last_included_index = 1U;
+  first.last_included_term = 1U;
+  first.manifest_generation = 9U;
+  first.part_set_checksum.fill(std::byte{0x99});
+  first.voters = {1U, 2U, 3U};
+  SnapshotMetadata second = first;
+  second.last_included_index = 2U;
+  second.last_included_term = 2U;
+  second.manifest_generation = 10U;
+  second.part_set_checksum.fill(std::byte{0xaa});
+
+  auto follower = RaftNode::create(1U, {1U, 2U, 3U}, state);
+  ASSERT_TRUE(follower.has_value());
+  auto pending = follower->receive(2U, InstallSnapshotRequest{2U, 2U, first});
+  ASSERT_TRUE(pending.has_value()) << pending.error().to_string();
+  ASSERT_TRUE(pending->snapshot_install.has_value());
+
+  auto duplicate = follower->receive(2U, InstallSnapshotRequest{2U, 2U, first});
+  ASSERT_TRUE(duplicate.has_value()) << duplicate.error().to_string();
+  EXPECT_FALSE(duplicate->snapshot_install.has_value());
+  EXPECT_TRUE(duplicate->outbound.empty());
+  EXPECT_FALSE(duplicate->persistent_state.has_value());
+
+  auto competing = follower->receive(2U, InstallSnapshotRequest{2U, 2U, second});
+  ASSERT_TRUE(competing.has_value()) << competing.error().to_string();
+  EXPECT_FALSE(competing->snapshot_install.has_value());
+  ASSERT_EQ(competing->outbound.size(), 1U);
+  EXPECT_EQ(std::get<InstallSnapshotResponse>(competing->outbound.front().message),
+            (InstallSnapshotResponse{2U, false, 0U}));
+  EXPECT_EQ(follower->persistent_state(), state);
+
+  auto installed = follower->complete_snapshot_install(2U, first, true);
+  ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+  EXPECT_EQ(follower->persistent_state().snapshot, first);
+
+  auto term_follower = RaftNode::create(1U, {1U, 2U, 3U}, state);
+  ASSERT_TRUE(term_follower.has_value());
+  auto term_pending = term_follower->receive(2U, InstallSnapshotRequest{2U, 2U, first});
+  ASSERT_TRUE(term_pending.has_value()) << term_pending.error().to_string();
+  ASSERT_TRUE(term_pending->snapshot_install.has_value());
+
+  auto higher = term_follower->receive(3U, InstallSnapshotRequest{3U, 3U, second});
+  ASSERT_TRUE(higher.has_value()) << higher.error().to_string();
+  EXPECT_FALSE(higher->snapshot_install.has_value());
+  EXPECT_EQ(higher->persistent_state,
+            std::optional<PersistentState>{term_follower->persistent_state()});
+  EXPECT_EQ(term_follower->current_term(), 3U);
+  EXPECT_FALSE(term_follower->persistent_state().voted_for.has_value());
+  ASSERT_EQ(higher->outbound.size(), 1U);
+  EXPECT_EQ(std::get<InstallSnapshotResponse>(higher->outbound.front().message),
+            (InstallSnapshotResponse{3U, false, 0U}));
+
+  auto stale_completion = term_follower->complete_snapshot_install(2U, first, true);
+  ASSERT_TRUE(stale_completion.has_value()) << stale_completion.error().to_string();
+  EXPECT_FALSE(stale_completion->persistent_state.has_value());
+  ASSERT_EQ(stale_completion->outbound.size(), 1U);
+  EXPECT_EQ(std::get<InstallSnapshotResponse>(stale_completion->outbound.front().message),
+            (InstallSnapshotResponse{3U, false, 0U}));
+
+  auto retry = term_follower->receive(3U, InstallSnapshotRequest{3U, 3U, second});
+  ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+  EXPECT_TRUE(retry->snapshot_install.has_value());
+  EXPECT_TRUE(retry->outbound.empty());
+  auto retry_declined = term_follower->complete_snapshot_install(3U, second, false);
+  ASSERT_TRUE(retry_declined.has_value()) << retry_declined.error().to_string();
+}
+
 TEST(RaftNodeTest, ConfirmsLinearizableReadAtCommittedIndexBeforeApplicationVisibility) {
   auto leader = RaftNode::create(1U, {1U, 2U, 3U});
   ASSERT_TRUE(leader.has_value());

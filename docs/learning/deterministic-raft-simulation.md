@@ -71,8 +71,10 @@ and bound validation. The production core additionally rejects AppendEntries pre
 installed snapshot without interpreting the compacted entry as retained log storage, and its
 higher-term regression requires persistence before the negative response. The same core serializes
 pending external installation against local compaction so one simulator node cannot create a second
-snapshot authority before resolving the first. Long seed campaigns, exhaustive schedules, timer
-clock changes, physical disk faults, and minimized corpus retention remain in the hardening ledger.
+snapshot authority before resolving the first. Duplicate snapshot requests coalesce around that
+owner; different requests fail negatively without replacing it, including persist-before-response
+handling for a higher term. Long seed campaigns, exhaustive schedules, timer clock changes,
+physical disk faults, and minimized corpus retention remain in the hardening ledger.
 
 Useful questions include: why can a queued message survive a sender crash; why must durable state be
 installed before outbound admission; why does replay use explicit message IDs; why is a snapshot

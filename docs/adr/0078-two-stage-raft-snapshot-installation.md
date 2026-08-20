@@ -22,6 +22,12 @@ checkpoint, and bounds, then returns a pending-install transition without acknow
 The application/storage owner must independently transfer, verify, and durably install the exact
 snapshot named by its manifest generation and part-set checksum.
 
+Exactly one external snapshot installation may be pending per node. An exact duplicate request
+coalesces without republishing application work or responding early. A different request receives a
+negative response and cannot replace the original source/term/metadata identity. If that competitor
+carries a higher term, the normal term/vote transition accompanies the negative response and must
+be persisted first. Once the original completion succeeds or fails, a later request may be admitted.
+
 Only `complete_snapshot_install(..., installed=true)` may atomically install the Raft snapshot
 metadata, membership checkpoint, commit/applied boundary, and compatible retained suffix. Its
 persistent transition crosses `DurableMultiRaftRuntime`'s synchronization boundary before the
@@ -46,6 +52,10 @@ immutable application snapshots with different manifest/checksum identity from r
 index and prevents local compaction from invalidating the retained suffix calculation for a pending
 completion.
 
+Competing remote requests are serialized for the same reason. Coalescing an exact retransmission
+avoids duplicate external ownership, while rejecting a different request preserves one completion
+identity that the application owner can resolve deterministically.
+
 Embedding unbounded snapshot bytes in one Raft message was rejected because it bypasses chunking,
 resource limits, durable file installation, and resumability. Immediately accepting metadata was
 rejected because it creates a fake application state. Log-only catch-up was rejected because it
@@ -66,3 +76,6 @@ term transition before that response. A pending-install regression attempts a di
 local compaction, requires `UNAVAILABLE` with byte-for-value state preservation, then completes the
 original installation and verifies its exact retained suffix and success response. A second branch
 rejects the installation, verifies its negative response, and then permits the local compaction.
+Request-level coverage coalesces an exact duplicate, rejects a different same-term snapshot without
+losing the first completion, persists a higher-term competitor before its negative response, clears
+the stale pending work through negative completion, and then admits the higher-term retry.

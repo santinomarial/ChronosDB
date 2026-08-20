@@ -792,7 +792,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   predecessors below that installed boundary now fail as ordinary conflicts without aliasing the
   snapshot entry into retained-log storage, while higher-term failures still carry their required
   persistence transition. Pending external snapshot installation also excludes local compaction,
-  preventing competing immutable snapshot identities at one index. A bounded canonical
+  preventing competing immutable snapshot identities at one index. Exact remote duplicates
+  coalesce, while different pending requests fail negatively without replacing the original
+  completion identity. A bounded canonical
   group/source/destination transport envelope now round-trips vote, append, snapshot, and read-
   barrier messages without introducing sockets into the deterministic core. Header-first bounded
   stream ownership now validates allocation-relevant fields before exact frame allocation and

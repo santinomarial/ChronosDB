@@ -60,6 +60,9 @@ Raft to the identical boundary. A crash between those steps leaves an unreferenc
 an unrecoverable Raft prefix. If a remote two-stage snapshot installation is already pending, the
 core rejects local compaction until that installation is completed or rejected; two immutable
 application-snapshot identities therefore cannot race for one Raft boundary.
+Exact retransmissions also coalesce without re-entering the application owner. A competing remote
+snapshot receives a negative response while the first transfer retains the sole completion
+identity; after that identity resolves, a later request can be admitted normally.
 
 `install_recovered_tablet_movement_snapshot` is the follower-transfer bridge into that owner. It
 accepts only a completed, authoritatively recovered movement; exact-decodes and canonicalizes the

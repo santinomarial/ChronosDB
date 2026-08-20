@@ -712,6 +712,15 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
                                                 impl_->state.snapshot.last_included_index}});
             return common::Status::ok();
           }
+          const std::optional<InstallSnapshotRequest>& pending = impl_->pending_snapshot;
+          if (pending.has_value()) {
+            if (*pending == value)
+              return common::Status::ok();
+            transition.outbound.push_back(OutboundMessage{
+                source, InstallSnapshotResponse{impl_->state.current_term, false,
+                                                impl_->state.snapshot.last_included_index}});
+            return common::Status::ok();
+          }
           impl_->pending_snapshot = value;
           transition.snapshot_install = PendingSnapshotInstall{source, value.snapshot};
           return common::Status::ok();
