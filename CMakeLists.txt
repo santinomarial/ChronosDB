@@ -1092,6 +1092,7 @@ if(CHRONOS_BUILD_TESTS)
   add_executable(
     chronos_live_allocation_failure_tests
     tests/live/multi_tablet_subscription_checkpoint_allocation_failure_test.cpp
+    tests/live/snapshot_subscription_allocation_failure_test.cpp
     tests/support/failing_allocator.cpp
   )
   set_target_properties(chronos_live_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)

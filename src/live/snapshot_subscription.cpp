@@ -163,11 +163,11 @@ common::Result<SnapshotSubscription> SnapshotSubscription::start(
       return common::make_unexpected(invalid("snapshot column does not match the plan output"));
   }
 
-  auto registration = manager.register_subscription(request);
-  if (!registration.has_value())
-    return common::make_unexpected(registration.error());
   const auto cancel = [&manager, &request]() noexcept { manager.abandon(request.subscription_id); };
   try {
+    auto registration = manager.register_subscription(request);
+    if (!registration.has_value())
+      return common::make_unexpected(registration.error());
     auto snapshot = publisher.snapshot();
     if (!snapshot.has_value()) {
       cancel();
