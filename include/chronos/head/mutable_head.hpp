@@ -31,14 +31,18 @@ struct HeadCommitPosition {
   std::uint64_t record_sequence{};
 
   [[nodiscard]] static HeadCommitPosition wal(wal::WalId id, std::uint64_t sequence) noexcept {
-    return HeadCommitPosition{
-        .source = CommitSource::kWal, .wal_id = id, .record_sequence = sequence};
+    return HeadCommitPosition{.source = CommitSource::kWal,
+                              .wal_id = id,
+                              .raft_group_id = common::Uuid{},
+                              .record_sequence = sequence};
   }
 
   [[nodiscard]] static HeadCommitPosition raft(common::Uuid group_id,
                                                std::uint64_t log_index) noexcept {
-    return HeadCommitPosition{
-        .source = CommitSource::kRaft, .raft_group_id = group_id, .record_sequence = log_index};
+    return HeadCommitPosition{.source = CommitSource::kRaft,
+                              .wal_id = wal::WalId{},
+                              .raft_group_id = group_id,
+                              .record_sequence = log_index};
   }
 
   [[nodiscard]] bool is_valid() const noexcept {

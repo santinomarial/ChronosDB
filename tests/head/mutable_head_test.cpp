@@ -232,6 +232,20 @@ TEST(MutableHeadTest, PreservesRaftGroupAndIndexAsTheRowVersionIdentity) {
   EXPECT_TRUE(target.metrics().failed);
 }
 
+TEST(MutableHeadTest, CommitPositionFactoriesZeroTheInactiveLogIdentity) {
+  const HeadCommitPosition wal = HeadCommitPosition::wal(wal_id(), 7U);
+  EXPECT_TRUE(wal.is_valid());
+  EXPECT_EQ(wal.source, CommitSource::kWal);
+  EXPECT_EQ(wal.wal_id, wal_id());
+  EXPECT_TRUE(wal.raft_group_id.is_nil());
+
+  const HeadCommitPosition raft = HeadCommitPosition::raft(raft_group_id(), 11U);
+  EXPECT_TRUE(raft.is_valid());
+  EXPECT_EQ(raft.source, CommitSource::kRaft);
+  EXPECT_FALSE(raft.wal_id.is_valid());
+  EXPECT_EQ(raft.raft_group_id, raft_group_id());
+}
+
 TEST(MutableHeadTest, OldSnapshotsKeepExactBoundariesAndStableStorageAcrossLaterAppends) {
   MutableHead target = head(4U, 2U);
   const auto input = batch();
