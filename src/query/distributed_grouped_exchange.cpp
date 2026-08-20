@@ -480,7 +480,8 @@ GroupedExchangeTerminalFrameReader::consume(const common::ByteView bytes) {
                     bytes_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_));
   buffered_bytes_ += consumed;
   if (buffered_bytes_ != grouped_exchange_terminal_format::kFrameLength)
-    return GroupedExchangeTerminalFrameReadStep{.consumed_bytes = consumed};
+    return GroupedExchangeTerminalFrameReadStep{.consumed_bytes = consumed,
+                                                .message = std::nullopt};
   auto decoded = decode_grouped_exchange_terminal_message_exact(bytes_);
   if (!decoded.has_value()) {
     failure_ = decoded.error();
@@ -556,7 +557,7 @@ GroupedFloat64ExchangeFrameReader::consume(const common::ByteView bytes) {
                     bytes_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_));
   buffered_bytes_ += consumed;
   if (buffered_bytes_ != grouped_float64_exchange_format::kFrameLength)
-    return GroupedFloat64ExchangeFrameReadStep{.consumed_bytes = consumed};
+    return GroupedFloat64ExchangeFrameReadStep{.consumed_bytes = consumed, .message = std::nullopt};
   auto decoded = decode_grouped_float64_exchange_message_exact(bytes_);
   if (!decoded.has_value()) {
     failure_ = decoded.error();

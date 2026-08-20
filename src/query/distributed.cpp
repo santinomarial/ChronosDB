@@ -260,7 +260,7 @@ common::Result<ExchangeFrameReadStep> ExchangeFrameReader::consume(const common:
                     bytes_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_));
   buffered_bytes_ += consumed;
   if (buffered_bytes_ != distributed_format::kExchangeMessageLength)
-    return ExchangeFrameReadStep{.consumed_bytes = consumed};
+    return ExchangeFrameReadStep{.consumed_bytes = consumed, .message = std::nullopt};
 
   common::Result<ExchangeMessage> decoded = decode_exchange_message_exact(bytes_);
   if (!decoded.has_value()) {
