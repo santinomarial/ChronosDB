@@ -157,9 +157,10 @@ Focused tests cover canonical command application, exact and disagreeing checkpo
 multi-tablet routed verification/application, retained and reclaimed pre-boundary rows,
 original/correction replay, historical lookup, scalar-winner vector materialization,
 impossible-history rejection, and continued WAL sequence ownership. Phase 18 retains golden bytes,
-fuzzing, allocation-failure sweeps, crash points, many-tablet skew, mixed-command dispatch, direct
-vector differential/lowering, long-history retention models, durable compaction, and performance
-measurement.
+fuzzing, allocation-failure sweeps beyond the implemented command-specific recovery and canonical
+one-tablet/no-part Manifest startup paths, crash points, many-tablet skew, mixed-command dispatch,
+direct vector differential/lowering, long-history retention models, durable compaction, and
+performance measurement.
 
 Useful design questions include:
 

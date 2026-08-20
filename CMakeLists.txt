@@ -1904,6 +1904,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/distributed_vector_fragment_v2_allocation_failure_test.cpp
     tests/query/head_scan_allocation_failure_test.cpp
     tests/query/latest_allocation_failure_test.cpp
+    tests/query/manifest_temporal_recovery_allocation_failure_test.cpp
     tests/query/parallel_scheduler_allocation_failure_test.cpp
     tests/query/physical_optimizer_allocation_failure_test.cpp
     tests/query/physical_lowering_allocation_failure_test.cpp
