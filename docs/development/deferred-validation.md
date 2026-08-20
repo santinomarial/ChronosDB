@@ -160,10 +160,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   Exhaustive test-only allocation injection now classifies every codec-owned canonical encode and
   exact-decode failure as resource exhaustion. The canonical single-table command-specific WAL
   recovery sweep covers every observed owned allocation through disposable provider construction,
-  preflight, replay, writer return, rollback, and lock release. The canonical one-tablet/no-part
-  Manifest-composed startup sweep likewise covers every observed allocation and proves both locks
-  are reacquirable after each failed unpublished recovery; nonempty and multi-tablet composed
-  startup allocation injection remains deferred.
+  preflight, replay, writer return, rollback, and lock release. Canonical one-tablet
+  Manifest-composed startup sweeps cover every observed allocation with both empty history and one
+  authenticated CSEG, proving both locks are reacquirable after each failed unpublished recovery;
+  multi-part and multi-tablet composed startup allocation injection remains deferred.
 - Mixed `COLUMNAR_APPEND`/temporal recovery dispatch and application checkpoints; Manifest-backed
   multi-part/vector winner resolution beyond the implemented single-lineage scalar reference,
   strict metadata, full-part, bounded semantic-validation, and projected-granule paths;

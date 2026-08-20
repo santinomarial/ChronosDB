@@ -58,9 +58,9 @@ Unknown application identity and command versions are classified as unsupported,
 recovery over a mixed v1/future-format WAL fails during preflight without publishing partial state.
 Exhaustive test-only allocation injection covers every codec-owned canonical encode/exact-decode
 allocation and every owned allocation observed on the canonical single-table command-specific WAL
-recovery path, including rollback and lock release. The canonical one-tablet, no-part
-Manifest-composed startup path also injects every observed allocation, returns no state on failure,
-and proves that both Manifest and WAL locks can be reacquired after each failure. The exact golden
-fixture runs in the standard Linux GCC, Linux Clang/libc++, and macOS AppleClang CI matrix.
-Sustained fuzzing, allocation injection for nonempty/multi-tablet Manifest startup, and crash
+recovery path, including rollback and lock release. Canonical one-tablet Manifest-composed startup
+sweeps cover both an empty tablet and authenticated single-CSEG restoration, return no state on
+failure, and prove that both Manifest and WAL locks can be reacquired after each failure. The exact
+golden fixture runs in the standard Linux GCC, Linux Clang/libc++, and macOS AppleClang CI matrix.
+Sustained fuzzing, allocation injection for multi-part/multi-tablet Manifest startup, and crash
 injection remain deferred to Phase 18.

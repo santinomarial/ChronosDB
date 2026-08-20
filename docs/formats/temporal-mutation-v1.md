@@ -60,5 +60,6 @@ database-kind dispatcher and general application checkpoints remain later integr
 selected distinct-table WAL tablet, verifies commands between a trailing global checkpoint and the
 target tablet's durable position, then applies each later suffix before returning the same writer
 ownership. Multiple tablets for one table remain unsupported because v1 carries no tablet identity.
-The canonical one-tablet/no-part composed startup has exhaustive allocation injection; every
-failure returns no composed state and a normal retry reacquires both Manifest and WAL locks.
+Canonical one-tablet composed startup with empty history and with one authenticated CSEG has
+exhaustive allocation injection; every failure returns no composed state and a normal retry
+reacquires both Manifest and WAL locks.
