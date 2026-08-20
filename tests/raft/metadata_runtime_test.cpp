@@ -352,6 +352,8 @@ TEST(DurableMetadataStateMachineTest, InstallsCompactsAndReopensSnapshotPlusComm
   auto first_compaction = metadata->compact_applied_prefix(4U);
   ASSERT_TRUE(first_compaction.has_value()) << first_compaction.error().to_string();
   EXPECT_EQ(first_compaction->snapshot.last_included_index, 4U);
+  EXPECT_EQ(first_compaction->snapshot.configuration_index, 0U);
+  EXPECT_EQ(first_compaction->snapshot.voters, std::vector<NodeId>{1U});
 
   ASSERT_TRUE(runtime->execute_batch({{group_id(), StartElectionOperation{}}}).has_value());
   ASSERT_TRUE(runtime->execute_batch({{group_id(), CommitCurrentTermOperation{}}}).has_value());
@@ -364,6 +366,8 @@ TEST(DurableMetadataStateMachineTest, InstallsCompactsAndReopensSnapshotPlusComm
   ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
   EXPECT_EQ(compacted->snapshot.last_included_index, 5U);
   EXPECT_EQ(compacted->snapshot.manifest_generation, 5U);
+  EXPECT_EQ(compacted->snapshot.configuration_index, 0U);
+  EXPECT_EQ(compacted->snapshot.voters, std::vector<NodeId>{1U});
   EXPECT_EQ(compacted->application_entries, 4U);
   EXPECT_FALSE(compacted->application_snapshot_already_present);
   EXPECT_TRUE(runtime->find_group(group_id())->persistent_state().log.empty());

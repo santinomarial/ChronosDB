@@ -289,12 +289,14 @@ public:
       return common::make_unexpected(
           fail(corruption("metadata application trails the requested snapshot boundary")));
 
-    MetadataApplicationSnapshot application_snapshot{.group_id = group_id};
+    MetadataApplicationSnapshot application_snapshot{
+        .group_id = group_id, .raft_snapshot = SnapshotMetadata{}, .entries = {}};
     SnapshotMetadata next_snapshot{.last_included_index = last_included_index,
                                    .last_included_term = boundary.term,
                                    .manifest_generation = last_included_index,
                                    .part_set_checksum = {},
-                                   .configuration_index = current_snapshot.configuration_index};
+                                   .configuration_index = current_snapshot.configuration_index,
+                                   .voters = {}};
     try {
       next_snapshot.voters.assign(node->voters().begin(), node->voters().end());
       if (current_snapshot.last_included_index != 0U) {
