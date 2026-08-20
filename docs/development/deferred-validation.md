@@ -27,13 +27,14 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
 
 ## Phase 11 — live subscriptions and materialized views
 
-- Materialized View Checkpoint storage now sweeps every observed install, exact-generation load,
-  and latest-generation selection allocation. Failures remain resource exhaustion rather than
-  false corruption, leave the storage usable, and retry to the exact checkpoint. The durable view
-  owner is likewise swept after committed progress: allocation failure leaves the prior generation
-  and source-retention sequence published until exact installation succeeds. Filesystem fault
-  injection at every write/sync/rename cut point, process crash/reopen, obsolete-generation
-  reclamation, and sustained recovery-size measurements remain deferred.
+- Materialized View Checkpoint v1 and its bound generation envelope now sweep every observed encode
+  and decode allocation through exact success. Its storage likewise sweeps every observed install,
+  exact-generation load, and latest-generation selection allocation. Failures remain resource
+  exhaustion rather than false corruption, leave the storage usable, and retry to the exact
+  checkpoint. The durable view owner is swept after committed progress: allocation failure leaves
+  the prior generation and source-retention sequence published until exact installation succeeds.
+  Filesystem fault injection at every write/sync/rename cut point, process crash/reopen,
+  obsolete-generation reclamation, and sustained recovery-size measurements remain deferred.
 - Multi-tablet coordinator checkpoints now have a structure-aware libFuzzer target covering raw
   hostile bytes, canonical WAL-only v1 and mixed-source v2 state, nested generation envelopes,
   checksum-repaired mutations, limit rejection, explicit-version/compatibility agreement, and

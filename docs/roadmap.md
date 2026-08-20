@@ -676,9 +676,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   preserves retryable exact state after each failed install, and does not mislabel allocation
   failure during canonical filename validation as durable corruption. Its coordinator owner now
   proves allocation failure cannot publish a generation or retention frontier before exact durable
-  installation. The materialized-view checkpoint store now provides the same exhaustive install,
-  generation-load, and latest-selection allocation guarantees, while its durable owner preserves
-  the prior generation and source-retention sequence until exact installation. Durable
+  installation. Materialized View Checkpoint v1 and its bound envelope now classify every observed
+  encode/decode allocation. Its store provides the same exhaustive install, generation-load, and
+  latest-selection allocation guarantees, while its durable owner preserves the prior generation
+  and source-retention sequence until exact installation. Durable
   plan-registry install and load/reprepare allocations are likewise
   classified, retryable, and non-poisoning. The
   homogeneous WAL vector now executes grouped aggregate, global sort/limit, and latest/limit plans
