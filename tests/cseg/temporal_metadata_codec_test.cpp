@@ -4,6 +4,7 @@
 #include "chronos/cseg/temporal_format.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
@@ -56,6 +57,27 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
                                .offsets_length = 0U,
                                .values_length = length,
                                .page_crc32c = crc};
+}
+
+[[nodiscard]] std::uint16_t load_u16(const common::ByteView bytes, const std::size_t offset) {
+  return static_cast<std::uint16_t>(std::to_integer<std::uint16_t>(bytes[offset]) |
+                                    (std::to_integer<std::uint16_t>(bytes[offset + 1U]) << 8U));
+}
+
+[[nodiscard]] std::uint32_t load_u32(const common::ByteView bytes, const std::size_t offset) {
+  std::uint32_t value = 0U;
+  for (std::size_t index = 0U; index < sizeof(value); ++index) {
+    value |= std::to_integer<std::uint32_t>(bytes[offset + index]) << (index * 8U);
+  }
+  return value;
+}
+
+[[nodiscard]] std::uint64_t load_u64(const common::ByteView bytes, const std::size_t offset) {
+  std::uint64_t value = 0U;
+  for (std::size_t index = 0U; index < sizeof(value); ++index) {
+    value |= std::to_integer<std::uint64_t>(bytes[offset + index]) << (index * 8U);
+  }
+  return value;
 }
 
 void store_u16(std::vector<std::byte>& bytes, const std::size_t offset, const std::uint16_t value) {
@@ -160,6 +182,86 @@ struct TemporalMetadataFixture {
             .value());
   }
 };
+
+TEST(TemporalMetadataCodecTest, EmitsIndependentFieldLevelGoldenBytes) {
+  TemporalMetadataFixture fixture;
+  const auto encoded = encode_cseg_v2_temporal_metadata(fixture.input());
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  ASSERT_EQ(encoded->size(), 1'912U);
+  EXPECT_EQ(encoded->total_length(), 2'048U);
+
+  // These absolute offsets and values were independently generated from the accepted byte layout
+  // with Python struct packing and a tableless reflected CRC32C implementation.
+  constexpr std::array<std::uint8_t, 8U> kMagic{0x43U, 0x48U, 0x52U, 0x4eU,
+                                                0x43U, 0x53U, 0x45U, 0x47U};
+  const auto expect_bytes = [&](const std::size_t offset, const auto& expected) {
+    for (std::size_t index = 0U; index < expected.size(); ++index) {
+      EXPECT_EQ(std::to_integer<std::uint8_t>(encoded->bytes()[offset + index]), expected[index])
+          << offset + index;
+    }
+  };
+  expect_bytes(0U, kMagic);
+  EXPECT_EQ(load_u16(encoded->bytes(), 8U), 2U);
+  EXPECT_EQ(load_u16(encoded->bytes(), 10U), 0U);
+  EXPECT_EQ(load_u32(encoded->bytes(), 12U), 256U);
+  EXPECT_EQ(load_u32(encoded->bytes(), 16U), 0U);
+  EXPECT_EQ(load_u32(encoded->bytes(), 20U), 0U);
+  EXPECT_EQ(load_u64(encoded->bytes(), 24U), 2'048U);
+  EXPECT_EQ(load_u64(encoded->bytes(), 32U), 1'912U);
+  EXPECT_EQ(load_u64(encoded->bytes(), 40U), 2U);
+  EXPECT_EQ(load_u32(encoded->bytes(), 48U), 1U);
+  EXPECT_EQ(load_u32(encoded->bytes(), 52U), 9U);
+  EXPECT_EQ(load_u32(encoded->bytes(), 56U), 1U);
+  EXPECT_EQ(load_u32(encoded->bytes(), 60U), 9U);
+
+  constexpr std::array<std::size_t, 4U> kIdentityOffsets{64U, 80U, 96U, 112U};
+  for (std::size_t index = 0U; index < kIdentityOffsets.size(); ++index) {
+    const std::size_t offset = kIdentityOffsets[index];
+    EXPECT_EQ(encoded->bytes()[offset], std::byte{static_cast<std::uint8_t>(index + 1U)});
+    EXPECT_TRUE(std::ranges::all_of(encoded->bytes().subspan(offset + 1U, 15U),
+                                    [](const std::byte value) { return value == std::byte{0U}; }));
+  }
+  EXPECT_EQ(load_u64(encoded->bytes(), 128U), 1U);
+  EXPECT_EQ(load_u64(encoded->bytes(), 136U), 256U);
+  EXPECT_EQ(load_u64(encoded->bytes(), 144U), 1'120U);
+  EXPECT_EQ(load_u64(encoded->bytes(), 152U), 1'184U);
+  EXPECT_EQ(load_u64(encoded->bytes(), 160U), 1'912U);
+  EXPECT_EQ(load_u32(encoded->bytes(), 168U), 0U);
+  EXPECT_EQ(load_u32(encoded->bytes(), 172U), 1U);
+  EXPECT_EQ(load_u64(encoded->bytes(), 176U), 10U);
+  EXPECT_EQ(load_u64(encoded->bytes(), 184U), 20U);
+  EXPECT_TRUE(std::ranges::all_of(encoded->bytes().subspan(192U, 56U),
+                                  [](const std::byte value) { return value == std::byte{0U}; }));
+  EXPECT_EQ(load_u32(encoded->bytes(), 248U), 0x2e0f2f20U);
+  EXPECT_EQ(load_u32(encoded->bytes(), 252U), 0U);
+
+  constexpr std::array<std::size_t, 8U> kSystemDescriptorOffsets{352U, 448U, 544U, 640U,
+                                                                 736U, 832U, 928U, 1'024U};
+  constexpr std::array<std::array<std::uint8_t, 4U>, 8U> kRegistryCodes{{
+      {0x02U, 0x00U, 0x06U, 0x00U},
+      {0x03U, 0x00U, 0x12U, 0x00U},
+      {0x04U, 0x00U, 0x09U, 0x00U},
+      {0x05U, 0x00U, 0x08U, 0x00U},
+      {0x06U, 0x00U, 0x06U, 0x00U},
+      {0x07U, 0x00U, 0x11U, 0x00U},
+      {0x08U, 0x00U, 0x0dU, 0x00U},
+      {0x09U, 0x00U, 0x0dU, 0x00U},
+  }};
+  for (std::size_t index = 0U; index < kSystemDescriptorOffsets.size(); ++index) {
+    const std::size_t offset = kSystemDescriptorOffsets[index];
+    EXPECT_TRUE(std::ranges::all_of(encoded->bytes().subspan(offset, 16U),
+                                    [](const std::byte value) { return value == std::byte{0U}; }));
+    expect_bytes(offset + 16U, kRegistryCodes[index]);
+    EXPECT_TRUE(std::ranges::all_of(encoded->bytes().subspan(offset + 20U, 8U),
+                                    [](const std::byte value) { return value == std::byte{0U}; }));
+    EXPECT_TRUE(
+        std::ranges::all_of(encoded->bytes().subspan(offset + 28U, 8U),
+                            [](const std::byte value) { return value == std::byte{0xffU}; }));
+    EXPECT_TRUE(std::ranges::all_of(encoded->bytes().subspan(offset + 36U, 60U),
+                                    [](const std::byte value) { return value == std::byte{0U}; }));
+  }
+  EXPECT_EQ(load_u32(encoded->bytes(), 1'908U), 0x5d84d7acU);
+}
 
 TEST(TemporalMetadataCodecTest, RoundTripsV2AndKeepsV1Strict) {
   TemporalMetadataFixture fixture;

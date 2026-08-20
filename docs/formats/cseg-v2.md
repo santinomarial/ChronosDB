@@ -47,6 +47,12 @@ The canonical two-row raw temporal fixture freezes a 2,048-byte complete file an
 well as the production checksum routine, so changes to metadata, page order, stored bytes, or zero
 padding are visible even when the file still round-trips through the same implementation.
 
+An independently generated field-level fixture additionally freezes the 1,912-byte metadata
+length, complete-file length, absolute header fields and identities, layout coordinates, all eight
+temporal system descriptor cores and reserved regions, header CRC32C `0x2e0f2f20`, and metadata
+CRC32C `0x5d84d7ac`. Its expected offsets and values are literal bytes derived from the specification
+rather than the production format constants.
+
 Checksum-valid hostile metadata tests distinguish assigned future format, storage, encoding,
 compression, and flag values as unsupported. Zero registry codes, incorrect temporal system-column
 shape, nonzero reserved bytes, contradictory stored-column/page counts, and overlapping page
