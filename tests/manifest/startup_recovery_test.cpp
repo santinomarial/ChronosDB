@@ -562,7 +562,13 @@ TEST(ManifestColumnarStartupRecoveryTest,
         recovered->tablet(tablet_id)->snapshot().value();
     EXPECT_EQ(recovered_tablet.visible_row_count(), 1U);
     EXPECT_EQ(recovered_tablet.retry_entry_count(), 2U);
-    EXPECT_EQ(recovered_tablet.retry_outcome(durable_identity)->record_sequence, 1U);
+    const std::shared_ptr<const ingest::ColumnarAppendRetryOutcome> durable_outcome =
+        recovered_tablet.retry_outcome(durable_identity);
+    ASSERT_NE(durable_outcome, nullptr);
+    EXPECT_EQ(durable_outcome->commit_source, head::CommitSource::kWal);
+    EXPECT_EQ(durable_outcome->wal_id, wal_id);
+    EXPECT_TRUE(durable_outcome->raft_group_id.is_nil());
+    EXPECT_EQ(durable_outcome->record_sequence, 1U);
     EXPECT_EQ(recovered_tablet.retry_outcome(uncovered_identity)->record_sequence, 2U);
     EXPECT_EQ(recovered->retry_directory().metrics().committed_entries, 2U);
     common::Result<wal::WalWriter> reopened = recovered->release_writer();

@@ -105,7 +105,9 @@ derive_durable_prefix(const LoadedManifestGeneration& manifest,
                   ingest::ColumnarAppendMutationIdentity{.table_id = retry.table_id,
                                                          .tablet_id = retry.tablet_id,
                                                          .request_digest = retry.request_digest},
+              .commit_source = head::CommitSource::kWal,
               .wal_id = retry.wal_id,
+              .raft_group_id = common::Uuid{},
               .record_sequence = retry.record_sequence,
               .applied_row_count = retry.applied_row_count}});
     }
