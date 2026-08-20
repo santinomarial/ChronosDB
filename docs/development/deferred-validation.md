@@ -81,8 +81,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   subscriber fan-out, slow consumers, window expiration, negative event times, overflow, NaN,
   floating reproducibility, integer/decimal overflow, VWAP zero weight, OHLC endpoint removal,
   Welford inverse/merge shapes, and recomputation equivalence.
-- ASan/UBSan/TSan, token/window fuzzing, restart/crash testing, state corruption, fan-out/latency/
-  memory benchmarks, ingestion-impact measurement, and API review.
+- Resume Token v1/v2 now has a structure-aware libFuzzer target that exercises raw hostile bytes,
+  authenticated canonical mutations, source-bound rejection, explicit-version/compatibility
+  agreement, and exact successful re-encoding under ASan/UBSan. Sustained token campaigns, window
+  fuzzing, restart/crash testing, state corruption, fan-out/latency/memory benchmarks,
+  ingestion-impact measurement, and API review remain deferred.
 
 ## Phase 12 — io_uring, SIMD, affinity, NUMA, and allocation
 
