@@ -51,7 +51,9 @@ An independently generated field-level fixture additionally freezes the 1,912-by
 length, complete-file length, absolute header fields and identities, layout coordinates, all eight
 temporal system descriptor cores and reserved regions, header CRC32C `0x2e0f2f20`, and metadata
 CRC32C `0x5d84d7ac`. Its expected offsets and values are literal bytes derived from the specification
-rather than the production format constants.
+rather than the production format constants. A companion fixture pins every field and reserved
+region in the canonical granule and all nine page descriptors, including exact aligned page
+coordinates and variable-width buffer lengths, plus the zero metadata-trailer padding.
 
 Checksum-valid hostile metadata tests distinguish assigned future format, storage, encoding,
 compression, and flag values as unsupported. Zero registry codes, incorrect temporal system-column

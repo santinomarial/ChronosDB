@@ -263,6 +263,66 @@ TEST(TemporalMetadataCodecTest, EmitsIndependentFieldLevelGoldenBytes) {
   EXPECT_EQ(load_u32(encoded->bytes(), 1'908U), 0x5d84d7acU);
 }
 
+TEST(TemporalMetadataCodecTest, EmitsIndependentGranuleAndPageDescriptorGoldenBytes) {
+  TemporalMetadataFixture fixture;
+  const auto encoded = encode_cseg_v2_temporal_metadata(fixture.input());
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  ASSERT_EQ(encoded->size(), 1'912U);
+
+  // Absolute offsets and expected fields come from independent struct packing of the normative
+  // 64-byte granule and 80-byte page descriptor layouts, not the production format constants.
+  EXPECT_EQ(load_u64(encoded->bytes(), 1'120U), 0U);
+  EXPECT_EQ(load_u32(encoded->bytes(), 1'128U), 2U);
+  EXPECT_EQ(load_u32(encoded->bytes(), 1'132U), 9U);
+  EXPECT_EQ(load_u64(encoded->bytes(), 1'136U), 0U);
+  EXPECT_EQ(load_u64(encoded->bytes(), 1'144U), 10U);
+  EXPECT_EQ(load_u64(encoded->bytes(), 1'152U), 20U);
+  EXPECT_TRUE(std::ranges::all_of(encoded->bytes().subspan(1'160U, 24U),
+                                  [](const std::byte value) { return value == std::byte{0U}; }));
+
+  struct GoldenPageDescriptor {
+    std::size_t descriptor_offset;
+    std::uint32_t stored_column_ordinal;
+    std::uint64_t page_offset;
+    std::uint64_t length;
+    std::uint64_t offsets_length;
+    std::uint64_t values_length;
+    std::uint32_t crc32c;
+  };
+  constexpr std::array kPages{
+      GoldenPageDescriptor{1'184U, 0U, 1'912U, 16U, 0U, 16U, 1U},
+      GoldenPageDescriptor{1'264U, 1U, 1'928U, 2U, 0U, 2U, 2U},
+      GoldenPageDescriptor{1'344U, 2U, 1'936U, 32U, 0U, 32U, 3U},
+      GoldenPageDescriptor{1'424U, 3U, 1'968U, 16U, 0U, 16U, 4U},
+      GoldenPageDescriptor{1'504U, 4U, 1'984U, 8U, 0U, 8U, 5U},
+      GoldenPageDescriptor{1'584U, 5U, 1'992U, 2U, 0U, 2U, 6U},
+      GoldenPageDescriptor{1'664U, 6U, 2'000U, 14U, 12U, 2U, 7U},
+      GoldenPageDescriptor{1'744U, 7U, 2'016U, 16U, 0U, 16U, 8U},
+      GoldenPageDescriptor{1'824U, 8U, 2'032U, 16U, 0U, 16U, 9U},
+  };
+  for (const GoldenPageDescriptor& page : kPages) {
+    const std::size_t offset = page.descriptor_offset;
+    EXPECT_EQ(load_u32(encoded->bytes(), offset), 0U) << offset;
+    EXPECT_EQ(load_u32(encoded->bytes(), offset + 4U), page.stored_column_ordinal) << offset;
+    EXPECT_EQ(load_u16(encoded->bytes(), offset + 8U), 1U) << offset;
+    EXPECT_EQ(load_u16(encoded->bytes(), offset + 10U), 1U) << offset;
+    EXPECT_EQ(load_u32(encoded->bytes(), offset + 12U), 0U) << offset;
+    EXPECT_EQ(load_u32(encoded->bytes(), offset + 16U), 2U) << offset;
+    EXPECT_EQ(load_u32(encoded->bytes(), offset + 20U), 0U) << offset;
+    EXPECT_EQ(load_u64(encoded->bytes(), offset + 24U), page.page_offset) << offset;
+    EXPECT_EQ(load_u64(encoded->bytes(), offset + 32U), page.length) << offset;
+    EXPECT_EQ(load_u64(encoded->bytes(), offset + 40U), page.length) << offset;
+    EXPECT_EQ(load_u64(encoded->bytes(), offset + 48U), 0U) << offset;
+    EXPECT_EQ(load_u64(encoded->bytes(), offset + 56U), page.offsets_length) << offset;
+    EXPECT_EQ(load_u64(encoded->bytes(), offset + 64U), page.values_length) << offset;
+    EXPECT_EQ(load_u32(encoded->bytes(), offset + 72U), page.crc32c) << offset;
+    EXPECT_EQ(load_u32(encoded->bytes(), offset + 76U), 0U) << offset;
+  }
+  EXPECT_TRUE(std::ranges::all_of(encoded->bytes().subspan(1'904U, 4U),
+                                  [](const std::byte value) { return value == std::byte{0U}; }));
+  EXPECT_EQ(load_u32(encoded->bytes(), 1'908U), 0x5d84d7acU);
+}
+
 TEST(TemporalMetadataCodecTest, RoundTripsV2AndKeepsV1Strict) {
   TemporalMetadataFixture fixture;
   auto encoded = encode_cseg_v2_temporal_metadata(fixture.input());
