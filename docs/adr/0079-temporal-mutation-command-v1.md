@@ -56,6 +56,7 @@ golden framing and CRC fixtures, a structure-aware sanitizer-backed fuzzer, and 
 hostile outer framing, count, metadata, caller-limit, and nested-batch matrices are implemented.
 Unknown application identity and command versions are classified as unsupported, and repeatable
 recovery over a mixed v1/future-format WAL fails during preflight without publishing partial state.
-Exhaustive test-only allocation injection covers every codec-owned canonical encode and exact-decode
-allocation. Sustained fuzzing, cross-compiler bytes, recovery-wide allocation failure, and crash
-injection remain deferred to Phase 18.
+Exhaustive test-only allocation injection covers every codec-owned canonical encode/exact-decode
+allocation and every owned allocation observed on the canonical single-table command-specific WAL
+recovery path, including rollback and lock release. Sustained fuzzing, cross-compiler bytes,
+Manifest-composed startup allocation failure, and crash injection remain deferred to Phase 18.

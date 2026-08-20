@@ -157,7 +157,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   reject future application identities and command major/minor versions as unsupported; repeatable
   recovery over a mixed v1/future-format WAL fails in preflight without returning partial state.
   Exhaustive test-only allocation injection now classifies every codec-owned canonical encode and
-  exact-decode failure as resource exhaustion; recovery-wide allocation injection remains deferred.
+  exact-decode failure as resource exhaustion. The canonical single-table command-specific WAL
+  recovery sweep covers every observed owned allocation through disposable provider construction,
+  preflight, replay, writer return, rollback, and lock release; Manifest-composed startup allocation
+  injection remains deferred.
 - Mixed `COLUMNAR_APPEND`/temporal recovery dispatch and application checkpoints; Manifest-backed
   multi-part/vector winner resolution beyond the implemented single-lineage scalar reference,
   strict metadata, full-part, bounded semantic-validation, and projected-granule paths;

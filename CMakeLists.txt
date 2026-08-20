@@ -1911,6 +1911,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/sort_allocation_failure_test.cpp
     tests/query/spill_sort_allocation_failure_test.cpp
     tests/query/temporal_command_allocation_failure_test.cpp
+    tests/query/temporal_recovery_allocation_failure_test.cpp
     tests/support/failing_allocator.cpp
   )
   set_target_properties(chronos_query_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)

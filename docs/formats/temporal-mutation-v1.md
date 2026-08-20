@@ -52,7 +52,9 @@ admission, waits for the requested `ASYNC` or `LOCAL_SYNC` completion, and only 
 actual WAL source position. Any post-admission uncertainty fails the provider closed for recovery.
 `recover_temporal_wal` verifies and preflights the complete command-specific WAL before replaying
 records in physical order into fresh multi-table providers; any failure discards the fresh owner.
-It returns the locked reopened writer at the next sequence for subsequent coordination. A combined
+It returns the locked reopened writer at the next sequence for subsequent coordination. Exhaustive
+test-only injection over the canonical single-table path proves an allocation-failed recovery
+returns no provider/writer state and releases the WAL lock for a later retry. A combined
 database-kind dispatcher and general application checkpoints remain later integration boundaries.
 `recover_manifest_temporal_wal` restores complete Manifest-authorized CSEG v2 histories for every
 selected distinct-table WAL tablet, verifies commands between a trailing global checkpoint and the
