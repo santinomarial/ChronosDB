@@ -10,8 +10,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <new>
 #include <set>
 #include <span>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -72,7 +74,7 @@ common::Result<EncodedTemporalCommand>
 encode_temporal_command_v1(const columnar::OwnedColumnarBatch& batch,
                            const std::vector<TemporalMutationDescriptor>& mutations,
                            const std::int64_t system_commit_time_ns,
-                           const TemporalCommandLimits limits) {
+                           const TemporalCommandLimits limits) try {
   if (mutations.empty() || mutations.size() != batch.row_count() ||
       mutations.size() > limits.maximum_mutations || limits.maximum_identity_bytes == 0U ||
       limits.maximum_metadata_bytes == 0U) {
@@ -164,10 +166,17 @@ encode_temporal_command_v1(const columnar::OwnedColumnarBatch& batch,
     return common::make_unexpected(envelope.error());
   return EncodedTemporalCommand{
       std::vector<std::byte>{envelope->bytes().begin(), envelope->bytes().end()}};
+} catch (const std::bad_alloc&) {
+  return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                "temporal command encoding allocation failed"});
+} catch (const std::length_error&) {
+  return common::make_unexpected(
+      common::Status{common::StatusCode::kResourceExhausted,
+                     "temporal command encoding exceeded container limits"});
 }
 
 common::Result<DecodedTemporalCommandView>
-decode_temporal_command_v1(const common::ByteView bytes, const TemporalCommandLimits limits) {
+decode_temporal_command_v1(const common::ByteView bytes, const TemporalCommandLimits limits) try {
   auto envelope = wal::decode_application_payload(bytes);
   if (!envelope.has_value())
     return common::make_unexpected(envelope.error());
@@ -259,6 +268,12 @@ decode_temporal_command_v1(const common::ByteView bytes, const TemporalCommandLi
   if (!reader.empty())
     return common::make_unexpected(corruption("temporal metadata has trailing bytes"));
   return DecodedTemporalCommandView{std::move(*batch), std::move(mutations), *commit_time};
+} catch (const std::bad_alloc&) {
+  return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                "temporal command decode allocation failed"});
+} catch (const std::length_error&) {
+  return common::make_unexpected(common::Status{
+      common::StatusCode::kResourceExhausted, "temporal command decode exceeded container limits"});
 }
 
 } // namespace chronos::query

@@ -37,7 +37,9 @@ the complete body excluding that trailer.
 Decoding validates the envelope, header before length-driven slicing, all checksums, exact size
 relationships, limits, descriptor exhaustion, batch row count, and repeated table/schema/version
 identity. Schema-dependent column validation occurs before committed application. Unknown versions
-or application identity are unsupported; damaged canonical bytes are corruption.
+or application identity are unsupported; damaged canonical bytes are corruption. Owned allocation
+failures during canonical encoding or exact decoding are reported as resource exhaustion rather
+than escaping the codec.
 
 `apply_committed_temporal_command` binds the enclosing WAL identity and record sequence to every
 row, copies canonical physical cells into owned scalar history, and atomically publishes the batch.
