@@ -173,8 +173,8 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   implemented local admission/install/selection and generation-pinned loading paths; live-executor
   fault injection plus crash and migration tests.
 - Expand CSEG v2 projected-reader and semantic validation beyond the implemented canonical
-  full-file size/CRC golden fingerprint with independently generated field-level bytes and hostile
-  metadata/page matrices,
+  full-file size/CRC golden fingerprint and checksum-valid hostile metadata/descriptor matrix with
+  independently generated field-level bytes and expanded page-body corruption matrices,
   WAL/Raft source-lineage cases, allocation failure, fuzzing, cross-version conversion, and
   cross-compiler fixtures after the accepted temporal registry and layout planner.
 - Direct mutable-head/CSEG vector winner resolution and physical-plan lowering beyond the

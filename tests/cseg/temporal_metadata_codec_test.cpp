@@ -69,9 +69,21 @@ void store_u32(std::vector<std::byte>& bytes, const std::size_t offset, const st
   }
 }
 
+void store_u64(std::vector<std::byte>& bytes, const std::size_t offset, const std::uint64_t value) {
+  for (std::size_t index = 0U; index < sizeof(value); ++index) {
+    bytes[offset + index] = std::byte{static_cast<std::uint8_t>(value >> (index * 8U))};
+  }
+}
+
 void refresh_metadata_crc(std::vector<std::byte>& bytes) {
   const std::size_t offset = bytes.size() - format::kMetadataCrc32cLength;
   store_u32(bytes, offset, common::crc32c(common::ByteView{bytes}.first(offset)));
+}
+
+void refresh_header_and_metadata_crc(std::vector<std::byte>& bytes) {
+  store_u32(bytes, format::kHeaderCrc32cOffset,
+            common::crc32c(common::ByteView{bytes}.first(format::kHeaderCrc32cOffset)));
+  refresh_metadata_crc(bytes);
 }
 
 struct TemporalMetadataFixture {
@@ -200,6 +212,105 @@ TEST(TemporalMetadataCodecTest, RejectsV1RegistryAndUnknownV2Registry) {
   const auto decoded = decode_cseg_v2_temporal_metadata_exact(unknown_kind);
   ASSERT_FALSE(decoded.has_value());
   EXPECT_EQ(decoded.error().kind(), CsegMetadataDecodeErrorKind::kUnsupported);
+}
+
+TEST(TemporalMetadataCodecTest,
+     ClassifiesChecksumValidHostileRegistriesReservedBytesAndContradictions) {
+  TemporalMetadataFixture fixture;
+  const auto encoded = encode_cseg_v2_temporal_metadata(fixture.input());
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  const std::vector<std::byte> golden{encoded->bytes().begin(), encoded->bytes().end()};
+  const std::size_t final_system_column =
+      format::kColumnsOffset + (fixture.columns.size() - 1U) * format::kColumnDescriptorLength;
+  const std::size_t granule =
+      format::kColumnsOffset + fixture.columns.size() * format::kColumnDescriptorLength;
+  const std::size_t first_page = granule + format::kGranuleDescriptorLength;
+
+  const auto expect_u16 = [&](const std::size_t offset, const std::uint16_t value,
+                              const bool header, const CsegMetadataDecodeErrorKind expected) {
+    std::vector<std::byte> bytes = golden;
+    store_u16(bytes, offset, value);
+    header ? refresh_header_and_metadata_crc(bytes) : refresh_metadata_crc(bytes);
+    const auto decoded = decode_cseg_v2_temporal_metadata_exact(bytes);
+    EXPECT_FALSE(decoded.has_value()) << offset;
+    if (!decoded.has_value())
+      EXPECT_EQ(decoded.error().kind(), expected) << offset;
+  };
+  const auto expect_u32 = [&](const std::size_t offset, const std::uint32_t value,
+                              const bool header, const CsegMetadataDecodeErrorKind expected) {
+    std::vector<std::byte> bytes = golden;
+    store_u32(bytes, offset, value);
+    header ? refresh_header_and_metadata_crc(bytes) : refresh_metadata_crc(bytes);
+    const auto decoded = decode_cseg_v2_temporal_metadata_exact(bytes);
+    EXPECT_FALSE(decoded.has_value()) << offset;
+    if (!decoded.has_value())
+      EXPECT_EQ(decoded.error().kind(), expected) << offset;
+  };
+  const auto expect_byte = [&](const std::size_t offset,
+                               const CsegMetadataDecodeErrorKind expected) {
+    std::vector<std::byte> bytes = golden;
+    bytes[offset] = std::byte{1U};
+    const bool header = offset < format::kFileHeaderLength;
+    header ? refresh_header_and_metadata_crc(bytes) : refresh_metadata_crc(bytes);
+    const auto decoded = decode_cseg_v2_temporal_metadata_exact(bytes);
+    EXPECT_FALSE(decoded.has_value()) << offset;
+    if (!decoded.has_value())
+      EXPECT_EQ(decoded.error().kind(), expected) << offset;
+  };
+
+  expect_u16(format::kFormatMajorOffset, 3U, true, CsegMetadataDecodeErrorKind::kUnsupported);
+  expect_u16(format::kFormatMinorOffset, 1U, true, CsegMetadataDecodeErrorKind::kUnsupported);
+  expect_u32(format::kFileFlagsOffset, 1U, true, CsegMetadataDecodeErrorKind::kUnsupported);
+  expect_u32(format::kStoredColumnCountOffset, 8U, true, CsegMetadataDecodeErrorKind::kCorruption);
+  expect_u32(format::kPageCountOffset, 8U, true, CsegMetadataDecodeErrorKind::kCorruption);
+  expect_byte(format::kHeaderReserved0Offset, CsegMetadataDecodeErrorKind::kCorruption);
+  expect_byte(format::kHeaderReserved1Offset, CsegMetadataDecodeErrorKind::kCorruption);
+  expect_byte(format::kHeaderReserved2Offset, CsegMetadataDecodeErrorKind::kCorruption);
+
+  expect_u16(final_system_column + format::kStorageKindOffset, 10U, false,
+             CsegMetadataDecodeErrorKind::kUnsupported);
+  expect_u16(final_system_column + format::kStorageKindOffset, 0U, false,
+             CsegMetadataDecodeErrorKind::kCorruption);
+  expect_u16(final_system_column + format::kStorageKindOffset,
+             temporal_format::kReceiveTimeStorageKind, false,
+             CsegMetadataDecodeErrorKind::kCorruption);
+  expect_u16(final_system_column + format::kLogicalTypeOffset,
+             static_cast<std::uint16_t>(schema::LogicalTypeKind::kUInt64), false,
+             CsegMetadataDecodeErrorKind::kCorruption);
+  expect_u32(final_system_column + format::kColumnFlagsOffset, format::kNullableColumnFlag, false,
+             CsegMetadataDecodeErrorKind::kCorruption);
+  expect_u32(final_system_column + format::kSchemaOrdinalOffset, 0U, false,
+             CsegMetadataDecodeErrorKind::kCorruption);
+  expect_u32(final_system_column + format::kOrderingOrdinalOffset, 0U, false,
+             CsegMetadataDecodeErrorKind::kCorruption);
+  expect_byte(final_system_column + format::kColumnIdOffset,
+              CsegMetadataDecodeErrorKind::kCorruption);
+  expect_byte(final_system_column + format::kColumnReservedOffset,
+              CsegMetadataDecodeErrorKind::kCorruption);
+  expect_byte(granule + format::kGranuleReservedOffset, CsegMetadataDecodeErrorKind::kCorruption);
+
+  expect_u16(first_page + format::kPagePhysicalEncodingOffset, 2U, false,
+             CsegMetadataDecodeErrorKind::kUnsupported);
+  expect_u16(first_page + format::kPagePhysicalEncodingOffset, 0U, false,
+             CsegMetadataDecodeErrorKind::kCorruption);
+  expect_u16(first_page + format::kPageCompressionOffset, 3U, false,
+             CsegMetadataDecodeErrorKind::kUnsupported);
+  expect_u16(first_page + format::kPageCompressionOffset, 0U, false,
+             CsegMetadataDecodeErrorKind::kCorruption);
+  expect_u32(first_page + format::kPageFlagsOffset, 1U, false,
+             CsegMetadataDecodeErrorKind::kUnsupported);
+  expect_byte(first_page + format::kPageReservedOffset, CsegMetadataDecodeErrorKind::kCorruption);
+
+  const auto canonical = decode_cseg_v2_temporal_metadata_exact(golden);
+  ASSERT_TRUE(canonical.has_value()) << canonical.error().status().to_string();
+  ASSERT_GE(canonical->pages().size(), 2U);
+  std::vector<std::byte> overlapping_page = golden;
+  store_u64(overlapping_page, first_page + format::kPageOffsetFieldOffset,
+            canonical->pages()[1U].page_offset);
+  refresh_metadata_crc(overlapping_page);
+  const auto decoded = decode_cseg_v2_temporal_metadata_exact(overlapping_page);
+  ASSERT_FALSE(decoded.has_value());
+  EXPECT_EQ(decoded.error().kind(), CsegMetadataDecodeErrorKind::kCorruption);
 }
 
 } // namespace

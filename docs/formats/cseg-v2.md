@@ -47,6 +47,11 @@ The canonical two-row raw temporal fixture freezes a 2,048-byte complete file an
 well as the production checksum routine, so changes to metadata, page order, stored bytes, or zero
 padding are visible even when the file still round-trips through the same implementation.
 
+Checksum-valid hostile metadata tests distinguish assigned future format, storage, encoding,
+compression, and flag values as unsupported. Zero registry codes, incorrect temporal system-column
+shape, nonzero reserved bytes, contradictory stored-column/page counts, and overlapping page
+coordinates are corruption after both header and metadata integrity are repaired.
+
 Complete acceptance additionally binds the exact table schema/tablet, validates every system tuple,
 distinguishes corrupt zero values from unsupported assigned-domain extensions, bounds nonempty
 logical identities, recomputes granule and part event-time extrema, and requires strict ordering by

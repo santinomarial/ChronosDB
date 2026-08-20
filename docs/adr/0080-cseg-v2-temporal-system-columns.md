@@ -57,8 +57,11 @@ metadata/page layout with the expanded suffix, round-trip v2 metadata, reject v1
 confusion, bind the exact table schema, deterministically compose complete files, classify every
 truncation, and fail closed on stored-page corruption. A canonical raw temporal file now freezes its
 exact 2,048-byte length and complete-file `0x3242794c` CRC32C through a tableless test oracle that is
-independent of the production checksum implementation. Additional field-level golden fixtures,
-hostile corruption matrices, crash tests, fuzzing, and performance evidence remain subsequent work
-and Phase 18 validation. Projected reading, Manifest v2 installation, current/as-of winner
-resolution, and temporal row/order validation are implemented with bounded work and exact
-corrupt-versus-unsupported value classification.
+independent of the production checksum implementation. A checksum-valid hostile metadata matrix
+also freezes unsupported future formats/registries versus corrupt zero codes, count/layout
+contradictions, temporal system-column reshaping, reserved bytes, and page-coordinate overlap.
+Additional field-level golden fixtures, expanded page-body corruption matrices, crash tests,
+fuzzing, and performance evidence remain subsequent work and Phase 18 validation. Projected
+reading, Manifest v2 installation, current/as-of winner resolution, and temporal row/order
+validation are implemented with bounded work and exact corrupt-versus-unsupported value
+classification.

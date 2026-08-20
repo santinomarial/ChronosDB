@@ -157,8 +157,10 @@ Focused tests cover canonical command application, exact and disagreeing checkpo
 multi-tablet routed verification/application, retained and reclaimed pre-boundary rows,
 original/correction replay, historical lookup, scalar-winner vector materialization,
 impossible-history rejection, and continued WAL sequence ownership. The canonical CSEG v2 temporal
-file has a frozen full-file size/CRC fingerprint. Phase 18 retains additional field-level golden
-bytes, fuzzing, allocation-failure sweeps beyond the implemented command-specific recovery and
+file has a frozen full-file size/CRC fingerprint, and its checksum-valid hostile metadata matrix
+freezes temporal registry, reserved-byte, count, and layout classifications. Phase 18 retains
+additional field-level golden bytes, expanded page-body corruption matrices, fuzzing,
+allocation-failure sweeps beyond the implemented command-specific recovery and
 canonical empty/one-CSEG/two-CSEG one-tablet plus CSEG-backed/empty two-tablet Manifest startup
 paths, crash points, many-tablet skew, mixed-command dispatch, direct vector
 differential/lowering, long-history retention models, durable compaction, and performance
