@@ -445,3 +445,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0408](0408-source-tagged-subscription-checkpoint-v2.md) | Source-tagged Subscription Checkpoint v2 | accepted |
 | [0409](0409-source-tagged-native-subscription-changes.md) | Source-tagged Native Subscription Changes | accepted |
 | [0410](0410-raft-subscription-snapshot-and-prefix-reclamation.md) | Raft subscription snapshot and prefix reclamation | accepted |
+| [0411](0411-mixed-wal-raft-subscription-snapshot.md) | Mixed WAL/Raft subscription snapshot | accepted |

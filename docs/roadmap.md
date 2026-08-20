@@ -658,8 +658,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   applied tablet snapshots after registration and execute one global historical pipeline. Their
   topology-bound retention path requires matching application and durable Raft snapshot coverage,
   then schedules one bounded worker-owned all-group checkpoint before reclaiming older shared-log
-  segments. Mixed WAL/Raft historical snapshots, dynamic plan-owner retirement, and the remaining
-  exit evidence remain deferred. The phase exit gate is not claimed.
+  segments. Mixed WAL/Raft historical subscriptions now exact-bind the registered product vector,
+  share one aggregate publication across WAL members, retain independent immutable Raft
+  publications, and run one global physical plan in canonical member order. Dynamic plan-owner
+  retirement and the remaining exit evidence remain deferred. The phase exit gate is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.

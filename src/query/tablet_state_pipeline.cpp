@@ -102,10 +102,10 @@ private:
 
 } // namespace
 
-common::Result<std::unique_ptr<PhysicalOperator>> instantiate_tablet_states_pipeline(
+common::Result<std::unique_ptr<PhysicalOperator>> create_tablet_states_source(
     const QueryResourceContext& resources, const std::span<const ingest::TabletSnapshot> snapshots,
     const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
-    const PhysicalPipelinePlan& pipeline, TabletStatePipelineLimits limits) {
+    const std::span<const PhysicalColumnShape> input_shape, TabletStatePipelineLimits limits) {
   if (limits.maximum_source_configuration_bytes == 0U || snapshots.empty())
     return common::make_unexpected(invalid("tablet-state pipeline limits are invalid"));
   const std::shared_ptr<const schema::TableSchema> destination =
@@ -114,8 +114,7 @@ common::Result<std::unique_ptr<PhysicalOperator>> instantiate_tablet_states_pipe
     return common::make_unexpected(
         invalid("tablet-state snapshot, lineage, and destination schema disagree"));
   }
-  auto row_version_mode =
-      validate_snapshot_pipeline_input_shape(pipeline.input_columns(), *destination);
+  auto row_version_mode = validate_snapshot_pipeline_input_shape(input_shape, *destination);
   if (!row_version_mode.has_value())
     return common::make_unexpected(row_version_mode.error());
   limits.scan.row_version_columns = *row_version_mode;
@@ -181,12 +180,23 @@ common::Result<std::unique_ptr<PhysicalOperator>> instantiate_tablet_states_pipe
         return common::make_unexpected(merged.error());
       source = std::move(*merged);
     }
-    return pipeline.instantiate(std::move(source));
+    return source;
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("tablet-state pipeline allocation failed"));
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("tablet-state pipeline exceeds container limits"));
   }
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>> instantiate_tablet_states_pipeline(
+    const QueryResourceContext& resources, const std::span<const ingest::TabletSnapshot> snapshots,
+    const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
+    const PhysicalPipelinePlan& pipeline, const TabletStatePipelineLimits limits) {
+  auto source = create_tablet_states_source(resources, snapshots, lineage, destination_schema_id,
+                                            pipeline.input_columns(), limits);
+  if (!source.has_value())
+    return common::make_unexpected(source.error());
+  return pipeline.instantiate(std::move(*source));
 }
 
 common::Result<std::unique_ptr<PhysicalOperator>> instantiate_tablet_state_pipeline(

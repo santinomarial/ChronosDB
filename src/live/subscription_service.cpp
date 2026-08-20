@@ -249,22 +249,23 @@ public:
       const bool all_wal = std::ranges::all_of(source.members, [](const auto& member) {
         return member.source_kind == SubscriptionSourceKind::kWal;
       });
-      if (!all_raft && !all_wal)
-        return publish_error(request,
-                             common::Status{common::StatusCode::kNotSupported,
-                                            "mixed-source historical subscription is unsupported"});
-      if (all_raft && config.raft_application == nullptr)
+      if (!all_wal && config.raft_application == nullptr)
         return publish_error(request,
                              common::Status{common::StatusCode::kUnavailable,
                                             "Raft historical subscription source is unavailable"});
       common::Result<MultiTabletSnapshotSubscription> snapshot =
-          all_raft
-              ? config.owner->start_raft_snapshot(
-                    *config.plan, decoded->subscription_id, *config.resources,
-                    *config.raft_application, *config.lineage, snapshot_limits(request.protocol))
-              : config.owner->start_snapshot(*config.plan, decoded->subscription_id,
+          all_raft ? config.owner->start_raft_snapshot(*config.plan, decoded->subscription_id,
+                                                       *config.resources, *config.raft_application,
+                                                       *config.lineage,
+                                                       snapshot_limits(request.protocol))
+          : all_wal
+              ? config.owner->start_snapshot(*config.plan, decoded->subscription_id,
                                              *config.resources, *config.storage, *config.publisher,
-                                             *config.lineage, snapshot_limits(request.protocol));
+                                             *config.lineage, snapshot_limits(request.protocol))
+              : config.owner->start_mixed_snapshot(
+                    *config.plan, decoded->subscription_id, *config.resources, *config.storage,
+                    *config.publisher, *config.raft_application, *config.lineage,
+                    snapshot_limits(request.protocol));
       if (!snapshot.has_value())
         return publish_error(request, snapshot.error());
       try {

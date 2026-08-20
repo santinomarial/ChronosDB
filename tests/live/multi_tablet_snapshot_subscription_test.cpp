@@ -11,6 +11,7 @@
 #include "ingest/ingest_test_support.hpp"
 #include "query/snapshot_tablet_scan_test_fixture.hpp"
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -112,6 +113,35 @@ private:
                            {.client_id = ingest::test::request_id<ingest::ClientId>(1U),
                             .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(2U),
                             .tablet_id = raft_tablet_id()},
+                           encoded_batch)
+                           .value();
+  return {encoded.bytes().begin(), encoded.bytes().end()};
+}
+
+[[nodiscard]] std::vector<std::byte>
+fixture_raft_command(const std::shared_ptr<const schema::TableSchema>& schema,
+                     const schema::TabletId& tablet) {
+  std::vector<std::byte> values;
+  for (const std::int64_t value : std::array<std::int64_t, 2U>{700, 701}) {
+    const std::uint64_t encoded = std::bit_cast<std::uint64_t>(value);
+    for (std::size_t index = 0U; index < sizeof(encoded); ++index)
+      values.push_back(std::byte{static_cast<std::uint8_t>(encoded >> (index * 8U))});
+  }
+  std::vector<columnar::OwnedColumnVector> columns;
+  columns.push_back(columnar::OwnedColumnVector::create(
+                        {.column_id = schema->event_time_column(),
+                         .type = schema->columns().front().type(),
+                         .nullable = false,
+                         .row_count = 2U,
+                         .null_count = 0U},
+                        {.validity = {}, .offsets = {}, .values = std::move(values)})
+                        .value());
+  auto batch = columnar::OwnedColumnarBatch::create(schema, std::move(columns)).value();
+  const auto encoded_batch = columnar::encode_columnar_batch_v1(batch).value();
+  const auto encoded = ingest::encode_columnar_append_v1(
+                           {.client_id = ingest::test::request_id<ingest::ClientId>(3U),
+                            .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(4U),
+                            .tablet_id = tablet},
                            encoded_batch)
                            .value();
   return {encoded.bytes().begin(), encoded.bytes().end()};
@@ -311,6 +341,106 @@ TEST(MultiTabletSnapshotSubscriptionTest,
   const auto stale_status = stale_manager->status(stale_request.subscription_id);
   ASSERT_TRUE(stale_status.has_value());
   EXPECT_EQ(stale_status->phase, SubscriptionPhase::kCancelled);
+  EXPECT_TRUE(runtime->shutdown().is_ok());
+}
+
+TEST(MultiTabletSnapshotSubscriptionTest, ExecutesOneGlobalPlanAcrossExactWalAndRaftBoundaries) {
+  query::test::SnapshotTabletScanFixture fixture{3U};
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const raft::GroupId group = raft_group_id();
+  const schema::TabletId raft_tablet = raft_tablet_id();
+  auto tablet = ingest::TabletState::create(
+      fixture.schema_ptr(), raft_tablet,
+      {.head_capacity = {.row_capacity = 4U, .variable_value_bytes = {0U}},
+       .maximum_schema_versions = 1U,
+       .maximum_sealed_generations = 1U,
+       .maximum_retry_entries = 4U});
+  ASSERT_TRUE(tablet.has_value()) << tablet.error().to_string();
+  auto retries = ingest::RetryDirectory::create({.maximum_entries = 4U});
+  ASSERT_TRUE(retries.has_value()) << retries.error().to_string();
+  std::vector<ingest::AsyncRaftTabletApplicationConfig> application_config;
+  application_config.push_back({.group_id = group,
+                                .snapshot_storage = std::nullopt,
+                                .retry_directory = std::move(*retries),
+                                .tablet = std::move(*tablet),
+                                .retained_schemas = {fixture.schema_ptr()},
+                                .decode_limits = {}});
+  auto application = ingest::AsyncRaftTabletApplication::create(std::move(application_config));
+  ASSERT_TRUE(application.has_value()) << application.error().to_string();
+  auto runtime = raft::AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group, {1U}}}, {}, *application);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  auto election = runtime->try_submit({{group, raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  ASSERT_TRUE(election->wait().has_value());
+  auto proposal = runtime->try_submit(
+      {{group, raft::ProposeOperation{ingest::kRaftColumnarAppendEntryType,
+                                      fixture_raft_command(fixture.schema_ptr(), raft_tablet)}}});
+  ASSERT_TRUE(proposal.has_value()) << proposal.error().to_string();
+  auto proposed = proposal->wait();
+  ASSERT_TRUE(proposed.has_value()) << proposed.error().to_string();
+  ASSERT_TRUE(proposed->front().status.is_ok()) << proposed->front().status.to_string();
+
+  MultiTabletSubscriptionSource mixed{
+      .database_id = fixture.snapshot().database_id().uuid(),
+      .table_id = fixture.schema_ptr()->table_id(),
+      .plan_fingerprint = fingerprint(),
+      .schema_id = fixture.schema_ptr()->schema_id(),
+      .schema_version = fixture.schema_ptr()->version(),
+      .members = {{query::test::SnapshotTabletScanFixture::tablet_id(), fixture.snapshot().wal_id(),
+                   1U},
+                  MultiTabletSubscriptionMember::raft(raft_tablet, group, 1U)},
+      .token_key = token_key()};
+  auto manager = MultiTabletSubscriptionManager::create(std::move(mixed));
+  ASSERT_TRUE(manager.has_value()) << manager.error().to_string();
+  const SubscriptionRequest subscription_request = request(fixture);
+  BoundPlan bound = lower(fixture, "SELECT count(*) AS total FROM metrics");
+  auto resources = query::QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+  auto subscription = MultiTabletSnapshotSubscription::start_mixed(
+      *manager, subscription_request, resources, fixture.storage(), fixture.publisher(),
+      **application, fixture.lineage(), fixture.schema_ptr()->schema_id(), bound.plan,
+      std::move(bound.columns));
+  ASSERT_TRUE(subscription.has_value()) << subscription.error().to_string();
+  auto result = subscription->next();
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  const auto decoded = network::decode_query_result_batch(result->payload);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  ASSERT_EQ(decoded->row_count(), 1U);
+  ASSERT_NE(decoded->cell(0U, 0U), nullptr);
+  EXPECT_EQ(decode_u64(decoded->cell(0U, 0U)->value), 5U);
+  ASSERT_TRUE(subscription->next().has_value());
+  auto ready = subscription->next();
+  ASSERT_TRUE(ready.has_value()) << ready.error().to_string();
+  EXPECT_TRUE(subscription->ready());
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+
+  MultiTabletSubscriptionSource stale_source{
+      .database_id = fixture.snapshot().database_id().uuid(),
+      .table_id = fixture.schema_ptr()->table_id(),
+      .plan_fingerprint = fingerprint(),
+      .schema_id = fixture.schema_ptr()->schema_id(),
+      .schema_version = fixture.schema_ptr()->version(),
+      .members = {{query::test::SnapshotTabletScanFixture::tablet_id(), fixture.snapshot().wal_id(),
+                   1U},
+                  MultiTabletSubscriptionMember::raft(raft_tablet, group, 0U)},
+      .token_key = token_key()};
+  auto stale_manager = MultiTabletSubscriptionManager::create(std::move(stale_source));
+  ASSERT_TRUE(stale_manager.has_value()) << stale_manager.error().to_string();
+  const SubscriptionRequest stale_request{uuid(std::byte{0x75U}), fingerprint(),
+                                          fixture.schema_ptr()->schema_id(),
+                                          fixture.schema_ptr()->version()};
+  BoundPlan stale_bound = lower(fixture, "SELECT count(*) AS total FROM metrics");
+  auto stale = MultiTabletSnapshotSubscription::start_mixed(
+      *stale_manager, stale_request, resources, fixture.storage(), fixture.publisher(),
+      **application, fixture.lineage(), fixture.schema_ptr()->schema_id(), stale_bound.plan,
+      std::move(stale_bound.columns));
+  ASSERT_FALSE(stale.has_value());
+  EXPECT_EQ(stale.error().code(), common::StatusCode::kUnavailable);
+  const auto stale_status = stale_manager->status(stale_request.subscription_id);
+  ASSERT_TRUE(stale_status.has_value());
+  EXPECT_EQ(stale_status->phase, SubscriptionPhase::kCancelled);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
   EXPECT_TRUE(runtime->shutdown().is_ok());
 }
 

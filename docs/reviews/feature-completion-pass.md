@@ -60,8 +60,10 @@ Homogeneous Raft-backed historical subscriptions now register before acquiring e
 applied tablet snapshots and execute one global vector pipeline. The Raft reclaimer binds the fixed
 tablet/group/epoch topology to the worker-hosted application, requires both its publication and
 durable application-snapshot boundary to cover every authorized index, and then schedules the
-implemented node-wide all-group checkpoint/reclamation on the sole durable worker. Mixed-source
-historical execution and dynamic plan-owner retirement remain production composition work.
+implemented node-wide all-group checkpoint/reclamation on the sole durable worker. Mixed WAL/Raft
+historical execution now treats the registered continuation vector as the cross-authority product
+boundary and executes one global pipeline over canonical raw sources without inventing a scalar
+epoch. Dynamic plan-owner retirement remains production composition work.
 
 ### Phase 12 — performance architecture and io_uring
 

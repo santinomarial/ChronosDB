@@ -45,6 +45,10 @@ The driver still receives an already prepared physical plan. Durable fingerprint
 provided by ADR 0103, can feed the durable coordinator owner directly without exposing its mutable
 manager. Reactor worker dispatch and packaged service lifecycle remain separate work.
 
+**Retrospective update (ADR 0411):** source-tagged continuation vectors now compose WAL and Raft
+members without asserting one scalar epoch across them. The WAL subset still uses exactly the
+aggregate-publication contract defined here.
+
 ## Affected invariants and validation
 
 Invariants 4, 6, 11, 12, 15, and 17 apply. Focused tests build two published tablets, prove one

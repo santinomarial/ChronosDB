@@ -4,6 +4,7 @@
 #include "chronos/common/status.hpp"
 #include "chronos/manifest/publication.hpp"
 #include "chronos/query/snapshot_shape.hpp"
+#include "chronos/query/tablet_state_pipeline.hpp"
 #include "chronos/schema/table_schema.hpp"
 
 #include <cstddef>
@@ -243,6 +244,70 @@ common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_tablets_p
     return common::make_unexpected(exhausted("multi-tablet snapshot allocation failed"));
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("multi-tablet snapshot exceeds container limits"));
+  }
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>> instantiate_mixed_snapshot_tablets_pipeline(
+    const QueryResourceContext& resources, const manifest::ManifestStorage& storage,
+    const manifest::DatabaseStorageSnapshot& wal_snapshot,
+    const std::span<const MixedSnapshotTabletSourceBinding> sources,
+    const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
+    const PhysicalPipelinePlan& pipeline, const SnapshotTabletPipelineLimits wal_limits,
+    const TabletStatePipelineLimits raft_limits) {
+  try {
+    std::vector<schema::TabletId> tablets;
+    tablets.reserve(sources.size());
+    bool has_wal = false;
+    bool has_raft = false;
+    for (const MixedSnapshotTabletSourceBinding& source : sources) {
+      tablets.push_back(source.tablet_id);
+      has_wal = has_wal || source.raft_snapshot == nullptr;
+      has_raft = has_raft || source.raft_snapshot != nullptr;
+      if (source.raft_snapshot != nullptr &&
+          source.raft_snapshot->tablet_id() != source.tablet_id) {
+        return common::make_unexpected(
+            invalid("mixed snapshot binding disagrees with its Raft tablet"));
+      }
+    }
+    common::Status canonical = validate_tablet_vector(tablets);
+    if (!canonical.is_ok())
+      return common::make_unexpected(std::move(canonical));
+    if (!has_wal || !has_raft)
+      return common::make_unexpected(
+          invalid("mixed snapshot pipeline requires WAL and Raft sources"));
+
+    auto publication = resources.reserve_shared(wal_snapshot.retained_buffer_bytes());
+    if (!publication.has_value())
+      return common::make_unexpected(publication.error());
+    auto charge = sequential_tablet_source_charge(sources.size());
+    if (!charge.has_value())
+      return common::make_unexpected(charge.error());
+    auto reservation = resources.reserve(*charge);
+    if (!reservation.has_value())
+      return common::make_unexpected(reservation.error());
+
+    std::vector<std::unique_ptr<PhysicalOperator>> operators;
+    operators.reserve(sources.size());
+    for (const MixedSnapshotTabletSourceBinding& source : sources) {
+      common::Result<std::unique_ptr<PhysicalOperator>> created =
+          source.raft_snapshot == nullptr
+              ? create_snapshot_tablet_source(resources, storage, wal_snapshot, source.tablet_id,
+                                              lineage, destination_schema_id,
+                                              pipeline.input_columns(), *publication, wal_limits)
+              : create_tablet_states_source(
+                    resources, std::span<const ingest::TabletSnapshot>{source.raft_snapshot, 1U},
+                    lineage, destination_schema_id, pipeline.input_columns(), raft_limits);
+      if (!created.has_value())
+        return common::make_unexpected(created.error());
+      operators.push_back(std::move(*created));
+    }
+    std::unique_ptr<PhysicalOperator> combined{new SequentialTabletSources{
+        std::move(operators), std::move(*publication), std::move(*reservation)}};
+    return pipeline.instantiate(std::move(combined));
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("mixed snapshot allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("mixed snapshot exceeds container limits"));
   }
 }
 

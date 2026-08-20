@@ -45,6 +45,17 @@ public:
       schema::SchemaId destination_schema_id, const query::PhysicalPipelinePlan& plan,
       std::vector<SnapshotSubscriptionColumn> columns, SnapshotSubscriptionLimits limits = {});
 
+  // Mixed-authority variant. The exact continuation vector is the product boundary: WAL members
+  // must match one aggregate storage publication and Raft members must match their independently
+  // pinned group publications. Canonical raw sources are combined before the plan runs once.
+  [[nodiscard]] static common::Result<MultiTabletSnapshotSubscription> start_mixed(
+      MultiTabletSubscriptionManager& manager, const SubscriptionRequest& request,
+      const query::QueryResourceContext& resources, const manifest::ManifestStorage& storage,
+      const manifest::DatabaseStoragePublisher& publisher,
+      const ingest::AsyncRaftTabletApplication& application, const schema::SchemaLineage& lineage,
+      schema::SchemaId destination_schema_id, const query::PhysicalPipelinePlan& plan,
+      std::vector<SnapshotSubscriptionColumn> columns, SnapshotSubscriptionLimits limits = {});
+
   [[nodiscard]] common::Result<SnapshotSubscriptionOutput> next();
   [[nodiscard]] bool ready() const noexcept;
   [[nodiscard]] const common::Uuid& subscription_id() const noexcept;

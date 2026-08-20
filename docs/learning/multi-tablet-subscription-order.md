@@ -58,16 +58,18 @@ sequence. The owner exposes checkpoint expiry components to a future retention m
 the generation file and directory have synchronized. If installation fails, the prior durable
 frontier remains unchanged even though newer state is still live in memory.
 
-For the historical half, `MultiTabletSnapshotSubscription` selects one of two homogeneous source
-adapters. WAL members validate every registered vector component against one aggregate storage
-publication. Raft members register first and then copy a pinned immutable `TabletSnapshot` from the
-worker-hosted application for each exact group; table, tablet, group, and applied log index must all
-match the registered vector. Raw tablet scans are concatenated before the physical plan is
-instantiated, so a global aggregate, sort, latest, or limit observes the complete source set rather
-than one independently finalized result per tablet. Mixing WAL and Raft historical adapters would
-invent an aggregate publication epoch, so it fails explicitly. READY is impossible until that
-global pipeline has ended and END_STREAM has been emitted. Pre-READY failure uses idempotent
-no-token abandonment, keeping local teardown independent of token-encoding allocation.
+For the historical half, `MultiTabletSnapshotSubscription` registers before selecting WAL, Raft, or
+mixed adapters. WAL members validate every registered component against one aggregate storage
+publication. Raft members copy a pinned immutable `TabletSnapshot` from the worker-hosted
+application for each exact group; table, tablet, group, and applied log index must all match the
+registered vector. A mixed set uses the continuation vector itself as the product boundary: its WAL
+subset shares one exact aggregate publication while every Raft component retains its independent
+immutable publication. This does not invent a scalar epoch across authorities. Raw tablet scans are
+concatenated in canonical member order before the physical plan is instantiated, so a global
+aggregate, sort, latest, or limit observes the complete source set rather than independently
+finalized results. READY is impossible until that global pipeline has ended and END_STREAM has been
+emitted. Pre-READY failure uses idempotent no-token abandonment, keeping local teardown independent
+of token-encoding allocation.
 
 The manager owns no threads and is not internally synchronized. Returned delivery records share
 immutable change ownership. Memory is bounded globally for retention and independently per

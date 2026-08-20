@@ -9,6 +9,7 @@
 #include "chronos/query/physical_plan.hpp"
 #include "chronos/query/relational_plan.hpp"
 #include "chronos/query/resource_context.hpp"
+#include "chronos/query/tablet_state_pipeline.hpp"
 #include "chronos/schema/identity.hpp"
 #include "chronos/schema/schema_lineage.hpp"
 
@@ -47,6 +48,14 @@ struct SnapshotTableSourceBinding {
   SnapshotTabletPipelineLimits limits{};
 };
 
+// One canonical tablet source beneath a mixed-authority historical plan. A null Raft snapshot
+// selects the supplied aggregate Manifest/WAL publication; a nonnull pointer selects that pinned
+// immutable Raft tablet publication. The pointer is borrowed only during construction.
+struct MixedSnapshotTabletSourceBinding {
+  schema::TabletId tablet_id;
+  const ingest::TabletSnapshot* raft_snapshot{};
+};
+
 // Instantiates a checked unary physical pipeline over one exact append-only tablet snapshot.
 // The pipeline input must be every destination-schema column in ordinal order, optionally followed
 // by the shared row-version suffix. Suffix mode is inferred from that checked shape and applied
@@ -71,6 +80,17 @@ instantiate_snapshot_tablets_pipeline(const QueryResourceContext& resources,
                                       schema::SchemaId destination_schema_id,
                                       const PhysicalPipelinePlan& pipeline,
                                       SnapshotTabletPipelineLimits limits = {});
+
+// Instantiates one physical pipeline over an interleaved canonical vector of WAL and Raft raw
+// tablet sources. Both authority kinds must be present. The WAL subset shares one exact aggregate
+// publication reservation, while each Raft source retains its own immutable tablet publication.
+[[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
+instantiate_mixed_snapshot_tablets_pipeline(
+    const QueryResourceContext& resources, const manifest::ManifestStorage& storage,
+    const manifest::DatabaseStorageSnapshot& wal_snapshot,
+    std::span<const MixedSnapshotTabletSourceBinding> sources, const schema::SchemaLineage& lineage,
+    schema::SchemaId destination_schema_id, const PhysicalPipelinePlan& pipeline,
+    SnapshotTabletPipelineLimits wal_limits = {}, TabletStatePipelineLimits raft_limits = {});
 
 [[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
 instantiate_optimized_snapshot_tablet_pipeline(

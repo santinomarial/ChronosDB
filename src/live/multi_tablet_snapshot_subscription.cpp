@@ -44,6 +44,31 @@ valid_output_columns(const query::PhysicalPipelinePlan& plan,
   return true;
 }
 
+[[nodiscard]] bool exact_wal_boundary(const MultiTabletSubscriptionSource& source,
+                                      const MultiTabletSubscriptionMember& member,
+                                      const SourcePosition& boundary,
+                                      const manifest::DatabaseStorageSnapshot& snapshot) {
+  const manifest::PublishedTabletStorage* tablet = snapshot.find_tablet(member.tablet_id);
+  if (member.source_kind != SubscriptionSourceKind::kWal || tablet == nullptr ||
+      tablet->table_id() != source.table_id || tablet->tablet_id() != member.tablet_id ||
+      snapshot.wal_id() != member.wal_id ||
+      !boundary.same_source(SourcePosition::wal(member.tablet_id, member.wal_id, 0U)))
+    return false;
+  const std::optional<head::HeadCommitPosition>& applied_position = tablet->applied_position();
+  if (applied_position.has_value()) {
+    const head::HeadCommitPosition& applied = *applied_position;
+    return applied.source == head::CommitSource::kWal && applied.wal_id == member.wal_id &&
+           applied.record_sequence == boundary.record_sequence;
+  }
+  for (const manifest::TabletDescriptor& durable : snapshot.durable_tablets()) {
+    if (durable.tablet_id == member.tablet_id) {
+      return durable.table_id == source.table_id &&
+             durable.durable_record_sequence == boundary.record_sequence;
+    }
+  }
+  return false;
+}
+
 [[nodiscard]] bool exact_boundary(const MultiTabletSubscriptionSource& source,
                                   const MultiTabletSubscriptionRegistration& registration,
                                   const manifest::DatabaseStorageSnapshot& snapshot,
@@ -53,35 +78,28 @@ valid_output_columns(const query::PhysicalPipelinePlan& plan,
     return false;
   target_tablets.reserve(source.members.size());
   for (std::size_t index = 0U; index < source.members.size(); ++index) {
-    const MultiTabletSubscriptionMember& member = source.members[index];
-    const SourcePosition& boundary = registration.snapshot_boundaries[index];
-    const manifest::PublishedTabletStorage* tablet = snapshot.find_tablet(member.tablet_id);
-    if (member.source_kind != SubscriptionSourceKind::kWal || tablet == nullptr ||
-        tablet->table_id() != source.table_id || tablet->tablet_id() != member.tablet_id ||
-        snapshot.wal_id() != member.wal_id ||
-        !boundary.same_source(SourcePosition::wal(member.tablet_id, member.wal_id, 0U)))
+    if (!exact_wal_boundary(source, source.members[index], registration.snapshot_boundaries[index],
+                            snapshot))
       return false;
-    const std::optional<head::HeadCommitPosition>& applied_position = tablet->applied_position();
-    if (applied_position.has_value()) {
-      const head::HeadCommitPosition& applied = *applied_position;
-      if (applied.source != head::CommitSource::kWal || applied.wal_id != member.wal_id ||
-          applied.record_sequence != boundary.record_sequence)
-        return false;
-    } else {
-      bool found = false;
-      for (const manifest::TabletDescriptor& durable : snapshot.durable_tablets()) {
-        if (durable.tablet_id == member.tablet_id) {
-          found = durable.table_id == source.table_id &&
-                  durable.durable_record_sequence == boundary.record_sequence;
-          break;
-        }
-      }
-      if (!found)
-        return false;
-    }
-    target_tablets.push_back(member.tablet_id);
+    target_tablets.push_back(source.members[index].tablet_id);
   }
   return true;
+}
+
+[[nodiscard]] bool exact_raft_boundary(const MultiTabletSubscriptionSource& source,
+                                       const MultiTabletSubscriptionMember& member,
+                                       const SourcePosition& boundary,
+                                       const ingest::TabletSnapshot& snapshot) noexcept {
+  if (member.source_kind != SubscriptionSourceKind::kRaft ||
+      snapshot.table_id() != source.table_id || snapshot.tablet_id() != member.tablet_id ||
+      !boundary.same_source(SourcePosition::raft(member.tablet_id, member.raft_group_id, 0U)))
+    return false;
+  const std::optional<head::HeadCommitPosition>& applied = snapshot.applied_position();
+  if (!applied.has_value())
+    return boundary.record_sequence == 0U && snapshot.visible_row_count() == 0U;
+  return applied->source == head::CommitSource::kRaft &&
+         applied->raft_group_id == member.raft_group_id &&
+         applied->record_sequence == boundary.record_sequence;
 }
 
 [[nodiscard]] bool
@@ -92,22 +110,8 @@ exact_raft_boundary(const MultiTabletSubscriptionSource& source,
       snapshots.size() != source.members.size())
     return false;
   for (std::size_t index = 0U; index < source.members.size(); ++index) {
-    const MultiTabletSubscriptionMember& member = source.members[index];
-    const SourcePosition& boundary = registration.snapshot_boundaries[index];
-    const ingest::TabletSnapshot& snapshot = snapshots[index];
-    if (member.source_kind != SubscriptionSourceKind::kRaft ||
-        snapshot.table_id() != source.table_id || snapshot.tablet_id() != member.tablet_id ||
-        !boundary.same_source(SourcePosition::raft(member.tablet_id, member.raft_group_id, 0U)))
-      return false;
-    const std::optional<head::HeadCommitPosition>& applied = snapshot.applied_position();
-    if (!applied.has_value()) {
-      if (boundary.record_sequence != 0U || snapshot.visible_row_count() != 0U)
-        return false;
-      continue;
-    }
-    if (applied->source != head::CommitSource::kRaft ||
-        applied->raft_group_id != member.raft_group_id ||
-        applied->record_sequence != boundary.record_sequence)
+    if (!exact_raft_boundary(source, source.members[index], registration.snapshot_boundaries[index],
+                             snapshots[index]))
       return false;
   }
   return true;
@@ -314,6 +318,100 @@ common::Result<MultiTabletSnapshotSubscription> MultiTabletSnapshotSubscription:
     cancel();
     return common::make_unexpected(
         exhausted("Raft multi-tablet snapshot exceeds container limits"));
+  }
+}
+
+common::Result<MultiTabletSnapshotSubscription> MultiTabletSnapshotSubscription::start_mixed(
+    MultiTabletSubscriptionManager& manager, const SubscriptionRequest& request,
+    const query::QueryResourceContext& resources, const manifest::ManifestStorage& storage,
+    const manifest::DatabaseStoragePublisher& publisher,
+    const ingest::AsyncRaftTabletApplication& application, const schema::SchemaLineage& lineage,
+    const schema::SchemaId destination_schema_id, const query::PhysicalPipelinePlan& plan,
+    std::vector<SnapshotSubscriptionColumn> columns, const SnapshotSubscriptionLimits limits) {
+  if (!valid_output_columns(plan, columns))
+    return common::make_unexpected(
+        invalid("mixed multi-tablet snapshot columns do not match plan output"));
+
+  auto registration = manager.register_subscription(request);
+  if (!registration.has_value())
+    return common::make_unexpected(registration.error());
+  const auto cancel = [&manager, &request]() noexcept { manager.abandon(request.subscription_id); };
+  try {
+    auto wal_snapshot = publisher.snapshot();
+    if (!wal_snapshot.has_value()) {
+      cancel();
+      return common::make_unexpected(wal_snapshot.error());
+    }
+    const MultiTabletSubscriptionSource& source = manager.source();
+    if (destination_schema_id != request.schema_id || lineage.table_id() != source.table_id ||
+        wal_snapshot->database_id().uuid() != source.database_id ||
+        registration->snapshot_boundaries.size() != source.members.size()) {
+      cancel();
+      return common::make_unexpected(
+          unavailable("mixed subscription plan or aggregate publication does not match source"));
+    }
+
+    std::size_t raft_count{};
+    for (const MultiTabletSubscriptionMember& member : source.members)
+      raft_count += member.source_kind == SubscriptionSourceKind::kRaft ? 1U : 0U;
+    if (raft_count == 0U || raft_count == source.members.size()) {
+      cancel();
+      return common::make_unexpected(
+          invalid("mixed subscription snapshot requires WAL and Raft sources"));
+    }
+    std::vector<ingest::TabletSnapshot> raft_snapshots;
+    raft_snapshots.reserve(raft_count);
+    for (const MultiTabletSubscriptionMember& member : source.members) {
+      if (member.source_kind != SubscriptionSourceKind::kRaft)
+        continue;
+      auto snapshot = application.snapshot(member.raft_group_id);
+      if (!snapshot.has_value()) {
+        cancel();
+        return common::make_unexpected(snapshot.error());
+      }
+      raft_snapshots.push_back(std::move(*snapshot));
+    }
+
+    std::vector<query::MixedSnapshotTabletSourceBinding> bindings;
+    bindings.reserve(source.members.size());
+    std::size_t raft_index{};
+    for (std::size_t index = 0U; index < source.members.size(); ++index) {
+      const MultiTabletSubscriptionMember& member = source.members[index];
+      const SourcePosition& boundary = registration->snapshot_boundaries[index];
+      if (member.source_kind == SubscriptionSourceKind::kWal) {
+        if (!exact_wal_boundary(source, member, boundary, *wal_snapshot)) {
+          cancel();
+          return common::make_unexpected(
+              unavailable("mixed subscription WAL boundary does not match aggregate publication"));
+        }
+        bindings.push_back({member.tablet_id, nullptr});
+      } else {
+        const ingest::TabletSnapshot& snapshot = raft_snapshots[raft_index++];
+        if (!exact_raft_boundary(source, member, boundary, snapshot)) {
+          cancel();
+          return common::make_unexpected(unavailable(
+              "mixed subscription Raft boundary does not match applied tablet snapshot"));
+        }
+        bindings.push_back({member.tablet_id, &snapshot});
+      }
+    }
+    auto pipeline = query::instantiate_mixed_snapshot_tablets_pipeline(
+        resources, storage, *wal_snapshot, bindings, lineage, destination_schema_id, plan,
+        limits.pipeline, limits.raft_pipeline);
+    if (!pipeline.has_value()) {
+      cancel();
+      return common::make_unexpected(pipeline.error());
+    }
+    return MultiTabletSnapshotSubscription{std::make_unique<Impl>(
+        manager, resources, request.subscription_id, std::move(registration->initial_resume_token),
+        std::move(*pipeline), std::move(columns), limits)};
+  } catch (const std::bad_alloc&) {
+    cancel();
+    return common::make_unexpected(exhausted("mixed multi-tablet snapshot allocation failed"));
+  } catch (const std::length_error&) {
+    cancel();
+    return common::make_unexpected(
+        exhausted("mixed multi-tablet snapshot exceeds container limits"));
   }
 }
 

@@ -60,6 +60,10 @@ checkpointing only requested groups were rejected because the physical stream is
 Executing log maintenance directly on the caller was rejected because the synchronous runtime and
 its file descriptors are worker-affine.
 
+**Retrospective update (ADR 0411):** mixed historical execution now composes this exact immutable
+Raft adapter with the existing aggregate WAL adapter. The registered source vector is the product
+boundary; it does not claim that the independent publications form one scalar epoch.
+
 ## Affected invariants and validation
 
 Invariants 1, 3, 8, 10, 11, 12, 15, and 17 apply. Focused tests apply a real Raft columnar append,

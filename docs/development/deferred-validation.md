@@ -44,7 +44,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   pull/END_STREAM/READY transition, multi-chunk socket backpressure, reactor worker dispatch, and
   real concurrent publication scheduling. Focused coverage now exercises one real Raft-applied
   aggregate, exact-boundary rejection, and service routing through the worker-hosted immutable
-  publication adapter. Exercise every global operator over multi-tablet WAL and Raft source vectors
+  publication adapter. Focused mixed-source coverage now combines a real Raft append with a WAL
+  publication under one global aggregate, rejects a stale vector component, and exercises service
+  routing. Exercise every global operator over homogeneous and mixed multi-tablet source vectors
   and sustained concurrent publication scheduling.
 - Committed columnar-batch vector source: forced-allocation sweeps, all logical types, cancellation
   at every column, hostile chunk limits, large batches, scalar/vector differential coverage, and
