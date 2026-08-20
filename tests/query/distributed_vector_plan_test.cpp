@@ -42,6 +42,7 @@ TEST(DistributedVectorPlanTest, RoundTripsRowsAggregatesOrderingAndPresentZeroLi
   const auto decoded = decode_distributed_vector_plan_intent_exact(encoded->bytes());
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   EXPECT_EQ(*decoded, grouped);
+  EXPECT_TRUE(decoded->row_output_indices.empty());
   EXPECT_EQ(decoded->limit, 0U);
 
   const DistributedVectorPlanIntent rows{.mode = DistributedVectorPlanMode::kRows,
@@ -50,7 +51,11 @@ TEST(DistributedVectorPlanTest, RoundTripsRowsAggregatesOrderingAndPresentZeroLi
                                          .limit = 17U};
   const auto encoded_rows = encode_distributed_vector_plan_intent(rows);
   ASSERT_TRUE(encoded_rows.has_value());
-  EXPECT_EQ(decode_distributed_vector_plan_intent_exact(encoded_rows->bytes()).value(), rows);
+  const auto decoded_rows = decode_distributed_vector_plan_intent_exact(encoded_rows->bytes());
+  ASSERT_TRUE(decoded_rows.has_value());
+  EXPECT_EQ(*decoded_rows, rows);
+  EXPECT_TRUE(decoded_rows->group_key_input_indices.empty());
+  EXPECT_TRUE(decoded_rows->aggregates.empty());
 
   const DistributedVectorPlanIntent ungrouped{
       .mode = DistributedVectorPlanMode::kUngroupedAggregate,

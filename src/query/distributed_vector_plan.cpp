@@ -307,7 +307,12 @@ decode_distributed_vector_plan_intent_exact(const common::ByteView bytes,
     return common::make_unexpected(corruption("distributed vector plan checksum is invalid"));
 
   try {
-    DistributedVectorPlanIntent intent{.mode = static_cast<DistributedVectorPlanMode>(*mode)};
+    DistributedVectorPlanIntent intent{.mode = static_cast<DistributedVectorPlanMode>(*mode),
+                                       .row_output_indices = {},
+                                       .group_key_input_indices = {},
+                                       .aggregates = {},
+                                       .order_keys = {},
+                                       .limit = std::nullopt};
     intent.row_output_indices.reserve(*row_count);
     intent.group_key_input_indices.reserve(*group_count);
     intent.aggregates.reserve(*aggregate_count);
