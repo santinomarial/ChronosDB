@@ -57,7 +57,9 @@ index only after success. The state-machine owner retains the snapshot lock.
 the prior exact application prefix, appends applied retained-log commands, derives canonical Raft
 term and membership metadata, durably installs the application bytes first, and only then compacts
 Raft to the identical boundary. A crash between those steps leaves an unreferenced future file, not
-an unrecoverable Raft prefix.
+an unrecoverable Raft prefix. If a remote two-stage snapshot installation is already pending, the
+core rejects local compaction until that installation is completed or rejected; two immutable
+application-snapshot identities therefore cannot race for one Raft boundary.
 
 `install_recovered_tablet_movement_snapshot` is the follower-transfer bridge into that owner. It
 accepts only a completed, authoritatively recovered movement; exact-decodes and canonicalizes the

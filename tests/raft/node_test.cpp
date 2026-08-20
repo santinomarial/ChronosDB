@@ -519,6 +519,65 @@ TEST(RaftNodeTest, CompactsAppliedPrefixAndInstallsSnapshotBeforeAcknowledgingLe
   EXPECT_EQ(follower->commit_index(), 3U);
 }
 
+TEST(RaftNodeTest, SerializesPendingSnapshotInstallAgainstLocalCompaction) {
+  PersistentState state{};
+  state.current_term = 2U;
+  state.log = {LogEntry{1U, 1U, 1U, {std::byte{0x11}}}, LogEntry{2U, 2U, 1U, {std::byte{0x22}}}};
+  state.commit_index = 2U;
+  state.applied_index = 2U;
+  auto follower = RaftNode::create(1U, {1U, 2U, 3U}, state);
+  ASSERT_TRUE(follower.has_value());
+
+  SnapshotMetadata incoming{};
+  incoming.last_included_index = 1U;
+  incoming.last_included_term = 1U;
+  incoming.manifest_generation = 9U;
+  incoming.part_set_checksum.fill(std::byte{0x99});
+  incoming.voters = {1U, 2U, 3U};
+  auto pending = follower->receive(2U, InstallSnapshotRequest{2U, 2U, incoming});
+  ASSERT_TRUE(pending.has_value()) << pending.error().to_string();
+  ASSERT_TRUE(pending->snapshot_install.has_value());
+  ASSERT_TRUE(pending->outbound.empty());
+  const PersistentState before_compaction = follower->persistent_state();
+
+  SnapshotMetadata local = incoming;
+  local.manifest_generation = 7U;
+  local.part_set_checksum.fill(std::byte{0x77});
+  auto compacted = follower->compact_snapshot(local);
+
+  ASSERT_FALSE(compacted.has_value());
+  EXPECT_EQ(compacted.error().code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(follower->persistent_state(), before_compaction);
+
+  auto installed = follower->complete_snapshot_install(2U, incoming, true);
+  ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+  ASSERT_TRUE(installed->persistent_state.has_value());
+  EXPECT_EQ(follower->persistent_state().snapshot, incoming);
+  ASSERT_EQ(follower->persistent_state().log.size(), 1U);
+  EXPECT_EQ(follower->persistent_state().log.front(), state.log.back());
+  ASSERT_EQ(installed->outbound.size(), 1U);
+  EXPECT_EQ(std::get<InstallSnapshotResponse>(installed->outbound.front().message),
+            (InstallSnapshotResponse{2U, true, 1U}));
+
+  auto rejected_follower = RaftNode::create(1U, {1U, 2U, 3U}, state);
+  ASSERT_TRUE(rejected_follower.has_value());
+  auto rejected_pending = rejected_follower->receive(2U, InstallSnapshotRequest{2U, 2U, incoming});
+  ASSERT_TRUE(rejected_pending.has_value()) << rejected_pending.error().to_string();
+  ASSERT_TRUE(rejected_pending->snapshot_install.has_value());
+  auto declined = rejected_follower->complete_snapshot_install(2U, incoming, false);
+  ASSERT_TRUE(declined.has_value()) << declined.error().to_string();
+  EXPECT_FALSE(declined->persistent_state.has_value());
+  ASSERT_EQ(declined->outbound.size(), 1U);
+  EXPECT_EQ(std::get<InstallSnapshotResponse>(declined->outbound.front().message),
+            (InstallSnapshotResponse{2U, false, 0U}));
+
+  auto compacted_after_rejection = rejected_follower->compact_snapshot(local);
+  ASSERT_TRUE(compacted_after_rejection.has_value())
+      << compacted_after_rejection.error().to_string();
+  ASSERT_TRUE(compacted_after_rejection->persistent_state.has_value());
+  EXPECT_EQ(rejected_follower->persistent_state().snapshot, local);
+}
+
 TEST(RaftNodeTest, ConfirmsLinearizableReadAtCommittedIndexBeforeApplicationVisibility) {
   auto leader = RaftNode::create(1U, {1U, 2U, 3U});
   ASSERT_TRUE(leader.has_value());

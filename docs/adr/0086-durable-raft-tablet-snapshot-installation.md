@@ -35,7 +35,8 @@ malformed recognized names, non-regular entries, and corrupt bytes fail closed.
 
 This storage owner still does not compact Raft or publish recovered tablet state. The caller must
 pair an exact installed application snapshot with matching Raft `SnapshotMetadata` before either
-action.
+action. The Raft core now rejects local compaction while a remote installation is pending, matching
+this owner's same-index immutability rule instead of allowing two authorities to race.
 
 ## Consequences and alternatives
 

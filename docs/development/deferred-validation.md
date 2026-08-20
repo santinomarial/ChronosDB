@@ -237,7 +237,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   persistence-before-response, committed-log overwrite, sequence-exhaustion, response-state, and
   broader snapshot-boundary properties. The exact snapshot-index-one alias now returns a negative
   conflict response without reading compacted storage, including a persistent higher-term/vote
-  transition before response publication.
+  transition before response publication. Pending remote installation now also excludes local
+  compaction until explicit completion/rejection; focused coverage proves the rejected compaction
+  changes no state, the original snapshot still installs with its exact retained suffix, and an
+  explicit negative completion releases local compaction.
 - Persistent file owner, vote/log fsync ordering, crash/restart at every transition, idempotent
   recovery, application to tablet state, snapshot creation/install, and log compaction. Extend the
   implemented read barrier through production transport and tablet snapshot acquisition.

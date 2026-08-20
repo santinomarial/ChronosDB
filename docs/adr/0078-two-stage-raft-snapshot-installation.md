@@ -29,7 +29,9 @@ success response is released. Rejection returns a negative response without chan
 Conflicts with an already committed local prefix fail as corruption.
 
 Local `compact_snapshot` is allowed only for a strictly newer applied prefix under a stable
-configuration, with an exact local term and nonzero application manifest generation. Raft fills the
+configuration, with an exact local term and nonzero application manifest generation. It is
+unavailable while an externally owned snapshot installation is pending; that installation must be
+completed or explicitly rejected before another snapshot identity can be created. Raft fills the
 canonical voter checkpoint and removes only entries covered by that application snapshot.
 
 ## Consequences and alternatives
@@ -38,6 +40,11 @@ Consensus remains deterministic and does not own large snapshot bytes, while the
 forge installation by merely delivering an RPC. Restart preserves the installed boundary through
 the versioned full-state record. Snapshot transfer may be retried; no success leaves the follower
 before both application installation and Raft persistence complete.
+
+Remote installation and local compaction are serialized at the core boundary. This prevents two
+immutable application snapshots with different manifest/checksum identity from racing at one Raft
+index and prevents local compaction from invalidating the retained suffix calculation for a pending
+completion.
 
 Embedding unbounded snapshot bytes in one Raft message was rejected because it bypasses chunking,
 resource limits, durable file installation, and resumability. Immediately accepting metadata was
@@ -55,4 +62,7 @@ compaction, pending installation without early response, synchronized completion
 membership restoration, durable reopen, and committed-prefix conflict rejection. AppendEntries
 predecessors below the installed snapshot boundary now receive an ordinary negative response
 without consulting compacted entry storage; a higher-term request retains the required persistent
-term transition before that response.
+term transition before that response. A pending-install regression attempts a different same-index
+local compaction, requires `UNAVAILABLE` with byte-for-value state preservation, then completes the
+original installation and verifies its exact retained suffix and success response. A second branch
+rejects the installation, verifies its negative response, and then permits the local compaction.

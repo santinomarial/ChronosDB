@@ -45,6 +45,8 @@ public:
   [[nodiscard]] common::Result<Transition> finalize_membership_change();
   [[nodiscard]] common::Result<Transition>
   complete_snapshot_install(NodeId source, SnapshotMetadata snapshot, bool installed);
+  // Local compaction is unavailable while an externally owned snapshot installation is pending.
+  // The caller must complete or reject that installation before creating another snapshot identity.
   [[nodiscard]] common::Result<Transition> compact_snapshot(SnapshotMetadata snapshot);
   [[nodiscard]] common::Result<Transition> heartbeat();
   // Starts one bounded current-term quorum probe. The leader must first have committed an entry in

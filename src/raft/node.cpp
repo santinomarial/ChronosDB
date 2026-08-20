@@ -1009,6 +1009,11 @@ common::Result<Transition> RaftNode::complete_snapshot_install(const NodeId sour
 }
 
 common::Result<Transition> RaftNode::compact_snapshot(SnapshotMetadata snapshot) {
+  if (impl_->pending_snapshot.has_value()) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable,
+                       "local Raft compaction cannot race a pending snapshot installation"});
+  }
   if (impl_->joint.has_value() ||
       snapshot.last_included_index <= impl_->state.snapshot.last_included_index ||
       snapshot.last_included_index > impl_->state.applied_index ||

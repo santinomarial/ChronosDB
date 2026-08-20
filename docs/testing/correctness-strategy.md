@@ -395,6 +395,11 @@ whose predecessor is already compacted receives a negative conflict response wit
 retained log storage; if it carries a higher term, the returned transition contains the exact
 term/vote persistence change required before that response can be released.
 
+Two-stage snapshot installation is exclusive with local compaction. A rejected same-index local
+snapshot changes no persistent state or pending identity, and completing the original installation
+retains only the exact compatible suffix before its success response becomes eligible. An explicit
+negative completion clears that pending authority before local compaction is admitted.
+
 The implemented group-scoped transport envelope additionally has checksum-repaired hostile
 length/count/reserved/value matrices, exhaustive owned-allocation failure sweeps, and a bounded
 structure-aware libFuzzer target. Accepted arbitrary frames must exact-reencode, while generated
