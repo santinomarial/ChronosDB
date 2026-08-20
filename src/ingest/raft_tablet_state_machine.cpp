@@ -247,11 +247,13 @@ public:
                                          .manifest_generation = manifest_generation,
                                          .part_set_checksum = part_set_checksum,
                                          .configuration_index =
-                                             current_snapshot.configuration_index};
+                                             current_snapshot.configuration_index,
+                                         .voters = {}};
     RaftTabletApplicationSnapshot application_snapshot{.group_id = group_id,
                                                        .table_id = tablet_publication->table_id(),
-                                                       .tablet_id =
-                                                           tablet_publication->tablet_id()};
+                                                       .tablet_id = tablet_publication->tablet_id(),
+                                                       .raft_snapshot = {},
+                                                       .entries = {}};
     try {
       next_snapshot.voters.assign(node->voters().begin(), node->voters().end());
       if (current_snapshot.last_included_index != 0U) {

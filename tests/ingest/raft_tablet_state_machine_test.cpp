@@ -203,7 +203,11 @@ TEST(RaftTabletStateMachineTest, RebuildsCompactedPrefixThenCommittedSuffixFromI
     auto compacted = machine->compact_applied_prefix(1U, 1U, first_part_set_checksum);
     ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
     EXPECT_EQ(compacted->snapshot.last_included_index, 1U);
+    EXPECT_EQ(compacted->snapshot.last_included_term, 1U);
+    EXPECT_EQ(compacted->snapshot.manifest_generation, 1U);
     EXPECT_EQ(compacted->snapshot.part_set_checksum, first_part_set_checksum);
+    EXPECT_EQ(compacted->snapshot.configuration_index, 0U);
+    EXPECT_EQ(compacted->snapshot.voters, std::vector<raft::NodeId>{1U});
     EXPECT_EQ(compacted->application_entries, 1U);
     EXPECT_FALSE(compacted->application_snapshot_already_present);
     EXPECT_EQ(durable.find_group(group_id())->persistent_state().snapshot, compacted->snapshot);
@@ -254,6 +258,11 @@ TEST(RaftTabletStateMachineTest, RebuildsCompactedPrefixThenCommittedSuffixFromI
   auto snapshot_storage = RaftTabletSnapshotStorage::open_existing(
       {.directory_path = snapshot_directory.string(), .group_id = group_id()});
   ASSERT_TRUE(snapshot_storage.has_value()) << snapshot_storage.error().to_string();
+  auto installed = snapshot_storage->load(2U);
+  ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+  EXPECT_EQ(installed->snapshot.raft_snapshot,
+            reopened->find_group(group_id())->persistent_state().snapshot);
+  EXPECT_EQ(installed->snapshot.entries.size(), 2U);
   auto rebuilt = RaftTabletStateMachine::recover(
       group_id(), *reopened, std::move(*snapshot_storage), retry_directory(), tablet(), schemas());
   ASSERT_TRUE(rebuilt.has_value()) << rebuilt.error().to_string();
