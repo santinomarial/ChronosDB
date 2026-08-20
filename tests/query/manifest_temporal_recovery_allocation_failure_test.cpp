@@ -429,6 +429,162 @@ TEST(ManifestTemporalRecoveryAllocationFailureTest,
 }
 
 TEST(ManifestTemporalRecoveryAllocationFailureTest,
+     UnwindsEveryMultiPartRestoreAllocationAndReleasesBothLocks) {
+  TemporaryDirectory directory;
+  ASSERT_TRUE(directory.valid());
+  const std::filesystem::path database_root = directory.path() / "database";
+  const std::filesystem::path wal_root = directory.path() / "wal";
+  establish_manifest_layout(database_root);
+  ASSERT_TRUE(std::filesystem::create_directory(wal_root));
+
+  const std::shared_ptr<const schema::TableSchema> retained = temporal_storage_schema();
+  const EncodedTemporalCommand suffix =
+      temporal_command(retained, 50, 'a', 500, TemporalMutationKind::kCorrection, 500);
+  const auto covered_payload = wal::encode_application_payload({.application_format = 99U,
+                                                                .application_kind = 99U,
+                                                                .application_flags = 0U,
+                                                                .application_body = {}});
+  ASSERT_TRUE(covered_payload.has_value()) << covered_payload.error().to_string();
+  const wal::WalWriterConfig writer_config{.directory_path = wal_root.string()};
+  auto created = wal::WalWriter::create_new(writer_config);
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  wal::WalWriter writer = std::move(*created);
+  const wal::WalId wal_id = writer.wal_id();
+  wal::WalAppendResult checkpoint_append{};
+  for (std::uint64_t sequence = 1U; sequence <= 13U; ++sequence) {
+    const auto appended = writer.append_application_entry(covered_payload->bytes());
+    ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
+    ASSERT_EQ(appended->record_sequence, sequence);
+    checkpoint_append = *appended;
+  }
+  const auto suffix_append = writer.append_application_entry(suffix.bytes());
+  ASSERT_TRUE(suffix_append.has_value()) << suffix_append.error().to_string();
+  ASSERT_EQ(suffix_append->record_sequence, 14U);
+  ASSERT_TRUE(writer.synchronize().has_value());
+  ASSERT_TRUE(writer.close().is_ok());
+
+  const common::Uuid source_id{wal_id.bytes};
+  const cseg::EncodedCsegPart first_encoded =
+      cseg::test::make_valid_temporal_part(cseg::PageCompression::kNone, {.source_id = source_id});
+  const cseg::EncodedCsegPart second_encoded = cseg::test::make_valid_temporal_part(
+      cseg::PageCompression::kNone, {.source_id = source_id,
+                                     .part_id_seed = 2U,
+                                     .first_event_time = 30,
+                                     .second_event_time = 40,
+                                     .first_commit_position = 11U,
+                                     .second_commit_position = 13U,
+                                     .first_logical_identity = std::byte{'c'},
+                                     .second_logical_identity = std::byte{'d'},
+                                     .first_receive_time = 102,
+                                     .second_receive_time = 103,
+                                     .first_system_time = 202,
+                                     .second_system_time = 203});
+  const schema::TabletId tablet_id = first_byte_id<schema::TabletId>(3U);
+  const auto first_part = manifest::describe_manifest_v2_temporal_part_image(
+      first_encoded.bytes(), *retained, tablet_id, cseg::temporal_format::CommitSource::kWal,
+      source_id);
+  ASSERT_TRUE(first_part.has_value()) << first_part.error().to_string();
+  const auto second_part = manifest::describe_manifest_v2_temporal_part_image(
+      second_encoded.bytes(), *retained, tablet_id, cseg::temporal_format::CommitSource::kWal,
+      source_id);
+  ASSERT_TRUE(second_part.has_value()) << second_part.error().to_string();
+  const std::array tablets{manifest::TemporalTabletDescriptor{
+      .table_id = retained->table_id(),
+      .tablet_id = tablet_id,
+      .recovery_schema_id = retained->schema_id(),
+      .recovery_schema_version = retained->version(),
+      .source_id = source_id,
+      .durable_position = 13U,
+      .reclaim_position = 0U,
+      .first_part_index = 0U,
+      .part_count = 2U,
+      .durable_version_count = first_part->row_count + second_part->row_count,
+      .commit_source = cseg::temporal_format::CommitSource::kWal}};
+  const std::array parts{*first_part, *second_part};
+  const manifest::DatabaseId database_id = first_byte_id<manifest::DatabaseId>(6U);
+  const auto encoded_manifest = manifest::encode_manifest_v2_temporal(
+      {.generation = 1U,
+       .database_id = database_id,
+       .wal_reclaim_checkpoint =
+           manifest::TemporalWalReclaimCheckpoint{
+               .wal_id = wal_id,
+               .coordinate = {.record_sequence = checkpoint_append.record_sequence,
+                              .segment_number = checkpoint_append.record_end.segment_number,
+                              .byte_offset = checkpoint_append.record_end.byte_offset}},
+       .tablets = tablets,
+       .parts = parts,
+       .retries = {}});
+  ASSERT_TRUE(encoded_manifest.has_value()) << encoded_manifest.error().to_string();
+  write_bytes(database_root / manifest::kPartsDirectoryName /
+                  manifest::part_file_name(first_part->part_id),
+              first_encoded.bytes());
+  write_bytes(database_root / manifest::kPartsDirectoryName /
+                  manifest::part_file_name(second_part->part_id),
+              second_encoded.bytes());
+  write_bytes(database_root / manifest::kManifestDirectoryName / *manifest::manifest_file_name(1U),
+              encoded_manifest->bytes());
+
+  const schema::SchemaLineage lineage = schema::SchemaLineage::create(*retained).value();
+  const std::array schema_bindings{
+      manifest::TabletSchemaBinding{.tablet_id = tablet_id, .lineage = std::cref(lineage)}};
+  const std::array source_bindings{manifest::TemporalTabletSourceBinding{
+      .tablet_id = tablet_id,
+      .commit_source = cseg::temporal_format::CommitSource::kWal,
+      .source_id = source_id}};
+  const auto startup_config = [&] {
+    return TemporalManifestWalStartupConfig{
+        .manifest_storage = {.database_root = database_root.string()},
+        .manifest_load = {.expected_database_id = database_id,
+                          .schema_bindings = schema_bindings,
+                          .source_bindings = source_bindings,
+                          .decode_limits = {},
+                          .part_validation_limits = {}},
+        .wal_writer = writer_config,
+        .wal_recovery = {},
+        .retained_system_time_ns = first_part->minimum_system_time,
+        .store_limits = {},
+        .cseg_limits = {},
+        .command_limits = {},
+        .reclaim_checkpointed_wal_segments = false};
+  };
+
+  bool succeeded = false;
+  for (std::size_t fail_after = 0U; fail_after < 2048U; ++fail_after) {
+    TemporalManifestWalStartupConfig config = startup_config();
+    auto recovered =
+        run_failure(fail_after, [&] { return recover_manifest_temporal_wal(std::move(config)); });
+    if (!recovered.has_value()) {
+      ASSERT_EQ(recovered.error().code(), common::StatusCode::kResourceExhausted)
+          << "allocation " << fail_after << ": " << recovered.error().to_string();
+      auto lock_probe = recover_manifest_temporal_wal(startup_config());
+      ASSERT_TRUE(lock_probe.has_value())
+          << "allocation " << fail_after << ": " << lock_probe.error().to_string();
+      auto probe_writer = lock_probe->release_writer();
+      ASSERT_TRUE(probe_writer.has_value()) << probe_writer.error().to_string();
+      ASSERT_TRUE(probe_writer->close().is_ok());
+      continue;
+    }
+
+    EXPECT_EQ(recovered->report().selected_generation, 1U);
+    EXPECT_EQ(recovered->report().checkpoint.record_sequence, 13U);
+    EXPECT_EQ(recovered->report().applied_suffix_command_count, 1U);
+    EXPECT_EQ(recovered->report().part_count, 2U);
+    EXPECT_EQ(recovered->report().durable_version_count, 4U);
+    const TemporalSnapshotProvider* const provider = recovered->provider(retained->table_id());
+    ASSERT_NE(provider, nullptr);
+    EXPECT_EQ(provider->latest_commit_position(), 14U);
+    EXPECT_EQ(provider->logical_row_count(), 4U);
+    EXPECT_EQ(provider->version_count(), 5U);
+    auto reopened = recovered->release_writer();
+    ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+    EXPECT_TRUE(reopened->close().is_ok());
+    succeeded = true;
+    break;
+  }
+  EXPECT_TRUE(succeeded);
+}
+
+TEST(ManifestTemporalRecoveryAllocationFailureTest,
      UnwindsEveryMultiTabletAllocationAndReleasesBothLocks) {
   TemporaryDirectory directory;
   ASSERT_TRUE(directory.valid());

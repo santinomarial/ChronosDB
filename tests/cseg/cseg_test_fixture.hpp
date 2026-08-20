@@ -234,6 +234,16 @@ struct TemporalPartFixtureOptions {
   common::Uuid source_id{common::Uuid{identifier<schema::SchemaId>(8U).bytes()}};
   std::uint8_t part_id_seed{1U};
   std::uint8_t tablet_id_seed{3U};
+  std::int64_t first_event_time{10};
+  std::int64_t second_event_time{20};
+  std::uint64_t first_commit_position{7U};
+  std::uint64_t second_commit_position{9U};
+  std::byte first_logical_identity{std::byte{'a'}};
+  std::byte second_logical_identity{std::byte{'b'}};
+  std::int64_t first_receive_time{100};
+  std::int64_t second_receive_time{101};
+  std::int64_t first_system_time{200};
+  std::int64_t second_system_time{201};
   double first_float64_value{1.5};
   double second_float64_value{2.5};
 };
@@ -291,8 +301,8 @@ make_valid_temporal_part(const PageCompression compression = PageCompression::kN
   };
 
   std::vector<std::byte> event_times;
-  append_little_endian(event_times, std::int64_t{10});
-  append_little_endian(event_times, std::int64_t{20});
+  append_little_endian(event_times, options.first_event_time);
+  append_little_endian(event_times, options.second_event_time);
   const std::vector<std::byte> sources(kRows,
                                        std::byte{static_cast<std::uint8_t>(options.commit_source)});
   const common::Uuid::Bytes source = options.source_id.bytes();
@@ -300,8 +310,8 @@ make_valid_temporal_part(const PageCompression compression = PageCompression::kN
   source_ids.insert(source_ids.end(), source.begin(), source.end());
   source_ids.insert(source_ids.end(), source.begin(), source.end());
   std::vector<std::byte> positions;
-  append_little_endian(positions, std::uint64_t{7U});
-  append_little_endian(positions, std::uint64_t{9U});
+  append_little_endian(positions, options.first_commit_position);
+  append_little_endian(positions, options.second_commit_position);
   std::vector<std::byte> ordinals;
   append_little_endian(ordinals, std::uint32_t{0U});
   append_little_endian(ordinals, std::uint32_t{0U});
@@ -311,13 +321,14 @@ make_valid_temporal_part(const PageCompression compression = PageCompression::kN
   append_little_endian(identity_offsets, std::uint32_t{0U});
   append_little_endian(identity_offsets, std::uint32_t{1U});
   append_little_endian(identity_offsets, std::uint32_t{2U});
-  const std::vector<std::byte> identities{std::byte{'a'}, std::byte{'b'}};
+  const std::vector<std::byte> identities{options.first_logical_identity,
+                                          options.second_logical_identity};
   std::vector<std::byte> receive_times;
-  append_little_endian(receive_times, std::int64_t{100});
-  append_little_endian(receive_times, std::int64_t{101});
+  append_little_endian(receive_times, options.first_receive_time);
+  append_little_endian(receive_times, options.second_receive_time);
   std::vector<std::byte> system_times;
-  append_little_endian(system_times, std::int64_t{200});
-  append_little_endian(system_times, std::int64_t{201});
+  append_little_endian(system_times, options.first_system_time);
+  append_little_endian(system_times, options.second_system_time);
 
   const auto encode_page = [&](const schema::LogicalType logical_type,
                                const common::ByteView offsets, const common::ByteView values) {
@@ -336,11 +347,12 @@ make_valid_temporal_part(const PageCompression compression = PageCompression::kN
   pages.push_back(encode_page(binary, identity_offsets, identities));
   pages.push_back(encode_page(timestamp, {}, receive_times));
   pages.push_back(encode_page(timestamp, {}, system_times));
-  const std::vector<CsegGranuleDescriptor> granules{{.first_row = 0U,
-                                                     .row_count = kRows,
-                                                     .first_page_index = 0U,
-                                                     .minimum_event_time = 10,
-                                                     .maximum_event_time = 20}};
+  const std::vector<CsegGranuleDescriptor> granules{
+      {.first_row = 0U,
+       .row_count = kRows,
+       .first_page_index = 0U,
+       .minimum_event_time = options.first_event_time,
+       .maximum_event_time = options.second_event_time}};
   return encode_cseg_v2_temporal_part(
              {.part_id = identifier<PartId>(options.part_id_seed),
               .table_id = identifier<schema::TableId>(2U),
@@ -350,8 +362,8 @@ make_valid_temporal_part(const PageCompression compression = PageCompression::kN
               .row_count = kRows,
               .event_time_column_ordinal = 0U,
               .ordering_column_count = 1U,
-              .minimum_event_time = 10,
-              .maximum_event_time = 20,
+              .minimum_event_time = options.first_event_time,
+              .maximum_event_time = options.second_event_time,
               .columns = columns,
               .granules = granules,
               .pages = pages})

@@ -59,8 +59,8 @@ recovery over a mixed v1/future-format WAL fails during preflight without publis
 Exhaustive test-only allocation injection covers every codec-owned canonical encode/exact-decode
 allocation and every owned allocation observed on the canonical single-table command-specific WAL
 recovery path, including rollback and lock release. Manifest-composed startup sweeps cover an empty
-tablet, authenticated single-CSEG restoration, and the accepted two-tablet combination of one of
-each. They return no state on failure and prove that both Manifest and WAL locks can be reacquired
-after each failure. The exact golden fixture runs in the standard Linux GCC, Linux Clang/libc++, and
-macOS AppleClang CI matrix. Sustained fuzzing, allocation injection for multi-part Manifest startup,
-and crash injection remain deferred to Phase 18.
+tablet, authenticated one- and two-CSEG restoration, and the accepted two-tablet combination of one
+CSEG-backed and one empty tablet. They return no state on failure and prove that both Manifest and
+WAL locks can be reacquired after each failure. The exact golden fixture runs in the standard Linux
+GCC, Linux Clang/libc++, and macOS AppleClang CI matrix. Sustained fuzzing, larger combined
+part/tablet allocation matrices, and crash injection remain deferred to Phase 18.

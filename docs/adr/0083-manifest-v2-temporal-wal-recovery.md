@@ -51,5 +51,8 @@ Invariants 1–8, 11–14, and 18 apply. A real-filesystem focused test creates 
 history through record 9, installs an exact Manifest/checkpoint at that physical boundary, appends a
 record-10 correction, and proves recovery returns historical state plus that suffix and a writer at
 sequence 11. It also proves an absent retained-history boundary fails before publication. Covered
-command verification, multiple tablets, Raft snapshot composition, crash injection, allocation
-failure, reclamation faults, and broader restart matrices remain Phase 18 follow-up work.
+command verification and multiple distinct-tablet routing are implemented. Exhaustive allocation
+sweeps cover empty, one-CSEG, two-CSEG, and one-CSEG-plus-empty-two-tablet startup shapes, including
+complete rollback and reacquisition of both locks. Raft snapshot composition, crash injection,
+larger combined part/tablet allocation matrices, reclamation faults, and broader restart matrices
+remain Phase 18 follow-up work.

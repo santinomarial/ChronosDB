@@ -65,8 +65,8 @@ Raft tablets retain their application-snapshot recovery owner and are not mixed 
 Invariants 1, 2, 4, 6–8, 10–14, and 18 apply. The focused real-filesystem test selects one retained
 tablet plus one empty tablet, verifies covered commands only against the first, applies independent
 suffix commands to both, checks per-tablet and aggregate reports, and reopens the shared writer at
-the next global sequence. Exhaustive allocation sweeps cover canonical empty and single-CSEG
-one-tablet startup plus the accepted two-tablet combination of one of each; every injected failure
-permits reacquisition of both locks. Same-table routing, allocation faults during multi-part
-restoration, crash injection, many-tablet skew, and mixed WAL/Raft publication remain in Phase 18
-or later format work.
+the next global sequence. Exhaustive allocation sweeps cover canonical empty, one-CSEG, and two-CSEG
+one-tablet startup plus the accepted two-tablet combination of one CSEG-backed and one empty tablet;
+every injected failure permits reacquisition of both locks. Same-table routing, larger combined
+part/tablet allocation skew, crash injection, many-tablet skew, and mixed WAL/Raft publication
+remain in Phase 18 or later format work.
