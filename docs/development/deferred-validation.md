@@ -39,10 +39,13 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   injection at every write/sync/rename cut point, process crash/reopen, token/checkpoint race
   scheduling, obsolete-generation reclamation, cross-compiler golden verification, and retained-
   state size/recovery measurements remain deferred.
-- Subscription plan identity: cross-process golden vectors, forced-allocation/provider-failure
-  sweeps, hostile SQL/catalog limits, registry crash/fault cut points, planner-upgrade compatibility,
-  obsolete-definition reclamation, schema migration, and compatibility review when the supported
-  incremental SQL surface expands.
+- Subscription plan identity: a dedicated sweep now fails every observed durable-registry install
+  and load/reprepare allocation, requires resource-exhausted classification, retries every
+  interrupted install to the exact executable fingerprint, and leaves the registry usable.
+  Cross-process golden vectors, provider-failure sweeps, hostile SQL/catalog limits, registry
+  crash/fault cut points, planner-upgrade compatibility, obsolete-definition reclamation, schema
+  migration, and compatibility review when the supported incremental SQL surface expands remain
+  deferred.
 - Plan-bound subscription snapshot execution: real-socket multi-chunk backpressure and reactor
   worker dispatch. Deterministic
   allocator sweeps now fail every observed single-tablet WAL and multi-tablet WAL/Raft/mixed owner

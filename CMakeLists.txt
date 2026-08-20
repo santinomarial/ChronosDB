@@ -1096,6 +1096,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/live/multi_tablet_subscription_checkpoint_storage_allocation_failure_test.cpp
     tests/live/multi_tablet_subscription_checkpoint_allocation_failure_test.cpp
     tests/live/snapshot_subscription_allocation_failure_test.cpp
+    tests/live/subscription_plan_storage_allocation_failure_test.cpp
     tests/live/subscription_service_allocation_failure_test.cpp
     tests/support/failing_allocator.cpp
   )
