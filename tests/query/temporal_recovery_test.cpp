@@ -215,6 +215,9 @@ TEST(TemporalRecoveryTest, ReplaysVerifiedHistoryAndContinuesTheWalSequence) {
   ASSERT_EQ(recovered->table_count(), 1U);
   TemporalSnapshotProvider* const provider = recovered->provider(retained->table_id());
   ASSERT_NE(provider, nullptr);
+  const RecoveredTemporalState& const_recovered = *recovered;
+  EXPECT_EQ(const_recovered.provider(retained->table_id()), provider);
+  EXPECT_EQ(const_recovered.provider(first_byte_id<schema::TableId>(0xFEU)), nullptr);
   EXPECT_EQ(provider->latest_commit_position(), 2U);
   EXPECT_EQ(provider->logical_row_count(), 2U);
   EXPECT_EQ(provider->version_count(), 4U);

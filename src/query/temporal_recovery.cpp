@@ -273,8 +273,13 @@ recover_temporal_wal(const wal::WalWriterConfig& writer_config,
       if (!provider.has_value()) {
         return common::make_unexpected(provider.error());
       }
-      tables.push_back(RecoveredTemporalState::Impl::TableEntry{
-          .schema = std::move(configured.schema), .provider = std::move(*provider)});
+      tables.push_back(
+          RecoveredTemporalState::Impl::TableEntry{.schema = std::move(configured.schema),
+                                                   .provider = std::move(*provider),
+                                                   .tablet_id = std::nullopt,
+                                                   .durable_position = 0U,
+                                                   .verified_covered_commands = 0U,
+                                                   .applied_commands = 0U});
     }
     auto implementation = std::make_unique<RecoveredTemporalState::Impl>(
         std::move(tables), recovery_config.decode_limits);
