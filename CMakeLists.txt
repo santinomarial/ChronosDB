@@ -2273,6 +2273,19 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_enable_static_analysis(chronos_multi_tablet_subscription_checkpoint_fuzz)
 
   add_executable(
+    chronos_materialized_view_checkpoint_fuzz
+    tests/fuzz/materialized_view_checkpoint_fuzz.cpp
+  )
+  set_target_properties(chronos_materialized_view_checkpoint_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_materialized_view_checkpoint_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_materialized_view_checkpoint_fuzz PRIVATE chronos::live)
+  target_compile_options(chronos_materialized_view_checkpoint_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_materialized_view_checkpoint_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_materialized_view_checkpoint_fuzz)
+  chronos_enable_sanitizers(chronos_materialized_view_checkpoint_fuzz)
+  chronos_enable_static_analysis(chronos_materialized_view_checkpoint_fuzz)
+
+  add_executable(
     chronos_distributed_vector_result_exchange_fuzz
     tests/fuzz/distributed_vector_result_exchange_fuzz.cpp
   )
