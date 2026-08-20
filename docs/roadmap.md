@@ -672,6 +672,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   fail closed without an active request; first result, END_STREAM, and READY failures likewise
   terminally remove the service entry. One-slot response-ring saturation across a five-chunk
   snapshot retains and retries each exact response without advancing the snapshot twice. The
+  durable checkpoint store now classifies every observed install and generation-load allocation,
+  preserves retryable exact state after each failed install, and does not mislabel allocation
+  failure during canonical filename validation as durable corruption. The
   homogeneous WAL vector now executes grouped aggregate, global sort/limit, and latest/limit plans
   once above all tablets in addition to the existing global ungrouped aggregate; the real mixed
   WAL/Raft vector now passes the same matrix across both authorities. A release-store schedule now

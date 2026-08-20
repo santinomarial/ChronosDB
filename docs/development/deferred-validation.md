@@ -32,10 +32,13 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   checksum-repaired mutations, limit rejection, explicit-version/compatibility agreement, and
   exact successful re-encoding under ASan/UBSan. A dedicated allocator-failure executable sweeps
   every observed owned allocation in v1/v2 checkpoint and generation-envelope encoding/decoding,
-  requiring resource-exhausted classification until exact success. Sustained campaigns, storage-
-  owner allocation and filesystem fault injection at every write/sync/rename cut point, process
-  crash/reopen, token/checkpoint race scheduling, obsolete-generation reclamation, cross-compiler
-  golden verification, and retained-state size/recovery measurements remain deferred.
+  requiring resource-exhausted classification until exact success. It now also sweeps durable
+  storage install, exact-generation load, and latest-generation selection; every failed install is
+  retryable to the exact checkpoint, and allocation failure during canonical filename validation
+  remains resource exhaustion rather than false corruption. Sustained campaigns, filesystem fault
+  injection at every write/sync/rename cut point, process crash/reopen, token/checkpoint race
+  scheduling, obsolete-generation reclamation, cross-compiler golden verification, and retained-
+  state size/recovery measurements remain deferred.
 - Subscription plan identity: cross-process golden vectors, forced-allocation/provider-failure
   sweeps, hostile SQL/catalog limits, registry crash/fault cut points, planner-upgrade compatibility,
   obsolete-definition reclamation, schema migration, and compatibility review when the supported

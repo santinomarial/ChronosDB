@@ -117,7 +117,9 @@ valid_codec_limits(const MultiTabletSubscriptionCheckpointCodecLimits& limits) n
   if (parsed.ec != std::errc{} || parsed.ptr != digits.data() + digits.size() || generation == 0U)
     return common::make_unexpected(invalid("subscription checkpoint generation is invalid"));
   auto canonical = multi_tablet_subscription_checkpoint_generation_file_name(generation);
-  if (!canonical.has_value() || !name.starts_with(*canonical))
+  if (!canonical.has_value())
+    return common::make_unexpected(canonical.error());
+  if (!name.starts_with(*canonical))
     return common::make_unexpected(invalid("subscription checkpoint name is noncanonical"));
   return generation;
 }
@@ -150,8 +152,13 @@ public:
     for (const io::DirectoryEntry& entry : *entries) {
       if (!entry.name.starts_with(kGenerationPrefix) || !entry.name.ends_with(kTemporarySuffix))
         continue;
-      if (!parse_name(entry.name, true).has_value() ||
-          entry.type != io::DirectoryEntryType::kRegularFile)
+      auto parsed = parse_name(entry.name, true);
+      if (!parsed.has_value()) {
+        if (parsed.error().code() == common::StatusCode::kResourceExhausted)
+          return parsed.error();
+        return corruption("recognized subscription checkpoint temporary is noncanonical");
+      }
+      if (entry.type != io::DirectoryEntryType::kRegularFile)
         return corruption("recognized subscription checkpoint temporary is noncanonical");
       common::Status status = directory_.remove_file(entry.name);
       if (!status.is_ok())
@@ -209,17 +216,23 @@ common::Result<std::string> multi_tablet_subscription_checkpoint_generation_file
     const std::uint64_t checkpoint_generation) {
   if (checkpoint_generation == 0U)
     return common::make_unexpected(invalid("checkpoint generation must be nonzero"));
-  std::array<char, kGenerationDigits> digits{};
-  const auto converted =
-      std::to_chars(digits.data(), digits.data() + digits.size(), checkpoint_generation);
-  if (converted.ec != std::errc{})
-    return common::make_unexpected(invalid("checkpoint generation is not representable"));
-  const std::size_t written = static_cast<std::size_t>(converted.ptr - digits.data());
-  std::string result{kGenerationPrefix};
-  result.append(kGenerationDigits - written, '0');
-  result.append(digits.data(), written);
-  result.append(kGenerationSuffix);
-  return result;
+  try {
+    std::array<char, kGenerationDigits> digits{};
+    const auto converted =
+        std::to_chars(digits.data(), digits.data() + digits.size(), checkpoint_generation);
+    if (converted.ec != std::errc{})
+      return common::make_unexpected(invalid("checkpoint generation is not representable"));
+    const std::size_t written = static_cast<std::size_t>(converted.ptr - digits.data());
+    std::string result{kGenerationPrefix};
+    result.append(kGenerationDigits - written, '0');
+    result.append(digits.data(), written);
+    result.append(kGenerationSuffix);
+    return result;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("checkpoint generation name allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("checkpoint generation name exceeds limits"));
+  }
 }
 
 common::Result<MultiTabletSubscriptionCheckpointStorage>
@@ -260,6 +273,8 @@ MultiTabletSubscriptionCheckpointStorage::create(
     return open(std::move(config), true);
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("subscription checkpoint storage allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("subscription checkpoint storage exceeds limits"));
   }
 }
 
@@ -270,79 +285,81 @@ MultiTabletSubscriptionCheckpointStorage::open_existing(
     return open(std::move(config), false);
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("subscription checkpoint storage allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("subscription checkpoint storage exceeds limits"));
   }
 }
 
 common::Result<InstalledMultiTabletSubscriptionCheckpoint>
 MultiTabletSubscriptionCheckpointStorage::install(
     const BoundMultiTabletSubscriptionCheckpoint& checkpoint) {
-  if (impl_ == nullptr)
-    return common::make_unexpected(invalid("subscription checkpoint storage was moved from"));
-  common::Status usable = impl_->check_usable();
-  if (!usable.is_ok())
-    return common::make_unexpected(std::move(usable));
-  if (!matches(impl_->config_.identity, checkpoint.state))
-    return common::make_unexpected(invalid("subscription checkpoint belongs to another owner"));
-  auto final_name =
-      multi_tablet_subscription_checkpoint_generation_file_name(checkpoint.checkpoint_generation);
-  if (!final_name.has_value())
-    return common::make_unexpected(final_name.error());
-  auto existing = impl_->load_file(*final_name, checkpoint.checkpoint_generation);
-  if (existing.has_value()) {
-    auto encoded_v1 = encode_bound_multi_tablet_subscription_checkpoint_v1(
-        checkpoint, impl_->config_.codec_limits);
-    auto encoded_v2 = encode_bound_multi_tablet_subscription_checkpoint_v2(
-        checkpoint, impl_->config_.codec_limits);
-    const bool exact_v1 = encoded_v1.has_value() && existing->bytes == *encoded_v1;
-    const bool exact_v2 = encoded_v2.has_value() && existing->bytes == *encoded_v2;
-    if (!exact_v1 && !exact_v2)
-      return common::make_unexpected(
-          corruption("checkpoint generation already has different durable bytes"));
-    return InstalledMultiTabletSubscriptionCheckpoint{checkpoint.checkpoint_generation, *final_name,
-                                                      true};
-  }
-  if (existing.error().code() != common::StatusCode::kNotFound)
-    return common::make_unexpected(existing.error());
-  auto encoded =
-      encode_bound_multi_tablet_subscription_checkpoint_v2(checkpoint, impl_->config_.codec_limits);
-  if (!encoded.has_value())
-    return common::make_unexpected(encoded.error());
-  auto latest = load_latest();
-  if (!latest.has_value())
-    return common::make_unexpected(latest.error());
-  const std::uint64_t previous_generation =
-      latest
-          ->transform([](const LoadedMultiTabletSubscriptionCheckpoint& loaded) noexcept {
-            return loaded.checkpoint.checkpoint_generation;
-          })
-          .value_or(0U);
-  if (previous_generation == std::numeric_limits<std::uint64_t>::max())
-    return common::make_unexpected(exhausted("subscription checkpoint generation is exhausted"));
-  const std::uint64_t expected = previous_generation + 1U;
-  if (checkpoint.checkpoint_generation != expected)
-    return common::make_unexpected(invalid("subscription checkpoint is not the next generation"));
-
-  const std::string temp_name = temporary_name(*final_name);
-  common::Status cleanup = impl_->directory_.remove_file(temp_name);
-  if (cleanup.is_ok())
-    cleanup = impl_->directory_.sync();
-  else if (cleanup.code() == common::StatusCode::kNotFound)
-    cleanup = common::Status::ok();
-  if (!cleanup.is_ok())
-    return common::make_unexpected(with_context("clean prior checkpoint temporary", cleanup));
-  auto temporary =
-      impl_->directory_.create_exclusive_regular_file(temp_name, impl_->config_.file_permissions);
-  if (!temporary.has_value())
-    return common::make_unexpected(temporary.error());
-  common::Status operation = temporary->write_all_at(0U, *encoded);
-  if (!operation.is_ok())
-    return common::make_unexpected(with_context("write checkpoint temporary", operation));
-  auto readback_size = temporary->size();
-  if (!readback_size.has_value() || *readback_size != encoded->size())
-    return common::make_unexpected(readback_size.has_value()
-                                       ? corruption("checkpoint temporary size changed")
-                                       : readback_size.error());
   try {
+    if (impl_ == nullptr)
+      return common::make_unexpected(invalid("subscription checkpoint storage was moved from"));
+    common::Status usable = impl_->check_usable();
+    if (!usable.is_ok())
+      return common::make_unexpected(std::move(usable));
+    if (!matches(impl_->config_.identity, checkpoint.state))
+      return common::make_unexpected(invalid("subscription checkpoint belongs to another owner"));
+    auto final_name =
+        multi_tablet_subscription_checkpoint_generation_file_name(checkpoint.checkpoint_generation);
+    if (!final_name.has_value())
+      return common::make_unexpected(final_name.error());
+    auto existing = impl_->load_file(*final_name, checkpoint.checkpoint_generation);
+    if (existing.has_value()) {
+      auto encoded_v1 = encode_bound_multi_tablet_subscription_checkpoint_v1(
+          checkpoint, impl_->config_.codec_limits);
+      auto encoded_v2 = encode_bound_multi_tablet_subscription_checkpoint_v2(
+          checkpoint, impl_->config_.codec_limits);
+      const bool exact_v1 = encoded_v1.has_value() && existing->bytes == *encoded_v1;
+      const bool exact_v2 = encoded_v2.has_value() && existing->bytes == *encoded_v2;
+      if (!exact_v1 && !exact_v2)
+        return common::make_unexpected(
+            corruption("checkpoint generation already has different durable bytes"));
+      return InstalledMultiTabletSubscriptionCheckpoint{checkpoint.checkpoint_generation,
+                                                        *final_name, true};
+    }
+    if (existing.error().code() != common::StatusCode::kNotFound)
+      return common::make_unexpected(existing.error());
+    auto encoded = encode_bound_multi_tablet_subscription_checkpoint_v2(
+        checkpoint, impl_->config_.codec_limits);
+    if (!encoded.has_value())
+      return common::make_unexpected(encoded.error());
+    auto latest = load_latest();
+    if (!latest.has_value())
+      return common::make_unexpected(latest.error());
+    const std::uint64_t previous_generation =
+        latest
+            ->transform([](const LoadedMultiTabletSubscriptionCheckpoint& loaded) noexcept {
+              return loaded.checkpoint.checkpoint_generation;
+            })
+            .value_or(0U);
+    if (previous_generation == std::numeric_limits<std::uint64_t>::max())
+      return common::make_unexpected(exhausted("subscription checkpoint generation is exhausted"));
+    const std::uint64_t expected = previous_generation + 1U;
+    if (checkpoint.checkpoint_generation != expected)
+      return common::make_unexpected(invalid("subscription checkpoint is not the next generation"));
+
+    const std::string temp_name = temporary_name(*final_name);
+    common::Status cleanup = impl_->directory_.remove_file(temp_name);
+    if (cleanup.is_ok())
+      cleanup = impl_->directory_.sync();
+    else if (cleanup.code() == common::StatusCode::kNotFound)
+      cleanup = common::Status::ok();
+    if (!cleanup.is_ok())
+      return common::make_unexpected(with_context("clean prior checkpoint temporary", cleanup));
+    auto temporary =
+        impl_->directory_.create_exclusive_regular_file(temp_name, impl_->config_.file_permissions);
+    if (!temporary.has_value())
+      return common::make_unexpected(temporary.error());
+    common::Status operation = temporary->write_all_at(0U, *encoded);
+    if (!operation.is_ok())
+      return common::make_unexpected(with_context("write checkpoint temporary", operation));
+    auto readback_size = temporary->size();
+    if (!readback_size.has_value() || *readback_size != encoded->size())
+      return common::make_unexpected(readback_size.has_value()
+                                         ? corruption("checkpoint temporary size changed")
+                                         : readback_size.error());
     std::vector<std::byte> readback(encoded->size());
     auto read = temporary->read_at(0U, readback);
     if (!read.has_value() || *read != readback.size())
@@ -353,76 +370,103 @@ MultiTabletSubscriptionCheckpointStorage::install(
     if (!decoded.has_value() || *decoded != checkpoint)
       return common::make_unexpected(decoded.has_value() ? corruption("checkpoint readback changed")
                                                          : decoded.error());
+    operation = temporary->sync_all();
+    if (!operation.is_ok())
+      return common::make_unexpected(with_context("synchronize checkpoint", operation));
+    operation = temporary->close();
+    if (!operation.is_ok())
+      return common::make_unexpected(with_context("close checkpoint temporary", operation));
+    operation = impl_->directory_.rename_no_replace({temp_name, *final_name});
+    if (!operation.is_ok())
+      return common::make_unexpected(with_context("install checkpoint", operation));
+    operation = impl_->directory_.sync();
+    if (!operation.is_ok())
+      return common::make_unexpected(
+          impl_->fail(with_context("synchronize checkpoint directory", operation), true));
+    return InstalledMultiTabletSubscriptionCheckpoint{checkpoint.checkpoint_generation, *final_name,
+                                                      false};
   } catch (const std::bad_alloc&) {
-    return common::make_unexpected(exhausted("checkpoint readback allocation failed"));
+    return common::make_unexpected(exhausted("subscription checkpoint install allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("subscription checkpoint install exceeds limits"));
   }
-  operation = temporary->sync_all();
-  if (!operation.is_ok())
-    return common::make_unexpected(with_context("synchronize checkpoint", operation));
-  operation = temporary->close();
-  if (!operation.is_ok())
-    return common::make_unexpected(with_context("close checkpoint temporary", operation));
-  operation = impl_->directory_.rename_no_replace({temp_name, *final_name});
-  if (!operation.is_ok())
-    return common::make_unexpected(with_context("install checkpoint", operation));
-  operation = impl_->directory_.sync();
-  if (!operation.is_ok())
-    return common::make_unexpected(
-        impl_->fail(with_context("synchronize checkpoint directory", operation), true));
-  return InstalledMultiTabletSubscriptionCheckpoint{checkpoint.checkpoint_generation, *final_name,
-                                                    false};
 }
 
 common::Result<LoadedMultiTabletSubscriptionCheckpoint>
 MultiTabletSubscriptionCheckpointStorage::load_generation(
     const std::uint64_t checkpoint_generation) const {
-  if (impl_ == nullptr)
-    return common::make_unexpected(invalid("subscription checkpoint storage was moved from"));
-  auto name = multi_tablet_subscription_checkpoint_generation_file_name(checkpoint_generation);
-  if (!name.has_value())
-    return common::make_unexpected(name.error());
-  return impl_->load_file(*name, checkpoint_generation);
+  try {
+    if (impl_ == nullptr)
+      return common::make_unexpected(invalid("subscription checkpoint storage was moved from"));
+    auto name = multi_tablet_subscription_checkpoint_generation_file_name(checkpoint_generation);
+    if (!name.has_value())
+      return common::make_unexpected(name.error());
+    return impl_->load_file(*name, checkpoint_generation);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("subscription checkpoint load allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("subscription checkpoint load exceeds limits"));
+  }
 }
 
 common::Result<std::optional<LoadedMultiTabletSubscriptionCheckpoint>>
 MultiTabletSubscriptionCheckpointStorage::load_latest() const {
-  if (impl_ == nullptr)
-    return common::make_unexpected(invalid("subscription checkpoint storage was moved from"));
-  common::Status usable = impl_->check_usable();
-  if (!usable.is_ok())
-    return common::make_unexpected(std::move(usable));
-  auto entries = impl_->directory_.list_entries();
-  if (!entries.has_value())
-    return common::make_unexpected(entries.error());
-  std::optional<std::uint64_t> latest;
-  std::uint64_t generation_count = 0U;
-  for (const io::DirectoryEntry& entry : *entries) {
-    if (entry.name == kLockFileName || !entry.name.starts_with(kGenerationPrefix))
-      continue;
-    if (entry.name.ends_with(kTemporarySuffix)) {
-      if (!parse_name(entry.name, true).has_value() ||
-          entry.type != io::DirectoryEntryType::kRegularFile)
+  try {
+    if (impl_ == nullptr)
+      return common::make_unexpected(invalid("subscription checkpoint storage was moved from"));
+    common::Status usable = impl_->check_usable();
+    if (!usable.is_ok())
+      return common::make_unexpected(std::move(usable));
+    auto entries = impl_->directory_.list_entries();
+    if (!entries.has_value())
+      return common::make_unexpected(entries.error());
+    std::optional<std::uint64_t> latest;
+    std::uint64_t generation_count = 0U;
+    for (const io::DirectoryEntry& entry : *entries) {
+      if (entry.name == kLockFileName || !entry.name.starts_with(kGenerationPrefix))
+        continue;
+      if (entry.name.ends_with(kTemporarySuffix)) {
+        auto parsed = parse_name(entry.name, true);
+        if (!parsed.has_value()) {
+          if (parsed.error().code() == common::StatusCode::kResourceExhausted)
+            return common::make_unexpected(parsed.error());
+          return common::make_unexpected(
+              corruption("subscription checkpoint directory is noncanonical"));
+        }
+        if (entry.type != io::DirectoryEntryType::kRegularFile)
+          return common::make_unexpected(
+              corruption("subscription checkpoint directory is noncanonical"));
+        continue;
+      }
+      auto parsed = parse_name(entry.name, false);
+      if (!parsed.has_value()) {
+        if (parsed.error().code() == common::StatusCode::kResourceExhausted)
+          return common::make_unexpected(parsed.error());
         return common::make_unexpected(
             corruption("subscription checkpoint directory is noncanonical"));
-      continue;
+      }
+      if (entry.type != io::DirectoryEntryType::kRegularFile)
+        return common::make_unexpected(
+            corruption("subscription checkpoint directory is noncanonical"));
+      if (!latest.has_value() || *parsed > *latest)
+        latest = *parsed;
+      ++generation_count;
     }
-    auto parsed = parse_name(entry.name, false);
-    if (!parsed.has_value() || entry.type != io::DirectoryEntryType::kRegularFile)
+    if (!latest.has_value())
+      return std::optional<LoadedMultiTabletSubscriptionCheckpoint>{};
+    if (*latest != generation_count)
       return common::make_unexpected(
-          corruption("subscription checkpoint directory is noncanonical"));
-    if (!latest.has_value() || *parsed > *latest)
-      latest = *parsed;
-    ++generation_count;
-  }
-  if (!latest.has_value())
-    return std::optional<LoadedMultiTabletSubscriptionCheckpoint>{};
-  if (*latest != generation_count)
+          corruption("subscription checkpoint generations are not contiguous from one"));
+    auto loaded = load_generation(*latest);
+    if (!loaded.has_value())
+      return common::make_unexpected(loaded.error());
+    return std::optional<LoadedMultiTabletSubscriptionCheckpoint>{std::move(*loaded)};
+  } catch (const std::bad_alloc&) {
     return common::make_unexpected(
-        corruption("subscription checkpoint generations are not contiguous from one"));
-  auto loaded = load_generation(*latest);
-  if (!loaded.has_value())
-    return common::make_unexpected(loaded.error());
-  return std::optional<LoadedMultiTabletSubscriptionCheckpoint>{std::move(*loaded)};
+        exhausted("latest subscription checkpoint load allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("latest subscription checkpoint load exceeds limits"));
+  }
 }
 
 bool MultiTabletSubscriptionCheckpointStorage::is_usable() const noexcept {
