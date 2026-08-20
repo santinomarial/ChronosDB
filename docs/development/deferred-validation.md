@@ -40,9 +40,12 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   sweeps, hostile SQL/catalog limits, registry crash/fault cut points, planner-upgrade compatibility,
   obsolete-definition reclamation, schema migration, and compatibility review when the supported
   incremental SQL surface expands.
-- Plan-bound subscription snapshot execution: forced-allocation sweeps, cancellation at every
-  pull/END_STREAM/READY transition, multi-chunk socket backpressure, reactor worker dispatch, and
-  real concurrent publication scheduling. Focused coverage now exercises one real Raft-applied
+- Plan-bound subscription snapshot execution: forced-allocation sweeps, multi-chunk socket
+  backpressure, reactor worker dispatch, and real concurrent publication scheduling. Focused
+  coverage now injects a committed change before the first pull and after every real one-row chunk,
+  END_STREAM, and READY boundary, then proves the exact ordered live suffix; destruction before the
+  first pull and after every chunk or END_STREAM abandons and releases the pre-READY owner. It also
+  exercises one real Raft-applied
   aggregate, exact-boundary rejection, and service routing through the worker-hosted immutable
   publication adapter. Focused mixed-source coverage now combines a real Raft append with a WAL
   publication under one global aggregate, rejects a stale vector component, and exercises service
@@ -70,7 +73,6 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   configured coordinator recovery. Broader checkpoint latency/failure profiling, batched group
   installation, and exact post-checkpoint WAL replay are deferred; no asynchronous relaxation is
   safe until replay and retention are composed.
-- Commits injected at every historical-to-live handoff step across real snapshot execution.
 - Cross-tablet-owner wiring around the implemented canonical vector/admission-order coordinator,
   topology transitions, multi-plan retention registration/retirement, service SQL/plan-to-input
   suffix replay, concurrent post-checkpoint source-log replay, physical WAL/Raft coordinate mapping

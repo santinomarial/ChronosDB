@@ -663,7 +663,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   publications, and run one global physical plan in canonical member order. The bounded retention
   registry now admits plans only before service activation and at or beyond prior reclamation, then
   retires them explicitly after service drain without advancing physical authority in the removal
-  call. The remaining exit evidence remains deferred. The phase exit gate is not claimed.
+  call. A real multi-chunk WAL snapshot now preserves commits injected before the first pull and
+  after every chunk, END_STREAM, and READY boundary, while each premature pre-READY teardown
+  fail-closed abandons its buffered session. The remaining exit evidence remains deferred. The
+  phase exit gate is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.

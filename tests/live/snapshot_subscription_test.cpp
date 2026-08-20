@@ -79,7 +79,7 @@ struct BoundPlan {
           .payload = {std::byte{2}}};
 }
 
-TEST(SnapshotSubscriptionTest, ExecutesExactSnapshotThenOpensBufferedLiveSuffix) {
+TEST(SnapshotSubscriptionTest, PreservesCommitsAcrossEverySnapshotToLiveTransition) {
   query::test::SnapshotTabletScanFixture fixture{3U};
   const auto* published =
       fixture.snapshot().find_tablet(query::test::SnapshotTabletScanFixture::tablet_id());
@@ -90,28 +90,33 @@ TEST(SnapshotSubscriptionTest, ExecutesExactSnapshotThenOpensBufferedLiveSuffix)
   auto manager = SubscriptionManager::create(configured);
   ASSERT_TRUE(manager.has_value());
   ASSERT_TRUE(manager->publish_committed(change(fixture, 1U)).is_ok());
-  BoundPlan bound = lower(fixture, "SELECT event_time FROM metrics ORDER BY event_time");
+  BoundPlan bound = lower(fixture, "SELECT event_time FROM metrics");
   query::QueryResourceContext resources =
       query::QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+  SnapshotSubscriptionLimits limits;
+  limits.pipeline.scan.head.chunk.maximum_rows = 1U;
 
   auto subscription = SnapshotSubscription::start(
       *manager, subscription_request, resources, fixture.storage(), fixture.publisher(),
       query::test::SnapshotTabletScanFixture::tablet_id(), fixture.lineage(),
-      fixture.schema_ptr()->schema_id(), bound.plan, std::move(bound.columns));
+      fixture.schema_ptr()->schema_id(), bound.plan, std::move(bound.columns), limits);
   ASSERT_TRUE(subscription.has_value()) << subscription.error().to_string();
   ASSERT_TRUE(manager->publish_committed(change(fixture, 2U)).is_ok());
   EXPECT_EQ(manager->poll(subscription_request.subscription_id, 8U).error().code(),
             common::StatusCode::kUnavailable);
 
-  const auto rows = subscription->next();
-  ASSERT_TRUE(rows.has_value()) << rows.error().to_string();
-  EXPECT_EQ(rows->message_type, network::MessageType::kQueryResult);
-  EXPECT_EQ(rows->flags, 0U);
-  const auto decoded_rows = network::decode_query_result_batch(rows->payload);
-  ASSERT_TRUE(decoded_rows.has_value());
-  EXPECT_EQ(decoded_rows->row_count(), 3U);
-  ASSERT_EQ(decoded_rows->columns().size(), 1U);
-  EXPECT_EQ(decoded_rows->columns().front().name, "event_time");
+  for (std::uint64_t sequence = 3U; sequence <= 5U; ++sequence) {
+    const auto rows = subscription->next();
+    ASSERT_TRUE(rows.has_value()) << rows.error().to_string();
+    EXPECT_EQ(rows->message_type, network::MessageType::kQueryResult);
+    EXPECT_EQ(rows->flags, 0U);
+    const auto decoded_rows = network::decode_query_result_batch(rows->payload);
+    ASSERT_TRUE(decoded_rows.has_value());
+    EXPECT_EQ(decoded_rows->row_count(), 1U);
+    ASSERT_EQ(decoded_rows->columns().size(), 1U);
+    EXPECT_EQ(decoded_rows->columns().front().name, "event_time");
+    ASSERT_TRUE(manager->publish_committed(change(fixture, sequence)).is_ok());
+  }
 
   const auto end = subscription->next();
   ASSERT_TRUE(end.has_value());
@@ -119,16 +124,64 @@ TEST(SnapshotSubscriptionTest, ExecutesExactSnapshotThenOpensBufferedLiveSuffix)
   EXPECT_EQ(end->flags, network::kFrameFlagEndStream);
   EXPECT_EQ(network::decode_query_result_batch(end->payload)->row_count(), 0U);
   EXPECT_FALSE(subscription->ready());
+  ASSERT_TRUE(manager->publish_committed(change(fixture, 6U)).is_ok());
 
   const auto ready = subscription->next();
   ASSERT_TRUE(ready.has_value()) << ready.error().to_string();
   EXPECT_EQ(ready->message_type, network::MessageType::kSubscriptionReady);
   EXPECT_TRUE(network::decode_subscription_ready(ready->payload).has_value());
   EXPECT_TRUE(subscription->ready());
+  ASSERT_TRUE(manager->publish_committed(change(fixture, 7U)).is_ok());
   const auto live = manager->poll(subscription_request.subscription_id, 8U);
   ASSERT_TRUE(live.has_value());
-  ASSERT_EQ(live->size(), 1U);
-  EXPECT_EQ(live->front().change->position.record_sequence, 2U);
+  ASSERT_EQ(live->size(), 6U);
+  for (std::size_t ordinal = 0U; ordinal < live->size(); ++ordinal) {
+    EXPECT_EQ((*live)[ordinal].delivery_sequence, ordinal + 1U);
+    EXPECT_EQ((*live)[ordinal].change->position.record_sequence, ordinal + 2U);
+  }
+}
+
+TEST(SnapshotSubscriptionTest, TeardownAbandonsEveryPreReadyTransition) {
+  constexpr std::size_t kEndStreamOutputCount = 4U;
+  for (std::size_t outputs_before_teardown = 0U; outputs_before_teardown <= kEndStreamOutputCount;
+       ++outputs_before_teardown) {
+    SCOPED_TRACE(outputs_before_teardown);
+    query::test::SnapshotTabletScanFixture fixture{3U};
+    const SubscriptionRequest subscription_request = request(fixture);
+    auto manager =
+        SubscriptionManager::create(source(fixture, subscription_request.plan_fingerprint));
+    ASSERT_TRUE(manager.has_value());
+    ASSERT_TRUE(manager->publish_committed(change(fixture, 1U)).is_ok());
+    BoundPlan bound = lower(fixture, "SELECT event_time FROM metrics");
+    query::QueryResourceContext resources =
+        query::QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+    SnapshotSubscriptionLimits limits;
+    limits.pipeline.scan.head.chunk.maximum_rows = 1U;
+
+    {
+      auto subscription = SnapshotSubscription::start(
+          *manager, subscription_request, resources, fixture.storage(), fixture.publisher(),
+          query::test::SnapshotTabletScanFixture::tablet_id(), fixture.lineage(),
+          fixture.schema_ptr()->schema_id(), bound.plan, std::move(bound.columns), limits);
+      ASSERT_TRUE(subscription.has_value()) << subscription.error().to_string();
+      ASSERT_TRUE(manager->publish_committed(change(fixture, 2U)).is_ok());
+      for (std::size_t output = 0U; output < outputs_before_teardown; ++output) {
+        auto step = subscription->next();
+        ASSERT_TRUE(step.has_value()) << step.error().to_string();
+        EXPECT_EQ(step->message_type, network::MessageType::kQueryResult);
+        EXPECT_EQ(step->flags,
+                  output == kEndStreamOutputCount - 1U ? network::kFrameFlagEndStream : 0U);
+      }
+      EXPECT_FALSE(subscription->ready());
+    }
+
+    const auto status = manager->status(subscription_request.subscription_id);
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(status->phase, SubscriptionPhase::kCancelled);
+    EXPECT_EQ(status->buffered_changes, 0U);
+    EXPECT_EQ(status->buffered_bytes, 0U);
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
 }
 
 TEST(SnapshotSubscriptionTest, RejectsAndCancelsAStorageBoundaryMismatch) {
