@@ -119,6 +119,28 @@ TEST(RaftTransportCodecTest, RoundTripsEveryCurrentMessageWithExactRouteIdentity
   }
 }
 
+TEST(RaftTransportCodecTest, RejectsNoncanonicalAppendResponseState) {
+  const std::vector<Message> malformed{
+      AppendEntriesResponse{4U, false, 12U, 5U, 7U},
+      AppendEntriesResponse{4U, false, 12U, std::nullopt, 0U},
+  };
+  for (const Message& message : malformed) {
+    auto encoded = encode_raft_transport_envelope_v1(envelope(message));
+    ASSERT_FALSE(encoded.has_value());
+    EXPECT_EQ(encoded.error().code(), common::StatusCode::kInvalidArgument);
+  }
+
+  const auto canonical =
+      encode_raft_transport_envelope_v1(envelope(AppendEntriesResponse{4U, false, 12U, 3U, 7U}))
+          .value();
+  std::vector<std::byte> candidate = canonical;
+  store_u64(candidate, 120U, 5U);
+  expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
+  candidate = canonical;
+  store_u64(candidate, 128U, 0U);
+  expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
+}
+
 TEST(RaftTransportCodecTest, RejectsDamageUnknownKindsAndNoncanonicalRoutes) {
   auto encoded =
       encode_raft_transport_envelope_v1(envelope(AppendEntriesRequest{4U, 1U, 0U, 0U, {}, 0U}))

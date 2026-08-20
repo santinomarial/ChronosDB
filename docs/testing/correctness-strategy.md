@@ -410,6 +410,11 @@ coverage submits that impossible relation to a candidate and requires `INVALID_A
 role and persistent-state preservation; checksum-valid wire decoding and outbound encoding reject
 the same relation before installation ownership can be published.
 
+Persistent-state recovery rejects a snapshot term above current term before the node can produce
+messages from impossible history. Failed AppendEntries responses require a nonzero conflict index
+and bound any optional conflict term by the response term; direct candidate-state preservation plus
+encoder and checksum-repaired decoder cases cover both invalid combinations.
+
 The implemented group-scoped transport envelope additionally has checksum-repaired hostile
 length/count/reserved/value matrices, exhaustive owned-allocation failure sweeps, and a bounded
 structure-aware libFuzzer target. Accepted arbitrary frames must exact-reencode, while generated

@@ -360,6 +360,9 @@ common::Result<RaftNode> RaftNode::create(const NodeId node_id, std::vector<Node
     return common::make_unexpected(
         invalid("Raft maximum log index is reserved for exhaustion detection"));
   }
+  if (persistent.snapshot.last_included_term > persistent.current_term) {
+    return common::make_unexpected(invalid("Raft snapshot term exceeds the current term"));
+  }
   LogIndex expected = persistent.snapshot.last_included_index + 1U;
   for (const LogEntry& entry : persistent.log) {
     if (entry.index != expected || entry.index == std::numeric_limits<LogIndex>::max() ||
@@ -546,7 +549,9 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
         } else if constexpr (std::is_same_v<T, AppendEntriesResponse>) {
           if ((value.success && (value.match_index > impl_->last_index() ||
                                  value.conflict_term.has_value() || value.conflict_index != 0U)) ||
-              (value.conflict_term.has_value() && *value.conflict_term == 0U)) {
+              (!value.success && value.conflict_index == 0U) ||
+              (value.conflict_term.has_value() &&
+               (*value.conflict_term == 0U || *value.conflict_term > value.term))) {
             return invalid("AppendEntries response state is invalid");
           }
         } else if constexpr (std::is_same_v<T, InstallSnapshotRequest>) {

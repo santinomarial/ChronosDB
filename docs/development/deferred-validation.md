@@ -244,7 +244,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   competing requests receive negative responses without replacing pending identity, and a higher-
   term competitor persists its term/vote transition before rejection and retry. Snapshot requests
   whose last-included term exceeds their message term now fail core and transport validation before
-  term/vote/role observation or external install publication.
+  term/vote/role observation or external install publication. Recovered snapshots newer than the
+  persisted current term now fail admission; failed append responses require a nonzero conflict
+  index and cannot carry a conflict term newer than their response term.
 - Persistent file owner, vote/log fsync ordering, crash/restart at every transition, idempotent
   recovery, application to tablet state, snapshot creation/install, and log compaction. Extend the
   implemented read barrier through production transport and tablet snapshot acquisition.

@@ -12,7 +12,9 @@ returning the persistence transition required by the runtime. That gate covered 
 identity and append payload bounds, but a fresh node could still grant a structurally valid-looking
 term-zero vote. Response conflict fields and vote/append predecessor pairs also admitted
 noncanonical combinations before higher-term observation. Snapshot metadata had the same omitted
-term relation: its last-included term could exceed the leader term carried by the request.
+term relation: its last-included term could exceed the leader term carried by the request. Failed
+append responses could likewise omit their conflict index or claim a conflict term newer than the
+response term, while recovery admitted snapshot metadata newer than the node's current term.
 
 ## Decision
 
@@ -22,9 +24,10 @@ their log term cannot exceed the message term. Existing source/candidate/leader 
 remain mandatory. An InstallSnapshot request likewise requires its nonzero last-included term not
 to exceed the request term before any role, term, vote, or pending external-install state changes.
 
-A successful AppendEntries response cannot carry conflict state, its match index cannot exceed the
-leader's log, and an optional conflict term must be nonzero. Failed responses may retain the
-follower's last-known match index because the core emits that diagnostic during conflict repair.
+A successful AppendEntries response cannot carry conflict state, and its match index cannot exceed
+the leader's log. A failed response requires a nonzero conflict index; an optional conflict term must
+be nonzero and no greater than the response term. Failed responses may retain the follower's last-
+known match index because the core emits that diagnostic during conflict repair.
 A successful snapshot response must name a nonzero installed index within the leader's log.
 Existing read-context, append-entry, and snapshot-metadata checks remain in the same pre-observation
 validation pass.
@@ -40,6 +43,9 @@ Invalid messages return `INVALID_ARGUMENT` without changing term, vote, role, lo
 snapshot state and without emitting a response. The authenticated transport envelope duplicates
 several structural checks as defense in depth, but direct deterministic callers receive the same
 core safety boundary.
+
+Recovered persistent state must also be inductive: an installed snapshot's last-included term may
+not exceed the node's current term. Retained entries already obey the same relation.
 
 ## Consequences
 
@@ -66,6 +72,9 @@ failover gate and the full Raft suite remain green. A dedicated snapshot-index-o
 presents both current- and higher-term `(previous=0, entry=1)` requests, requires an exact negative
 conflict response, proves no retained entry is read or installed, and requires the higher term/vote
 reset to accompany that response as persistent state.
+Failed append-response coverage rejects a missing conflict index and a conflict term above the
+response term through direct-core, outbound encoding, and checksum-valid decoding paths. Recovery
+separately rejects a persisted snapshot term above current term.
 
 ## References
 

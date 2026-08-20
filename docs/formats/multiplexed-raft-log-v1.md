@@ -50,8 +50,8 @@ AppendEntries suffix.
 The decoder validates header integrity before trusting lengths, then exact size relationships,
 payload and full-record integrity, required-zero bytes, bounded entry count, and exact exhaustion.
 `RaftNode::create` performs the semantic validation: contiguous logical indexes, bounded entries,
-valid term/vote/snapshot state, canonical bounded checkpoint voters, and
-`applied <= commit <= last`.
+snapshot and retained-log terms no greater than the current term, valid vote/snapshot state,
+canonical bounded checkpoint voters, and `applied <= commit <= last`.
 
 ## Segment v1 envelope
 

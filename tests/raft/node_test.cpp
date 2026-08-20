@@ -159,6 +159,22 @@ TEST(RaftNodeTest, RejectsMalformedHigherTermWithoutChangingPersistentState) {
   EXPECT_EQ(node->persistent_state(), before);
 }
 
+TEST(RaftNodeTest, RejectsPersistentSnapshotNewerThanCurrentTerm) {
+  PersistentState state{};
+  state.current_term = 2U;
+  state.snapshot.last_included_index = 1U;
+  state.snapshot.last_included_term = 3U;
+  state.snapshot.manifest_generation = 1U;
+  state.snapshot.voters = {1U, 2U, 3U};
+  state.commit_index = 1U;
+  state.applied_index = 1U;
+
+  auto node = RaftNode::create(1U, {1U, 2U, 3U}, std::move(state));
+
+  ASSERT_FALSE(node.has_value());
+  EXPECT_EQ(node.error().code(), common::StatusCode::kInvalidArgument);
+}
+
 TEST(RaftNodeTest, RejectsNoncanonicalTermsAndResponseStateBeforeObservingTerm) {
   SnapshotMetadata future_term_snapshot{};
   future_term_snapshot.last_included_index = 1U;
@@ -171,6 +187,8 @@ TEST(RaftNodeTest, RejectsNoncanonicalTermsAndResponseStateBeforeObservingTerm) 
       AppendEntriesRequest{9U, 2U, 0U, 1U, {}, 0U},
       AppendEntriesResponse{9U, true, 0U, 1U, 1U},
       AppendEntriesResponse{9U, false, 0U, 0U, 1U},
+      AppendEntriesResponse{9U, false, 0U, 10U, 1U},
+      AppendEntriesResponse{9U, false, 0U, std::nullopt, 0U},
       InstallSnapshotRequest{9U, 2U, std::move(future_term_snapshot)},
       InstallSnapshotResponse{9U, true, 0U},
       ReadBarrierResponse{9U, 0U, true},

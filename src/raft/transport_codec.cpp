@@ -188,8 +188,11 @@ void store_u32(const std::span<std::byte> bytes, const std::size_t offset,
         } else if constexpr (std::is_same_v<T, AppendEntriesResponse>) {
           if (value.success && (value.conflict_term.has_value() || value.conflict_index != 0U))
             return invalid("successful Raft append response carries conflict state");
-          if (value.conflict_term.has_value() && *value.conflict_term == 0U)
-            return invalid("Raft append response conflict term is zero");
+          if (!value.success && value.conflict_index == 0U)
+            return invalid("failed Raft append response has no conflict index");
+          if (value.conflict_term.has_value() &&
+              (*value.conflict_term == 0U || *value.conflict_term > value.term))
+            return invalid("Raft append response conflict term is invalid");
         } else if constexpr (std::is_same_v<T, InstallSnapshotRequest>) {
           if (value.leader_id != envelope.source || value.snapshot.last_included_term > value.term)
             return invalid("Raft snapshot request identity or term is invalid");

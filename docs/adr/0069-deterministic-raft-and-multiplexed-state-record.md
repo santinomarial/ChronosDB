@@ -15,7 +15,8 @@ persistence without conflating logical indexes.
 metadata. Runtime election timeouts call `start_election`; messages are value types. A transition
 containing persistent state must be durably installed before its outbound messages. Majority commit
 uses the current-term restriction, and committed entries remain unavailable to application until
-`mark_applied`.
+`mark_applied`. Recovery rejects retained log entries or installed snapshot metadata whose term is
+newer than the checkpoint's current term.
 
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
@@ -38,8 +39,9 @@ Invariants 1, 4–6, 8, 10–12, 14, and 17 apply. Focused deterministic tests c
 replication/commit, failover, stale-term rejection, restart catch-up, independent groups with
 different leaders, node loss, reopen, metadata order, record round trip, and corruption. Focused disk
 tests additionally cover rotation, reopen, explicit incomplete-tail repair, and corruption
-rejection. Randomized simulation, partitions, application snapshot codecs, coordinated fsync
-batching/crash testing, and production transport remain deferred.
+rejection. Recovery validation also rejects an installed snapshot term above current term before a
+node can emit messages from impossible history. Randomized simulation, partitions, application
+snapshot codecs, coordinated fsync batching/crash testing, and production transport remain deferred.
 
 **Retrospective note (2026-08-12):** [ADR 0252](0252-replayable-deterministic-raft-fault-simulator.md)
 now supplies bounded explicit and seeded schedules for partitions, delay/reordering, duplication,
