@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -37,18 +38,27 @@ namespace chronos::query::test {
 
 class SnapshotTabletScanFixture {
 public:
+  struct FirstTabletAppend {
+    std::int64_t value{};
+    std::uint64_t record_sequence{};
+  };
+
   explicit SnapshotTabletScanFixture(
       const std::uint32_t rows,
       const std::optional<std::uint32_t> second_tablet_rows = std::nullopt)
       : schema_(make_schema()), lineage_(schema::SchemaLineage::create(*schema_).value()),
-        state_(ingest::TabletState::create(schema_, tablet_id(),
-                                           {.head_capacity = {.row_capacity = std::max(rows, 1U),
-                                                              .variable_value_bytes = {0U}},
-                                            .maximum_schema_versions = 1U,
-                                            .maximum_sealed_generations = 1U,
-                                            .maximum_retry_entries = 4U,
-                                            .flush_queue = {}})
-                   .value()) {
+        state_(
+            ingest::TabletState::create(
+                schema_, tablet_id(),
+                {.head_capacity = {.row_capacity = rows == std::numeric_limits<std::uint32_t>::max()
+                                                       ? rows
+                                                       : std::max(rows, 1U) + 1U,
+                                   .variable_value_bytes = {0U}},
+                 .maximum_schema_versions = 1U,
+                 .maximum_sealed_generations = 1U,
+                 .maximum_retry_entries = 4U,
+                 .flush_queue = {}})
+                .value()) {
     std::string pattern =
         (std::filesystem::temp_directory_path() / "chronos-tablet-scan-fixture-XXXXXX").string();
     if (char* const created = ::mkdtemp(pattern.data()); created != nullptr)
@@ -99,7 +109,7 @@ public:
         {.tablet_id = tablet_id(), .lineage = std::cref(lineage_)}};
     if (second_tablet_rows.has_value())
       bindings.push_back({.tablet_id = second_tablet_id(), .lineage = std::cref(lineage_)});
-    auto selected = std::make_shared<const manifest::LoadedManifestGeneration>(
+    selected_ = std::make_shared<const manifest::LoadedManifestGeneration>(
         storage_
             ->load_selected_manifest(
                 {.expected_database_id = cseg::test::identifier<manifest::DatabaseId>(6U),
@@ -128,9 +138,8 @@ public:
         throw std::runtime_error{"snapshot tablet scan fixture WAL transition failed"};
       tablet_snapshot = prepared.publish({.wal_id = wal, .record_sequence = 1U}).value().snapshot;
     }
-    std::vector<ingest::TabletSnapshot> tablet_snapshots;
-    tablet_snapshots.reserve(second_tablet_rows.has_value() ? 2U : 1U);
-    tablet_snapshots.push_back(std::move(tablet_snapshot));
+    tablet_snapshots_.reserve(second_tablet_rows.has_value() ? 2U : 1U);
+    tablet_snapshots_.push_back(std::move(tablet_snapshot));
     if (second_tablet_rows.has_value()) {
       second_state_ = std::make_unique<ingest::TabletState>(
           ingest::TabletState::create(
@@ -161,14 +170,14 @@ public:
           throw std::runtime_error{"second snapshot tablet WAL transition failed"};
         second_snapshot = prepared.publish({.wal_id = wal, .record_sequence = 1U}).value().snapshot;
       }
-      tablet_snapshots.push_back(std::move(second_snapshot));
+      tablet_snapshots_.push_back(std::move(second_snapshot));
     }
     std::vector<manifest::DatabaseStorageTabletInput> input;
-    input.reserve(tablet_snapshots.size());
-    for (const ingest::TabletSnapshot& snapshot : tablet_snapshots)
+    input.reserve(tablet_snapshots_.size());
+    for (const ingest::TabletSnapshot& snapshot : tablet_snapshots_)
       input.push_back({.snapshot = snapshot});
     publisher_ = std::make_unique<manifest::DatabaseStoragePublisher>(
-        manifest::DatabaseStoragePublisher::create(std::move(selected), input).value());
+        manifest::DatabaseStoragePublisher::create(selected_, input).value());
     snapshot_ = std::make_unique<manifest::DatabaseStorageSnapshot>(publisher_->snapshot().value());
   }
 
@@ -199,8 +208,39 @@ public:
     return *snapshot_;
   }
 
+  [[nodiscard]] const std::shared_ptr<const manifest::LoadedManifestGeneration>&
+  selected_manifest() const noexcept {
+    return selected_;
+  }
+
+  [[nodiscard]] std::span<const ingest::TabletSnapshot> tablet_snapshots() const noexcept {
+    return tablet_snapshots_;
+  }
+
   [[nodiscard]] const manifest::DatabaseStoragePublisher& publisher() const noexcept {
     return *publisher_;
+  }
+
+  [[nodiscard]] common::Result<ingest::TabletSnapshot>
+  append_first_tablet(const FirstTabletAppend& append) {
+    const std::array values{append.value};
+    auto prepared = state_.prepare_append(
+        {.client_id = cseg::test::identifier<ingest::ClientId>(0x31U),
+         .client_batch_id = cseg::test::identifier<ingest::ClientBatchId>(0x32U)},
+        {.table_id = schema_->table_id(),
+         .tablet_id = tablet_id(),
+         .request_digest = digest(0x33U)},
+        batch(values));
+    if (!prepared.has_value())
+      return common::make_unexpected(prepared.error());
+    common::Status started = prepared->mark_wal_started();
+    if (!started.is_ok())
+      return common::make_unexpected(std::move(started));
+    auto published = prepared->publish(
+        {.wal_id = snapshot_->wal_id(), .record_sequence = append.record_sequence});
+    if (!published.has_value())
+      return common::make_unexpected(published.error());
+    return std::move(published->snapshot);
   }
 
   [[nodiscard]] static schema::TabletId tablet_id() {
@@ -290,6 +330,8 @@ private:
   ingest::TabletState state_;
   std::unique_ptr<ingest::TabletState> second_state_;
   std::unique_ptr<manifest::ManifestStorage> storage_;
+  std::shared_ptr<const manifest::LoadedManifestGeneration> selected_;
+  std::vector<ingest::TabletSnapshot> tablet_snapshots_;
   std::unique_ptr<manifest::DatabaseStoragePublisher> publisher_;
   std::unique_ptr<manifest::DatabaseStorageSnapshot> snapshot_;
 };

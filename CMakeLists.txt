@@ -1082,7 +1082,9 @@ if(CHRONOS_BUILD_TESTS)
   )
   set_target_properties(chronos_live_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_live_tests PRIVATE cxx_std_23)
-  target_include_directories(chronos_live_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+  target_include_directories(
+    chronos_live_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
   target_link_libraries(chronos_live_tests PRIVATE chronos::live GTest::gtest_main zstd::libzstd)
   chronos_set_project_warnings(chronos_live_tests)
   chronos_enable_sanitizers(chronos_live_tests)

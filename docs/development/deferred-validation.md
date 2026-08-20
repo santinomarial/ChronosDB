@@ -40,8 +40,8 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   sweeps, hostile SQL/catalog limits, registry crash/fault cut points, planner-upgrade compatibility,
   obsolete-definition reclamation, schema migration, and compatibility review when the supported
   incremental SQL surface expands.
-- Plan-bound subscription snapshot execution: real-socket multi-chunk backpressure, reactor worker
-  dispatch, and real concurrent publication scheduling. Deterministic
+- Plan-bound subscription snapshot execution: real-socket multi-chunk backpressure and reactor
+  worker dispatch. Deterministic
   allocator sweeps now fail every observed single-tablet WAL and multi-tablet WAL/Raft/mixed owner
   allocation during registration/acquisition/instantiation, plus the shared first chunk, END_STREAM,
   and READY calls, requiring resource-exhausted classification, abandoned manager state, and
@@ -61,7 +61,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   routing. A complete homogeneous WAL vector now proves ungrouped and grouped aggregation, sort,
   latest, and limit execute once above all tablets. The real mixed WAL/Raft vector now proves the
   same grouped/latest/sort/limit matrix across both authorities. Sustained concurrent publication
-  scheduling remains open.
+  scheduling remains open, but a release-store schedule now pauses the single writer immediately
+  before publication, proves a registered multi-tablet subscription pins the complete predecessor
+  epoch, then proves an already-published successor cancels the stale registered vector.
 - Committed columnar-batch vector source: forced-allocation sweeps, all logical types, cancellation
   at every column, hostile chunk limits, large batches, scalar/vector differential coverage, and
   memory/allocation profiles. Focused coverage now proves bounded canonical slicing and a checked

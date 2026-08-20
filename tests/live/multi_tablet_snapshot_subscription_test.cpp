@@ -9,6 +9,7 @@
 #include "chronos/query/physical_lowering.hpp"
 #include "columnar/columnar_test_support.hpp"
 #include "ingest/ingest_test_support.hpp"
+#include "manifest/publication_internal.hpp"
 #include "query/snapshot_tablet_scan_test_fixture.hpp"
 
 #include <bit>
@@ -16,11 +17,13 @@
 #include <cstdint>
 #include <filesystem>
 #include <gtest/gtest.h>
+#include <latch>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -202,6 +205,17 @@ source(const query::test::SnapshotTabletScanFixture& fixture, const std::uint64_
   return std::bit_cast<std::uint64_t>(value);
 }
 
+struct PublicationPause {
+  std::latch entered{1U};
+  std::latch release{1U};
+};
+
+void pause_before_publication(void* const context) noexcept {
+  auto& pause = *static_cast<PublicationPause*>(context);
+  pause.entered.count_down();
+  pause.release.wait();
+}
+
 TEST(MultiTabletSnapshotSubscriptionTest, ExecutesOneGlobalPlanBeforeOpeningLiveSuffix) {
   query::test::SnapshotTabletScanFixture fixture{2U, 3U};
   const auto* first =
@@ -247,6 +261,72 @@ TEST(MultiTabletSnapshotSubscriptionTest, ExecutesOneGlobalPlanBeforeOpeningLive
   ASSERT_TRUE(live.has_value());
   ASSERT_EQ(live->size(), 1U);
   EXPECT_EQ(live->front().change->position.record_sequence, 2U);
+}
+
+TEST(MultiTabletSnapshotSubscriptionTest,
+     LinearizesSnapshotAcquisitionAgainstConcurrentAggregatePublication) {
+  query::test::SnapshotTabletScanFixture fixture{1U, 1U};
+  const auto successor = fixture.append_first_tablet({.value = 700, .record_sequence = 2U});
+  ASSERT_TRUE(successor.has_value()) << successor.error().to_string();
+
+  std::vector<manifest::DatabaseStorageTabletInput> inputs;
+  inputs.reserve(fixture.tablet_snapshots().size());
+  for (const ingest::TabletSnapshot& tablet : fixture.tablet_snapshots())
+    inputs.push_back({.snapshot = tablet});
+  PublicationPause pause;
+  auto created = manifest::detail::DatabaseStoragePublisherTestAccess::create(
+      fixture.selected_manifest(), inputs, &pause_before_publication, &pause);
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  manifest::DatabaseStoragePublisher publisher = std::move(*created);
+
+  auto manager = MultiTabletSubscriptionManager::create(source(fixture, 1U, 1U));
+  ASSERT_TRUE(manager.has_value()) << manager.error().to_string();
+  const SubscriptionRequest subscription_request = request(fixture);
+  BoundPlan bound = lower(fixture, "SELECT count(*) AS total FROM metrics");
+  auto resources = query::QueryResourceContext::create(std::size_t{16U} * 1024U * 1024U).value();
+  common::Result<manifest::DatabaseStorageSnapshot> published = common::make_unexpected(
+      common::Status{common::StatusCode::kInternal, "publication thread did not run"});
+  std::thread writer([&] { published = publisher.publish_tablet_snapshot(*successor); });
+  pause.entered.wait();
+
+  auto subscription = MultiTabletSnapshotSubscription::start(
+      *manager, subscription_request, resources, fixture.storage(), publisher, fixture.lineage(),
+      fixture.schema_ptr()->schema_id(), bound.plan, std::move(bound.columns));
+  pause.release.count_down();
+  writer.join();
+
+  ASSERT_TRUE(published.has_value()) << published.error().to_string();
+  const auto* current = published->find_tablet(query::test::SnapshotTabletScanFixture::tablet_id());
+  ASSERT_NE(current, nullptr);
+  ASSERT_TRUE(current->applied_position().has_value());
+  EXPECT_EQ(current->applied_position().value_or(head::HeadCommitPosition{}).record_sequence, 2U);
+  EXPECT_EQ(published->visible_head_row_count(), 3U);
+
+  ASSERT_TRUE(subscription.has_value()) << subscription.error().to_string();
+  const auto result = subscription->next();
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  const auto decoded = network::decode_query_result_batch(result->payload);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  ASSERT_EQ(decoded->row_count(), 1U);
+  ASSERT_NE(decoded->cell(0U, 0U), nullptr);
+  EXPECT_EQ(decode_u64(decoded->cell(0U, 0U)->value), 2U);
+  ASSERT_TRUE(subscription->next().has_value());
+  ASSERT_TRUE(subscription->next().has_value());
+  EXPECT_TRUE(subscription->ready());
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+
+  auto stale_manager = MultiTabletSubscriptionManager::create(source(fixture, 1U, 1U));
+  ASSERT_TRUE(stale_manager.has_value()) << stale_manager.error().to_string();
+  BoundPlan stale_bound = lower(fixture, "SELECT count(*) AS total FROM metrics");
+  auto rejected = MultiTabletSnapshotSubscription::start(
+      *stale_manager, request(fixture), resources, fixture.storage(), publisher, fixture.lineage(),
+      fixture.schema_ptr()->schema_id(), stale_bound.plan, std::move(stale_bound.columns));
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kUnavailable);
+  const auto stale_status = stale_manager->status(subscription_request.subscription_id);
+  ASSERT_TRUE(stale_status.has_value());
+  EXPECT_EQ(stale_status->phase, SubscriptionPhase::kCancelled);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
 TEST(MultiTabletSnapshotSubscriptionTest, ExecutesEveryGlobalStageOnceAcrossTheWalVector) {
