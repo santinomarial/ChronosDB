@@ -78,7 +78,7 @@ constexpr std::size_t kCoordinateDigits = 20U;
 [[nodiscard]] common::Result<std::uint64_t> parse_name(const std::string_view name,
                                                        const std::string_view prefix,
                                                        const std::string_view suffix,
-                                                       const bool temporary) {
+                                                       const bool temporary) try {
   const std::size_t expected = prefix.size() + kCoordinateDigits + suffix.size() +
                                (temporary ? kTemporarySuffix.size() : 0U);
   if (name.size() != expected || !name.starts_with(prefix) ||
@@ -107,6 +107,11 @@ constexpr std::size_t kCoordinateDigits = 20U;
         invalid("materialized-view checkpoint sequence name is noncanonical"));
   }
   return coordinate;
+} catch (const std::bad_alloc&) {
+  return common::make_unexpected(exhausted("materialized-view checkpoint name allocation failed"));
+} catch (const std::length_error&) {
+  return common::make_unexpected(
+      exhausted("materialized-view checkpoint name exceeds allocation limits"));
 }
 
 } // namespace
@@ -142,10 +147,15 @@ public:
         continue;
       }
       const bool generation = entry.name.starts_with(kGenerationPrefix);
-      if (!parse_name(entry.name, generation ? kGenerationPrefix : kLegacyPrefix,
-                      generation ? kGenerationSuffix : kLegacySuffix, true)
-               .has_value() ||
-          entry.type != io::DirectoryEntryType::kRegularFile) {
+      auto parsed = parse_name(entry.name, generation ? kGenerationPrefix : kLegacyPrefix,
+                               generation ? kGenerationSuffix : kLegacySuffix, true);
+      if (!parsed.has_value()) {
+        if (parsed.error().code() == common::StatusCode::kResourceExhausted) {
+          return parsed.error();
+        }
+        return corruption("recognized materialized-view temporary is noncanonical");
+      }
+      if (entry.type != io::DirectoryEntryType::kRegularFile) {
         return corruption("recognized materialized-view temporary is noncanonical");
       }
       common::Status status = directory_.remove_file(entry.name);
@@ -216,7 +226,7 @@ public:
 };
 
 common::Result<std::string>
-materialized_view_checkpoint_file_name(const std::uint64_t record_sequence) {
+materialized_view_checkpoint_file_name(const std::uint64_t record_sequence) try {
   std::array<char, kCoordinateDigits> digits{};
   const auto converted =
       std::to_chars(digits.data(), digits.data() + digits.size(), record_sequence);
@@ -229,10 +239,16 @@ materialized_view_checkpoint_file_name(const std::uint64_t record_sequence) {
   result.append(digits.data(), written);
   result.append(kLegacySuffix);
   return result;
+} catch (const std::bad_alloc&) {
+  return common::make_unexpected(
+      exhausted("materialized-view checkpoint filename allocation failed"));
+} catch (const std::length_error&) {
+  return common::make_unexpected(
+      exhausted("materialized-view checkpoint filename exceeds allocation limits"));
 }
 
 common::Result<std::string>
-materialized_view_checkpoint_generation_file_name(const std::uint64_t checkpoint_generation) {
+materialized_view_checkpoint_generation_file_name(const std::uint64_t checkpoint_generation) try {
   if (checkpoint_generation == 0U) {
     return common::make_unexpected(invalid("checkpoint generation must be nonzero"));
   }
@@ -248,6 +264,12 @@ materialized_view_checkpoint_generation_file_name(const std::uint64_t checkpoint
   result.append(digits.data(), written);
   result.append(kGenerationSuffix);
   return result;
+} catch (const std::bad_alloc&) {
+  return common::make_unexpected(
+      exhausted("materialized-view checkpoint generation filename allocation failed"));
+} catch (const std::length_error&) {
+  return common::make_unexpected(
+      exhausted("materialized-view checkpoint generation filename exceeds allocation limits"));
 }
 
 common::Result<MaterializedViewCheckpointStorage>
@@ -294,6 +316,9 @@ MaterializedViewCheckpointStorage::create(MaterializedViewCheckpointStorageConfi
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(
         exhausted("materialized-view checkpoint storage allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("materialized-view checkpoint storage allocation exceeds limits"));
   }
 }
 
@@ -304,11 +329,14 @@ MaterializedViewCheckpointStorage::open_existing(MaterializedViewCheckpointStora
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(
         exhausted("materialized-view checkpoint storage allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("materialized-view checkpoint storage allocation exceeds limits"));
   }
 }
 
 common::Result<InstalledMaterializedViewCheckpoint>
-MaterializedViewCheckpointStorage::install(const BoundMaterializedViewCheckpoint& checkpoint) {
+MaterializedViewCheckpointStorage::install(const BoundMaterializedViewCheckpoint& checkpoint) try {
   if (impl_ == nullptr) {
     return common::make_unexpected(invalid("materialized-view checkpoint storage was moved from"));
   }
@@ -431,10 +459,16 @@ MaterializedViewCheckpointStorage::install(const BoundMaterializedViewCheckpoint
                                              .record_sequence = sequence,
                                              .file_name = *final_name,
                                              .already_present = false};
+} catch (const std::bad_alloc&) {
+  return common::make_unexpected(
+      exhausted("materialized-view checkpoint install allocation failed"));
+} catch (const std::length_error&) {
+  return common::make_unexpected(
+      exhausted("materialized-view checkpoint install allocation exceeds limits"));
 }
 
 common::Result<LoadedMaterializedViewCheckpoint>
-MaterializedViewCheckpointStorage::load(const std::uint64_t record_sequence) const {
+MaterializedViewCheckpointStorage::load(const std::uint64_t record_sequence) const try {
   if (impl_ == nullptr) {
     return common::make_unexpected(invalid("materialized-view checkpoint storage was moved from"));
   }
@@ -443,10 +477,16 @@ MaterializedViewCheckpointStorage::load(const std::uint64_t record_sequence) con
     return common::make_unexpected(name.error());
   }
   return impl_->load_file(*name, record_sequence, 0U);
+} catch (const std::bad_alloc&) {
+  return common::make_unexpected(exhausted("materialized-view checkpoint load allocation failed"));
+} catch (const std::length_error&) {
+  return common::make_unexpected(
+      exhausted("materialized-view checkpoint load allocation exceeds limits"));
 }
 
-common::Result<LoadedMaterializedViewCheckpoint> MaterializedViewCheckpointStorage::load_generation(
-    const std::uint64_t checkpoint_generation) const {
+common::Result<LoadedMaterializedViewCheckpoint>
+MaterializedViewCheckpointStorage::load_generation(const std::uint64_t checkpoint_generation) const
+    try {
   if (impl_ == nullptr) {
     return common::make_unexpected(invalid("materialized-view checkpoint storage was moved from"));
   }
@@ -455,10 +495,16 @@ common::Result<LoadedMaterializedViewCheckpoint> MaterializedViewCheckpointStora
     return common::make_unexpected(name.error());
   }
   return impl_->load_file(*name, std::nullopt, checkpoint_generation);
+} catch (const std::bad_alloc&) {
+  return common::make_unexpected(
+      exhausted("materialized-view checkpoint generation load allocation failed"));
+} catch (const std::length_error&) {
+  return common::make_unexpected(
+      exhausted("materialized-view checkpoint generation load allocation exceeds limits"));
 }
 
 common::Result<std::optional<LoadedMaterializedViewCheckpoint>>
-MaterializedViewCheckpointStorage::load_latest() const {
+MaterializedViewCheckpointStorage::load_latest() const try {
   if (impl_ == nullptr) {
     return common::make_unexpected(invalid("materialized-view checkpoint storage was moved from"));
   }
@@ -478,10 +524,20 @@ MaterializedViewCheckpointStorage::load_latest() const {
       continue;
     }
     const bool generation = entry.name.starts_with(kGenerationPrefix);
+    const bool temporary = entry.name.ends_with(kTemporarySuffix);
     auto parsed = parse_name(entry.name, generation ? kGenerationPrefix : kLegacyPrefix,
-                             generation ? kGenerationSuffix : kLegacySuffix, false);
-    if (!parsed.has_value() || entry.type != io::DirectoryEntryType::kRegularFile) {
+                             generation ? kGenerationSuffix : kLegacySuffix, temporary);
+    if (!parsed.has_value()) {
+      if (parsed.error().code() == common::StatusCode::kResourceExhausted) {
+        return common::make_unexpected(parsed.error());
+      }
       return common::make_unexpected(corruption("checkpoint directory is noncanonical"));
+    }
+    if (entry.type != io::DirectoryEntryType::kRegularFile) {
+      return common::make_unexpected(corruption("checkpoint directory is noncanonical"));
+    }
+    if (temporary) {
+      continue;
     }
     auto& latest = generation ? latest_generation : latest_legacy_sequence;
     if (!latest.has_value() || *parsed > *latest) {
@@ -503,6 +559,12 @@ MaterializedViewCheckpointStorage::load_latest() const {
     return common::make_unexpected(loaded.error());
   }
   return std::optional<LoadedMaterializedViewCheckpoint>{std::move(*loaded)};
+} catch (const std::bad_alloc&) {
+  return common::make_unexpected(
+      exhausted("latest materialized-view checkpoint load allocation failed"));
+} catch (const std::length_error&) {
+  return common::make_unexpected(
+      exhausted("latest materialized-view checkpoint load allocation exceeds limits"));
 }
 
 bool MaterializedViewCheckpointStorage::is_usable() const noexcept {
