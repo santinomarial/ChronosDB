@@ -669,8 +669,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   single-tablet WAL and multi-tablet WAL/Raft/mixed owner allocation across start, chunk,
   END_STREAM, and READY is classified as resource exhaustion and leaves no active session or query
   credit. Service admission allocation failures likewise either admit the exact durable snapshot or
-  fail closed without an active request. The remaining exit evidence remains deferred. The phase
-  exit gate is not claimed.
+  fail closed without an active request; first result, END_STREAM, and READY failures likewise
+  terminally remove the service entry. The remaining exit evidence remains deferred. The phase exit
+  gate is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.
