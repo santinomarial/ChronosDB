@@ -458,7 +458,13 @@ DeterministicRaftSimulator::create(RaftSimulationConfig config) {
       auto node = RaftNode::create(id, config.initial_voters, {}, config.limits.raft);
       if (!node.has_value())
         return common::make_unexpected(node.error());
-      nodes.push_back({.id = id, .active = std::move(*node)});
+      nodes.push_back({.id = id,
+                       .durable = PersistentState{},
+                       .active = std::move(*node),
+                       .pending_snapshot = std::nullopt,
+                       .fail_next_persistence = false,
+                       .maximum_observed_term = 0U,
+                       .maximum_observed_commit = 0U});
     }
     std::vector<std::optional<Impl::NetworkSlot>> network(config.limits.maximum_pending_messages);
     std::vector<bool> links(config.node_ids.size() * config.node_ids.size(), true);

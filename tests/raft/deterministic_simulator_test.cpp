@@ -30,6 +30,23 @@ void drain(DeterministicRaftSimulator& simulation) {
   FAIL() << "simulation network did not drain";
 }
 
+TEST(DeterministicRaftSimulatorTest, InitializesAndRestartsFromAnExactEmptyDurableImage) {
+  auto simulation = DeterministicRaftSimulator::create(config());
+  ASSERT_TRUE(simulation.has_value()) << simulation.error().to_string();
+  const PersistentState empty;
+  for (const NodeId node : config().node_ids) {
+    ASSERT_NE(simulation->durable_state(node), nullptr);
+    EXPECT_EQ(*simulation->durable_state(node), empty);
+  }
+
+  ASSERT_TRUE(simulation->step(RaftSimulationCrash{2U}).is_ok());
+  EXPECT_EQ(simulation->active_node(2U), nullptr);
+  EXPECT_EQ(*simulation->durable_state(2U), empty);
+  ASSERT_TRUE(simulation->step(RaftSimulationRestart{2U}).is_ok());
+  ASSERT_NE(simulation->active_node(2U), nullptr);
+  EXPECT_EQ(*simulation->durable_state(2U), empty);
+}
+
 TEST(DeterministicRaftSimulatorTest, ReplaysPartitionDuplicateCommitCrashAndPersistenceFailure) {
   auto simulation = DeterministicRaftSimulator::create(config());
   ASSERT_TRUE(simulation.has_value()) << simulation.error().to_string();
