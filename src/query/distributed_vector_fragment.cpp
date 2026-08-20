@@ -476,7 +476,8 @@ DistributedVectorFragmentReader::consume(const common::ByteView bytes) {
     header_bytes_ += copied;
     consumed += copied;
     if (header_bytes_ != distributed_vector_fragment_format::kHeaderLength)
-      return DistributedVectorFragmentReadStep{.consumed_bytes = consumed};
+      return DistributedVectorFragmentReadStep{.consumed_bytes = consumed,
+                                               .dispatch = std::nullopt};
 
     common::ByteReader crc_reader{common::ByteView{header_}.subspan(kHeaderCrcOffset, 4U)};
     const auto header_crc = crc_reader.read_u32_le();
@@ -554,7 +555,7 @@ DistributedVectorFragmentReader::consume(const common::ByteView bytes) {
   frame_bytes_ += copied;
   consumed += copied;
   if (frame_bytes_ != frame_.size())
-    return DistributedVectorFragmentReadStep{.consumed_bytes = consumed};
+    return DistributedVectorFragmentReadStep{.consumed_bytes = consumed, .dispatch = std::nullopt};
   auto decoded = decode_distributed_vector_fragment_dispatch_exact(frame_, limits_);
   if (!decoded.has_value()) {
     failure_ = decoded.error();

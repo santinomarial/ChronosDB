@@ -139,6 +139,8 @@ TEST(DistributedVectorExchangeTest, OwnsBoundedPartialReadsAndShortWriteProgress
     EXPECT_EQ(prefix->consumed_bytes, split) << "split=" << split;
     EXPECT_EQ(prefix->message.has_value(), split == first_encoded->bytes().size())
         << "split=" << split;
+    if (split < first_encoded->bytes().size())
+      EXPECT_EQ(prefix->message, std::nullopt) << "split=" << split;
     const auto suffix = reader.consume(first_encoded->bytes().subspan(split));
     ASSERT_TRUE(suffix.has_value()) << "split=" << split;
     EXPECT_EQ(suffix->consumed_bytes, first_encoded->bytes().size() - split) << "split=" << split;

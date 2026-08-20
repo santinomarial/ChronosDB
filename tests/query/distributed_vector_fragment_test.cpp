@@ -204,6 +204,8 @@ TEST(DistributedVectorFragmentTest, OwnsBoundedPartialReadsAndShortWriteProgress
     ASSERT_TRUE(prefix.has_value()) << "split=" << split;
     EXPECT_EQ(prefix->consumed_bytes, split) << "split=" << split;
     EXPECT_EQ(prefix->dispatch.has_value(), split == encoded->bytes().size()) << "split=" << split;
+    if (split < encoded->bytes().size())
+      EXPECT_EQ(prefix->dispatch, std::nullopt) << "split=" << split;
     const auto suffix = reader.consume(encoded->bytes().subspan(split));
     ASSERT_TRUE(suffix.has_value()) << "split=" << split;
     EXPECT_EQ(suffix->consumed_bytes, encoded->bytes().size() - split) << "split=" << split;

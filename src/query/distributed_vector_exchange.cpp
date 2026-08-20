@@ -226,7 +226,7 @@ DistributedVectorExchangeReader::consume(const common::ByteView bytes) {
     header_bytes_ += copied;
     consumed += copied;
     if (header_bytes_ != distributed_vector_exchange_format::kHeaderLength)
-      return DistributedVectorExchangeReadStep{.consumed_bytes = consumed};
+      return DistributedVectorExchangeReadStep{.consumed_bytes = consumed, .message = std::nullopt};
 
     common::ByteReader crc_reader{common::ByteView{header_}.subspan(72U, 4U)};
     const auto header_crc = crc_reader.read_u32_le();
@@ -289,7 +289,7 @@ DistributedVectorExchangeReader::consume(const common::ByteView bytes) {
   frame_bytes_ += copied;
   consumed += copied;
   if (frame_bytes_ != frame_.size())
-    return DistributedVectorExchangeReadStep{.consumed_bytes = consumed};
+    return DistributedVectorExchangeReadStep{.consumed_bytes = consumed, .message = std::nullopt};
   auto decoded = decode_distributed_vector_exchange_message_exact(frame_, limits_);
   if (!decoded.has_value()) {
     failure_ = decoded.error();
