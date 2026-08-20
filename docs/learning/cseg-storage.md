@@ -116,7 +116,9 @@ identifies a well-formed registry/version value unavailable to this implementati
 
 All counts and byte lengths are checked before allocation or subspan formation. Zstandard frames
 are rejected before unbounded output allocation and are constrained by both the durable v1 maximums
-and caller-provided limits. The inspector checks the filesystem size before allocating its input
+and caller-provided limits. Metadata and full-part decoders convert allocator/container failures to
+resource-limit results; deterministic sweeps cover v1/v2 metadata, raw parts, exact suffixes, and a
+compressed-page output path. The inspector checks the filesystem size before allocating its input
 buffer and defaults to a 1 GiB operational limit even though the durable format maximum is larger.
 
 None of these CSEG-local APIs make a file durable or safe to reference from a manifest. Manifest v2
@@ -168,10 +170,12 @@ truncation, suffix, splice, reserved-byte, registry, checksum, extrema, ordering
 schema-binding, and decompression-limit corruption cases; decoder fuzzers; external-consumer and
 installation tests; and ASan/UBSan/TSan coverage.
 
-Projected planning additionally has exact descriptor/ownership accounting tests, foreign-reader and
-hostile-request rejection, deterministic direct-versus-planned execution, a dedicated allocator
-test proving zero successful-path plan allocations and classifying every output allocation failure,
-and plan-then-read fuzz coverage.
+Codec allocation tests fail every observed v1/v2 metadata/raw-part allocation, exact-suffix error
+allocation, and compressed-page output allocation until exact success or intended corruption.
+Projected planning additionally has exact descriptor/ownership accounting tests, foreign-reader
+and hostile-request rejection, deterministic direct-versus-planned execution, a dedicated allocator
+test proving zero successful-path plan allocations and classifying every open/output allocation
+failure, and plan-then-read fuzz coverage.
 
 The query scan adds pin-after-source-destruction, pre-decode admission, cross-query, cancellation,
 LIMIT composition, multi-granule deterministic properties, exhaustive allocation failure, hostile

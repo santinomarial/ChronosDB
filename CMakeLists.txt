@@ -1503,6 +1503,7 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_cseg_allocation_failure_tests
+    tests/cseg/codec_allocation_failure_test.cpp
     tests/cseg/projected_reader_allocation_failure_test.cpp
     tests/support/failing_allocator.cpp
   )

@@ -42,6 +42,12 @@ NONE/Zstandard page encodings. The decoder authenticates and interprets every st
 nonzero alignment padding and trailing bytes in exact mode, and reports the exact next required
 size for valid truncations.
 
+Dedicated allocator sweeps cover every observed v2 metadata and canonical raw-part exact-decode
+allocation through success, plus exact trailing-suffix rejection through the intended corruption
+result. The shared compressed-page path is swept with a genuinely Zstandard-compressed canonical
+part. Allocation and container failures return resource-limit errors rather than escaping or being
+misclassified as corruption.
+
 The canonical two-row raw temporal fixture freezes a 2,048-byte complete file and full-file CRC32C
 `0x3242794c`. The test computes that fingerprint with a tableless reflected-Castagnoli oracle as
 well as the production checksum routine, so changes to metadata, page order, stored bytes, or zero

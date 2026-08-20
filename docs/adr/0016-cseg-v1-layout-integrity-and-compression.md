@@ -137,6 +137,9 @@ claims of this format decision.
   separately from zero/invalid and checksum failures.
 - Test Zstandard content-size, dictionary, checksum, concatenation, trailing-byte, oversized-window,
   output-limit, and malformed-frame cases without allocation beyond configured bounds.
+- Deterministically fail every observed metadata, raw-part, exact-suffix, and compressed-page output
+  allocation, require resource-exhausted classification, and continue through exact success or the
+  intended corruption result.
 - Run decoder fuzzing, AddressSanitizer, UndefinedBehaviorSanitizer, applicable ThreadSanitizer,
   strict warnings, static analysis, standalone public-header compilation, install/export, and an
   external consumer.

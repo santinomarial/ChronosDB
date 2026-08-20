@@ -176,9 +176,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   full-file size/CRC golden fingerprint and checksum-valid hostile metadata/descriptor matrix with
   broader checksum-repaired semantic page-body matrices beyond the implemented scalar-domain and
   event/source-tuple ordering cases, WAL/Raft source-lineage cases, allocation failure beyond the
-  implemented v1/v2 projected-reader open/plan/execution sweeps, fuzzing, cross-version conversion,
-  and cross-compiler fixtures after the accepted temporal registry, layout planner, and
-  independently generated header/system-column/granule/page field fixtures.
+  implemented v1/v2 metadata/raw-part decoder and projected-reader open/plan/execution sweeps,
+  fuzzing, cross-version conversion, and cross-compiler fixtures after the accepted temporal
+  registry, layout planner, and independently generated header/system-column/granule/page field
+  fixtures.
 - Direct mutable-head/CSEG vector winner resolution and physical-plan lowering beyond the
   implemented scalar-snapshot vector source; full logical-type/allocation/cancellation matrices and
   current/as-of scalar-vector differential SQL; many-tablet/skew/allocation/crash coverage beyond

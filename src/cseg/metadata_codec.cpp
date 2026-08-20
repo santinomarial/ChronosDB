@@ -9,7 +9,9 @@
 #include <array>
 #include <bit>
 #include <limits>
+#include <new>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -927,38 +929,63 @@ decode_cseg_metadata_prefix(const common::ByteView bytes, const CsegMetadataDeco
 
 CsegMetadataDecodeResult decode_cseg_v1_metadata_prefix(const common::ByteView bytes,
                                                         const CsegMetadataDecodeLimits limits) {
-  return decode_cseg_metadata_prefix(bytes, limits, format::kFormatMajor);
+  try {
+    return decode_cseg_metadata_prefix(bytes, limits, format::kFormatMajor);
+  } catch (const std::bad_alloc&) {
+    return std::unexpected(resource_limit("CSEG metadata decode allocation failed"));
+  } catch (const std::length_error&) {
+    return std::unexpected(resource_limit("CSEG metadata decode exceeds container limits"));
+  }
 }
 
 CsegMetadataDecodeResult
 decode_cseg_v2_temporal_metadata_prefix(const common::ByteView bytes,
                                         const CsegMetadataDecodeLimits limits) {
-  return decode_cseg_metadata_prefix(bytes, limits, temporal_format::kFormatMajor);
+  try {
+    return decode_cseg_metadata_prefix(bytes, limits, temporal_format::kFormatMajor);
+  } catch (const std::bad_alloc&) {
+    return std::unexpected(resource_limit("CSEG v2 metadata decode allocation failed"));
+  } catch (const std::length_error&) {
+    return std::unexpected(resource_limit("CSEG v2 metadata decode exceeds container limits"));
+  }
 }
 
 CsegMetadataDecodeResult decode_cseg_v1_metadata_exact(const common::ByteView bytes,
                                                        const CsegMetadataDecodeLimits limits) {
-  CsegMetadataDecodeResult decoded = decode_cseg_v1_metadata_prefix(bytes, limits);
-  if (!decoded.has_value()) {
+  try {
+    CsegMetadataDecodeResult decoded = decode_cseg_v1_metadata_prefix(bytes, limits);
+    if (!decoded.has_value()) {
+      return decoded;
+    }
+    if (bytes.size() != decoded->encoded_metadata().size()) {
+      return std::unexpected(corruption("CSEG metadata exact decoder rejects trailing bytes"));
+    }
     return decoded;
+  } catch (const std::bad_alloc&) {
+    return std::unexpected(resource_limit("CSEG metadata exact decode allocation failed"));
+  } catch (const std::length_error&) {
+    return std::unexpected(resource_limit("CSEG metadata exact decode exceeds container limits"));
   }
-  if (bytes.size() != decoded->encoded_metadata().size()) {
-    return std::unexpected(corruption("CSEG metadata exact decoder rejects trailing bytes"));
-  }
-  return decoded;
 }
 
 CsegMetadataDecodeResult
 decode_cseg_v2_temporal_metadata_exact(const common::ByteView bytes,
                                        const CsegMetadataDecodeLimits limits) {
-  CsegMetadataDecodeResult decoded = decode_cseg_v2_temporal_metadata_prefix(bytes, limits);
-  if (!decoded.has_value()) {
+  try {
+    CsegMetadataDecodeResult decoded = decode_cseg_v2_temporal_metadata_prefix(bytes, limits);
+    if (!decoded.has_value()) {
+      return decoded;
+    }
+    if (bytes.size() != decoded->encoded_metadata().size()) {
+      return std::unexpected(corruption("CSEG v2 metadata exact decoder rejects trailing bytes"));
+    }
     return decoded;
+  } catch (const std::bad_alloc&) {
+    return std::unexpected(resource_limit("CSEG v2 metadata exact decode allocation failed"));
+  } catch (const std::length_error&) {
+    return std::unexpected(
+        resource_limit("CSEG v2 metadata exact decode exceeds container limits"));
   }
-  if (bytes.size() != decoded->encoded_metadata().size()) {
-    return std::unexpected(corruption("CSEG v2 metadata exact decoder rejects trailing bytes"));
-  }
-  return decoded;
 }
 
 [[nodiscard]] common::Status validate_cseg_metadata_schema(const DecodedCsegMetadataView& metadata,

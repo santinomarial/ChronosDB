@@ -74,4 +74,6 @@ remain subsequent work and Phase 18 validation. Projected reading, Manifest v2 i
 current/as-of winner resolution, and temporal row/order validation are implemented with bounded
 work and exact corrupt-versus-unsupported value classification. Dedicated allocator sweeps now
 cover every observed temporal projected-reader open and result allocation while re-proving
-allocation-free planning.
+allocation-free planning. They also cover every observed v2 metadata/raw-part exact-decode
+allocation and exact-suffix failure; the version-shared compressed-page output path is swept with a
+genuinely compressed canonical part.

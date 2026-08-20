@@ -376,6 +376,11 @@ runtime limit. Page decompression owns a bounded output buffer. A borrowed part 
 valid only while its complete encoded storage and any decoded page owner remain alive and
 immutable.
 
+Implementation bookkeeping is fail-closed: metadata descriptor vectors, raw full-part decoding,
+exact trailing-suffix rejection, and compressed-page output allocations are deterministically swept.
+Every observed failure returns `kResourceLimit` with `RESOURCE_EXHAUSTED`; it is never mislabeled as
+corruption and no allocation exception crosses the public decode boundary.
+
 Prefix decoding consumes exactly `total_length` bytes and may leave a following byte sequence to
 its caller. Exact decoding additionally requires no trailing byte. Outcomes are distinct:
 

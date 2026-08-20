@@ -27,6 +27,11 @@ namespace {
   return {CsegPartDecodeErrorKind::kCorruption, status(common::StatusCode::kCorruption, message)};
 }
 
+[[nodiscard]] CsegPartDecodeError resource_limit(const std::string_view message) {
+  return {CsegPartDecodeErrorKind::kResourceLimit,
+          status(common::StatusCode::kResourceExhausted, message)};
+}
+
 [[nodiscard]] CsegPartDecodeError page_error(const common::Status& page_status) {
   switch (page_status.code()) {
   case common::StatusCode::kNotSupported:
@@ -189,36 +194,60 @@ CsegPartDecodeResult decode_cseg_part_prefix(const common::ByteView bytes,
 
 CsegPartDecodeResult decode_cseg_v1_part_prefix(const common::ByteView bytes,
                                                 const CsegMetadataDecodeLimits limits) {
-  return decode_cseg_part_prefix(bytes, limits, format::kFormatMajor);
+  try {
+    return decode_cseg_part_prefix(bytes, limits, format::kFormatMajor);
+  } catch (const std::bad_alloc&) {
+    return std::unexpected(resource_limit("CSEG part decode allocation failed"));
+  } catch (const std::length_error&) {
+    return std::unexpected(resource_limit("CSEG part decode exceeds container limits"));
+  }
 }
 
 CsegPartDecodeResult decode_cseg_v2_temporal_part_prefix(const common::ByteView bytes,
                                                          const CsegMetadataDecodeLimits limits) {
-  return decode_cseg_part_prefix(bytes, limits, temporal_format::kFormatMajor);
+  try {
+    return decode_cseg_part_prefix(bytes, limits, temporal_format::kFormatMajor);
+  } catch (const std::bad_alloc&) {
+    return std::unexpected(resource_limit("CSEG v2 part decode allocation failed"));
+  } catch (const std::length_error&) {
+    return std::unexpected(resource_limit("CSEG v2 part decode exceeds container limits"));
+  }
 }
 
 CsegPartDecodeResult decode_cseg_v1_part_exact(const common::ByteView bytes,
                                                const CsegMetadataDecodeLimits limits) {
-  CsegPartDecodeResult decoded = decode_cseg_v1_part_prefix(bytes, limits);
-  if (!decoded.has_value()) {
+  try {
+    CsegPartDecodeResult decoded = decode_cseg_v1_part_prefix(bytes, limits);
+    if (!decoded.has_value()) {
+      return decoded;
+    }
+    if (bytes.size() != decoded->encoded_part().size()) {
+      return std::unexpected(corruption("CSEG part exact decoder rejects trailing bytes"));
+    }
     return decoded;
+  } catch (const std::bad_alloc&) {
+    return std::unexpected(resource_limit("CSEG part exact decode allocation failed"));
+  } catch (const std::length_error&) {
+    return std::unexpected(resource_limit("CSEG part exact decode exceeds container limits"));
   }
-  if (bytes.size() != decoded->encoded_part().size()) {
-    return std::unexpected(corruption("CSEG part exact decoder rejects trailing bytes"));
-  }
-  return decoded;
 }
 
 CsegPartDecodeResult decode_cseg_v2_temporal_part_exact(const common::ByteView bytes,
                                                         const CsegMetadataDecodeLimits limits) {
-  CsegPartDecodeResult decoded = decode_cseg_v2_temporal_part_prefix(bytes, limits);
-  if (!decoded.has_value()) {
+  try {
+    CsegPartDecodeResult decoded = decode_cseg_v2_temporal_part_prefix(bytes, limits);
+    if (!decoded.has_value()) {
+      return decoded;
+    }
+    if (bytes.size() != decoded->encoded_part().size()) {
+      return std::unexpected(corruption("CSEG part exact decoder rejects trailing bytes"));
+    }
     return decoded;
+  } catch (const std::bad_alloc&) {
+    return std::unexpected(resource_limit("CSEG v2 part exact decode allocation failed"));
+  } catch (const std::length_error&) {
+    return std::unexpected(resource_limit("CSEG v2 part exact decode exceeds container limits"));
   }
-  if (bytes.size() != decoded->encoded_part().size()) {
-    return std::unexpected(corruption("CSEG part exact decoder rejects trailing bytes"));
-  }
-  return decoded;
 }
 
 common::Result<EncodedCsegPart> adopt_cseg_v2_temporal_part(const common::ByteView bytes,
