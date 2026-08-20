@@ -248,6 +248,8 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   persisted current term now fail admission; failed append responses require a nonzero conflict
   index and cannot carry a conflict term newer than their response term. Recovery also rejects a
   term-zero vote and any manifest/checksum or membership identity on an index-zero empty snapshot.
+  Remote and transport snapshot validation now reserve `UINT64_MAX` consistently with recovery, so
+  successful two-stage completion cannot create an index-exhausted checkpoint that cannot reopen.
 - Persistent file owner, vote/log fsync ordering, crash/restart at every transition, idempotent
   recovery, application to tablet state, snapshot creation/install, and log compaction. Extend the
   implemented read barrier through production transport and tablet snapshot acquisition.

@@ -17,7 +17,8 @@ containing persistent state must be durably installed before its outbound messag
 uses the current-term restriction, and committed entries remain unavailable to application until
 `mark_applied`. Recovery rejects retained log entries or installed snapshot metadata whose term is
 newer than the checkpoint's current term. Term zero cannot carry a vote, and an index-zero snapshot
-cannot carry term, manifest/checksum identity, configuration index, or voters.
+cannot carry term, manifest/checksum identity, configuration index, or voters. Logical index
+`UINT64_MAX` remains reserved for exhaustion detection and cannot be recovered or installed.
 
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable

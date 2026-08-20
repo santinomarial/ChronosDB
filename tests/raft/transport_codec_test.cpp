@@ -249,6 +249,9 @@ TEST(RaftTransportCodecTest, RejectsChecksumRepairedHostilePayloadFields) {
       encode_raft_transport_envelope_v1(envelope(InstallSnapshotRequest{4U, 1U, snapshot()}))
           .value();
   candidate = snapshot_frame;
+  store_u64(candidate, 112U, std::numeric_limits<LogIndex>::max());
+  expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
+  candidate = snapshot_frame;
   store_u64(candidate, 120U, 5U);
   expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
   candidate = snapshot_frame;
@@ -406,6 +409,13 @@ TEST(RaftTransportCodecTest, EnforcesFrameEntryAndSnapshotBoundsBeforeAllocation
       envelope(InstallSnapshotRequest{4U, 1U, std::move(future_term_snapshot)}));
   ASSERT_FALSE(future_term.has_value());
   EXPECT_EQ(future_term.error().code(), common::StatusCode::kInvalidArgument);
+
+  SnapshotMetadata exhausted_snapshot = snapshot();
+  exhausted_snapshot.last_included_index = std::numeric_limits<LogIndex>::max();
+  auto exhausted = encode_raft_transport_envelope_v1(
+      envelope(InstallSnapshotRequest{4U, 1U, std::move(exhausted_snapshot)}));
+  ASSERT_FALSE(exhausted.has_value());
+  EXPECT_EQ(exhausted.error().code(), common::StatusCode::kInvalidArgument);
 }
 
 } // namespace

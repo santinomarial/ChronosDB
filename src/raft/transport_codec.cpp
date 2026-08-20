@@ -143,8 +143,9 @@ void store_u32(const std::span<std::byte> bytes, const std::size_t offset,
 
 [[nodiscard]] common::Status validate_snapshot(const SnapshotMetadata& snapshot,
                                                const std::size_t maximum_voters) {
-  if (snapshot.last_included_index == 0U || snapshot.last_included_term == 0U ||
-      snapshot.manifest_generation == 0U ||
+  if (snapshot.last_included_index == 0U ||
+      snapshot.last_included_index == std::numeric_limits<LogIndex>::max() ||
+      snapshot.last_included_term == 0U || snapshot.manifest_generation == 0U ||
       snapshot.configuration_index > snapshot.last_included_index || snapshot.voters.empty() ||
       !canonical_voters(snapshot.voters, maximum_voters)) {
     return invalid("Raft transport snapshot metadata is inconsistent");

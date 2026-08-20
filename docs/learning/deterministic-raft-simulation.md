@@ -80,7 +80,8 @@ must name a nonzero conflict index, and their optional conflict term cannot exce
 so malformed higher-term feedback cannot step down a candidate. Recovered term-zero state has no
 vote, and an index-zero snapshot has no external or membership identity. Long seed campaigns,
 exhaustive schedules, timer clock changes, physical disk faults, and minimized corpus retention
-remain in the hardening ledger.
+remain in the hardening ledger. Snapshot index `UINT64_MAX` is rejected before external installation
+because installing it would create a durable state the exhaustion-aware recovery path cannot reopen.
 
 Useful questions include: why can a queued message survive a sender crash; why must durable state be
 installed before outbound admission; why does replay use explicit message IDs; why is a snapshot

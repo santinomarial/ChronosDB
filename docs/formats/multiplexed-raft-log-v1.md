@@ -52,7 +52,8 @@ The decoder validates header integrity before trusting lengths, then exact size 
 payload and full-record integrity, required-zero bytes, bounded entry count, and exact exhaustion.
 `RaftNode::create` performs the semantic validation: contiguous logical indexes, bounded entries,
 snapshot and retained-log terms no greater than the current term, valid vote/snapshot state,
-canonical term-zero and empty-snapshot state, bounded checkpoint voters, and
+logical and snapshot indexes below the reserved `UINT64_MAX`, canonical term-zero and empty-snapshot
+state, bounded checkpoint voters, and
 `applied <= commit <= last`.
 
 ## Segment v1 envelope

@@ -200,6 +200,9 @@ TEST(RaftNodeTest, RejectsNoncanonicalTermsAndResponseStateBeforeObservingTerm) 
   future_term_snapshot.last_included_term = 10U;
   future_term_snapshot.manifest_generation = 1U;
   future_term_snapshot.voters = {1U, 2U, 3U};
+  SnapshotMetadata exhausted_index_snapshot = future_term_snapshot;
+  exhausted_index_snapshot.last_included_index = std::numeric_limits<LogIndex>::max();
+  exhausted_index_snapshot.last_included_term = 9U;
   const std::vector<Message> malformed{
       RequestVoteRequest{0U, 2U, 0U, 0U},
       RequestVoteRequest{9U, 2U, 0U, 1U},
@@ -209,6 +212,7 @@ TEST(RaftNodeTest, RejectsNoncanonicalTermsAndResponseStateBeforeObservingTerm) 
       AppendEntriesResponse{9U, false, 0U, 10U, 1U},
       AppendEntriesResponse{9U, false, 0U, std::nullopt, 0U},
       InstallSnapshotRequest{9U, 2U, std::move(future_term_snapshot)},
+      InstallSnapshotRequest{9U, 2U, std::move(exhausted_index_snapshot)},
       InstallSnapshotResponse{9U, true, 0U},
       ReadBarrierResponse{9U, 0U, true},
   };

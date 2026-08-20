@@ -49,8 +49,8 @@ allocator sweeps fail every observed encode allocation for all eight kinds and e
 payload and snapshot-voter decode allocation, requiring `RESOURCE_EXHAUSTED` until exact success.
 Checksum-repaired matrices cover header lengths/routes/versions/kinds/reserved bytes plus append
 counts/lengths/reserved bytes/trailing payload, append-response conflict term/index state, snapshot
-term/voters/reserved bytes, and fixed-message Boolean/term fields with exact corruption,
-unsupported, or resource classification. A
+term/maximum-index/voters/reserved bytes, and fixed-message Boolean/term fields with exact
+corruption, unsupported, or resource classification. A
 bounded structure-aware libFuzzer target drives raw bytes, all eight canonical variants, repaired
 mutations, fragmented reading, and write-cursor validation under ASan/UBSan. Cross-compiler golden
 fixtures, sustained fuzzing, authenticated carrier integration, mixed-version processes, and

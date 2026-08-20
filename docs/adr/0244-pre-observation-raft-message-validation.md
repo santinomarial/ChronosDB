@@ -14,7 +14,9 @@ term-zero vote. Response conflict fields and vote/append predecessor pairs also 
 noncanonical combinations before higher-term observation. Snapshot metadata had the same omitted
 term relation: its last-included term could exceed the leader term carried by the request. Failed
 append responses could likewise omit their conflict index or claim a conflict term newer than the
-response term, while recovery admitted snapshot metadata newer than the node's current term.
+response term, while recovery admitted snapshot metadata newer than the node's current term. Remote
+snapshot admission also accepted the maximum logical index even though recovery reserves it for
+exhaustion detection.
 
 ## Decision
 
@@ -22,7 +24,8 @@ Every received Raft message must carry a nonzero term before role or persistent 
 RequestVote last-log index/term and AppendEntries previous index/term use exact zero-pair semantics;
 their log term cannot exceed the message term. Existing source/candidate/leader identity checks
 remain mandatory. An InstallSnapshot request likewise requires its nonzero last-included term not
-to exceed the request term before any role, term, vote, or pending external-install state changes.
+to exceed the request term and its last-included index to remain below `UINT64_MAX` before any role,
+term, vote, or pending external-install state changes.
 
 A successful AppendEntries response cannot carry conflict state, and its match index cannot exceed
 the leader's log. A failed response requires a nonzero conflict index; an optional conflict term must
@@ -75,6 +78,8 @@ reset to accompany that response as persistent state.
 Failed append-response coverage rejects a missing conflict index and a conflict term above the
 response term through direct-core, outbound encoding, and checksum-valid decoding paths. Recovery
 separately rejects a persisted snapshot term above current term.
+Maximum-index snapshot coverage rejects direct-core admission without changing candidate state and
+rejects both outbound encoding and checksum-valid decoding. No external install owner is published.
 
 ## References
 
