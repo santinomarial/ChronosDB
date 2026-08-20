@@ -256,6 +256,24 @@ TEST(TemporalPartCodecTest, AdoptsOnlyAnExactCanonicalV2Image) {
   EXPECT_EQ(adopt_cseg_v2_temporal_part(damaged).error().code(), common::StatusCode::kCorruption);
 }
 
+TEST(TemporalPartCodecTest, EveryStoredPageAndPaddingByteMutationFailsClosed) {
+  TemporalPartFixture fixture;
+  const auto encoded = encode_cseg_v2_temporal_part(fixture.input());
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  const auto canonical = decode_cseg_v2_temporal_part_exact(encoded->bytes());
+  ASSERT_TRUE(canonical.has_value()) << canonical.error().status().to_string();
+  const std::size_t metadata_length = canonical->metadata().encoded_metadata().size();
+  ASSERT_LT(metadata_length, encoded->size());
+
+  for (std::size_t offset = metadata_length; offset < encoded->size(); ++offset) {
+    std::vector<std::byte> mutated{encoded->bytes().begin(), encoded->bytes().end()};
+    mutated[offset] ^= std::byte{1U};
+    const auto decoded = decode_cseg_v2_temporal_part_exact(mutated);
+    ASSERT_FALSE(decoded.has_value()) << offset;
+    EXPECT_EQ(decoded.error().kind(), CsegPartDecodeErrorKind::kCorruption) << offset;
+  }
+}
+
 TEST(TemporalPartCodecTest, FailsClosedOnTruncationStoredCorruptionAndSuffix) {
   TemporalPartFixture fixture;
   const auto encoded = encode_cseg_v2_temporal_part(fixture.input());

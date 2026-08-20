@@ -52,6 +52,11 @@ compression, and flag values as unsupported. Zero registry codes, incorrect temp
 shape, nonzero reserved bytes, contradictory stored-column/page counts, and overlapping page
 coordinates are corruption after both header and metadata integrity are repaired.
 
+For the canonical raw fixture, a one-bit mutation at every byte in the stored-page and alignment
+padding region must fail exact part decoding as corruption. This sweep proves complete stored-byte
+integrity and canonical zero padding; checksum-repaired semantic page mutations remain separate
+from this integrity contract.
+
 Complete acceptance additionally binds the exact table schema/tablet, validates every system tuple,
 distinguishes corrupt zero values from unsupported assigned-domain extensions, bounds nonempty
 logical identities, recomputes granule and part event-time extrema, and requires strict ordering by
