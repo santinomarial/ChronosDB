@@ -181,9 +181,8 @@ execute_columnar_append(const ColumnarAppendExecutionInput& input, RetryDirector
     return common::make_unexpected(wal_status);
   }
 
-  common::Result<TabletAppendResult> published = prepared->publish(
-      head::HeadCommitPosition{.wal_id = wal_result->append.record_start.wal_id,
-                               .record_sequence = wal_result->append.record_sequence});
+  common::Result<TabletAppendResult> published = prepared->publish(head::HeadCommitPosition::wal(
+      wal_result->append.record_start.wal_id, wal_result->append.record_sequence));
   if (!published.has_value()) {
     return common::make_unexpected(published.error());
   }

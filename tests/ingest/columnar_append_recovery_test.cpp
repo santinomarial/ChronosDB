@@ -239,13 +239,16 @@ TEST(ColumnarAppendRecoveryTest, RebuildsFreshStateDeterministicallyAndContinues
   EXPECT_EQ(first_snapshot.visible_row_count(), 2U);
   EXPECT_EQ(first_snapshot.retry_entry_count(), 1U);
   EXPECT_EQ(first_position.wal_id, expected_wal_id);
+  EXPECT_TRUE(first_position.raft_group_id.is_nil());
   EXPECT_EQ(first_position.record_sequence, 2U);
   ASSERT_TRUE(first_snapshot.active_generation().applied_position().has_value());
   const head::HeadCommitPosition active_position =
       first_snapshot.active_generation().applied_position().value_or(head::HeadCommitPosition{});
+  EXPECT_TRUE(active_position.raft_group_id.is_nil());
   EXPECT_EQ(active_position.record_sequence, 1U);
   EXPECT_EQ(second_snapshot.visible_row_count(), 2U);
   EXPECT_EQ(second_snapshot.retry_entry_count(), 1U);
+  EXPECT_TRUE(second_position.raft_group_id.is_nil());
   EXPECT_EQ(second_position.record_sequence, 3U);
   EXPECT_EQ(first->retry_directory().metrics().committed_entries, 2U);
 
@@ -400,7 +403,9 @@ TEST(ColumnarAppendRecoveryTest,
     ASSERT_TRUE(snapshot.active_generation().applied_position().has_value());
     const head::HeadCommitPosition active_position =
         snapshot.active_generation().applied_position().value_or(head::HeadCommitPosition{});
+    EXPECT_TRUE(applied_position.raft_group_id.is_nil());
     EXPECT_EQ(applied_position.record_sequence, 4U);
+    EXPECT_TRUE(active_position.raft_group_id.is_nil());
     EXPECT_EQ(active_position.record_sequence, 4U);
     EXPECT_EQ(recovered->retry_directory().metrics().committed_entries, 3U);
     EXPECT_EQ(snapshot.retry_outcome(retry_identity(1U))->record_sequence, 1U);

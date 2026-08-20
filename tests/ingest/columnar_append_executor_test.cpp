@@ -207,8 +207,13 @@ TEST(ColumnarAppendExecutorTest, AppliesAsyncAndLocalSyncAndReturnsMatchingRetri
   EXPECT_EQ(first->outcome->wal_id, expected_wal_id);
   EXPECT_EQ(first->outcome->record_sequence, 1U);
   EXPECT_EQ(first->outcome->applied_row_count, 2U);
-  EXPECT_EQ(target.snapshot()->visible_row_count(), 2U);
-  EXPECT_EQ(target.snapshot()->retry_outcome(retry_identity(1U)).get(), first->outcome.get());
+  const TabletSnapshot first_applied_snapshot = target.snapshot().value();
+  EXPECT_EQ(first_applied_snapshot.visible_row_count(), 2U);
+  EXPECT_EQ(first_applied_snapshot.retry_outcome(retry_identity(1U)).get(), first->outcome.get());
+  ASSERT_TRUE(first_applied_snapshot.applied_position().has_value());
+  const head::HeadCommitPosition first_applied_position =
+      first_applied_snapshot.applied_position().value_or(head::HeadCommitPosition{});
+  EXPECT_TRUE(first_applied_position.raft_group_id.is_nil());
 
   const auto matching = execute_columnar_append(execution_input(1U, input_batch), retry_directory,
                                                 target, coordinator);

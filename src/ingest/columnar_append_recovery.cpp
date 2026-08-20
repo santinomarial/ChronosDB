@@ -215,8 +215,8 @@ public:
       return internal("preflighted recovery tablet disappeared before replay");
     }
 
-    const head::HeadCommitPosition position{.wal_id = record.record_start.wal_id,
-                                            .record_sequence = record.header.record_sequence};
+    const head::HeadCommitPosition position =
+        head::HeadCommitPosition::wal(record.record_start.wal_id, record.header.record_sequence);
     auto applied = apply_committed_columnar_append(*command, std::move(*retained_schema), position,
                                                    retry_directory_, target->state, decode_limits_);
     if (!applied.has_value()) {
@@ -460,8 +460,7 @@ recover_columnar_append_wal(const wal::WalWriterConfig& writer_config,
         }
         common::Status seeded = detail::ColumnarRecoveryStateBuilder::seed_tablet(
             *state, seed.recovery_schema_id, seed.recovery_schema_version,
-            head::HeadCommitPosition{.wal_id = checkpoint.wal_id,
-                                     .record_sequence = seed.durable_record_sequence},
+            head::HeadCommitPosition::wal(checkpoint.wal_id, seed.durable_record_sequence),
             identities, outcomes);
         if (!seeded.is_ok()) {
           return common::make_unexpected(std::move(seeded));
