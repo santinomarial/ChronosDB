@@ -58,5 +58,6 @@ Unknown application identity and command versions are classified as unsupported,
 recovery over a mixed v1/future-format WAL fails during preflight without publishing partial state.
 Exhaustive test-only allocation injection covers every codec-owned canonical encode/exact-decode
 allocation and every owned allocation observed on the canonical single-table command-specific WAL
-recovery path, including rollback and lock release. Sustained fuzzing, cross-compiler bytes,
+recovery path, including rollback and lock release. The exact golden fixture runs in the standard
+Linux GCC, Linux Clang/libc++, and macOS AppleClang CI matrix. Sustained fuzzing,
 Manifest-composed startup allocation failure, and crash injection remain deferred to Phase 18.

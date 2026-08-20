@@ -16,7 +16,8 @@ namespace {
 // Generated independently from Temporal Mutation Command v1 with Python struct packing and a
 // standalone CRC32C implementation. The embedded 400-byte region is the independently reviewed
 // Columnar Batch v1 golden fixture; these literals cover its command envelope/header and metadata
-// suffix, while the full-payload CRC below binds all three regions.
+// suffix, while the full-payload CRC below binds all three regions. The standard compiler CI matrix
+// runs this exact fixture under GCC, Clang/libc++, and AppleClang.
 constexpr std::array<std::uint8_t, 112U> kGoldenCommandPrefix{
     0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x43, 0x48, 0x52, 0x4e, 0x54, 0x4d, 0x50, 0x00, 0x01, 0x00, 0x00, 0x00, 0x60, 0x00, 0x00, 0x00,
@@ -46,7 +47,7 @@ TEST(TemporalCommandTest, DefaultsToSixtyFourMebibytesOfMutationMetadata) {
   EXPECT_EQ(limits.maximum_metadata_bytes, std::size_t{64U} * 1024U * 1024U);
 }
 
-TEST(TemporalCommandTest, RoundTripsCanonicalBatchAndMutationMetadata) {
+TEST(TemporalCommandTest, EmitsCompilerIndependentGoldenBytesAndRoundTrips) {
   auto batch = columnar::OwnedColumnarBatch::create(columnar::test::batch_schema(),
                                                     columnar::test::batch_columns());
   ASSERT_TRUE(batch.has_value()) << batch.error().to_string();

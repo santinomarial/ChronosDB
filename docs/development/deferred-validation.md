@@ -152,8 +152,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   target covering raw hostile bytes, canonical commands, caller-limit rejection,
   checksum-repaired mutations, and nested-batch integrity. Deterministic checksum-valid matrices
   cover hostile outer length/count/limit fields, descriptor lengths/kinds/reserved bytes/identity
-  uniqueness, and nested-batch magic/version/layout/count/padding failures. Sustained fuzzing and
-  cross-compiler bytes remain deferred. Codec compatibility matrices now
+  uniqueness, and nested-batch magic/version/layout/count/padding failures. The exact golden fixture
+  runs in the standard Linux GCC, Linux Clang/libc++, and macOS AppleClang CI matrix; sustained
+  fuzzing remains deferred. Codec compatibility matrices now
   reject future application identities and command major/minor versions as unsupported; repeatable
   recovery over a mixed v1/future-format WAL fails in preflight without returning partial state.
   Exhaustive test-only allocation injection now classifies every codec-owned canonical encode and
