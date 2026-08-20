@@ -61,8 +61,10 @@ independent of the production checksum implementation. A checksum-valid hostile 
 also freezes unsupported future formats/registries versus corrupt zero codes, count/layout
 contradictions, temporal system-column reshaping, reserved bytes, and page-coordinate overlap.
 Every byte in the canonical stored-page and alignment-padding region is also mutation-tested and
-must fail exact decode as corruption. Additional field-level golden fixtures, checksum-repaired
-semantic page matrices, crash tests, fuzzing, and performance evidence remain subsequent work and
-Phase 18 validation. Projected reading, Manifest v2 installation, current/as-of winner resolution,
-and temporal row/order validation are implemented with bounded work and exact
-corrupt-versus-unsupported value classification.
+must fail exact decode as corruption. Checksum-repaired page mutations additionally prove that
+structurally valid source, source-identity, commit-position, operation, and logical-identity bytes
+still receive exact corrupt-versus-unsupported semantic classification. Additional field-level
+golden fixtures, broader semantic page matrices, crash tests, fuzzing, and performance evidence
+remain subsequent work and Phase 18 validation. Projected reading, Manifest v2 installation,
+current/as-of winner resolution, and temporal row/order validation are implemented with bounded
+work and exact corrupt-versus-unsupported value classification.

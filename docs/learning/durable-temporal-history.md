@@ -159,12 +159,13 @@ original/correction replay, historical lookup, scalar-winner vector materializat
 impossible-history rejection, and continued WAL sequence ownership. The canonical CSEG v2 temporal
 file has a frozen full-file size/CRC fingerprint, and its checksum-valid hostile metadata matrix
 freezes temporal registry, reserved-byte, count, and layout classifications. Every canonical
-stored-page and padding byte is also mutation-tested. Phase 18 retains additional field-level
-golden bytes, checksum-repaired semantic page-body matrices, fuzzing, allocation-failure sweeps
-beyond the implemented command-specific recovery and
-canonical empty/one-CSEG/two-CSEG one-tablet plus CSEG-backed/empty two-tablet Manifest startup
-paths, crash points, many-tablet skew, mixed-command dispatch, direct vector
-differential/lowering, long-history retention models, durable compaction, and performance
+stored-page and padding byte is also mutation-tested. A checksum-repaired page-body matrix proves
+that integrity-valid source, source-identity, commit-position, operation, and logical-identity
+mutations still fail semantic validation. Phase 18 retains additional field-level golden bytes,
+broader semantic matrices, fuzzing, allocation-failure sweeps beyond the implemented
+command-specific recovery and canonical empty/one-CSEG/two-CSEG one-tablet plus CSEG-backed/empty
+two-tablet Manifest startup paths, crash points, many-tablet skew, mixed-command dispatch, direct
+vector differential/lowering, long-history retention models, durable compaction, and performance
 measurement.
 
 Useful design questions include:

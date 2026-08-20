@@ -57,6 +57,12 @@ padding region must fail exact part decoding as corruption. This sweep proves co
 integrity and canonical zero padding; checksum-repaired semantic page mutations remain separate
 from this integrity contract.
 
+A checksum-repaired semantic matrix changes page bodies and then repairs both the stored-page and
+metadata CRC32C fields. Exact part decoding must succeed before complete validation rejects zero or
+unsupported commit sources, a zero source identity, a zero commit position, zero or unsupported
+operations, and an empty logical identity with the specified corruption/unsupported classification.
+This proves that integrity success is not treated as semantic validity.
+
 Complete acceptance additionally binds the exact table schema/tablet, validates every system tuple,
 distinguishes corrupt zero values from unsupported assigned-domain extensions, bounds nonempty
 logical identities, recomputes granule and part event-time extrema, and requires strict ordering by

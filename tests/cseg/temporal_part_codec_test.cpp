@@ -1,6 +1,7 @@
 #include "chronos/columnar/column_vector.hpp"
 #include "chronos/common/crc32c.hpp"
 #include "chronos/common/uuid.hpp"
+#include "chronos/cseg/format.hpp"
 #include "chronos/cseg/part_codec.hpp"
 #include "chronos/cseg/projected_reader.hpp"
 #include "chronos/cseg/temporal_format.hpp"
@@ -205,6 +206,31 @@ struct TemporalPartFixture {
   return ~crc;
 }
 
+void store_u32(std::vector<std::byte>& bytes, const std::size_t offset, const std::uint32_t value) {
+  for (std::size_t index = 0U; index < sizeof(value); ++index) {
+    bytes[offset + index] = std::byte{static_cast<std::uint8_t>(value >> (index * 8U))};
+  }
+}
+
+void authenticate_page_mutation(std::vector<std::byte>& bytes,
+                                const DecodedCsegMetadataView& metadata,
+                                const std::size_t page_index) {
+  const CsegPageDescriptor& page = metadata.pages()[page_index];
+  const common::ByteView stored = common::ByteView{bytes}.subspan(
+      static_cast<std::size_t>(page.page_offset), static_cast<std::size_t>(page.stored_length));
+  const std::size_t page_descriptor_base =
+      format::kFileHeaderLength + metadata.columns().size() * format::kColumnDescriptorLength +
+      metadata.granules().size() * format::kGranuleDescriptorLength;
+  store_u32(bytes,
+            page_descriptor_base + page_index * format::kPageDescriptorLength +
+                format::kPageCrc32cOffset,
+            common::crc32c(stored));
+  const std::size_t metadata_crc_offset =
+      metadata.encoded_metadata().size() - format::kMetadataCrc32cLength;
+  store_u32(bytes, metadata_crc_offset,
+            common::crc32c(common::ByteView{bytes}.first(metadata_crc_offset)));
+}
+
 TEST(TemporalPartCodecTest, EmitsGoldenCanonicalV2PartWithoutWeakeningV1) {
   TemporalPartFixture fixture;
   const auto first = encode_cseg_v2_temporal_part(fixture.input());
@@ -271,6 +297,53 @@ TEST(TemporalPartCodecTest, EveryStoredPageAndPaddingByteMutationFailsClosed) {
     const auto decoded = decode_cseg_v2_temporal_part_exact(mutated);
     ASSERT_FALSE(decoded.has_value()) << offset;
     EXPECT_EQ(decoded.error().kind(), CsegPartDecodeErrorKind::kCorruption) << offset;
+  }
+}
+
+TEST(TemporalPartCodecTest, ChecksumRepairedSemanticMutationsRemainInvalid) {
+  TemporalPartFixture fixture;
+  const auto encoded = encode_cseg_v2_temporal_part(fixture.input());
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  const auto canonical = decode_cseg_v2_temporal_part_exact(encoded->bytes());
+  ASSERT_TRUE(canonical.has_value()) << canonical.error().status().to_string();
+
+  struct Mutation {
+    std::size_t page_index;
+    std::size_t byte_offset;
+    std::byte replacement;
+    common::StatusCode expected_code;
+    const char* expected_message;
+  };
+  const std::array mutations{
+      Mutation{1U, 0U, std::byte{0U}, common::StatusCode::kCorruption,
+               "CSEG v2 temporal COMMIT_SOURCE is zero or malformed"},
+      Mutation{1U, 0U, std::byte{3U}, common::StatusCode::kNotSupported,
+               "CSEG v2 temporal COMMIT_SOURCE is unsupported"},
+      Mutation{2U, 0U, std::byte{0U}, common::StatusCode::kCorruption,
+               "CSEG v2 temporal SOURCE_ID is zero or malformed"},
+      Mutation{3U, 0U, std::byte{0U}, common::StatusCode::kCorruption,
+               "CSEG v2 temporal COMMIT_POSITION is zero or malformed"},
+      Mutation{5U, 0U, std::byte{0U}, common::StatusCode::kCorruption,
+               "CSEG v2 temporal OPERATION is zero or malformed"},
+      Mutation{5U, 0U, std::byte{5U}, common::StatusCode::kNotSupported,
+               "CSEG v2 temporal OPERATION is unsupported"},
+      Mutation{6U, sizeof(std::uint32_t), std::byte{0U}, common::StatusCode::kCorruption,
+               "CSEG v2 temporal LOGICAL_IDENTITY is outside format bounds"},
+  };
+
+  for (const Mutation& mutation : mutations) {
+    const CsegPageDescriptor& page = canonical->metadata().pages()[mutation.page_index];
+    ASSERT_LT(mutation.byte_offset, page.stored_length);
+    std::vector<std::byte> bytes{encoded->bytes().begin(), encoded->bytes().end()};
+    bytes[static_cast<std::size_t>(page.page_offset) + mutation.byte_offset] = mutation.replacement;
+    authenticate_page_mutation(bytes, canonical->metadata(), mutation.page_index);
+
+    const auto decoded = decode_cseg_v2_temporal_part_exact(bytes);
+    ASSERT_TRUE(decoded.has_value())
+        << mutation.page_index << ": " << decoded.error().status().to_string();
+    const common::Status status = validate_cseg_v2_temporal_part_contents(*decoded);
+    EXPECT_EQ(status.code(), mutation.expected_code) << mutation.page_index;
+    EXPECT_EQ(status.message(), mutation.expected_message) << mutation.page_index;
   }
 }
 
