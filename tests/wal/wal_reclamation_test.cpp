@@ -138,11 +138,16 @@ TEST(WalReclamationTest, ResolvesDurableLogicalSequenceToVerifiedPhysicalBoundar
   const auto resolved = writer->resolve_replay_checkpoint(3U);
 
   ASSERT_TRUE(resolved.has_value()) << resolved.error().to_string();
-  ASSERT_TRUE(resolved->has_value());
-  EXPECT_EQ(**resolved, (WalReplayCheckpoint{.wal_id = test::make_wal_id(),
-                                             .record_sequence = 3U,
-                                             .segment_number = 3U,
-                                             .byte_offset = kSegmentHeaderSize + 64U}));
+  const auto& maybe_resolved_checkpoint = resolved.value();
+  if (!maybe_resolved_checkpoint.has_value()) {
+    ADD_FAILURE() << "expected a physical checkpoint for a retained durable sequence";
+    return;
+  }
+  const WalReplayCheckpoint& resolved_checkpoint = maybe_resolved_checkpoint.value();
+  EXPECT_EQ(resolved_checkpoint, (WalReplayCheckpoint{.wal_id = test::make_wal_id(),
+                                                      .record_sequence = 3U,
+                                                      .segment_number = 3U,
+                                                      .byte_offset = kSegmentHeaderSize + 64U}));
   EXPECT_TRUE(writer->close().is_ok());
 }
 
@@ -157,8 +162,13 @@ TEST(WalReclamationTest, ResolutionRecognizesARequestedPrefixOlderThanRetainedFi
   ASSERT_TRUE(writer.has_value()) << writer.error().to_string();
   const auto checkpoint = writer->resolve_replay_checkpoint(3U);
   ASSERT_TRUE(checkpoint.has_value());
-  ASSERT_TRUE(checkpoint->has_value());
-  ASSERT_TRUE(writer->reclaim_checkpointed_segments(**checkpoint).has_value());
+  const auto& maybe_durable_checkpoint = checkpoint.value();
+  if (!maybe_durable_checkpoint.has_value()) {
+    ADD_FAILURE() << "expected a physical checkpoint before prefix reclamation";
+    return;
+  }
+  const WalReplayCheckpoint durable_checkpoint = maybe_durable_checkpoint.value();
+  ASSERT_TRUE(writer->reclaim_checkpointed_segments(durable_checkpoint).has_value());
 
   const auto absent = writer->resolve_replay_checkpoint(1U);
   const auto retained_boundary = writer->resolve_replay_checkpoint(3U);
@@ -166,9 +176,14 @@ TEST(WalReclamationTest, ResolutionRecognizesARequestedPrefixOlderThanRetainedFi
   ASSERT_TRUE(absent.has_value()) << absent.error().to_string();
   EXPECT_FALSE(absent->has_value());
   ASSERT_TRUE(retained_boundary.has_value()) << retained_boundary.error().to_string();
-  ASSERT_TRUE(retained_boundary->has_value());
-  EXPECT_EQ((**retained_boundary).record_sequence, 3U);
-  EXPECT_EQ((**retained_boundary).segment_number, 3U);
+  const auto& maybe_retained_checkpoint = retained_boundary.value();
+  if (!maybe_retained_checkpoint.has_value()) {
+    ADD_FAILURE() << "expected the retained predecessor checkpoint after reclamation";
+    return;
+  }
+  const WalReplayCheckpoint& retained_checkpoint = maybe_retained_checkpoint.value();
+  EXPECT_EQ(retained_checkpoint.record_sequence, 3U);
+  EXPECT_EQ(retained_checkpoint.segment_number, 3U);
   EXPECT_TRUE(writer->close().is_ok());
 }
 
