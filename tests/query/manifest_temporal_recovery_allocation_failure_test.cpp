@@ -108,8 +108,15 @@ void append_little_endian(std::vector<std::byte>& bytes, const Integer value) {
   }
 }
 
-[[nodiscard]] std::shared_ptr<const schema::TableSchema> temporal_storage_schema() {
-  const schema::ColumnId event_id = first_byte_id<schema::ColumnId>(5U);
+struct TemporalStorageSchemaSeeds {
+  std::uint8_t table{2U};
+  std::uint8_t schema{4U};
+  std::uint8_t column{5U};
+};
+
+[[nodiscard]] std::shared_ptr<const schema::TableSchema>
+temporal_storage_schema(const TemporalStorageSchemaSeeds seeds = {}) {
+  const schema::ColumnId event_id = first_byte_id<schema::ColumnId>(seeds.column);
   std::vector<schema::ColumnDefinition> columns;
   columns.push_back(schema::ColumnDefinition::create(
                         event_id, "event_time",
@@ -117,21 +124,25 @@ void append_little_endian(std::vector<std::byte>& bytes, const Integer value) {
                         false)
                         .value());
   return std::make_shared<const schema::TableSchema>(
-      schema::TableSchema::create(
-          first_byte_id<schema::TableId>(2U), first_byte_id<schema::SchemaId>(4U),
-          schema::SchemaVersion::initial(), std::nullopt, std::move(columns),
-          {.event_time_column = event_id,
-           .physical_ordering_key = {event_id},
-           .partition_columns = {event_id},
-           .shard_key = {event_id},
-           .deduplication_key = {event_id}})
+      schema::TableSchema::create(first_byte_id<schema::TableId>(seeds.table),
+                                  first_byte_id<schema::SchemaId>(seeds.schema),
+                                  schema::SchemaVersion::initial(), std::nullopt,
+                                  std::move(columns),
+                                  {.event_time_column = event_id,
+                                   .physical_ordering_key = {event_id},
+                                   .partition_columns = {event_id},
+                                   .shard_key = {event_id},
+                                   .deduplication_key = {event_id}})
           .value());
 }
 
 [[nodiscard]] EncodedTemporalCommand
-correction_command(const std::shared_ptr<const schema::TableSchema>& retained) {
+temporal_command(const std::shared_ptr<const schema::TableSchema>& retained,
+                 const std::int64_t event_time, const char logical_identity,
+                 const std::int64_t receive_time, const TemporalMutationKind kind,
+                 const std::int64_t system_time) {
   std::vector<std::byte> values;
-  append_little_endian(values, std::int64_t{30});
+  append_little_endian(values, event_time);
   std::vector<columnar::OwnedColumnVector> columns;
   columns.push_back(columnar::OwnedColumnVector::create(
                         {.column_id = retained->event_time_column(),
@@ -144,11 +155,12 @@ correction_command(const std::shared_ptr<const schema::TableSchema>& retained) {
   const auto batch = columnar::OwnedColumnarBatch::create(retained, std::move(columns));
   return encode_temporal_command_v1(
              *batch,
-             {TemporalMutationDescriptor{.logical_identity = {std::byte{'a'}},
-                                         .event_time_ns = 30,
-                                         .receive_time_ns = 300,
-                                         .kind = TemporalMutationKind::kCorrection}},
-             300)
+             {TemporalMutationDescriptor{
+                 .logical_identity = {std::byte{static_cast<std::uint8_t>(logical_identity)}},
+                 .event_time_ns = event_time,
+                 .receive_time_ns = receive_time,
+                 .kind = kind}},
+             system_time)
       .value();
 }
 
@@ -291,7 +303,8 @@ TEST(ManifestTemporalRecoveryAllocationFailureTest,
   ASSERT_TRUE(std::filesystem::create_directory(wal_root));
 
   const std::shared_ptr<const schema::TableSchema> retained = temporal_storage_schema();
-  const EncodedTemporalCommand suffix = correction_command(retained);
+  const EncodedTemporalCommand suffix =
+      temporal_command(retained, 30, 'a', 300, TemporalMutationKind::kCorrection, 300);
   const auto covered_payload = wal::encode_application_payload({.application_format = 99U,
                                                                 .application_kind = 99U,
                                                                 .application_flags = 0U,
@@ -406,6 +419,177 @@ TEST(ManifestTemporalRecoveryAllocationFailureTest,
     EXPECT_EQ(provider->latest_commit_position(), 10U);
     EXPECT_EQ(provider->logical_row_count(), 2U);
     EXPECT_EQ(provider->version_count(), 3U);
+    auto reopened = recovered->release_writer();
+    ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+    EXPECT_TRUE(reopened->close().is_ok());
+    succeeded = true;
+    break;
+  }
+  EXPECT_TRUE(succeeded);
+}
+
+TEST(ManifestTemporalRecoveryAllocationFailureTest,
+     UnwindsEveryMultiTabletAllocationAndReleasesBothLocks) {
+  TemporaryDirectory directory;
+  ASSERT_TRUE(directory.valid());
+  const std::filesystem::path database_root = directory.path() / "database";
+  const std::filesystem::path wal_root = directory.path() / "wal";
+  establish_manifest_layout(database_root);
+  ASSERT_TRUE(std::filesystem::create_directory(wal_root));
+
+  const std::shared_ptr<const schema::TableSchema> retained = temporal_storage_schema();
+  const std::shared_ptr<const schema::TableSchema> second_schema =
+      temporal_storage_schema({.table = 12U, .schema = 14U, .column = 15U});
+  const EncodedTemporalCommand first_suffix =
+      temporal_command(retained, 30, 'a', 300, TemporalMutationKind::kCorrection, 300);
+  const EncodedTemporalCommand second_suffix =
+      temporal_command(second_schema, 40, 'c', 400, TemporalMutationKind::kOriginal, 400);
+  const auto covered_payload = wal::encode_application_payload({.application_format = 99U,
+                                                                .application_kind = 99U,
+                                                                .application_flags = 0U,
+                                                                .application_body = {}});
+  ASSERT_TRUE(covered_payload.has_value()) << covered_payload.error().to_string();
+  const wal::WalWriterConfig writer_config{.directory_path = wal_root.string()};
+  auto created = wal::WalWriter::create_new(writer_config);
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  wal::WalWriter writer = std::move(*created);
+  const wal::WalId wal_id = writer.wal_id();
+  wal::WalAppendResult checkpoint_append{};
+  for (std::uint64_t sequence = 1U; sequence <= 9U; ++sequence) {
+    const auto appended = writer.append_application_entry(covered_payload->bytes());
+    ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
+    ASSERT_EQ(appended->record_sequence, sequence);
+    checkpoint_append = *appended;
+  }
+  const auto first_append = writer.append_application_entry(first_suffix.bytes());
+  ASSERT_TRUE(first_append.has_value()) << first_append.error().to_string();
+  ASSERT_EQ(first_append->record_sequence, 10U);
+  const auto second_append = writer.append_application_entry(second_suffix.bytes());
+  ASSERT_TRUE(second_append.has_value()) << second_append.error().to_string();
+  ASSERT_EQ(second_append->record_sequence, 11U);
+  ASSERT_TRUE(writer.synchronize().has_value());
+  ASSERT_TRUE(writer.close().is_ok());
+
+  const common::Uuid source_id{wal_id.bytes};
+  const cseg::EncodedCsegPart encoded =
+      cseg::test::make_valid_temporal_part(cseg::PageCompression::kNone, {.source_id = source_id});
+  const schema::TabletId tablet_id = first_byte_id<schema::TabletId>(3U);
+  const auto part = manifest::describe_manifest_v2_temporal_part_image(
+      encoded.bytes(), *retained, tablet_id, cseg::temporal_format::CommitSource::kWal, source_id);
+  ASSERT_TRUE(part.has_value()) << part.error().to_string();
+  const schema::TabletId second_tablet_id = first_byte_id<schema::TabletId>(13U);
+  const std::array tablets{manifest::TemporalTabletDescriptor{
+                               .table_id = retained->table_id(),
+                               .tablet_id = tablet_id,
+                               .recovery_schema_id = retained->schema_id(),
+                               .recovery_schema_version = retained->version(),
+                               .source_id = source_id,
+                               .durable_position = 9U,
+                               .reclaim_position = 0U,
+                               .first_part_index = 0U,
+                               .part_count = 1U,
+                               .durable_version_count = part->row_count,
+                               .commit_source = cseg::temporal_format::CommitSource::kWal},
+                           manifest::TemporalTabletDescriptor{
+                               .table_id = second_schema->table_id(),
+                               .tablet_id = second_tablet_id,
+                               .recovery_schema_id = second_schema->schema_id(),
+                               .recovery_schema_version = second_schema->version(),
+                               .source_id = source_id,
+                               .durable_position = 9U,
+                               .reclaim_position = 0U,
+                               .first_part_index = 1U,
+                               .part_count = 0U,
+                               .durable_version_count = 0U,
+                               .commit_source = cseg::temporal_format::CommitSource::kWal}};
+  const std::array parts{*part};
+  const manifest::DatabaseId database_id = first_byte_id<manifest::DatabaseId>(6U);
+  const auto encoded_manifest = manifest::encode_manifest_v2_temporal(
+      {.generation = 1U,
+       .database_id = database_id,
+       .wal_reclaim_checkpoint =
+           manifest::TemporalWalReclaimCheckpoint{
+               .wal_id = wal_id,
+               .coordinate = {.record_sequence = checkpoint_append.record_sequence,
+                              .segment_number = checkpoint_append.record_end.segment_number,
+                              .byte_offset = checkpoint_append.record_end.byte_offset}},
+       .tablets = tablets,
+       .parts = parts,
+       .retries = {}});
+  ASSERT_TRUE(encoded_manifest.has_value()) << encoded_manifest.error().to_string();
+  write_bytes(database_root / manifest::kPartsDirectoryName /
+                  manifest::part_file_name(part->part_id),
+              encoded.bytes());
+  write_bytes(database_root / manifest::kManifestDirectoryName / *manifest::manifest_file_name(1U),
+              encoded_manifest->bytes());
+
+  const schema::SchemaLineage lineage = schema::SchemaLineage::create(*retained).value();
+  const schema::SchemaLineage second_lineage =
+      schema::SchemaLineage::create(*second_schema).value();
+  const std::array schema_bindings{
+      manifest::TabletSchemaBinding{.tablet_id = tablet_id, .lineage = std::cref(lineage)},
+      manifest::TabletSchemaBinding{.tablet_id = second_tablet_id,
+                                    .lineage = std::cref(second_lineage)}};
+  const std::array source_bindings{manifest::TemporalTabletSourceBinding{
+                                       .tablet_id = tablet_id,
+                                       .commit_source = cseg::temporal_format::CommitSource::kWal,
+                                       .source_id = source_id},
+                                   manifest::TemporalTabletSourceBinding{
+                                       .tablet_id = second_tablet_id,
+                                       .commit_source = cseg::temporal_format::CommitSource::kWal,
+                                       .source_id = source_id}};
+  const auto startup_config = [&] {
+    return TemporalManifestWalStartupConfig{
+        .manifest_storage = {.database_root = database_root.string()},
+        .manifest_load = {.expected_database_id = database_id,
+                          .schema_bindings = schema_bindings,
+                          .source_bindings = source_bindings,
+                          .decode_limits = {},
+                          .part_validation_limits = {}},
+        .wal_writer = writer_config,
+        .wal_recovery = {},
+        .retained_system_time_ns = part->minimum_system_time,
+        .store_limits = {},
+        .cseg_limits = {},
+        .command_limits = {},
+        .reclaim_checkpointed_wal_segments = false};
+  };
+
+  bool succeeded = false;
+  for (std::size_t fail_after = 0U; fail_after < 2048U; ++fail_after) {
+    TemporalManifestWalStartupConfig config = startup_config();
+    auto recovered =
+        run_failure(fail_after, [&] { return recover_manifest_temporal_wal(std::move(config)); });
+    if (!recovered.has_value()) {
+      ASSERT_EQ(recovered.error().code(), common::StatusCode::kResourceExhausted)
+          << "allocation " << fail_after << ": " << recovered.error().to_string();
+      auto lock_probe = recover_manifest_temporal_wal(startup_config());
+      ASSERT_TRUE(lock_probe.has_value())
+          << "allocation " << fail_after << ": " << lock_probe.error().to_string();
+      auto probe_writer = lock_probe->release_writer();
+      ASSERT_TRUE(probe_writer.has_value()) << probe_writer.error().to_string();
+      ASSERT_TRUE(probe_writer->close().is_ok());
+      continue;
+    }
+
+    EXPECT_EQ(recovered->report().selected_generation, 1U);
+    EXPECT_EQ(recovered->report().checkpoint.record_sequence, 9U);
+    EXPECT_EQ(recovered->report().applied_suffix_command_count, 2U);
+    EXPECT_EQ(recovered->report().part_count, 1U);
+    EXPECT_EQ(recovered->report().durable_version_count, 2U);
+    EXPECT_EQ(recovered->table_count(), 2U);
+    const TemporalSnapshotProvider* const first_provider =
+        recovered->provider(retained->table_id());
+    ASSERT_NE(first_provider, nullptr);
+    EXPECT_EQ(first_provider->latest_commit_position(), 10U);
+    EXPECT_EQ(first_provider->logical_row_count(), 2U);
+    EXPECT_EQ(first_provider->version_count(), 3U);
+    const TemporalSnapshotProvider* const second_provider =
+        recovered->provider(second_schema->table_id());
+    ASSERT_NE(second_provider, nullptr);
+    EXPECT_EQ(second_provider->latest_commit_position(), 11U);
+    EXPECT_EQ(second_provider->logical_row_count(), 1U);
+    EXPECT_EQ(second_provider->version_count(), 1U);
     auto reopened = recovered->release_writer();
     ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
     EXPECT_TRUE(reopened->close().is_ok());

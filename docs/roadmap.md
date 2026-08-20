@@ -764,9 +764,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   progress; ambiguous same-table multi-tablet routing fails explicitly because command v1 has no
   tablet identity. Resolved current/as-of scalar winners now feed canonical, bounded,
   query-accounted owned vector chunks with cancellation and sticky end. Raft/mixed-source
-  application snapshots, allocation-failure coverage beyond the canonical one-tablet empty and
-  single-CSEG Manifest startup paths, complete query-epoch publication, v1 migration, direct vector
-  winner resolution/lowering, and
+  application snapshots, allocation-failure coverage beyond the canonical empty/single-CSEG one-
+  and two-tablet Manifest startup paths, complete query-epoch publication, v1 migration, direct
+  vector winner resolution/lowering, and
   authorized durable retention/compaction integration remain deferred. In-memory history
   compaction now preserves the exact-boundary time-index predecessor, enforces monotonic position/
   time frontiers, and reports exact removal state. The phase exit gate is not claimed.
