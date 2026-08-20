@@ -54,14 +54,14 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   Focused coverage now injects a committed change before the first pull and after every real one-row
   chunk, END_STREAM, and READY boundary, then proves the exact ordered live suffix; destruction
   before the first pull and after every chunk or END_STREAM abandons and releases the pre-READY
-  owner. It also
-  exercises one real Raft-applied
-  aggregate, exact-boundary rejection, and service routing through the worker-hosted immutable
+  owner. It also exercises one real Raft-applied aggregate, exact-boundary rejection, and service
+  routing through the worker-hosted immutable
   publication adapter. Focused mixed-source coverage now combines a real Raft append with a WAL
   publication under one global aggregate, rejects a stale vector component, and exercises service
   routing. A complete homogeneous WAL vector now proves ungrouped and grouped aggregation, sort,
-  latest, and limit execute once above all tablets. Mixed-source parity for grouped/latest/sort/
-  limit and sustained concurrent publication scheduling remain open.
+  latest, and limit execute once above all tablets. The real mixed WAL/Raft vector now proves the
+  same grouped/latest/sort/limit matrix across both authorities. Sustained concurrent publication
+  scheduling remains open.
 - Committed columnar-batch vector source: forced-allocation sweeps, all logical types, cancellation
   at every column, hostile chunk limits, large batches, scalar/vector differential coverage, and
   memory/allocation profiles. Focused coverage now proves bounded canonical slicing and a checked

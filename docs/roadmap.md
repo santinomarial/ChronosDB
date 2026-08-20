@@ -673,8 +673,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   terminally remove the service entry. One-slot response-ring saturation across a five-chunk
   snapshot retains and retries each exact response without advancing the snapshot twice. The
   homogeneous WAL vector now executes grouped aggregate, global sort/limit, and latest/limit plans
-  once above all tablets in addition to the existing global ungrouped aggregate. The remaining exit
-  evidence remains deferred. The phase exit gate is not claimed.
+  once above all tablets in addition to the existing global ungrouped aggregate; the real mixed
+  WAL/Raft vector now passes the same matrix across both authorities. The remaining exit evidence
+  remains deferred. The phase exit gate is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.

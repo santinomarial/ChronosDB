@@ -405,7 +405,7 @@ TEST(MultiTabletSnapshotSubscriptionTest,
   EXPECT_TRUE(runtime->shutdown().is_ok());
 }
 
-TEST(MultiTabletSnapshotSubscriptionTest, ExecutesOneGlobalPlanAcrossExactWalAndRaftBoundaries) {
+TEST(MultiTabletSnapshotSubscriptionTest, ExecutesEveryGlobalStageAcrossExactWalAndRaftBoundaries) {
   query::test::SnapshotTabletScanFixture fixture{3U};
   TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
@@ -475,6 +475,69 @@ TEST(MultiTabletSnapshotSubscriptionTest, ExecutesOneGlobalPlanAcrossExactWalAnd
   ASSERT_TRUE(ready.has_value()) << ready.error().to_string();
   EXPECT_TRUE(subscription->ready());
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+
+  const auto execute = [&](const std::string_view sql) {
+    MultiTabletSubscriptionSource current{
+        .database_id = fixture.snapshot().database_id().uuid(),
+        .table_id = fixture.schema_ptr()->table_id(),
+        .plan_fingerprint = fingerprint(),
+        .schema_id = fixture.schema_ptr()->schema_id(),
+        .schema_version = fixture.schema_ptr()->version(),
+        .members = {{query::test::SnapshotTabletScanFixture::tablet_id(),
+                     fixture.snapshot().wal_id(), 1U},
+                    MultiTabletSubscriptionMember::raft(raft_tablet, group, 1U)},
+        .token_key = token_key()};
+    auto current_manager = MultiTabletSubscriptionManager::create(std::move(current));
+    EXPECT_TRUE(current_manager.has_value()) << current_manager.error().to_string();
+    std::vector<std::vector<std::uint64_t>> rows;
+    if (!current_manager.has_value())
+      return rows;
+    BoundPlan current_bound = lower(fixture, sql);
+    auto current_subscription = MultiTabletSnapshotSubscription::start_mixed(
+        *current_manager, subscription_request, resources, fixture.storage(), fixture.publisher(),
+        **application, fixture.lineage(), fixture.schema_ptr()->schema_id(), current_bound.plan,
+        std::move(current_bound.columns));
+    EXPECT_TRUE(current_subscription.has_value()) << current_subscription.error().to_string();
+    if (!current_subscription.has_value())
+      return rows;
+    for (;;) {
+      auto output = current_subscription->next();
+      EXPECT_TRUE(output.has_value()) << output.error().to_string();
+      if (!output.has_value())
+        break;
+      if (output->message_type == network::MessageType::kSubscriptionReady)
+        break;
+      auto batch = network::decode_query_result_batch(output->payload);
+      EXPECT_TRUE(batch.has_value()) << batch.error().to_string();
+      if (!batch.has_value())
+        break;
+      for (std::uint32_t row = 0U; row < batch->row_count(); ++row) {
+        std::vector<std::uint64_t> cells;
+        cells.reserve(batch->columns().size());
+        for (std::size_t column = 0U; column < batch->columns().size(); ++column) {
+          const network::QueryResultCell* cell = batch->cell(row, column);
+          EXPECT_NE(cell, nullptr);
+          if (cell != nullptr)
+            cells.push_back(decode_u64(cell->value));
+        }
+        rows.push_back(std::move(cells));
+      }
+    }
+    EXPECT_TRUE(current_subscription->ready());
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+    return rows;
+  };
+
+  EXPECT_EQ(execute("SELECT event_time FROM metrics ORDER BY event_time DESC LIMIT 2"),
+            (std::vector<std::vector<std::uint64_t>>{{signed_bits(701)}, {signed_bits(700)}}));
+  EXPECT_EQ(
+      execute("SELECT time_bucket(INTERVAL '1 second', event_time) AS bucket, count(*) AS rows "
+              "FROM metrics GROUP BY time_bucket(INTERVAL '1 second', event_time) ORDER BY bucket"),
+      (std::vector<std::vector<std::uint64_t>>{{signed_bits(-1'000'000'000), 3U}, {0U, 2U}}));
+  EXPECT_EQ(
+      execute("SELECT event_time FROM metrics LATEST BY (event_time) ON "
+              "time_bucket(INTERVAL '1 second', event_time) ORDER BY event_time DESC LIMIT 2"),
+      (std::vector<std::vector<std::uint64_t>>{{signed_bits(701)}, {signed_bits(700)}}));
 
   MultiTabletSubscriptionSource stale_source{
       .database_id = fixture.snapshot().database_id().uuid(),
