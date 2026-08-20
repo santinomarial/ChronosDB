@@ -73,6 +73,8 @@ template <typename Integer> void append_le(std::vector<std::byte>& bytes, const 
 struct TemporalFixtureValues {
   std::int64_t first_event_time{10};
   std::int64_t second_event_time{20};
+  std::int64_t minimum_event_time{10};
+  std::int64_t maximum_event_time{20};
   std::uint8_t commit_source{static_cast<std::uint8_t>(temporal_format::CommitSource::kWal)};
   std::uint64_t commit_position{7U};
   std::uint8_t operation{static_cast<std::uint8_t>(temporal_format::Operation::kOriginal)};
@@ -84,6 +86,8 @@ struct TemporalPartFixture {
   schema::TableId table_id{id<schema::TableId>(2U)};
   schema::TabletId tablet_id{id<schema::TabletId>(3U)};
   schema::SchemaId schema_id{id<schema::SchemaId>(4U)};
+  std::int64_t minimum_event_time;
+  std::int64_t maximum_event_time;
   std::vector<CsegColumnDescriptor> columns{
       user_column(),
       system_column(StorageKind::kCommitSource, schema::LogicalTypeKind::kUInt8),
@@ -102,7 +106,11 @@ struct TemporalPartFixture {
                                                .maximum_event_time = 20}};
   std::vector<EncodedCsegPage> pages;
 
-  explicit TemporalPartFixture(const TemporalFixtureValues values = {}) {
+  explicit TemporalPartFixture(const TemporalFixtureValues values = {})
+      : minimum_event_time(values.minimum_event_time),
+        maximum_event_time(values.maximum_event_time) {
+    granules.front().minimum_event_time = minimum_event_time;
+    granules.front().maximum_event_time = maximum_event_time;
     std::vector<std::byte> event_time;
     append_le(event_time, values.first_event_time);
     append_le(event_time, values.second_event_time);
@@ -158,8 +166,8 @@ struct TemporalPartFixture {
             .row_count = 2U,
             .event_time_column_ordinal = 0U,
             .ordering_column_count = 1U,
-            .minimum_event_time = 10,
-            .maximum_event_time = 20,
+            .minimum_event_time = minimum_event_time,
+            .maximum_event_time = maximum_event_time,
             .columns = columns,
             .granules = granules,
             .pages = pages};
@@ -344,6 +352,68 @@ TEST(TemporalPartCodecTest, ChecksumRepairedSemanticMutationsRemainInvalid) {
     const common::Status status = validate_cseg_v2_temporal_part_contents(*decoded);
     EXPECT_EQ(status.code(), mutation.expected_code) << mutation.page_index;
     EXPECT_EQ(status.message(), mutation.expected_message) << mutation.page_index;
+  }
+}
+
+TEST(TemporalPartCodecTest, ChecksumRepairedEventKeySwapFailsPhysicalOrdering) {
+  TemporalPartFixture fixture;
+  const auto encoded = encode_cseg_v2_temporal_part(fixture.input());
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  const auto canonical = decode_cseg_v2_temporal_part_exact(encoded->bytes());
+  ASSERT_TRUE(canonical.has_value()) << canonical.error().status().to_string();
+  ASSERT_TRUE(validate_cseg_v2_temporal_part_contents(*canonical).is_ok());
+
+  const CsegPageDescriptor& event_time = canonical->metadata().pages()[0U];
+  std::vector<std::byte> bytes{encoded->bytes().begin(), encoded->bytes().end()};
+  bytes[static_cast<std::size_t>(event_time.page_offset)] = std::byte{20U};
+  bytes[static_cast<std::size_t>(event_time.page_offset) + sizeof(std::int64_t)] = std::byte{10U};
+  authenticate_page_mutation(bytes, canonical->metadata(), 0U);
+
+  const auto decoded = decode_cseg_v2_temporal_part_exact(bytes);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().status().to_string();
+  const common::Status status = validate_cseg_v2_temporal_part_contents(*decoded);
+  EXPECT_EQ(status.code(), common::StatusCode::kCorruption);
+  EXPECT_EQ(status.message(), "CSEG physical row order is not strictly increasing");
+}
+
+TEST(TemporalPartCodecTest, ChecksumRepairedSourceTupleReversalsFailPhysicalOrdering) {
+  TemporalFixtureValues values;
+  values.second_event_time = values.first_event_time;
+  values.maximum_event_time = values.minimum_event_time;
+  TemporalPartFixture fixture{values};
+  const auto encoded = encode_cseg_v2_temporal_part(fixture.input());
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  const auto canonical = decode_cseg_v2_temporal_part_exact(encoded->bytes());
+  ASSERT_TRUE(canonical.has_value()) << canonical.error().status().to_string();
+  ASSERT_TRUE(validate_cseg_v2_temporal_part_contents(*canonical).is_ok());
+
+  struct Mutation {
+    std::size_t page_index;
+    std::size_t byte_offset;
+    std::byte replacement;
+  };
+  constexpr std::array mutations{
+      Mutation{1U, 0U, std::byte{2U}},
+      Mutation{2U, 0U, std::byte{9U}},
+      Mutation{3U, 0U, std::byte{8U}},
+      Mutation{4U, 0U, std::byte{1U}},
+  };
+  for (const Mutation& mutation : mutations) {
+    const CsegPageDescriptor& page = canonical->metadata().pages()[mutation.page_index];
+    std::vector<std::byte> bytes{encoded->bytes().begin(), encoded->bytes().end()};
+    bytes[static_cast<std::size_t>(page.page_offset) + mutation.byte_offset] = mutation.replacement;
+    if (mutation.page_index == 4U) {
+      bytes[static_cast<std::size_t>(page.page_offset) + sizeof(std::uint32_t)] = std::byte{0U};
+    }
+    authenticate_page_mutation(bytes, canonical->metadata(), mutation.page_index);
+
+    const auto decoded = decode_cseg_v2_temporal_part_exact(bytes);
+    ASSERT_TRUE(decoded.has_value())
+        << mutation.page_index << ": " << decoded.error().status().to_string();
+    const common::Status status = validate_cseg_v2_temporal_part_contents(*decoded);
+    EXPECT_EQ(status.code(), common::StatusCode::kCorruption) << mutation.page_index;
+    EXPECT_EQ(status.message(), "CSEG physical row order is not strictly increasing")
+        << mutation.page_index;
   }
 }
 

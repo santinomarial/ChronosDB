@@ -71,6 +71,11 @@ unsupported commit sources, a zero source identity, a zero commit position, zero
 operations, and an empty logical identity with the specified corruption/unsupported classification.
 This proves that integrity success is not treated as semantic validity.
 
+Additional repaired-checksum cases swap the two event-time values while preserving their extrema,
+then reverse each component of `(commit_source, source_id, commit_position, row_ordinal)` under an
+equal event key. Every image passes exact structural decoding and scalar-domain validation but must
+fail complete validation because physical row order is not strictly increasing.
+
 Complete acceptance additionally binds the exact table schema/tablet, validates every system tuple,
 distinguishes corrupt zero values from unsupported assigned-domain extensions, bounds nonempty
 logical identities, recomputes granule and part event-time extrema, and requires strict ordering by
