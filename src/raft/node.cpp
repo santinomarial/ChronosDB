@@ -152,6 +152,15 @@ public:
     return state.log[offset].term;
   }
 
+  [[nodiscard]] std::optional<Term> append_predecessor_term(const LogIndex index) const noexcept {
+    // Index zero is the canonical empty-log predecessor only while no installed snapshot has
+    // compacted it away. Treating it as retained after snapshot index one would let the following
+    // entry alias the snapshot boundary and produce an underflowed retained-log offset.
+    if (index < state.snapshot.last_included_index)
+      return std::nullopt;
+    return term_at(index);
+  }
+
   [[nodiscard]] std::size_t offset_for(const LogIndex index) const noexcept {
     return static_cast<std::size_t>(index - state.snapshot.last_included_index - 1U);
   }
@@ -479,7 +488,7 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
           if (value.term < impl_->state.current_term) {
             return common::Status::ok();
           }
-          const auto previous_term = impl_->term_at(value.previous_log_index);
+          const auto previous_term = impl_->append_predecessor_term(value.previous_log_index);
           if (!previous_term.has_value() || *previous_term != value.previous_log_term) {
             return common::Status::ok();
           }
@@ -609,7 +618,7 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
             return common::Status::ok();
           }
           impl_->become_follower(value.term, source);
-          const auto previous_term = impl_->term_at(value.previous_log_index);
+          const auto previous_term = impl_->append_predecessor_term(value.previous_log_index);
           if (!previous_term.has_value() || *previous_term != value.previous_log_term) {
             std::optional<Term> conflict_term;
             LogIndex conflict_index = impl_->last_index() + 1U;

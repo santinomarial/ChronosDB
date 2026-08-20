@@ -52,4 +52,7 @@ segment reclamation remain follow-up work.
 
 Invariants 1, 4, 5, 8, 10, 11, 14, and 18 apply. Focused core tests cover applied-prefix
 compaction, pending installation without early response, synchronized completion, suffix catch-up,
-membership restoration, durable reopen, and committed-prefix conflict rejection.
+membership restoration, durable reopen, and committed-prefix conflict rejection. AppendEntries
+predecessors below the installed snapshot boundary now receive an ordinary negative response
+without consulting compacted entry storage; a higher-term request retains the required persistent
+term transition before that response.

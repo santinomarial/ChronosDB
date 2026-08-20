@@ -788,7 +788,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   election and commit quorums, recover from the retained log, and safely remove leaders.
   Focused 3-node election, commit, failover, stale leader, restart catch-up, and membership tests
   pass. A two-stage snapshot protocol now withholds acknowledgment until external application
-  installation is confirmed and the compacted Raft state is synchronized. A bounded canonical
+  installation is confirmed and the compacted Raft state is synchronized. AppendEntries
+  predecessors below that installed boundary now fail as ordinary conflicts without aliasing the
+  snapshot entry into retained-log storage, while higher-term failures still carry their required
+  persistence transition. A bounded canonical
   group/source/destination transport envelope now round-trips vote, append, snapshot, and read-
   barrier messages without introducing sockets into the deterministic core. Header-first bounded
   stream ownership now validates allocation-relevant fields before exact frame allocation and

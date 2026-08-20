@@ -390,6 +390,11 @@ SPSC tests cover empty/full transitions, counter wraparound, publication/reclama
 
 Before production integration, virtual-time simulation explores elections, replication, membership, snapshot installation, crashes, disk errors, partitions, duplication, delay, and reordering. Traces are seed-replayable and shrinkable. Safety checkers cover election safety, log matching, leader completeness, committed apply order, read-mode histories, and absence of uncommitted visibility.
 
+The deterministic core separately checks the installed-snapshot predecessor boundary. A request
+whose predecessor is already compacted receives a negative conflict response without indexing
+retained log storage; if it carries a higher term, the returned transition contains the exact
+term/vote persistence change required before that response can be released.
+
 The implemented group-scoped transport envelope additionally has checksum-repaired hostile
 length/count/reserved/value matrices, exhaustive owned-allocation failure sweeps, and a bounded
 structure-aware libFuzzer target. Accepted arbitrary frames must exact-reencode, while generated

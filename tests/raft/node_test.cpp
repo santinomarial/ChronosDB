@@ -197,6 +197,45 @@ TEST(RaftNodeTest, RejectsDivergentBytesAtMatchingTermAndIndex) {
   EXPECT_EQ(node->persistent_state(), state);
 }
 
+TEST(RaftNodeTest, RejectsAppendPrefixBeforeSnapshotWithoutReadingCompactedEntry) {
+  PersistentState state{};
+  state.current_term = 2U;
+  state.voted_for = 3U;
+  state.snapshot.last_included_index = 1U;
+  state.snapshot.last_included_term = 1U;
+  state.snapshot.manifest_generation = 1U;
+  state.snapshot.configuration_index = 1U;
+  state.snapshot.voters = {1U, 2U, 3U};
+  state.commit_index = 1U;
+  state.applied_index = 1U;
+
+  for (const Term term : {2U, 3U}) {
+    SCOPED_TRACE(term);
+    auto node = RaftNode::create(1U, {1U, 2U, 3U}, state);
+    ASSERT_TRUE(node.has_value());
+
+    auto rejected = node->receive(
+        2U, AppendEntriesRequest{term, 2U, 0U, 0U, {LogEntry{1U, 1U, 1U, {std::byte{0x11}}}}, 0U});
+
+    ASSERT_TRUE(rejected.has_value()) << rejected.error().to_string();
+    ASSERT_EQ(rejected->outbound.size(), 1U);
+    const auto& response = std::get<AppendEntriesResponse>(rejected->outbound.front().message);
+    EXPECT_EQ(response, (AppendEntriesResponse{term, false, 1U, std::nullopt, 2U}));
+    EXPECT_EQ(rejected->persistent_state.has_value(), term > state.current_term);
+    EXPECT_EQ(node->current_term(), term);
+    EXPECT_EQ(node->last_log_index(), 1U);
+    EXPECT_EQ(node->commit_index(), 1U);
+    EXPECT_TRUE(node->persistent_state().log.empty());
+    if (term > state.current_term) {
+      EXPECT_EQ(rejected->persistent_state,
+                std::optional<PersistentState>{node->persistent_state()});
+      EXPECT_FALSE(node->persistent_state().voted_for.has_value());
+    } else {
+      EXPECT_EQ(node->persistent_state(), state);
+    }
+  }
+}
+
 TEST(RaftNodeTest, RejectsIndexExhaustionBeforeNextIndexCanWrap) {
   PersistentState state{};
   state.current_term = 1U;

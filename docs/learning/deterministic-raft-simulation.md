@@ -67,8 +67,11 @@ corpus evidence shows a need.
 
 Focused coverage includes partition, duplicate, commit propagation, crash/restart, atomic
 persistence failure, exact replay, seeded schedules, joint membership, compaction, trace shrinking,
-and bound validation. Long seed campaigns, exhaustive schedules, timer clock changes, physical disk
-faults, and minimized corpus retention remain in the hardening ledger.
+and bound validation. The production core additionally rejects AppendEntries predecessors below an
+installed snapshot without interpreting the compacted entry as retained log storage, and its
+higher-term regression requires persistence before the negative response. Long seed campaigns,
+exhaustive schedules, timer clock changes, physical disk faults, and minimized corpus retention
+remain in the hardening ledger.
 
 Useful questions include: why can a queued message survive a sender crash; why must durable state be
 installed before outbound admission; why does replay use explicit message IDs; why is a snapshot

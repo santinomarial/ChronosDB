@@ -232,9 +232,12 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   partition, delay/reordering, duplicate/loss, crash/restart, atomic persistence failure,
   application, joint membership, local compaction, exact replay, safety-model comparison, and
   deletion shrinking (eight seeds and 4,000 generated actions in the focused test).
-- Extend the implemented hostile higher-term/payload-identity and pre-observation term/position/
-  response-state regression checks into exhaustive persistence-before-response, committed-log
-  overwrite, sequence-exhaustion, response-state, and snapshot-boundary properties.
+- Extend the implemented hostile higher-term/payload-identity, pre-observation term/position/
+  response-state, and exact compacted-prefix predecessor regression checks into exhaustive
+  persistence-before-response, committed-log overwrite, sequence-exhaustion, response-state, and
+  broader snapshot-boundary properties. The exact snapshot-index-one alias now returns a negative
+  conflict response without reading compacted storage, including a persistent higher-term/vote
+  transition before response publication.
 - Persistent file owner, vote/log fsync ordering, crash/restart at every transition, idempotent
   recovery, application to tablet state, snapshot creation/install, and log compaction. Extend the
   implemented read barrier through production transport and tablet snapshot acquisition.
