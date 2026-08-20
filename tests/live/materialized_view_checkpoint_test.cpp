@@ -98,6 +98,24 @@ TEST(MaterializedViewCheckpointTest, RoundTripsExactStateAndContinuation) {
   EXPECT_EQ(after->apply_committed(next, correction), before->apply_committed(next, correction));
 }
 
+TEST(MaterializedViewCheckpointTest, RoundTripsEmptyOwnedState) {
+  auto view =
+      WindowedMaterializedView::create(tablet_id(), wal_id(), WindowDefinition{10, 5, 2, 16U, 16U});
+  ASSERT_TRUE(view.has_value()) << view.error().to_string();
+  auto original = view->checkpoint();
+  ASSERT_TRUE(original.has_value()) << original.error().to_string();
+  EXPECT_TRUE(original->rows.empty());
+  EXPECT_TRUE(original->windows.empty());
+
+  auto encoded = encode_windowed_materialized_view_checkpoint_v1(*original);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  auto decoded = decode_windowed_materialized_view_checkpoint_v1(*encoded);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(*decoded, *original);
+  EXPECT_TRUE(decoded->rows.empty());
+  EXPECT_TRUE(decoded->windows.empty());
+}
+
 TEST(MaterializedViewCheckpointTest, RejectsCorruptionUnknownVersionAndDecodeLimits) {
   auto encoded = encode_windowed_materialized_view_checkpoint_v1(checkpoint()).value();
   encoded[kMaterializedViewCheckpointHeaderSize] ^= std::byte{0x01U};

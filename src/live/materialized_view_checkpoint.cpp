@@ -401,7 +401,9 @@ common::Result<WindowedMaterializedViewCheckpoint> decode_windowed_materialized_
                      .maximum_windows = static_cast<std::size_t>(maximum_windows),
                      .maximum_rows = static_cast<std::size_t>(maximum_rows)},
       .position = SourcePosition::wal(*tablet_id, wal_id, load_u64(bytes, kAppliedSequenceOffset)),
-      .watermark = load_i64(bytes, kWatermarkOffset)};
+      .watermark = load_i64(bytes, kWatermarkOffset),
+      .rows = {},
+      .windows = {}};
   try {
     checkpoint.rows.reserve(static_cast<std::size_t>(row_count));
     checkpoint.windows.reserve(static_cast<std::size_t>(window_count));

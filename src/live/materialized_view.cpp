@@ -385,7 +385,9 @@ common::Result<WindowedMaterializedViewCheckpoint> WindowedMaterializedView::che
   try {
     WindowedMaterializedViewCheckpoint checkpoint{.definition = impl_->definition,
                                                   .position = impl_->position,
-                                                  .watermark = impl_->current_watermark};
+                                                  .watermark = impl_->current_watermark,
+                                                  .rows = {},
+                                                  .windows = {}};
     checkpoint.rows.reserve(impl_->rows.size());
     for (const auto& [identity, input] : impl_->rows) {
       static_cast<void>(identity);
