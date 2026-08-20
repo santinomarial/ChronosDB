@@ -17,8 +17,9 @@ the follower cannot recover.
 ## Accepted decision
 
 Replication emits `InstallSnapshotRequest` when a peer needs an index at or below the leader's
-snapshot boundary. Receipt validates the term, leader identity, snapshot identity, membership
-checkpoint, and bounds, then returns a pending-install transition without acknowledging success.
+snapshot boundary. Receipt validates the nonzero term, requires the snapshot's last-included term
+not to exceed that message term, and validates leader identity, snapshot identity, membership
+checkpoint, and bounds before returning a pending-install transition without acknowledging success.
 The application/storage owner must independently transfer, verify, and durably install the exact
 snapshot named by its manifest generation and part-set checksum.
 
@@ -79,3 +80,5 @@ rejects the installation, verifies its negative response, and then permits the l
 Request-level coverage coalesces an exact duplicate, rejects a different same-term snapshot without
 losing the first completion, persists a higher-term competitor before its negative response, clears
 the stale pending work through negative completion, and then admits the higher-term retry.
+An impossible higher-term request whose snapshot term is newer than its own leader term is rejected
+before term/vote/role observation or external installation publication.

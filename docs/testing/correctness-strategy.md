@@ -405,6 +405,11 @@ no second application task, a different request returns a negative response with
 first completion, and a higher-term competitor returns its term/vote persistence state before that
 response. Resolution of the old request permits a later retry.
 
+Snapshot metadata cannot claim an entry term newer than its enclosing leader request. Direct-core
+coverage submits that impossible relation to a candidate and requires `INVALID_ARGUMENT` with exact
+role and persistent-state preservation; checksum-valid wire decoding and outbound encoding reject
+the same relation before installation ownership can be published.
+
 The implemented group-scoped transport envelope additionally has checksum-repaired hostile
 length/count/reserved/value matrices, exhaustive owned-allocation failure sweeps, and a bounded
 structure-aware libFuzzer target. Accepted arbitrary frames must exact-reencode, while generated

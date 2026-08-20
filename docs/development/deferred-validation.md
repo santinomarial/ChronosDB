@@ -242,7 +242,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   changes no state, the original snapshot still installs with its exact retained suffix, and an
   explicit negative completion releases local compaction. Exact remote duplicates now coalesce,
   competing requests receive negative responses without replacing pending identity, and a higher-
-  term competitor persists its term/vote transition before rejection and retry.
+  term competitor persists its term/vote transition before rejection and retry. Snapshot requests
+  whose last-included term exceeds their message term now fail core and transport validation before
+  term/vote/role observation or external install publication.
 - Persistent file owner, vote/log fsync ordering, crash/restart at every transition, idempotent
   recovery, application to tablet state, snapshot creation/install, and log compaction. Extend the
   implemented read barrier through production transport and tablet snapshot acquisition.

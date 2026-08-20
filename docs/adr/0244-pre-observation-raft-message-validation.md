@@ -11,14 +11,16 @@ term, because a rejected higher-term message cannot mutate persistent term/vote 
 returning the persistence transition required by the runtime. That gate covered embedded source
 identity and append payload bounds, but a fresh node could still grant a structurally valid-looking
 term-zero vote. Response conflict fields and vote/append predecessor pairs also admitted
-noncanonical combinations before higher-term observation.
+noncanonical combinations before higher-term observation. Snapshot metadata had the same omitted
+term relation: its last-included term could exceed the leader term carried by the request.
 
 ## Decision
 
 Every received Raft message must carry a nonzero term before role or persistent state changes.
 RequestVote last-log index/term and AppendEntries previous index/term use exact zero-pair semantics;
 their log term cannot exceed the message term. Existing source/candidate/leader identity checks
-remain mandatory.
+remain mandatory. An InstallSnapshot request likewise requires its nonzero last-included term not
+to exceed the request term before any role, term, vote, or pending external-install state changes.
 
 A successful AppendEntries response cannot carry conflict state, its match index cannot exceed the
 leader's log, and an optional conflict term must be nonzero. Failed responses may retain the
@@ -56,12 +58,14 @@ Those broader schedules and fault matrices remain Phase 18 work.
 ## Validation
 
 Focused regression coverage presents zero-term votes and higher-term malformed vote, append,
-append-response, snapshot-response, and read-barrier messages. Every message is rejected and the
-complete persistent state remains byte-for-value equal. The election/replication/failover gate and
-the full Raft suite remain green. A dedicated snapshot-index-one regression presents both current-
-and higher-term `(previous=0, entry=1)` requests, requires an exact negative conflict response,
-proves no retained entry is read or installed, and requires the higher term/vote reset to accompany
-that response as persistent state.
+append-response, snapshot-request, snapshot-response, and read-barrier messages. The impossible
+snapshot request carries a last-included term above its own request term and is also rejected by
+checksum-valid transport decoding and outbound encoding. Every direct message is rejected while
+the candidate role and complete persistent state remain unchanged. The election/replication/
+failover gate and the full Raft suite remain green. A dedicated snapshot-index-one regression
+presents both current- and higher-term `(previous=0, entry=1)` requests, requires an exact negative
+conflict response, proves no retained entry is read or installed, and requires the higher term/vote
+reset to accompany that response as persistent state.
 
 ## References
 

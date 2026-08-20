@@ -73,8 +73,10 @@ higher-term regression requires persistence before the negative response. The sa
 pending external installation against local compaction so one simulator node cannot create a second
 snapshot authority before resolving the first. Duplicate snapshot requests coalesce around that
 owner; different requests fail negatively without replacing it, including persist-before-response
-handling for a higher term. Long seed campaigns, exhaustive schedules, timer clock changes,
-physical disk faults, and minimized corpus retention remain in the hardening ledger.
+handling for a higher term. An impossible snapshot whose last-included term exceeds the request term
+fails before the node observes that request term or publishes external installation work. Long seed
+campaigns, exhaustive schedules, timer clock changes, physical disk faults, and minimized corpus
+retention remain in the hardening ledger.
 
 Useful questions include: why can a queued message survive a sender crash; why must durable state be
 installed before outbound admission; why does replay use explicit message IDs; why is a snapshot

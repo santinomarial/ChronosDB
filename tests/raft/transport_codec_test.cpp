@@ -227,6 +227,9 @@ TEST(RaftTransportCodecTest, RejectsChecksumRepairedHostilePayloadFields) {
       encode_raft_transport_envelope_v1(envelope(InstallSnapshotRequest{4U, 1U, snapshot()}))
           .value();
   candidate = snapshot_frame;
+  store_u64(candidate, 120U, 5U);
+  expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
+  candidate = snapshot_frame;
   store_u32(candidate, 176U, std::numeric_limits<std::uint32_t>::max());
   expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kResourceExhausted);
   for (const std::size_t offset : {180U, 181U, 182U, 183U}) {
@@ -374,6 +377,13 @@ TEST(RaftTransportCodecTest, EnforcesFrameEntryAndSnapshotBoundsBeforeAllocation
       envelope(InstallSnapshotRequest{4U, 1U, std::move(too_many_voters)}), three_voters);
   ASSERT_FALSE(snapshot_limit.has_value());
   EXPECT_EQ(snapshot_limit.error().code(), common::StatusCode::kInvalidArgument);
+
+  SnapshotMetadata future_term_snapshot = snapshot();
+  future_term_snapshot.last_included_term = 5U;
+  auto future_term = encode_raft_transport_envelope_v1(
+      envelope(InstallSnapshotRequest{4U, 1U, std::move(future_term_snapshot)}));
+  ASSERT_FALSE(future_term.has_value());
+  EXPECT_EQ(future_term.error().code(), common::StatusCode::kInvalidArgument);
 }
 
 } // namespace

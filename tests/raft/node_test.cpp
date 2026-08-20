@@ -160,18 +160,27 @@ TEST(RaftNodeTest, RejectsMalformedHigherTermWithoutChangingPersistentState) {
 }
 
 TEST(RaftNodeTest, RejectsNoncanonicalTermsAndResponseStateBeforeObservingTerm) {
+  SnapshotMetadata future_term_snapshot{};
+  future_term_snapshot.last_included_index = 1U;
+  future_term_snapshot.last_included_term = 10U;
+  future_term_snapshot.manifest_generation = 1U;
+  future_term_snapshot.voters = {1U, 2U, 3U};
   const std::vector<Message> malformed{
       RequestVoteRequest{0U, 2U, 0U, 0U},
       RequestVoteRequest{9U, 2U, 0U, 1U},
       AppendEntriesRequest{9U, 2U, 0U, 1U, {}, 0U},
       AppendEntriesResponse{9U, true, 0U, 1U, 1U},
       AppendEntriesResponse{9U, false, 0U, 0U, 1U},
+      InstallSnapshotRequest{9U, 2U, std::move(future_term_snapshot)},
       InstallSnapshotResponse{9U, true, 0U},
       ReadBarrierResponse{9U, 0U, true},
   };
   for (const Message& message : malformed) {
     auto node = RaftNode::create(1U, {1U, 2U, 3U});
     ASSERT_TRUE(node.has_value());
+    auto election = node->start_election();
+    ASSERT_TRUE(election.has_value()) << election.error().to_string();
+    ASSERT_EQ(node->role(), Role::kCandidate);
     const PersistentState before = node->persistent_state();
 
     auto rejected = node->receive(2U, message);
@@ -179,6 +188,7 @@ TEST(RaftNodeTest, RejectsNoncanonicalTermsAndResponseStateBeforeObservingTerm) 
     ASSERT_FALSE(rejected.has_value());
     EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
     EXPECT_EQ(node->persistent_state(), before);
+    EXPECT_EQ(node->role(), Role::kCandidate);
   }
 }
 

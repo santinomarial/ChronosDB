@@ -550,7 +550,7 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
             return invalid("AppendEntries response state is invalid");
           }
         } else if constexpr (std::is_same_v<T, InstallSnapshotRequest>) {
-          if (value.leader_id != source ||
+          if (value.leader_id != source || value.snapshot.last_included_term > value.term ||
               !valid_snapshot(value.snapshot, impl_->limits.maximum_voters)) {
             return invalid("InstallSnapshot identity or metadata is invalid");
           }

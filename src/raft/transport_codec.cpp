@@ -191,8 +191,8 @@ void store_u32(const std::span<std::byte> bytes, const std::size_t offset,
           if (value.conflict_term.has_value() && *value.conflict_term == 0U)
             return invalid("Raft append response conflict term is zero");
         } else if constexpr (std::is_same_v<T, InstallSnapshotRequest>) {
-          if (value.leader_id != envelope.source)
-            return invalid("Raft snapshot leader disagrees with the transport source");
+          if (value.leader_id != envelope.source || value.snapshot.last_included_term > value.term)
+            return invalid("Raft snapshot request identity or term is invalid");
           common::Status snapshot =
               validate_snapshot(value.snapshot, limits.maximum_snapshot_voters);
           if (!snapshot.is_ok())
