@@ -1,3 +1,4 @@
+#include "chronos/live/multi_tablet_snapshot_subscription.hpp"
 #include "chronos/live/snapshot_subscription.hpp"
 #include "chronos/live/subscription.hpp"
 #include "chronos/network/messages.hpp"
@@ -33,12 +34,13 @@ struct BoundPlan {
   std::vector<SnapshotSubscriptionColumn> columns;
 };
 
-[[nodiscard]] BoundPlan lower(const query::test::SnapshotTabletScanFixture& fixture) {
+[[nodiscard]] BoundPlan lower(const query::test::SnapshotTabletScanFixture& fixture,
+                              const std::string_view sql = "SELECT event_time FROM metrics") {
   const std::vector<query::QueryCatalogTableInput> tables{
       {.name = "metrics", .quoted = false, .schema = fixture.schema_ptr()}};
   auto catalog = std::make_shared<const query::QueryCatalogSnapshot>(
       query::QueryCatalogSnapshot::create(1U, tables).value());
-  auto parsed = query::parse_sql_v1_select("SELECT event_time FROM metrics");
+  auto parsed = query::parse_sql_v1_select(sql);
   auto bound = query::bind_sql_v1_select(std::move(*parsed), std::move(catalog));
   std::vector<SnapshotSubscriptionColumn> columns;
   columns.reserve(bound->outputs().size());
@@ -86,8 +88,8 @@ initial_change(const query::test::SnapshotTabletScanFixture& fixture) {
   return limits;
 }
 
-void expect_failed_owner_is_abandoned(SubscriptionManager& manager,
-                                      const common::Uuid& subscription_id) {
+template <typename Manager>
+void expect_failed_owner_is_abandoned(Manager& manager, const common::Uuid& subscription_id) {
   const auto status = manager.status(subscription_id);
   if (!status.has_value()) {
     EXPECT_EQ(status.error().code(), common::StatusCode::kNotFound);
@@ -96,6 +98,20 @@ void expect_failed_owner_is_abandoned(SubscriptionManager& manager,
   EXPECT_EQ(status->phase, SubscriptionPhase::kCancelled);
   EXPECT_EQ(status->buffered_changes, 0U);
   EXPECT_EQ(status->buffered_bytes, 0U);
+}
+
+[[nodiscard]] MultiTabletSubscriptionSource
+multi_source(const query::test::SnapshotTabletScanFixture& fixture) {
+  return {.database_id = fixture.snapshot().database_id().uuid(),
+          .table_id = fixture.schema_ptr()->table_id(),
+          .plan_fingerprint = request(fixture).plan_fingerprint,
+          .schema_id = fixture.schema_ptr()->schema_id(),
+          .schema_version = fixture.schema_ptr()->version(),
+          .members = {{query::test::SnapshotTabletScanFixture::second_tablet_id(),
+                       fixture.snapshot().wal_id(), 1U},
+                      {query::test::SnapshotTabletScanFixture::tablet_id(),
+                       fixture.snapshot().wal_id(), 1U}},
+          .token_key = source(fixture, request(fixture).plan_fingerprint).token_key};
 }
 
 TEST(SnapshotSubscriptionAllocationFailureTest, StartClassifiesAndRollsBackEveryOwnedAllocation) {
@@ -174,6 +190,104 @@ TEST(SnapshotSubscriptionAllocationFailureTest,
           fixture.schema_ptr()->schema_id(), bound.plan, bound.columns, one_row_limits());
       ASSERT_TRUE(started.has_value()) << started.error().to_string();
       std::optional<SnapshotSubscription> subscription;
+      subscription.emplace(std::move(*started));
+      for (std::size_t output = 0U; output < transition.completed_outputs; ++output) {
+        auto completed = subscription->next();
+        ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
+      }
+
+      std::optional<common::Result<SnapshotSubscriptionOutput>> result;
+      std::size_t observed = 0U;
+      {
+        ::chronos::test::ScopedAllocationFailure failure{fail_after};
+        result.emplace(subscription->next());
+        observed = failure.observed_allocations();
+        failure.disable();
+      }
+      EXPECT_GT(observed, 0U);
+      if (result->has_value()) {
+        EXPECT_EQ(result->value().message_type, transition.expected_type);
+        EXPECT_EQ(result->value().flags, transition.expected_flags);
+        reached_success = true;
+        result.reset();
+        subscription.reset();
+        EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+        break;
+      }
+      EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+      expect_failed_owner_is_abandoned(*manager, subscription_request.subscription_id);
+      EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+    }
+    EXPECT_TRUE(reached_success);
+  }
+}
+
+TEST(MultiTabletSnapshotSubscriptionAllocationFailureTest,
+     StartClassifiesAndRollsBackEveryOwnedAllocation) {
+  query::test::SnapshotTabletScanFixture fixture{2U, 3U};
+  const SubscriptionRequest subscription_request = request(fixture);
+  const BoundPlan bound = lower(fixture, "SELECT count(*) AS total FROM metrics");
+  bool reached_success = false;
+
+  for (std::size_t fail_after = 0U; fail_after < 512U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    auto manager = MultiTabletSubscriptionManager::create(multi_source(fixture));
+    ASSERT_TRUE(manager.has_value());
+    query::QueryResourceContext resources =
+        query::QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+    std::vector<SnapshotSubscriptionColumn> columns = bound.columns;
+    std::optional<common::Result<MultiTabletSnapshotSubscription>> result;
+    std::size_t observed = 0U;
+    {
+      ::chronos::test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(MultiTabletSnapshotSubscription::start(
+          *manager, subscription_request, resources, fixture.storage(), fixture.publisher(),
+          fixture.lineage(), fixture.schema_ptr()->schema_id(), bound.plan, std::move(columns),
+          one_row_limits()));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+    EXPECT_GT(observed, 0U);
+    if (result->has_value()) {
+      reached_success = true;
+      result.reset();
+      EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+      break;
+    }
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    expect_failed_owner_is_abandoned(*manager, subscription_request.subscription_id);
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(MultiTabletSnapshotSubscriptionAllocationFailureTest,
+     PullEndAndReadyClassifyAndAbandonEveryOwnedAllocation) {
+  constexpr std::array<OutputTransition, 3U> transitions{{
+      {"first pull", 0U, network::MessageType::kQueryResult, 0U},
+      {"end stream", 1U, network::MessageType::kQueryResult, network::kFrameFlagEndStream},
+      {"ready", 2U, network::MessageType::kSubscriptionReady, 0U},
+  }};
+  query::test::SnapshotTabletScanFixture fixture{2U, 3U};
+  const SubscriptionRequest subscription_request = request(fixture);
+  const BoundPlan bound = lower(fixture, "SELECT count(*) AS total FROM metrics");
+
+  for (const OutputTransition& transition : transitions) {
+    SCOPED_TRACE(transition.name);
+    bool reached_success = false;
+    for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+      SCOPED_TRACE(fail_after);
+      auto manager = MultiTabletSubscriptionManager::create(multi_source(fixture));
+      ASSERT_TRUE(manager.has_value());
+      query::QueryResourceContext resources =
+          query::QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+      auto started = MultiTabletSnapshotSubscription::start(
+          *manager, subscription_request, resources, fixture.storage(), fixture.publisher(),
+          fixture.lineage(), fixture.schema_ptr()->schema_id(), bound.plan, bound.columns,
+          one_row_limits());
+      ASSERT_TRUE(started.has_value()) << started.error().to_string();
+      std::optional<MultiTabletSnapshotSubscription> subscription;
       subscription.emplace(std::move(*started));
       for (std::size_t output = 0U; output < transition.completed_outputs; ++output) {
         auto completed = subscription->next();

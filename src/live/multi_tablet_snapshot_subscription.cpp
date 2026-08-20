@@ -224,11 +224,11 @@ common::Result<MultiTabletSnapshotSubscription> MultiTabletSnapshotSubscription:
     return common::make_unexpected(
         invalid("multi-tablet snapshot columns do not match plan output"));
 
-  auto registration = manager.register_subscription(request);
-  if (!registration.has_value())
-    return common::make_unexpected(registration.error());
   const auto cancel = [&manager, &request]() noexcept { manager.abandon(request.subscription_id); };
   try {
+    auto registration = manager.register_subscription(request);
+    if (!registration.has_value())
+      return common::make_unexpected(registration.error());
     auto snapshot = publisher.snapshot();
     if (!snapshot.has_value()) {
       cancel();
@@ -271,11 +271,11 @@ common::Result<MultiTabletSnapshotSubscription> MultiTabletSnapshotSubscription:
     return common::make_unexpected(
         invalid("Raft multi-tablet snapshot columns do not match plan output"));
 
-  auto registration = manager.register_subscription(request);
-  if (!registration.has_value())
-    return common::make_unexpected(registration.error());
   const auto cancel = [&manager, &request]() noexcept { manager.abandon(request.subscription_id); };
   try {
+    auto registration = manager.register_subscription(request);
+    if (!registration.has_value())
+      return common::make_unexpected(registration.error());
     const MultiTabletSubscriptionSource& source = manager.source();
     if (destination_schema_id != request.schema_id || lineage.table_id() != source.table_id) {
       cancel();
@@ -332,11 +332,11 @@ common::Result<MultiTabletSnapshotSubscription> MultiTabletSnapshotSubscription:
     return common::make_unexpected(
         invalid("mixed multi-tablet snapshot columns do not match plan output"));
 
-  auto registration = manager.register_subscription(request);
-  if (!registration.has_value())
-    return common::make_unexpected(registration.error());
   const auto cancel = [&manager, &request]() noexcept { manager.abandon(request.subscription_id); };
   try {
+    auto registration = manager.register_subscription(request);
+    if (!registration.has_value())
+      return common::make_unexpected(registration.error());
     auto wal_snapshot = publisher.snapshot();
     if (!wal_snapshot.has_value()) {
       cancel();
