@@ -115,7 +115,7 @@ struct ChunkRange {
                                                    const ColumnarBatchScanLimits& limits) {
   if (batch.columns().size() > limits.chunk.maximum_columns)
     return common::make_unexpected(exhausted("columnar batch scan exceeds the column limit"));
-  ChunkPlan plan{.row_count = range.row_count};
+  ChunkPlan plan{.row_count = range.row_count, .charge = 0U, .variable_value_bytes = {}};
   try {
     plan.variable_value_bytes.resize(batch.columns().size());
   } catch (const std::bad_alloc&) {

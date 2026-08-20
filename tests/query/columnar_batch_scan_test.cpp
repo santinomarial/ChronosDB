@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <gtest/gtest.h>
 #include <memory>
 
@@ -36,6 +37,11 @@ TEST(ColumnarBatchScanTest, EmitsBoundedOwnedCanonicalChunksAndReleasesSourceCre
   ASSERT_EQ(first->kind(), PhysicalOperatorStepKind::kChunk);
   const VectorChunk& first_chunk = first->chunk()->chunk();
   EXPECT_EQ(first_chunk.physical_row_count(), 1U);
+  auto timestamp = first_chunk.cell({0U, 0U})->bytes();
+  ASSERT_TRUE(timestamp.has_value());
+  EXPECT_EQ(timestamp->size(), sizeof(std::int64_t));
+  EXPECT_TRUE(
+      std::ranges::all_of(*timestamp, [](const std::byte value) { return value == std::byte{0}; }));
   auto text = first_chunk.cell({1U, 0U})->bytes();
   ASSERT_TRUE(text.has_value());
   const std::array expected{std::byte{'x'}};
