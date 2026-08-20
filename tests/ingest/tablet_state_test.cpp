@@ -361,7 +361,9 @@ TEST(TabletStateTest, PublishesRowsPositionAndExactRetryOutcomeTogether) {
   EXPECT_EQ(result.snapshot.retry_entry_count(), 1U);
   EXPECT_EQ(result.snapshot.retry_outcome(retry_identity(1U)).get(), result.outcome.get());
   EXPECT_EQ(result.outcome->mutation, mutation(1U));
+  EXPECT_EQ(result.outcome->commit_source, head::CommitSource::kWal);
   EXPECT_EQ(result.outcome->wal_id, wal_id());
+  EXPECT_TRUE(result.outcome->raft_group_id.is_nil());
   EXPECT_EQ(result.outcome->record_sequence, 7U);
   EXPECT_EQ(result.outcome->applied_row_count, input->row_count());
   EXPECT_EQ(result.snapshot.active_generation().row_metadata(1U)->commit_position, position(7U));

@@ -454,6 +454,7 @@ detail::TabletStateCore::prepare(const RetryIdentity& retry_identity,
         ColumnarAppendRetryOutcome{.mutation = mutation,
                                    .commit_source = head::CommitSource::kWal,
                                    .wal_id = wal::WalId{},
+                                   .raft_group_id = common::Uuid{},
                                    .record_sequence = 0U,
                                    .applied_row_count = row_count});
     std::shared_ptr<const ColumnarAppendRetryOutcome> outcome = outcome_mutable;
