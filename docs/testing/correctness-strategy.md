@@ -390,6 +390,11 @@ SPSC tests cover empty/full transitions, counter wraparound, publication/reclama
 
 Before production integration, virtual-time simulation explores elections, replication, membership, snapshot installation, crashes, disk errors, partitions, duplication, delay, and reordering. Traces are seed-replayable and shrinkable. Safety checkers cover election safety, log matching, leader completeness, committed apply order, read-mode histories, and absence of uncommitted visibility.
 
+The implemented group-scoped transport envelope additionally has checksum-repaired hostile
+length/count/reserved/value matrices, exhaustive owned-allocation failure sweeps, and a bounded
+structure-aware libFuzzer target. Accepted arbitrary frames must exact-reencode, while generated
+canonical and mutated variants also exercise fragmented reader and write-cursor ownership.
+
 ## Test review gate
 
 A phase cannot exit because code compiles or a happy-path test passes. The review reports exact commands, seeds/corpora, configurations, sanitizer coverage, skipped/unsupported checks, failures, and retained reproducers. Performance results are inadmissible until applicable correctness suites pass under the same semantic mode.

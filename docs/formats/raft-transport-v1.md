@@ -95,6 +95,13 @@ variants, append-entry payload and snapshot-voter decoding, header-gated exact-f
 move-owned write-cursor validation. Every observed failure returns `RESOURCE_EXHAUSTED`; reader
 failure remains sticky, and the sweep continues until the exact canonical operation succeeds.
 
+Deterministic checksum-repaired hostile matrices exercise every header reserved byte, inconsistent
+frame and payload lengths, route/version/kind fields, append counts/entry lengths/reserved and
+trailing bytes, snapshot counts/voter ordering/reserved bytes, and fixed-message Boolean/term
+domains. A structure-aware fuzzer combines arbitrary input with generated canonical variants,
+single-byte and truncated mutations, optional header/payload/frame checksum repair, two-fragment
+reader delivery, exact canonical re-encoding, and write-cursor validation under a 64 KiB test cap.
+
 ## Authenticated dispatch
 
 `RaftTransportReceiver` requires a transport-authenticated nonzero stable principal before it

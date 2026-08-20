@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <limits>
 #include <span>
 #include <variant>
 #include <vector>
@@ -40,6 +41,12 @@ void store_u32(const std::span<std::byte> bytes, const std::size_t offset,
     bytes[offset + ordinal] = static_cast<std::byte>(value >> (ordinal * 8U));
 }
 
+void store_u64(const std::span<std::byte> bytes, const std::size_t offset,
+               const std::uint64_t value) {
+  for (std::size_t ordinal = 0U; ordinal < sizeof(value); ++ordinal)
+    bytes[offset + ordinal] = static_cast<std::byte>(value >> (ordinal * 8U));
+}
+
 void repair_checksums(std::vector<std::byte>& frame) {
   constexpr std::size_t kHeaderCrcOffset = 76U;
   std::array<std::byte, kRaftTransportHeaderSize> header{};
@@ -49,6 +56,36 @@ void repair_checksums(std::vector<std::byte>& frame) {
   store_u32(
       frame, frame.size() - kRaftTransportTrailerSize,
       common::crc32c(common::ByteView{frame}.first(frame.size() - kRaftTransportTrailerSize)));
+}
+
+void repair_payload_and_checksums(std::vector<std::byte>& frame) {
+  constexpr std::size_t kPayloadCrcOffset = 72U;
+  const common::ByteView bytes{frame};
+  store_u32(frame, kPayloadCrcOffset,
+            common::crc32c(bytes.subspan(kRaftTransportHeaderSize, frame.size() -
+                                                                       kRaftTransportHeaderSize -
+                                                                       kRaftTransportTrailerSize)));
+  repair_checksums(frame);
+}
+
+void expect_repaired_header_rejection(std::vector<std::byte> frame,
+                                      const common::StatusCode expected) {
+  repair_checksums(frame);
+  const common::ByteView bytes{frame};
+  const auto header = raft_transport_frame_length_v1(bytes.first(kRaftTransportHeaderSize));
+  ASSERT_FALSE(header.has_value());
+  EXPECT_EQ(header.error().code(), expected);
+  const auto decoded = decode_raft_transport_envelope_v1(bytes);
+  ASSERT_FALSE(decoded.has_value());
+  EXPECT_EQ(decoded.error().code(), expected);
+}
+
+void expect_repaired_payload_rejection(std::vector<std::byte> frame,
+                                       const common::StatusCode expected) {
+  repair_payload_and_checksums(frame);
+  const auto decoded = decode_raft_transport_envelope_v1(frame);
+  ASSERT_FALSE(decoded.has_value());
+  EXPECT_EQ(decoded.error().code(), expected);
 }
 
 TEST(RaftTransportCodecTest, RoundTripsEveryCurrentMessageWithExactRouteIdentity) {
@@ -109,6 +146,116 @@ TEST(RaftTransportCodecTest, RejectsDamageUnknownKindsAndNoncanonicalRoutes) {
   auto invalid_route = encode_raft_transport_envelope_v1(mismatched);
   ASSERT_FALSE(invalid_route.has_value());
   EXPECT_EQ(invalid_route.error().code(), common::StatusCode::kInvalidArgument);
+}
+
+TEST(RaftTransportCodecTest, RejectsChecksumRepairedHostileHeaderFields) {
+  const std::vector<std::byte> canonical =
+      encode_raft_transport_envelope_v1(envelope(RequestVoteResponse{4U, false})).value();
+
+  std::vector<std::byte> candidate = canonical;
+  std::fill_n(candidate.begin() + 24, common::Uuid::kSize, std::byte{0U});
+  expect_repaired_header_rejection(std::move(candidate), common::StatusCode::kCorruption);
+
+  candidate = canonical;
+  store_u64(candidate, 40U, 0U);
+  expect_repaired_header_rejection(std::move(candidate), common::StatusCode::kCorruption);
+  candidate = canonical;
+  store_u64(candidate, 48U, 1U);
+  expect_repaired_header_rejection(std::move(candidate), common::StatusCode::kCorruption);
+
+  for (const std::size_t offset : {57U, 58U, 59U, 60U, 61U, 62U, 63U, 80U, 81U, 82U, 83U, 84U,
+                                   85U, 86U, 87U, 88U, 89U, 90U, 91U, 92U, 93U, 94U, 95U}) {
+    SCOPED_TRACE(offset);
+    candidate = canonical;
+    candidate[offset] = std::byte{1U};
+    expect_repaired_header_rejection(std::move(candidate), common::StatusCode::kCorruption);
+  }
+
+  for (const std::byte kind : {std::byte{0U}, std::byte{9U}, std::byte{255U}}) {
+    candidate = canonical;
+    candidate[56U] = kind;
+    expect_repaired_header_rejection(std::move(candidate), common::StatusCode::kNotSupported);
+  }
+  candidate = canonical;
+  candidate[8U] = std::byte{2U};
+  expect_repaired_header_rejection(std::move(candidate), common::StatusCode::kNotSupported);
+  candidate = canonical;
+  candidate[10U] = std::byte{1U};
+  expect_repaired_header_rejection(std::move(candidate), common::StatusCode::kNotSupported);
+
+  candidate = canonical;
+  store_u64(candidate, 16U, canonical.size() - 1U);
+  expect_repaired_header_rejection(std::move(candidate), common::StatusCode::kCorruption);
+  candidate = canonical;
+  store_u64(candidate, 16U, canonical.size() + 1U);
+  expect_repaired_header_rejection(std::move(candidate), common::StatusCode::kCorruption);
+  candidate = canonical;
+  store_u64(candidate, 64U, 17U);
+  expect_repaired_header_rejection(std::move(candidate), common::StatusCode::kCorruption);
+}
+
+TEST(RaftTransportCodecTest, RejectsChecksumRepairedHostilePayloadFields) {
+  const std::vector<std::byte> append =
+      encode_raft_transport_envelope_v1(
+          envelope(AppendEntriesRequest{
+              4U, 1U, 7U, 3U, {{8U, 4U, 1U, {std::byte{0x11}, std::byte{0x22}}}}, 7U}))
+          .value();
+
+  std::vector<std::byte> candidate = append;
+  store_u32(candidate, 136U, std::numeric_limits<std::uint32_t>::max());
+  expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kResourceExhausted);
+  candidate = append;
+  store_u32(candidate, 164U, std::numeric_limits<std::uint32_t>::max());
+  expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kResourceExhausted);
+
+  for (const std::size_t offset : {140U, 141U, 142U, 143U, 161U, 162U, 163U}) {
+    SCOPED_TRACE(offset);
+    candidate = append;
+    candidate[offset] = std::byte{1U};
+    expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
+  }
+
+  candidate = append;
+  candidate.insert(candidate.end() - static_cast<std::ptrdiff_t>(kRaftTransportTrailerSize),
+                   std::byte{0U});
+  store_u64(candidate, 16U, candidate.size());
+  store_u64(candidate, 64U,
+            candidate.size() - kRaftTransportHeaderSize - kRaftTransportTrailerSize);
+  expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
+
+  const std::vector<std::byte> snapshot_frame =
+      encode_raft_transport_envelope_v1(envelope(InstallSnapshotRequest{4U, 1U, snapshot()}))
+          .value();
+  candidate = snapshot_frame;
+  store_u32(candidate, 176U, std::numeric_limits<std::uint32_t>::max());
+  expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kResourceExhausted);
+  for (const std::size_t offset : {180U, 181U, 182U, 183U}) {
+    SCOPED_TRACE(offset);
+    candidate = snapshot_frame;
+    candidate[offset] = std::byte{1U};
+    expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
+  }
+  candidate = snapshot_frame;
+  store_u64(candidate, 184U, 0U);
+  expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
+  candidate = snapshot_frame;
+  store_u64(candidate, 192U, 1U);
+  expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
+
+  const std::vector<std::byte> vote =
+      encode_raft_transport_envelope_v1(envelope(RequestVoteResponse{4U, false})).value();
+  candidate = vote;
+  candidate[104U] = std::byte{2U};
+  expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
+  for (const std::size_t offset : {105U, 106U, 107U, 108U, 109U, 110U, 111U}) {
+    SCOPED_TRACE(offset);
+    candidate = vote;
+    candidate[offset] = std::byte{1U};
+    expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
+  }
+  candidate = vote;
+  store_u64(candidate, 96U, 0U);
+  expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
 }
 
 TEST(RaftTransportCodecTest, CarriesConflictRepairResponseProducedByTheCore) {

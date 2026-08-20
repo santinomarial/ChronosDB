@@ -126,12 +126,15 @@ bound; explicit batching is preferable to unbounded socket ownership.
 ## Verification and likely interview questions
 
 Focused tests cover every variant, actual conflict repair, corruption, compatibility, identity,
-bounds, bytewise and coalesced reads, sticky failure, short-write ownership, exact-peer pool
-preflight, and failed-carrier retry handoff. Deterministic allocation sweeps cover all encode,
-owned-variable decode, header-gated reader, and move-owned cursor-validation paths through exact
-success. Phase 18 retains golden fixtures, hostile length matrices, sustained fuzzing, connection
-churn, partitions/reordering/duplication, and mixed-version processes. Focused real mutual-TLS
-coverage exercises fragmented persistent input and bounded authenticated FIFO output.
+bounds, checksum-repaired hostile header/payload matrices, bytewise and coalesced reads, sticky
+failure, short-write ownership, exact-peer pool preflight, and failed-carrier retry handoff.
+Deterministic allocation sweeps cover all encode, owned-variable decode, header-gated reader, and
+move-owned cursor-validation paths through exact success. The structure-aware fuzzer exact-
+reencodes accepted arbitrary bytes; generates every message kind; mutates, truncates, and optionally
+repairs nested checksums; and drives two-fragment reader plus cursor ownership under ASan/UBSan.
+Phase 18 retains cross-compiler goldens, sustained fuzzing, connection churn, partitions/reordering/
+duplication, and mixed-version processes. Focused real mutual-TLS coverage exercises fragmented
+persistent input and bounded authenticated FIFO output.
 
 Useful questions include: why is CRC not authentication; why must persistence precede sending; why
 does snapshot metadata travel separately from snapshot bytes; how does route identity prevent

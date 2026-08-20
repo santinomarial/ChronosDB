@@ -193,9 +193,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
 
 ## Phase 14 — deterministic Raft
 
-- Raft Transport Envelope v1 cross-compiler golden fixtures, hostile length/count/reserved-byte
-  matrices, sustained fuzzing, carrier-wide admission schedules, runtime poll composition across
-  inbound/outbound/timer/durable completion, mixed-version processes, and
+- Raft Transport Envelope v1 cross-compiler golden fixtures, sustained fuzzing, carrier-wide
+  admission schedules, runtime poll composition across inbound/outbound/timer/durable completion,
+  mixed-version processes, and
   carrier-integrated duplicate/loss/reorder/partition simulation. Focused coverage round-trips every
   current message, including an actual conflict-repair response, rejects damage, unknown kinds,
   route mismatch and bounds, and exercises the header-first exact-allocation reader and owned
@@ -221,6 +221,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   owned append-payload and snapshot-voter decoding, header-gated reader frame/nested decoding, and
   move-owned write-cursor validation. Failures remain `RESOURCE_EXHAUSTED`, reader failure remains
   sticky, and every sweep reaches exact success.
+  Checksum-repaired deterministic matrices now cover hostile header lengths/routes/versions/kinds/
+  reserved bytes, append and snapshot counts/lengths/reserved bytes, trailing payload, voter order,
+  and fixed-message value domains. A structure-aware ASan/UBSan libFuzzer target combines raw bytes
+  with every generated message kind, checksum-repaired mutation, truncation, fragmented reading,
+  exact successful re-encoding, and cursor validation; sustained campaigns remain open.
 - Long seed matrices, exhaustive bounded schedules, chunk/dependency trace shrinking, timer/clock
   changes, physical segmented-log syscall faults, and automated randomized membership/snapshot/read-
   barrier generation. The bounded simulator now has focused explicit and seeded coverage for

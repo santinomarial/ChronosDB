@@ -41,8 +41,10 @@ prefixes, sticky damaged-header failure, checked short writes, move ownership, i
 frames, and configured frame limits. Deterministic allocator sweeps complete the final header byte
 under injection, fail every observed exact-frame and nested append/snapshot decode allocation, and
 prove `RESOURCE_EXHAUSTED` is sticky. Move-owned write-cursor validation is swept through exact
-success without publishing partial ownership. Real TLS descriptors, carrier-wide admission,
-disconnects, and hostile long-running partial-I/O schedules remain in the Phase 18 ledger.
+success without publishing partial ownership. The transport fuzzer splits raw and structured
+mutated frames at generated boundaries, requires sticky reader failure, and exact-reencodes every
+returned envelope prefix. Real TLS descriptors, carrier-wide admission, disconnects, and hostile
+long-running partial-I/O schedules remain in the Phase 18 ledger.
 
 ## References
 
