@@ -153,7 +153,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   checksum-repaired mutations, and nested-batch integrity. Deterministic checksum-valid matrices
   cover hostile outer length/count/limit fields, descriptor lengths/kinds/reserved bytes/identity
   uniqueness, and nested-batch magic/version/layout/count/padding failures. Sustained fuzzing,
-  mixed versions, allocation failure, and cross-compiler bytes remain deferred.
+  allocation failure, and cross-compiler bytes remain deferred. Codec compatibility matrices now
+  reject future application identities and command major/minor versions as unsupported; repeatable
+  recovery over a mixed v1/future-format WAL fails in preflight without returning partial state.
 - Mixed `COLUMNAR_APPEND`/temporal recovery dispatch and application checkpoints; Manifest-backed
   multi-part/vector winner resolution beyond the implemented single-lineage scalar reference,
   strict metadata, full-part, bounded semantic-validation, and projected-granule paths;

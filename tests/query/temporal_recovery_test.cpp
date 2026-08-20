@@ -252,6 +252,37 @@ TEST(TemporalRecoveryTest, RejectsCorrectionWithoutAnOriginalAsCommittedCorrupti
   EXPECT_EQ(recovered.error().code(), common::StatusCode::kCorruption);
 }
 
+TEST(TemporalRecoveryTest, RejectsMixedFutureApplicationBeforePublishingState) {
+  TemporaryDirectory directory{"chronos-temporal-future-application"};
+  ASSERT_TRUE(directory.valid());
+  const wal::WalWriterConfig writer_config{.directory_path = directory.path().string()};
+  const std::shared_ptr<const schema::TableSchema> retained = columnar::test::batch_schema();
+  auto batch = columnar::OwnedColumnarBatch::create(retained, columnar::test::batch_columns());
+  ASSERT_TRUE(batch.has_value()) << batch.error().to_string();
+  auto created = wal::WalWriter::create_new(writer_config);
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  wal::WalWriter writer = std::move(*created);
+  const EncodedTemporalCommand first = command(*batch, TemporalMutationKind::kOriginal, 1000);
+  ASSERT_TRUE(writer.append_application_entry(first.bytes()).has_value());
+  const auto future =
+      wal::encode_application_payload({.application_format = kTemporalApplicationFormat + 1U,
+                                       .application_kind = kTemporalApplicationKind,
+                                       .application_flags = 0U,
+                                       .application_body = {}});
+  ASSERT_TRUE(future.has_value()) << future.error().to_string();
+  ASSERT_TRUE(writer.append_application_entry(future->bytes()).has_value());
+  ASSERT_TRUE(writer.synchronize().has_value());
+  ASSERT_TRUE(writer.close().is_ok());
+
+  for (std::size_t attempt = 0U; attempt < 2U; ++attempt) {
+    auto recovered = recover_temporal_wal(writer_config, {}, recovery_config(retained));
+    ASSERT_FALSE(recovered.has_value());
+    EXPECT_EQ(recovered.error().code(), common::StatusCode::kNotSupported);
+    EXPECT_EQ(recovered.error().message(),
+              "preflight WAL record: application payload is not temporal v1");
+  }
+}
+
 TEST(TemporalManifestWalRecoveryTest, RestoresMultipleTabletsAndReplaysOnlyTheirSuffixes) {
   TemporaryDirectory directory{"chronos-manifest-temporal-recovery"};
   ASSERT_TRUE(directory.valid());

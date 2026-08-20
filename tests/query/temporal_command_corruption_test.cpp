@@ -131,6 +131,51 @@ TEST(TemporalCommandCorruptionTest, RejectsChecksumValidHostileFramingAndCountFi
   }
 }
 
+TEST(TemporalCommandCorruptionTest, ClassifiesUnknownIdentityAndVersionsAsUnsupported) {
+  struct ApplicationCase {
+    const char* label;
+    std::uint32_t format;
+    std::uint32_t kind;
+    std::uint64_t flags;
+  };
+  constexpr std::array<ApplicationCase, 3U> kApplicationCases{{
+      {"format", kTemporalApplicationFormat + 1U, kTemporalApplicationKind, 0U},
+      {"kind", kTemporalApplicationFormat, kTemporalApplicationKind + 1U, 0U},
+      {"flags", kTemporalApplicationFormat, kTemporalApplicationKind, 1U},
+  }};
+  const std::vector<std::byte> canonical = valid_command();
+  const common::ByteView canonical_body =
+      common::ByteView{canonical}.subspan(wal::kApplicationBodyOffset);
+  for (const ApplicationCase& test : kApplicationCases) {
+    SCOPED_TRACE(test.label);
+    const auto encoded = wal::encode_application_payload({.application_format = test.format,
+                                                          .application_kind = test.kind,
+                                                          .application_flags = test.flags,
+                                                          .application_body = canonical_body});
+    ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+    expect_failure(encoded->bytes(), common::StatusCode::kNotSupported,
+                   "application payload is not temporal v1");
+  }
+
+  using Mutation = void (*)(common::MutableByteView);
+  struct VersionCase {
+    const char* label;
+    Mutation mutate;
+  };
+  constexpr std::array<VersionCase, 2U> kVersionCases{{
+      {"major", [](const common::MutableByteView bytes) { store_u16_le(bytes, 8U, 2U); }},
+      {"minor", [](const common::MutableByteView bytes) { store_u16_le(bytes, 10U, 1U); }},
+  }};
+  for (const VersionCase& test : kVersionCases) {
+    SCOPED_TRACE(test.label);
+    std::vector<std::byte> bytes = canonical;
+    test.mutate(body(bytes));
+    refresh_command_checksums(body(bytes));
+    expect_failure(bytes, common::StatusCode::kNotSupported,
+                   "temporal command version is unsupported");
+  }
+}
+
 TEST(TemporalCommandCorruptionTest, EnforcesCallerLimitsBeforeDescriptorAllocation) {
   const std::vector<std::byte> bytes = valid_command();
   for (const TemporalCommandLimits limits : {

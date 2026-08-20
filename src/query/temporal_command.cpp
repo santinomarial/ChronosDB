@@ -206,11 +206,16 @@ decode_temporal_command_v1(const common::ByteView bytes, const TemporalCommandLi
   static_cast<void>(ignored_header_crc);
   if (!magic || !major || !minor || !header_size || !total_size || !batch_size || !count ||
       !metadata_size || !table || !schema || !schema_version || !commit_time || !batch_crc ||
-      !metadata_crc || !reserved || !std::ranges::equal(*magic, kMagic) || *major != kMajor ||
-      *minor != kMinor || *header_size != kTemporalCommandHeaderSize ||
-      *total_size != body.size() || *count == 0U || *count > limits.maximum_mutations ||
-      *metadata_size > limits.maximum_metadata_bytes || *reserved != 0U ||
-      *count > *metadata_size / (kTemporalMutationMetadataSize + 1U) ||
+      !metadata_crc || !reserved || !std::ranges::equal(*magic, kMagic)) {
+    return common::make_unexpected(corruption("temporal command header is invalid"));
+  }
+  if (*major != kMajor || *minor != kMinor) {
+    return common::make_unexpected(common::Status{common::StatusCode::kNotSupported,
+                                                  "temporal command version is unsupported"});
+  }
+  if (*header_size != kTemporalCommandHeaderSize || *total_size != body.size() || *count == 0U ||
+      *count > limits.maximum_mutations || *metadata_size > limits.maximum_metadata_bytes ||
+      *reserved != 0U || *count > *metadata_size / (kTemporalMutationMetadataSize + 1U) ||
       *batch_size > body.size() - kTemporalCommandHeaderSize - kTemporalCommandTrailerSize ||
       *metadata_size !=
           body.size() - kTemporalCommandHeaderSize - *batch_size - kTemporalCommandTrailerSize) {

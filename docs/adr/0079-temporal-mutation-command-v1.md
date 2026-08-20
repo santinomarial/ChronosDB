@@ -54,5 +54,7 @@ rejection. Live tests cover a covering `LOCAL_SYNC` frontier, recovery equivalen
 rejection, sequence preservation, and post-admission fail-closed behavior. Independently generated
 golden framing and CRC fixtures, a structure-aware sanitizer-backed fuzzer, and checksum-valid
 hostile outer framing, count, metadata, caller-limit, and nested-batch matrices are implemented.
-Sustained fuzzing, cross-compiler bytes, mixed-version recovery, allocation failure, and crash
-injection remain deferred to Phase 18.
+Unknown application identity and command versions are classified as unsupported, and repeatable
+recovery over a mixed v1/future-format WAL fails during preflight without publishing partial state.
+Sustained fuzzing, cross-compiler bytes, allocation failure, and crash injection remain deferred to
+Phase 18.
