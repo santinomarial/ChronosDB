@@ -538,11 +538,14 @@ decode_checkpoint(const common::ByteView bytes,
     if (reader.remaining() != kMultiTabletSubscriptionCheckpointTrailerSize)
       return common::make_unexpected(corruption("subscription checkpoint has trailing bytes"));
     auto valid = validate_and_size(checkpoint, limits, **layout);
-    if (!valid.has_value() || *valid != bytes.size())
+    if (!valid.has_value()) {
+      if (valid.error().code() == common::StatusCode::kResourceExhausted)
+        return common::make_unexpected(valid.error());
       return common::make_unexpected(
-          valid.has_value()
-              ? corruption("subscription checkpoint layout is invalid")
-              : common::Status{common::StatusCode::kCorruption, valid.error().message()});
+          common::Status{common::StatusCode::kCorruption, valid.error().message()});
+    }
+    if (*valid != bytes.size())
+      return common::make_unexpected(corruption("subscription checkpoint layout is invalid"));
     return checkpoint;
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("subscription checkpoint decoding allocation failed"));

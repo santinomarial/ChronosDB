@@ -30,10 +30,12 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
 - Multi-tablet coordinator checkpoints now have a structure-aware libFuzzer target covering raw
   hostile bytes, canonical WAL-only v1 and mixed-source v2 state, nested generation envelopes,
   checksum-repaired mutations, limit rejection, explicit-version/compatibility agreement, and
-  exact successful re-encoding under ASan/UBSan. Sustained campaigns, allocation sweeps, filesystem
-  fault injection at every write/sync/rename cut point, process crash/reopen, token/checkpoint race
-  scheduling, obsolete-generation reclamation, cross-compiler golden verification, and retained-
-  state size/recovery measurements remain deferred.
+  exact successful re-encoding under ASan/UBSan. A dedicated allocator-failure executable sweeps
+  every observed owned allocation in v1/v2 checkpoint and generation-envelope encoding/decoding,
+  requiring resource-exhausted classification until exact success. Sustained campaigns, storage-
+  owner allocation and filesystem fault injection at every write/sync/rename cut point, process
+  crash/reopen, token/checkpoint race scheduling, obsolete-generation reclamation, cross-compiler
+  golden verification, and retained-state size/recovery measurements remain deferred.
 - Subscription plan identity: cross-process golden vectors, forced-allocation/provider-failure
   sweeps, hostile SQL/catalog limits, registry crash/fault cut points, planner-upgrade compatibility,
   obsolete-definition reclamation, schema migration, and compatibility review when the supported
