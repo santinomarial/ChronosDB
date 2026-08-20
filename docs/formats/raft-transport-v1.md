@@ -90,6 +90,11 @@ and allocation failures are sticky for that reader instance.
 unwritten suffix. Checked advancement supports short writes, and moving the cursor leaves the source
 complete. Descriptor, TLS, retry, and readiness ownership remain outside both types.
 
+Implementation-owned allocation failures are fail-closed. Dedicated sweeps cover all eight encoder
+variants, append-entry payload and snapshot-voter decoding, header-gated exact-frame reading, and
+move-owned write-cursor validation. Every observed failure returns `RESOURCE_EXHAUSTED`; reader
+failure remains sticky, and the sweep continues until the exact canonical operation succeeds.
+
 ## Authenticated dispatch
 
 `RaftTransportReceiver` requires a transport-authenticated nonzero stable principal before it

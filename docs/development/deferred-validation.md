@@ -194,9 +194,8 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
 ## Phase 14 — deterministic Raft
 
 - Raft Transport Envelope v1 cross-compiler golden fixtures, hostile length/count/reserved-byte
-  matrices, sustained fuzzing, allocation-failure sweeps, carrier-wide admission schedules,
-  runtime poll composition across inbound/outbound/timer/durable completion, mixed-version processes,
-  and
+  matrices, sustained fuzzing, carrier-wide admission schedules, runtime poll composition across
+  inbound/outbound/timer/durable completion, mixed-version processes, and
   carrier-integrated duplicate/loss/reorder/partition simulation. Focused coverage round-trips every
   current message, including an actual conflict-repair response, rejects damage, unknown kinds,
   route mismatch and bounds, and exercises the header-first exact-allocation reader and owned
@@ -218,6 +217,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   scheduling remain deferred. One immutable peer now has exact-deadline capped exponential
   reconnect and lossless failed-frame custody. A fixed multi-peer manager now owns route validation,
   descriptor interests, pool installation, failure recycling, and fresh-result backpressure.
+  Dedicated allocator sweeps now fail every observed encoder allocation for all eight message kinds,
+  owned append-payload and snapshot-voter decoding, header-gated reader frame/nested decoding, and
+  move-owned write-cursor validation. Failures remain `RESOURCE_EXHAUSTED`, reader failure remains
+  sticky, and every sweep reaches exact success.
 - Long seed matrices, exhaustive bounded schedules, chunk/dependency trace shrinking, timer/clock
   changes, physical segmented-log syscall faults, and automated randomized membership/snapshot/read-
   barrier generation. The bounded simulator now has focused explicit and seeded coverage for

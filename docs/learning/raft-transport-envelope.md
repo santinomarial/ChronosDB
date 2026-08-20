@@ -15,13 +15,18 @@ authorizes a complete frame before asynchronously dispatching it to the durable 
 Encoding borrows the envelope for the call and returns one owned byte vector. Decoding borrows the
 input bytes only while validating and copies all variable append payloads and snapshot voters into
 an owned result. Neither operation stores pointers, opens sockets, or mutates Raft state. Allocation
-failure returns `RESOURCE_EXHAUSTED` without a partial value.
+failure returns `RESOURCE_EXHAUSTED` without a partial value. A dedicated test executable fails
+every observed encoder allocation for all message variants and every owned append/snapshot decoder
+allocation before allowing the exact operation to succeed.
 
 The move-only stream reader owns a fixed header until it can validate every allocation-relevant
 field, then owns one exactly sized frame until full decode. A successful step reports its exact
 consumed prefix and returns at most one envelope, leaving a coalesced suffix with the caller. Any
-failure is sticky. The move-only write cursor validates and owns a complete encoded frame; its
-pending span remains valid until the cursor advances or moves.
+failure is sticky. Allocation sweeps inject after the first 95 header bytes, so they cover both the
+exact frame allocation and nested decode ownership only after the final authenticated header byte.
+The move-only write cursor validates and owns a complete encoded frame; its pending span remains
+valid until the cursor advances or moves. Its validation allocations are swept with caller-owned
+bytes moved into the boundary, proving no partial cursor is published.
 
 The 96-byte header protects lengths and route fields before variable parsing. A payload checksum
 localizes damage, and the trailer covers the complete header and payload. Integers are explicit
@@ -122,10 +127,11 @@ bound; explicit batching is preferable to unbounded socket ownership.
 
 Focused tests cover every variant, actual conflict repair, corruption, compatibility, identity,
 bounds, bytewise and coalesced reads, sticky failure, short-write ownership, exact-peer pool
-preflight, and failed-carrier retry handoff. Phase 18 retains golden fixtures, hostile length
-matrices, fuzzing, allocation failure, connection churn, partitions/reordering/duplication, and
-mixed-version processes. Focused real mutual-TLS coverage exercises fragmented persistent input and
-bounded authenticated FIFO output.
+preflight, and failed-carrier retry handoff. Deterministic allocation sweeps cover all encode,
+owned-variable decode, header-gated reader, and move-owned cursor-validation paths through exact
+success. Phase 18 retains golden fixtures, hostile length matrices, sustained fuzzing, connection
+churn, partitions/reordering/duplication, and mixed-version processes. Focused real mutual-TLS
+coverage exercises fragmented persistent input and bounded authenticated FIFO output.
 
 Useful questions include: why is CRC not authentication; why must persistence precede sending; why
 does snapshot metadata travel separately from snapshot bytes; how does route identity prevent
