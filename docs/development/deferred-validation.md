@@ -59,8 +59,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   aggregate, exact-boundary rejection, and service routing through the worker-hosted immutable
   publication adapter. Focused mixed-source coverage now combines a real Raft append with a WAL
   publication under one global aggregate, rejects a stale vector component, and exercises service
-  routing. Exercise every global operator over homogeneous and mixed multi-tablet source vectors
-  and sustained concurrent publication scheduling.
+  routing. A complete homogeneous WAL vector now proves ungrouped and grouped aggregation, sort,
+  latest, and limit execute once above all tablets. Mixed-source parity for grouped/latest/sort/
+  limit and sustained concurrent publication scheduling remain open.
 - Committed columnar-batch vector source: forced-allocation sweeps, all logical types, cancellation
   at every column, hostile chunk limits, large batches, scalar/vector differential coverage, and
   memory/allocation profiles. Focused coverage now proves bounded canonical slicing and a checked

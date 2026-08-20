@@ -198,6 +198,10 @@ source(const query::test::SnapshotTabletScanFixture& fixture, const std::uint64_
   return value;
 }
 
+[[nodiscard]] std::uint64_t signed_bits(const std::int64_t value) {
+  return std::bit_cast<std::uint64_t>(value);
+}
+
 TEST(MultiTabletSnapshotSubscriptionTest, ExecutesOneGlobalPlanBeforeOpeningLiveSuffix) {
   query::test::SnapshotTabletScanFixture fixture{2U, 3U};
   const auto* first =
@@ -243,6 +247,63 @@ TEST(MultiTabletSnapshotSubscriptionTest, ExecutesOneGlobalPlanBeforeOpeningLive
   ASSERT_TRUE(live.has_value());
   ASSERT_EQ(live->size(), 1U);
   EXPECT_EQ(live->front().change->position.record_sequence, 2U);
+}
+
+TEST(MultiTabletSnapshotSubscriptionTest, ExecutesEveryGlobalStageOnceAcrossTheWalVector) {
+  query::test::SnapshotTabletScanFixture fixture{2U, 3U};
+  const SubscriptionRequest subscription_request = request(fixture);
+  auto resources = query::QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+  const auto execute = [&](const std::string_view sql) {
+    BoundPlan bound = lower(fixture, sql);
+    auto manager = MultiTabletSubscriptionManager::create(source(fixture, 1U, 1U));
+    EXPECT_TRUE(manager.has_value()) << manager.error().to_string();
+    std::vector<std::vector<std::uint64_t>> rows;
+    if (!manager.has_value())
+      return rows;
+    auto subscription = MultiTabletSnapshotSubscription::start(
+        *manager, subscription_request, resources, fixture.storage(), fixture.publisher(),
+        fixture.lineage(), fixture.schema_ptr()->schema_id(), bound.plan, std::move(bound.columns));
+    EXPECT_TRUE(subscription.has_value()) << subscription.error().to_string();
+    if (!subscription.has_value())
+      return rows;
+    for (;;) {
+      auto output = subscription->next();
+      EXPECT_TRUE(output.has_value()) << output.error().to_string();
+      if (!output.has_value())
+        break;
+      if (output->message_type == network::MessageType::kSubscriptionReady)
+        break;
+      auto batch = network::decode_query_result_batch(output->payload);
+      EXPECT_TRUE(batch.has_value()) << batch.error().to_string();
+      if (!batch.has_value())
+        break;
+      for (std::uint32_t row = 0U; row < batch->row_count(); ++row) {
+        std::vector<std::uint64_t> cells;
+        cells.reserve(batch->columns().size());
+        for (std::size_t column = 0U; column < batch->columns().size(); ++column) {
+          const network::QueryResultCell* cell = batch->cell(row, column);
+          EXPECT_NE(cell, nullptr);
+          if (cell != nullptr)
+            cells.push_back(decode_u64(cell->value));
+        }
+        rows.push_back(std::move(cells));
+      }
+    }
+    EXPECT_TRUE(subscription->ready());
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+    return rows;
+  };
+
+  EXPECT_EQ(execute("SELECT event_time FROM metrics ORDER BY event_time DESC LIMIT 2"),
+            (std::vector<std::vector<std::uint64_t>>{{signed_bits(102)}, {signed_bits(101)}}));
+  EXPECT_EQ(
+      execute("SELECT time_bucket(INTERVAL '1 second', event_time) AS bucket, count(*) AS rows "
+              "FROM metrics GROUP BY time_bucket(INTERVAL '1 second', event_time) ORDER BY bucket"),
+      (std::vector<std::vector<std::uint64_t>>{{signed_bits(-1'000'000'000), 2U}, {0U, 3U}}));
+  EXPECT_EQ(
+      execute("SELECT event_time FROM metrics LATEST BY (event_time) ON "
+              "time_bucket(INTERVAL '1 second', event_time) ORDER BY event_time DESC LIMIT 2"),
+      (std::vector<std::vector<std::uint64_t>>{{signed_bits(102)}, {signed_bits(101)}}));
 }
 
 TEST(MultiTabletSnapshotSubscriptionTest, CancelsWhenAnyTabletBoundaryDisagrees) {
