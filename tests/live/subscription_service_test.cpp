@@ -245,6 +245,122 @@ TEST(SubscriptionServiceTest, OwnsSnapshotResumeBackpressureCancellationAndShutd
   EXPECT_EQ(service->metrics().terminal_responses, 2U);
 }
 
+TEST(SubscriptionServiceTest, RetainsEveryMultiChunkSnapshotResponseUnderRingBackpressure) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  query::test::SnapshotTabletScanFixture snapshot{2U, 3U};
+  const std::vector<query::QueryCatalogTableInput> tables{
+      {.name = "metrics", .quoted = false, .schema = snapshot.schema_ptr()}};
+  auto catalog = std::make_shared<const query::QueryCatalogSnapshot>(
+      query::QueryCatalogSnapshot::create(1U, tables).value());
+  constexpr std::string_view kSql = "SUBSCRIBE SELECT event_time FROM metrics";
+  auto plan = prepare_subscription_plan(kSql, catalog);
+  ASSERT_TRUE(plan.has_value()) << plan.error().status().to_string();
+
+  ResumeTokenMacKey key{};
+  key.fill(std::byte{13});
+  const schema::TabletId tablet_a = query::test::SnapshotTabletScanFixture::tablet_id();
+  const schema::TabletId tablet_b = query::test::SnapshotTabletScanFixture::second_tablet_id();
+  const wal::WalId wal = snapshot.snapshot().wal_id();
+  DurableMultiTabletSubscriptionConfig owner_config{
+      .storage = {.directory_path = directory.path().string(),
+                  .identity = {snapshot.snapshot().database_id().uuid(),
+                               snapshot.schema_ptr()->table_id(),
+                               plan->fingerprint(),
+                               snapshot.schema_ptr()->schema_id(),
+                               snapshot.schema_ptr()->version(),
+                               {{tablet_a, wal}, {tablet_b, wal}}}},
+      .source = {.database_id = snapshot.snapshot().database_id().uuid(),
+                 .table_id = snapshot.schema_ptr()->table_id(),
+                 .plan_fingerprint = plan->fingerprint(),
+                 .schema_id = snapshot.schema_ptr()->schema_id(),
+                 .schema_version = snapshot.schema_ptr()->version(),
+                 .members = {{tablet_b, wal, 1U}, {tablet_a, wal, 1U}},
+                 .token_key = key}};
+  auto owner = DurableMultiTabletSubscription::create_new(std::move(owner_config));
+  ASSERT_TRUE(owner.has_value()) << owner.error().to_string();
+  auto resources = query::QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+  auto requests = network::SpscNetworkTaskQueue::create(2U).value();
+  auto responses = network::SpscNetworkTaskQueue::create(1U).value();
+  SnapshotSubscriptionLimits snapshot_limits;
+  snapshot_limits.pipeline.scan.head.chunk.maximum_rows = 1U;
+  auto service = SubscriptionService::create({.owner = &*owner,
+                                              .plan = &*plan,
+                                              .catalog = catalog,
+                                              .resources = &resources,
+                                              .storage = &snapshot.storage(),
+                                              .publisher = &snapshot.publisher(),
+                                              .lineage = &snapshot.lineage(),
+                                              .requests = &requests,
+                                              .responses = &responses,
+                                              .maximum_active_subscriptions = 2U,
+                                              .maximum_live_poll_records = 2U,
+                                              .snapshot_limits = snapshot_limits});
+  ASSERT_TRUE(service.has_value()) << service.error().to_string();
+
+  const common::Uuid subscription_id = uuid(std::byte{14});
+  auto subscribe_payload = network::encode_subscription_request(
+      {.mode = network::SubscriptionStartMode::kNewQuery,
+       .subscription_id = subscription_id,
+       .body = std::as_bytes(std::span{kSql.data(), kSql.size()})});
+  ASSERT_TRUE(subscribe_payload.has_value());
+  ASSERT_TRUE(requests.try_push(request_task(1U, 1U, network::MessageType::kSubscribeRequest,
+                                             std::move(*subscribe_payload))));
+  ASSERT_TRUE(service->poll_once().is_ok());
+  ASSERT_TRUE(service->owns(1U, 1U));
+
+  constexpr std::size_t kSnapshotChunkCount = 5U;
+  constexpr std::size_t kSnapshotResponseCount = kSnapshotChunkCount + 2U;
+  for (std::size_t stage = 0U; stage < kSnapshotResponseCount; ++stage) {
+    SCOPED_TRACE(stage);
+    const std::uint64_t sentinel_request_id = 100U + stage;
+    ASSERT_TRUE(
+        responses.try_push(request_task(99U, sentinel_request_id, network::MessageType::kError,
+                                        {std::byte{static_cast<std::uint8_t>(stage)}})));
+    const SubscriptionServiceMetrics before = service->metrics();
+    ASSERT_TRUE(service->poll_once().is_ok());
+    EXPECT_EQ(service->metrics().snapshot_responses, before.snapshot_responses + 1U);
+    EXPECT_EQ(service->metrics().response_backpressure, stage + 1U);
+
+    ASSERT_TRUE(service->poll_once().is_ok());
+    EXPECT_EQ(service->metrics().snapshot_responses, before.snapshot_responses + 1U);
+    EXPECT_EQ(service->metrics().response_backpressure, stage + 1U);
+    auto sentinel = responses.try_pop();
+    ASSERT_TRUE(sentinel.has_value());
+    const network::NetworkTask sentinel_task = std::move(sentinel).value_or(network::NetworkTask{});
+    EXPECT_EQ(sentinel_task.frame.header.request_id, sentinel_request_id);
+    ASSERT_EQ(sentinel_task.frame.payload.size(), 1U);
+    EXPECT_EQ(sentinel_task.frame.payload.front(), std::byte{static_cast<std::uint8_t>(stage)});
+
+    ASSERT_TRUE(service->poll_once().is_ok());
+    auto output = responses.try_pop();
+    ASSERT_TRUE(output.has_value());
+    const network::NetworkTask output_task = std::move(output).value_or(network::NetworkTask{});
+    EXPECT_EQ(output_task.frame.header.request_id, 1U);
+    if (stage < kSnapshotChunkCount) {
+      EXPECT_EQ(output_task.frame.header.message_type, network::MessageType::kQueryResult);
+      EXPECT_EQ(output_task.frame.header.flags, 0U);
+      const auto decoded = network::decode_query_result_batch(output_task.frame.payload);
+      ASSERT_TRUE(decoded.has_value());
+      EXPECT_EQ(decoded->row_count(), 1U);
+    } else if (stage == kSnapshotChunkCount) {
+      EXPECT_EQ(output_task.frame.header.message_type, network::MessageType::kQueryResult);
+      EXPECT_EQ(output_task.frame.header.flags, network::kFrameFlagEndStream);
+      const auto decoded = network::decode_query_result_batch(output_task.frame.payload);
+      ASSERT_TRUE(decoded.has_value());
+      EXPECT_EQ(decoded->row_count(), 0U);
+    } else {
+      EXPECT_EQ(output_task.frame.header.message_type, network::MessageType::kSubscriptionReady);
+      EXPECT_TRUE(network::decode_subscription_ready(output_task.frame.payload).has_value());
+    }
+  }
+
+  EXPECT_EQ(service->metrics().snapshot_responses, kSnapshotResponseCount);
+  EXPECT_EQ(service->metrics().response_backpressure, kSnapshotResponseCount);
+  EXPECT_TRUE(service->owns(1U, 1U));
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
 TEST(SubscriptionServiceTest, RejectsRaftResumeOnOnePointOneAndDeliversItOnOnePointTwo) {
   TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
