@@ -72,4 +72,6 @@ Additional independently generated assertions pin every granule and page descrip
 metadata trailer. Broader semantic page matrices, crash tests, fuzzing, and performance evidence
 remain subsequent work and Phase 18 validation. Projected reading, Manifest v2 installation,
 current/as-of winner resolution, and temporal row/order validation are implemented with bounded
-work and exact corrupt-versus-unsupported value classification.
+work and exact corrupt-versus-unsupported value classification. Dedicated allocator sweeps now
+cover every observed temporal projected-reader open and result allocation while re-proving
+allocation-free planning.

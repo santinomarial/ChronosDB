@@ -93,8 +93,11 @@ only authenticated descriptors. Its borrowed plan reports source and synthesized
 decoded canonical bytes split between raw page borrows and compressed/synthesized owned buffers.
 The reader and caller-owned ordinal span remain alive, unmoved, and immutable until plan execution.
 Execution revalidates the request before allocating, removes the former temporary projection
-vectors, and converts allocation failures to `RESOURCE_EXHAUSTED`. The byte plan does not include
-container/allocator bookkeeping, provider workspace, file pins, or future query backing objects.
+vectors, and converts allocation failures to `RESOURCE_EXHAUSTED`. Reader open also converts
+metadata/schema-projection allocation and container failures into resource-limit results. Dedicated
+allocator sweeps cover both versioned open paths, allocation-free v1/v2 planning, and every observed
+v1/v2 result allocation through success. The byte plan does not include container/allocator
+bookkeeping, provider workspace, file pins, or future query backing objects.
 
 ADR 0026's scan source supplies those next-layer owners for one in-memory part. Its trusted
 `CsegPartPin` carries complete byte/snapshot lifetime and a conservative retained charge. Source

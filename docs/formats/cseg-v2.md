@@ -88,8 +88,10 @@ The projected reader authenticates metadata without touching page bodies, binds 
 lineage, plans exact decoded/owned/borrowed bytes, reads only requested user pages, and always reads
 and semantically validates all eight temporal system pages for a selected granule. Empty user
 projections therefore still authenticate row identities and operations. V1 and v2 open entry points
-remain version-strict. The reader exposes physical history rows; choosing current/as-of winners is a
-higher-level query operation.
+remain version-strict and classify every observed metadata/schema-projection allocation failure as
+resource exhaustion. Dedicated fault injection re-proves that temporal planning allocates nothing
+and that every observed result allocation fails cleanly until exact success. The reader exposes
+physical history rows; choosing current/as-of winners is a higher-level query operation.
 
 The query-layer reference resolver implements that higher-level operation for one explicit
 authoritative source lineage. It requires a complete schema-order projection, filters by an

@@ -580,59 +580,72 @@ CsegProjectedReaderOpenResult open_cseg_projected_reader_prefix(
     const common::ByteView bytes, const schema::SchemaLineage& lineage,
     const schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
     const CsegProjectedReaderLimits limits, const std::uint16_t expected_major) {
-  if (limits.max_decoded_buffer_bytes == 0U) {
-    return std::unexpected(CsegProjectedReaderOpenError{
-        CsegProjectedReaderOpenErrorKind::kInvalidArgument,
-        invalid("CSEG projected-reader decoded-buffer limit must be nonzero")});
-  }
-  CsegMetadataDecodeResult metadata =
-      expected_major == temporal_format::kFormatMajor
-          ? decode_cseg_v2_temporal_metadata_prefix(bytes, limits.metadata)
-          : decode_cseg_v1_metadata_prefix(bytes, limits.metadata);
-  if (!metadata.has_value()) {
-    return std::unexpected(open_error(metadata.error()));
-  }
-  if (metadata->total_length() > std::numeric_limits<std::size_t>::max()) {
+  try {
+    if (limits.max_decoded_buffer_bytes == 0U) {
+      return std::unexpected(CsegProjectedReaderOpenError{
+          CsegProjectedReaderOpenErrorKind::kInvalidArgument,
+          invalid("CSEG projected-reader decoded-buffer limit must be nonzero")});
+    }
+    CsegMetadataDecodeResult metadata =
+        expected_major == temporal_format::kFormatMajor
+            ? decode_cseg_v2_temporal_metadata_prefix(bytes, limits.metadata)
+            : decode_cseg_v1_metadata_prefix(bytes, limits.metadata);
+    if (!metadata.has_value()) {
+      return std::unexpected(open_error(metadata.error()));
+    }
+    if (metadata->total_length() > std::numeric_limits<std::size_t>::max()) {
+      return std::unexpected(CsegProjectedReaderOpenError{
+          CsegProjectedReaderOpenErrorKind::kResourceLimit,
+          status(common::StatusCode::kResourceExhausted,
+                 "CSEG projected-reader part does not fit this platform")});
+    }
+    const std::size_t total_length = static_cast<std::size_t>(metadata->total_length());
+    if (bytes.size() < total_length) {
+      return std::unexpected(incomplete(metadata->total_length()));
+    }
+
+    std::shared_ptr<const schema::TableSchema> source_schema = lineage.find(metadata->schema_id());
+    if (source_schema == nullptr) {
+      return std::unexpected(CsegProjectedReaderOpenError{
+          CsegProjectedReaderOpenErrorKind::kNotFound,
+          status(common::StatusCode::kNotFound,
+                 "CSEG source schema is not retained in the lineage")});
+    }
+    const common::Status binding =
+        expected_major == temporal_format::kFormatMajor
+            ? validate_cseg_v2_temporal_metadata_schema(*metadata, *source_schema, target_tablet)
+            : validate_cseg_v1_metadata_schema(*metadata, *source_schema, target_tablet);
+    if (!binding.is_ok()) {
+      return std::unexpected(invalid_open(binding));
+    }
+    std::shared_ptr<const schema::TableSchema> destination_schema =
+        lineage.find(destination_schema_id);
+    if (destination_schema == nullptr) {
+      return std::unexpected(CsegProjectedReaderOpenError{
+          CsegProjectedReaderOpenErrorKind::kNotFound,
+          status(common::StatusCode::kNotFound,
+                 "CSEG destination schema is not retained in the lineage")});
+    }
+    common::Result<schema::SchemaProjection> projection =
+        lineage.projection({.ancestor_schema_id = metadata->schema_id(),
+                            .descendant_schema_id = destination_schema_id});
+    if (!projection.has_value()) {
+      return std::unexpected(invalid_open(projection.error()));
+    }
+    return CsegProjectedReaderView{std::move(*metadata),     bytes.first(total_length),
+                                   std::move(source_schema), std::move(destination_schema),
+                                   std::move(*projection),   limits};
+  } catch (const std::bad_alloc&) {
+    return std::unexpected(
+        CsegProjectedReaderOpenError{CsegProjectedReaderOpenErrorKind::kResourceLimit,
+                                     status(common::StatusCode::kResourceExhausted,
+                                            "CSEG projected-reader open allocation failed")});
+  } catch (const std::length_error&) {
     return std::unexpected(CsegProjectedReaderOpenError{
         CsegProjectedReaderOpenErrorKind::kResourceLimit,
         status(common::StatusCode::kResourceExhausted,
-               "CSEG projected-reader part does not fit this platform")});
+               "CSEG projected-reader open exceeds container limits")});
   }
-  const std::size_t total_length = static_cast<std::size_t>(metadata->total_length());
-  if (bytes.size() < total_length) {
-    return std::unexpected(incomplete(metadata->total_length()));
-  }
-
-  std::shared_ptr<const schema::TableSchema> source_schema = lineage.find(metadata->schema_id());
-  if (source_schema == nullptr) {
-    return std::unexpected(
-        CsegProjectedReaderOpenError{CsegProjectedReaderOpenErrorKind::kNotFound,
-                                     status(common::StatusCode::kNotFound,
-                                            "CSEG source schema is not retained in the lineage")});
-  }
-  const common::Status binding =
-      expected_major == temporal_format::kFormatMajor
-          ? validate_cseg_v2_temporal_metadata_schema(*metadata, *source_schema, target_tablet)
-          : validate_cseg_v1_metadata_schema(*metadata, *source_schema, target_tablet);
-  if (!binding.is_ok()) {
-    return std::unexpected(invalid_open(binding));
-  }
-  std::shared_ptr<const schema::TableSchema> destination_schema =
-      lineage.find(destination_schema_id);
-  if (destination_schema == nullptr) {
-    return std::unexpected(CsegProjectedReaderOpenError{
-        CsegProjectedReaderOpenErrorKind::kNotFound,
-        status(common::StatusCode::kNotFound,
-               "CSEG destination schema is not retained in the lineage")});
-  }
-  common::Result<schema::SchemaProjection> projection = lineage.projection(
-      {.ancestor_schema_id = metadata->schema_id(), .descendant_schema_id = destination_schema_id});
-  if (!projection.has_value()) {
-    return std::unexpected(invalid_open(projection.error()));
-  }
-  return CsegProjectedReaderView{std::move(*metadata),     bytes.first(total_length),
-                                 std::move(source_schema), std::move(destination_schema),
-                                 std::move(*projection),   limits};
 }
 
 CsegProjectedReaderOpenResult open_cseg_v1_projected_reader_prefix(

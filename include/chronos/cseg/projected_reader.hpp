@@ -86,8 +86,9 @@ public:
   [[nodiscard]] constexpr std::size_t decoded_page_count() const noexcept {
     return source_user_page_count_ + system_page_count_;
   }
-  // Exact aggregate canonical bytes for selected source pages, synthesized columns, and all system
-  // pages. Raw page bytes are borrowed; compressed page outputs and synthesized columns are owned.
+  // Exact aggregate canonical bytes for selected source pages, synthesized columns, and every
+  // version-mandatory system page. Raw page bytes are borrowed; compressed page outputs and
+  // synthesized columns are owned.
   [[nodiscard]] constexpr std::uint64_t decoded_buffer_bytes() const noexcept {
     return decoded_buffer_bytes_;
   }
@@ -219,8 +220,8 @@ private:
 
 // A metadata-authenticated, schema-bound projected reader over one complete immutable in-memory
 // part image. Opening does not touch page bytes. Each read validates only requested user pages and
-// all four mandatory system pages, including their following alignment and v1 system semantics.
-// It is therefore a scan primitive, not evidence of complete-part acceptance.
+// every version-mandatory system page, including following alignment and version-specific system
+// semantics. It is therefore a scan primitive, not evidence of complete-part acceptance.
 class CsegProjectedReaderView {
 public:
   CsegProjectedReaderView() = delete;

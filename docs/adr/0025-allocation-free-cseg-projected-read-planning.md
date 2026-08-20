@@ -42,6 +42,9 @@ v1 byte.
   borrowed ordinal span.
 - Output allocation failures and container length failures become `RESOURCE_EXHAUSTED` results.
   No partially constructed granule escapes.
+- Projected-reader open likewise converts metadata/schema-projection allocation and container
+  failures into `kResourceLimit` errors carrying `RESOURCE_EXHAUSTED`; no exception crosses either
+  versioned public open entry point.
 - The decoded-byte plan is not a complete query-memory reservation. It excludes container and
   allocator bookkeeping, Zstandard context workspace, encoded-part/snapshot pin policy, scheduler
   queues, and a future `VectorChunkBacking` object. The CSEG scan owner must conservatively add and
@@ -109,8 +112,9 @@ lifetime explicit, changes no versioned byte, and does not weaken page validatio
   raw/Zstandard ownership, synthesized nullable tails, direct reads, and caller-order results.
 - Hostile tests cover duplicate/out-of-range/oversized requests, foreign-reader plans, empty user
   projections, and mandatory system bytes.
-- A dedicated test allocator proves valid planning performs zero `new`/`new[]` calls and injects
-  failure at every output allocation until successful execution.
+- A dedicated test allocator proves valid v1 and v2 planning performs zero `new`/`new[]` calls,
+  injects failure at every observed v1/v2 open allocation, and injects failure at every v1/v2
+  output allocation until successful execution.
 - The existing CSEG part fuzzer plans and executes selected and system-only reads. Sanitizers cover
   borrowed plan and output lifetimes.
 - A microbenchmark isolates planning across row counts, compression policies, and empty/one-column
