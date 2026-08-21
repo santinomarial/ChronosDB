@@ -417,6 +417,10 @@ Read-barrier authority coverage submits a higher-term leadership probe from a no
 leader and requires `INVALID_ARGUMENT` before term, role, leader identity, or persistent state can
 change. Existing learner catch-up coverage still accepts AppendEntries from a new-only leader,
 keeping the membership ADR's replication exception distinct from leadership authority.
+The paired AppendEntries authority case submits an empty higher-term heartbeat from that same
+nonvoter position and requires exact leader-state preservation because no matching membership
+suffix proves the sender active. The positive new-only-leader case continues to install and commit
+the canonical joint/final suffix.
 
 Persistent-state recovery rejects a snapshot term above current term before the node can produce
 messages from impossible history. Failed AppendEntries responses require a nonzero conflict index

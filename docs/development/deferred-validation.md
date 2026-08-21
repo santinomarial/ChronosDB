@@ -266,8 +266,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   Core recovery and every log- or snapshot-changing transition now enforce the exact aggregate
   persistent-state payload budget before mutation; exhaustive mixed append/replacement/compaction
   boundary generation remains deferred. Read-barrier requests now require an active-voter source
-  before term observation without removing the learner log/snapshot replication exception; broader
-  membership-transition source-authority schedules remain deferred.
+  before term observation. An otherwise nonvoter AppendEntries source must now be established by a
+  matching valid candidate suffix before term observation, while the new-only-leader catch-up case
+  remains accepted; broader membership-transition and snapshot source-authority schedules remain
+  deferred.
 - Persistent file owner, vote/log fsync ordering, crash/restart at every transition, idempotent
   recovery, application to tablet state, snapshot creation/install, and log compaction. Extend the
   implemented read barrier through production transport and tablet snapshot acquisition.

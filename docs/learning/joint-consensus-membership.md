@@ -35,6 +35,10 @@ remains encodable.
 A bootstrap learner can receive replication but cannot start an election or grant a vote. New peers
 receive replication as soon as the joint entry is appended. A leader excluded from the final set
 sends the final commit update to new peers, clears leader-only state, and becomes a follower.
+Conversely, a sender outside a lagging recipient's current active set gains AppendEntries authority
+only when the request matches the local predecessor and its validated candidate suffix derives the
+sender into the active union. This supports catch-up from a new-only leader without allowing an
+unproven nonvoter heartbeat to advance the recipient's term.
 
 Exact begin/finalize retries are empty successful transitions when the matching retained membership
 entry is committed or belongs to the current leader term. Divergent intent is invalid. For an exact

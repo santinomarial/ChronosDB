@@ -481,8 +481,8 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
   // different: only an active voter can be a leader authorized to issue one.
   const bool learner_replication_request = std::holds_alternative<AppendEntriesRequest>(message) ||
                                            std::holds_alternative<InstallSnapshotRequest>(message);
-  if (source == 0U || source == impl_->id ||
-      (!impl_->voter(source) && !learner_replication_request)) {
+  const bool active_source = impl_->voter(source);
+  if (source == 0U || source == impl_->id || (!active_source && !learner_replication_request)) {
     return common::make_unexpected(
         invalid("Raft message source is invalid or not an active voter"));
   }
@@ -529,10 +529,14 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
               return invalid("AppendEntries leader no-op entry has a payload");
           }
           if (value.term < impl_->state.current_term) {
+            if (!active_source)
+              return invalid("stale AppendEntries source is not an active voter");
             return common::Status::ok();
           }
           const auto previous_term = impl_->append_predecessor_term(value.previous_log_index);
           if (!previous_term.has_value() || *previous_term != value.previous_log_term) {
+            if (!active_source)
+              return invalid("AppendEntries suffix cannot establish nonvoter leader authority");
             return common::Status::ok();
           }
           std::optional<std::size_t> first_conflict;
@@ -585,6 +589,9 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
                                               impl_->limits);
           if (!membership.has_value())
             return membership.error();
+          if (!active_source && !std::ranges::binary_search(membership->active_voters, source)) {
+            return invalid("AppendEntries suffix does not establish active leader membership");
+          }
           if (const common::Status fits = persistent_state_fits(impl_->state.snapshot.voters.size(),
                                                                 candidate_log, impl_->limits);
               !fits.is_ok()) {

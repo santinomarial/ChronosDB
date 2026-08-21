@@ -82,7 +82,9 @@ group-scoped durable runtime. The envelope does not replace the runtime's persis
 outbound bytes are released only after any associated persistent transition has synchronized. The
 codec cannot establish group membership. At dispatch, the deterministic core admits read-barrier
 requests only from an active voter and performs that check before observing a higher term; the
-nonvoter learner exception remains limited to AppendEntries and snapshot requests.
+nonvoter learner exception remains limited to AppendEntries and snapshot requests. An otherwise
+nonvoter AppendEntries sender is admitted only when a matching, valid candidate suffix derives that
+sender into the active configuration before term observation.
 
 Minor-version compatibility is exact in v1. Reserved fields must remain zero until a later accepted
 version defines them.

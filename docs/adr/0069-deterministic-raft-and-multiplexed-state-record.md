@@ -23,6 +23,11 @@ Remote candidates cannot advertise that reserved value as an existing last-log i
 leaders cannot name it as an AppendEntries predecessor or committed index.
 AppendEntries responses cannot report it as the follower's actual last known match index.
 InstallSnapshot responses cannot report it as the follower's installed snapshot boundary.
+An AppendEntries sender outside the recipient's active configuration must supply a predecessor-
+matching, semantically valid candidate suffix whose derived active voters include that sender.
+Otherwise the request is rejected before its term can change local state. This permits a lagging
+node to learn a valid joint/final configuration from a new-only leader without treating an
+unproven nonvoter heartbeat as leadership authority.
 The core also owns the exact aggregate byte budget of the version-1 persistent-state payload:
 fixed state, snapshot voters, retained entry framing, and entry payloads. Recovery and every log- or
 snapshot-changing transition must fit that budget before any persistent or volatile core state

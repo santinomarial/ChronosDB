@@ -788,6 +788,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   focused term-conflict and same-term byte-divergence state-preservation coverage. Canonical
   joint/final membership commands enforce a construction-time `u16` voter-limit bound and old-and-
   new election and commit quorums, recover from the retained log, and safely remove leaders.
+  A sender outside the current active set must now prove AppendEntries leadership through a
+  matching valid suffix that derives its membership before term observation, preserving new-only
+  leader catch-up while rejecting unproven nonvoter heartbeats.
   Exact full-state payload accounting now bounds the aggregate snapshot voters, retained-entry
   framing, and payload bytes on recovery and before every log- or snapshot-changing transition, so
   an individually legal entry cannot create an unencodable persistent state.

@@ -51,7 +51,9 @@ The implemented receiver enforces that sequence. It rejects absent principals be
 delegates exact source authorization to the embedding, checks the local destination, and submits
 one owning receive operation followed immediately by its observation through the bounded
 asynchronous runtime. Its completion is the acquire boundary for the already synchronized result
-and post-message state. Outbound encoding borrows that result so the caller retains every message
+and post-message state. Group membership remains a core decision: an AppendEntries sender outside
+the active set must prove its membership through the validated matching suffix before term
+observation. Outbound encoding borrows that result so the caller retains every message
 if a configured frame limit is too small.
 
 The inbound TLS carrier gives one event-loop thread exclusive session ownership. It reads through a

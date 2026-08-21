@@ -25,7 +25,10 @@ may be in flight per group.
 The bootstrap voter list remains external group configuration. A node need not initially be a
 voter, which permits a learner target to accept log replication, but a nonvoter cannot campaign or
 grant a vote. That learner exception covers AppendEntries and snapshot installation only; a
-nonvoter cannot issue a leadership read-barrier probe. Recovery deterministically derives
+nonvoter cannot issue a leadership read-barrier probe. An AppendEntries sender not already active
+must establish its authority through a predecessor-matching, valid candidate suffix that derives
+the sender into the active voter union before the recipient observes its term. Recovery
+deterministically derives
 membership from the complete retained log and rejects corrupt or impossible transitions. Generic
 application proposals cannot use the reserved
 entry types. Metadata and tablet application owners advance over membership entries as internal
@@ -59,4 +62,6 @@ old/new commit and election quorums, premature-final rejection, leader removal, 
 rejection, invalid-history preflight, durable reopen, Multi-Raft operations, and ordered tablet and
 metadata application across internal entries. Limit coverage rejects an unencodable configured
 voter bound at node construction and accepts the exact format maximum. A higher-term read-barrier
-request from a nonvoter is rejected before term, role, leader identity, or persistent state changes.
+request and an unproven higher-term AppendEntries heartbeat from a nonvoter are rejected before
+term, role, leader identity, or persistent state changes. A suffix carrying the valid joint/final
+transition from a new-only leader remains accepted.
