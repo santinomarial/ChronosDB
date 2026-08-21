@@ -81,6 +81,9 @@ destruction joins the worker before closing either pipe descriptor.
 Completion state is shared ownership, so it can outlive the runtime. Requests are unique ownership
 and are released after exactly one completion. Runtime destruction stops admission, drains or
 terminally rejects every accepted task, closes storage, and joins before destroying state.
+A controlled test blocks the worker at the exact 64-task admission bound, races eight producers
+with two shutdown callers, and verifies every accepted sequence completes once, both shutdown calls
+converge, terminal metrics are exact, and the joined runtime's descriptor remains drainable.
 An extension object may be shared with an embedding for separately synchronized admission/result
 coordination, but its application owners and batch contexts remain worker-affine. A hook must never
 wait on a completion submitted to this same runtime; the sole worker would be waiting on itself.

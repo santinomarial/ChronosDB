@@ -1,10 +1,16 @@
 #include "chronos/raft/async_durable_runtime.hpp"
 
+#include <algorithm>
+#include <array>
+#include <barrier>
+#include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <poll.h>
 #include <span>
 #include <string>
@@ -144,6 +150,71 @@ private:
   std::size_t prepared_{};
   std::size_t completed_{};
   std::optional<QuorumSyncReceipt> receipt_;
+};
+
+class BlockingWorkerExtension final : public AsyncDurableRaftWorkerExtension {
+public:
+  common::Status initialize(DurableMultiRaftRuntime&) override {
+    return common::Status::ok();
+  }
+
+  common::Result<std::unique_ptr<AsyncDurableRaftWorkerBatchContext>>
+  prepare_batch(DurableMultiRaftRuntime&,
+                const std::span<const DurableRaftRequest> requests) override {
+    std::unique_lock lock{mutex_};
+    if (!blocked_once_) {
+      blocked_once_ = true;
+      worker_blocked_ = true;
+      condition_.notify_all();
+      condition_.wait(lock, [this] { return released_; });
+    }
+    return std::unique_ptr<AsyncDurableRaftWorkerBatchContext>{
+        std::make_unique<RecordingBatchContext>(requests.size())};
+  }
+
+  common::Status complete_batch(DurableMultiRaftRuntime&,
+                                std::unique_ptr<AsyncDurableRaftWorkerBatchContext>,
+                                std::span<const DurableRaftResult>) override {
+    return common::Status::ok();
+  }
+
+  common::Status shutdown(DurableMultiRaftRuntime&) override {
+    return common::Status::ok();
+  }
+
+  [[nodiscard]] bool wait_until_blocked() {
+    std::unique_lock lock{mutex_};
+    return condition_.wait_for(lock, std::chrono::seconds{1}, [this] { return worker_blocked_; });
+  }
+
+  void release() {
+    {
+      const std::lock_guard lock{mutex_};
+      released_ = true;
+    }
+    condition_.notify_all();
+  }
+
+private:
+  std::mutex mutex_;
+  std::condition_variable condition_;
+  bool blocked_once_{};
+  bool worker_blocked_{};
+  bool released_{};
+};
+
+class BlockingWorkerReleaseGuard {
+public:
+  explicit BlockingWorkerReleaseGuard(BlockingWorkerExtension* extension) noexcept
+      : extension_(extension) {}
+  ~BlockingWorkerReleaseGuard() {
+    extension_->release();
+  }
+  BlockingWorkerReleaseGuard(const BlockingWorkerReleaseGuard&) = delete;
+  BlockingWorkerReleaseGuard& operator=(const BlockingWorkerReleaseGuard&) = delete;
+
+private:
+  BlockingWorkerExtension* extension_;
 };
 
 TEST(AsyncDurableMultiRaftRuntimeTest, RunsApplicationExtensionBeforePublishingCompletion) {
@@ -421,6 +492,124 @@ TEST(AsyncDurableMultiRaftRuntimeTest, WakesAndDrainsCompletionDescriptor) {
   ASSERT_EQ(result->size(), 1U);
   EXPECT_TRUE(result->front().status.is_ok());
   EXPECT_TRUE(runtime->shutdown().is_ok());
+}
+
+TEST(AsyncDurableMultiRaftRuntimeTest, ConcurrentShutdownDrainsTheExactAcceptedBound) {
+  constexpr std::size_t kMaximumPending = 64U;
+  constexpr std::size_t kProducerCount = 8U;
+  constexpr std::size_t kShutdownCallerCount = 2U;
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{5U});
+  AsyncDurableMultiRaftLimits limits{};
+  limits.maximum_pending_batches = kMaximumPending;
+  limits.maximum_pending_operations = kMaximumPending;
+  auto extension = std::make_shared<BlockingWorkerExtension>();
+  auto runtime = AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group, {1U}}}, limits, extension);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  [[maybe_unused]] BlockingWorkerReleaseGuard release_on_exit{extension.get()};
+
+  auto first = runtime->try_observe_group(group);
+  ASSERT_TRUE(first.has_value()) << first.error().to_string();
+  if (!extension->wait_until_blocked()) {
+    extension->release();
+    EXPECT_TRUE(runtime->shutdown().is_ok());
+    FAIL() << "durable worker did not reach the controlled shutdown boundary";
+  }
+
+  std::vector<AsyncDurableRaftCompletion> completions;
+  completions.reserve(kMaximumPending);
+  completions.push_back(std::move(*first));
+  std::size_t resource_exhausted{};
+  std::size_t unavailable{};
+  std::size_t unexpected_rejections{};
+  std::mutex outcomes_mutex;
+  auto record = [&](common::Result<AsyncDurableRaftCompletion> outcome) {
+    const std::lock_guard lock{outcomes_mutex};
+    if (outcome.has_value()) {
+      completions.push_back(std::move(*outcome));
+    } else if (outcome.error().code() == common::StatusCode::kResourceExhausted) {
+      ++resource_exhausted;
+    } else if (outcome.error().code() == common::StatusCode::kUnavailable) {
+      ++unavailable;
+    } else {
+      ++unexpected_rejections;
+    }
+  };
+
+  std::barrier race_start{static_cast<std::ptrdiff_t>(kProducerCount + kShutdownCallerCount)};
+  std::vector<std::thread> producers;
+  producers.reserve(kProducerCount);
+  for (std::size_t producer = 0U; producer < kProducerCount; ++producer) {
+    producers.emplace_back([&] {
+      while (true) {
+        auto outcome = runtime->try_observe_group(group);
+        const bool reached_bound = !outcome.has_value() &&
+                                   outcome.error().code() == common::StatusCode::kResourceExhausted;
+        const bool unexpected = !outcome.has_value() &&
+                                outcome.error().code() != common::StatusCode::kResourceExhausted;
+        record(std::move(outcome));
+        if (reached_bound || unexpected)
+          break;
+      }
+      race_start.arrive_and_wait();
+      record(runtime->try_observe_group(group));
+    });
+  }
+
+  std::array<common::Status, kShutdownCallerCount> shutdown_statuses;
+  std::array<std::thread, kShutdownCallerCount> shutdown_callers;
+  for (std::size_t caller = 0U; caller < kShutdownCallerCount; ++caller) {
+    shutdown_callers[caller] = std::thread{[&, caller] {
+      race_start.arrive_and_wait();
+      shutdown_statuses[caller] = runtime->shutdown();
+    }};
+  }
+  for (std::thread& producer : producers)
+    producer.join();
+  extension->release();
+  for (std::thread& caller : shutdown_callers)
+    caller.join();
+
+  ASSERT_EQ(completions.size(), kMaximumPending);
+  EXPECT_EQ(resource_exhausted + unavailable, kProducerCount * 2U);
+  EXPECT_GE(resource_exhausted, kProducerCount);
+  EXPECT_EQ(unexpected_rejections, 0U);
+  for (const common::Status& status : shutdown_statuses)
+    EXPECT_TRUE(status.is_ok()) << status.to_string();
+
+  std::sort(completions.begin(), completions.end(),
+            [](const AsyncDurableRaftCompletion& left, const AsyncDurableRaftCompletion& right) {
+              return left.submission_sequence() < right.submission_sequence();
+            });
+  for (std::size_t index = 0U; index < completions.size(); ++index) {
+    AsyncDurableRaftCompletion& completion = completions[index];
+    EXPECT_EQ(completion.submission_sequence(), index + 1U);
+    EXPECT_TRUE(completion.is_ready());
+    auto result = completion.wait();
+    ASSERT_TRUE(result.has_value()) << result.error().to_string();
+    ASSERT_EQ(result->size(), 1U);
+    EXPECT_TRUE(result->front().status.is_ok());
+    EXPECT_TRUE(result->front().observation.has_value());
+  }
+
+  const AsyncDurableMultiRaftMetrics metrics = runtime->metrics();
+  EXPECT_FALSE(metrics.accepting);
+  EXPECT_FALSE(metrics.terminal_failure);
+  EXPECT_EQ(metrics.admitted_batches, kMaximumPending);
+  EXPECT_EQ(metrics.completed_batches, kMaximumPending);
+  EXPECT_EQ(metrics.rejected_batches, resource_exhausted + unavailable);
+  EXPECT_EQ(metrics.pending_batches, 0U);
+  EXPECT_EQ(metrics.pending_operations, 0U);
+  EXPECT_EQ(metrics.high_water_pending_batches, kMaximumPending);
+  EXPECT_EQ(metrics.high_water_pending_operations, kMaximumPending);
+
+  pollfd descriptor{.fd = runtime->completion_descriptor(), .events = POLLIN};
+  ASSERT_EQ(::poll(&descriptor, 1U, 0), 1);
+  EXPECT_NE(descriptor.revents & POLLIN, 0);
+  ASSERT_TRUE(runtime->drain_completion_notifications().is_ok());
+  descriptor.revents = 0;
+  EXPECT_EQ(::poll(&descriptor, 1U, 0), 0);
 }
 
 } // namespace

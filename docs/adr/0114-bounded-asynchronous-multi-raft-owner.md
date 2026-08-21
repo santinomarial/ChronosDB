@@ -73,9 +73,12 @@ The mutex publication argument is part of the concurrency contract.
 Focused tests submit election, proposal, and apply batches without waiting between them, request
 shutdown immediately, verify FIFO drain and completion, and reopen the durable log at the applied
 state. Boundary tests reject empty, oversized, aggregate-outbound-exhausting, closed-admission, and
-invalid completion use; outbound rejection preserves admission and accepts a smaller batch. Queue
-interleaving stress, TSan, allocation injection, worker-start injection, I/O failure fanout,
-thousands-of-groups fairness, and latency/throughput measurements remain in Phase 18.
+invalid completion use; outbound rejection preserves admission and accepts a smaller batch. A
+controlled full-bound race admits exactly 64 observations from eight producers, releases two
+concurrent shutdown callers against final admission attempts, and proves every accepted completion
+drains once with convergent shutdown status and exact terminal metrics. Broader queue-interleaving
+stress, allocation injection, worker-start injection, I/O failure fanout, thousands-of-groups
+fairness, and latency/throughput measurements remain in Phase 18.
 
 ## Migration or rollback considerations
 

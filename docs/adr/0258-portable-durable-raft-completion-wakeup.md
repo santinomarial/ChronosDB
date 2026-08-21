@@ -28,8 +28,10 @@ Completion results remain independently owning and may outlive the runtime as be
 Portable `poll`/`epoll` integrations can now wait for durable results together with sockets without
 timer polling. Every successful or terminal batch adds at most one byte and notifications may
 coalesce without losing readiness. Focused tests prove a real durable operation wakes the
-descriptor, draining clears readiness, and the owning completion is ready. Pipe saturation,
-shutdown races, and sanitizer coverage remain Phase 18 work.
+descriptor, draining clears readiness, and the owning completion is ready. A controlled full-bound
+race also proves concurrent shutdown retains every accepted completion and leaves the descriptor
+drainable after the worker joins. Actual pipe-capacity saturation and broader shutdown/fault timing
+matrices remain Phase 18 work.
 
 ## References
 
