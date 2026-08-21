@@ -33,6 +33,13 @@ namespace {
   return request == nullptr ? 0U : request->context;
 }
 
+[[nodiscard]] const ReadBarrier* completed_read_barrier(const Transition& transition) {
+  const std::optional<ReadBarrier>& barrier = transition.read_barrier_ready;
+  if (!barrier.has_value())
+    return nullptr;
+  return &barrier.value();
+}
+
 void expect_read_barrier_allocation_atomic(const bool joint_membership,
                                            const std::size_t expected_probe_count) {
   std::size_t failure_count = 0U;
@@ -85,6 +92,60 @@ TEST(RaftNodeAllocationFailureTest,
 TEST(RaftNodeAllocationFailureTest,
      JointReadBarrierIssuancePreservesStateAndContextUntilPublication) {
   expect_read_barrier_allocation_atomic(true, 4U);
+}
+
+TEST(RaftNodeAllocationFailureTest,
+     JointReadBarrierAcknowledgementPreservesQuorumStateUntilPublication) {
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 16U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    RaftNode leader = leader_ready_for_read_barrier(true);
+    auto started = leader.begin_read_barrier();
+    ASSERT_TRUE(started.has_value()) << started.error().to_string();
+    const std::uint64_t context = read_context(*started);
+    const PersistentState before = leader.persistent_state();
+
+    std::optional<common::Result<Transition>> response;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      response.emplace(leader.receive(4U, ReadBarrierResponse{1U, context, true}));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(response.has_value());
+    if (response->has_value()) {
+      EXPECT_FALSE((**response).read_barrier_ready.has_value());
+      auto completed = leader.receive(3U, ReadBarrierResponse{1U, context, true});
+      ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
+      const ReadBarrier* barrier = completed_read_barrier(*completed);
+      ASSERT_NE(barrier, nullptr);
+      EXPECT_EQ(barrier->context, context);
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(response->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(leader.role(), Role::kLeader);
+    EXPECT_EQ(leader.current_term(), 1U);
+    EXPECT_EQ(leader.leader_id(), 1U);
+    EXPECT_EQ(leader.persistent_state(), before);
+
+    auto old_quorum_only = leader.receive(3U, ReadBarrierResponse{1U, context, true});
+    ASSERT_TRUE(old_quorum_only.has_value()) << old_quorum_only.error().to_string();
+    EXPECT_FALSE(old_quorum_only->read_barrier_ready.has_value());
+    auto retry = leader.receive(4U, ReadBarrierResponse{1U, context, true});
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    const ReadBarrier* barrier = completed_read_barrier(*retry);
+    ASSERT_NE(barrier, nullptr);
+    EXPECT_EQ(barrier->context, context);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
 }
 
 } // namespace

@@ -39,6 +39,9 @@ Issuance prepares the frozen voter ownership, acknowledgement set, and complete 
 batch before publishing either the pending barrier or the next context. Allocation or container-
 limit failure returns `RESOURCE_EXHAUSTED` with no pending operation and no consumed context, so an
 exact retry cannot be mistaken for a concurrent barrier and reuses the same context.
+Recording an accepted response is also atomic: failure to allocate its acknowledgement returns
+`RESOURCE_EXHAUSTED` without counting that voter or completing the barrier. Retrying the same exact
+response is safe under the set's duplicate suppression.
 
 ## Consequences
 
@@ -46,8 +49,8 @@ exact retry cannot be mistaken for a concurrent barrier and reuses the same cont
 - Lagging voters can confirm leadership without modifying replication progress or first receiving a
   snapshot.
 - Joint membership preserves its two-quorum safety rule for reads as well as election and commit.
-- Allocation failure during issuance is retryable and cannot leave a hidden pending barrier or a
-  gap in the term-local context sequence.
+- Allocation failure during issuance or acknowledgement is retryable and cannot leave a hidden
+  pending barrier, partial quorum observation, or gap in the term-local context sequence.
 - Production transport framing and binding the returned index to a tablet snapshot remain separate
   integration work; the in-memory value messages are not a released wire format.
 
@@ -68,6 +71,8 @@ context matching, apply gating, stable and frozen joint quorums, higher-term dem
 rejection after reelection, recipient persistence, nonvoter request rejection before higher-term
 observation, single-voter completion, and allocation failure at every observed issuance allocation.
 The allocation sweep requires exact role, term, leader, persistent-state, and retry-context
-preservation until the complete transition can be published. Production wire
+preservation until the complete transition can be published. A joint-quorum response sweep further
+requires failed acknowledgement allocation to leave the voter uncounted, then proves exact retry
+completion only after both frozen majorities exist. Production wire
 versioning, tablet snapshot acquisition, exhaustive schedules, partitions, duplication, restart,
 and long randomized simulation remain Phase 14 integration and hardening work.

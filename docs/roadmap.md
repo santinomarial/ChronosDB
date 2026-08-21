@@ -851,7 +851,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   abandon pending work on leadership change, and return an exact committed read index that must be
   applied before visibility. Issuance now prepares all owned quorum state and the complete probe
   batch before publishing the pending barrier or consuming its context, so allocation failure is
-  retryable with exact state and context preservation.
+  retryable with exact state and context preservation. Accepted-response allocation likewise
+  either counts the voter once or returns resource exhaustion with the frozen quorum unchanged.
   A bounded generation-tagged monotonic timer scheduler now emits election and heartbeat actions,
   retries rejected admission without shifting deadlines, and rejects stale completion rearming;
   its bounded driver now composes those actions with ordered asynchronous durable observations and

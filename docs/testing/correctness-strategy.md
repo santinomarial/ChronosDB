@@ -422,6 +422,10 @@ sweeps. Every observed allocation must return `RESOURCE_EXHAUSTED`, preserve the
 term, identity, and complete persistent state, and permit an immediate retry that publishes the
 exact complete probe batch with the same context. Each sweep must then reach successful issuance
 after all failure points are exhausted.
+A joint-quorum response sweep fails the new-only voter acknowledgement allocation, verifies an
+old-majority response still cannot complete the barrier, and then requires the exact new-only retry
+to complete it. This distinguishes strong insertion rollback from a partially counted response
+rather than relying only on unchanged durable state.
 The paired AppendEntries authority case submits an empty higher-term heartbeat from that same
 nonvoter position and requires exact leader-state preservation because no matching membership
 suffix proves the sender active. The positive new-only-leader case continues to install and commit

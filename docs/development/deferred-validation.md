@@ -268,10 +268,12 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   boundary generation remains deferred. Read-barrier requests now require an active-voter source
   before term observation. Focused stable- and joint-membership allocation sweeps now prove barrier
   issuance publishes neither pending ownership nor its next context until the exact complete probe
-  batch is owned; response-side acknowledgement allocation and high-contention schedules remain
-  deferred. An otherwise nonvoter AppendEntries source must now be established by a matching valid
-  candidate suffix before term observation, while the new-only-leader catch-up case remains
-  accepted; broader membership-transition and snapshot source-authority schedules remain deferred.
+  batch is owned. A focused joint-quorum response sweep proves acknowledgement allocation failure
+  does not partially count the voter and that an exact retry completes only after both majorities;
+  high-contention schedules remain deferred. An otherwise nonvoter AppendEntries source must now be
+  established by a matching valid candidate suffix before term observation, while the new-only-
+  leader catch-up case remains accepted; broader membership-transition and snapshot source-
+  authority schedules remain deferred.
 - Persistent file owner, vote/log fsync ordering, crash/restart at every transition, idempotent
   recovery, application to tablet state, snapshot creation/install, and log compaction. Extend the
   implemented read barrier through production transport and tablet snapshot acquisition.

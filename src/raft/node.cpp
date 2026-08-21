@@ -811,7 +811,13 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
               value.term != impl_->pending_read_barrier->term) {
             return common::Status::ok();
           }
-          impl_->pending_read_barrier->acknowledgements.insert(source);
+          try {
+            impl_->pending_read_barrier->acknowledgements.insert(source);
+          } catch (const std::bad_alloc&) {
+            return exhausted("Raft read-barrier acknowledgement allocation failed");
+          } catch (const std::length_error&) {
+            return exhausted("Raft read-barrier acknowledgement exceeds container limits");
+          }
           impl_->finish_read_barrier(transition);
           return common::Status::ok();
         }

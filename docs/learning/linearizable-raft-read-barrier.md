@@ -68,7 +68,9 @@ complete a barrier. Loss or partition leaves the one barrier pending and causes 
 return `UNAVAILABLE`; the owner may resolve this through its request deadline or a leadership
 change. Allocation or container-limit failure while issuing a barrier returns `RESOURCE_EXHAUSTED`
 without changing role, term, leader identity, persistent state, pending ownership, or the next
-context. Each barrier sends `O(voters)` messages and retains `O(voters)` bounded state.
+context. The acknowledgement set insertion has the same strong guarantee: allocation failure
+returns `RESOURCE_EXHAUSTED` without counting the responder, and an exact retry can add it once.
+Each barrier sends `O(voters)` messages and retains `O(voters)` bounded state.
 
 ## Tradeoffs and likely interview questions
 
