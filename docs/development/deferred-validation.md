@@ -204,7 +204,8 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   reads fragmented exact frames, pauses for durable completion, and publishes complete results.
   A bounded TCP listener/poll owner now admits those sessions and retains result-ready connections
   until explicit pickup. Stable connection IDs and external readiness/closure driving now permit one
-  outer poll table; overload/churn and unified runtime polling remain deferred.
+  outer poll table; overload/churn remain deferred, while the bounded unified runtime composition is
+  covered below.
   Each admitted inbound message now returns its exact ordered post-message group observation for
   timer rearming; high-contention observation ordering remains part of cluster stress validation.
   A persistent peer-authenticated outbound session bounds FIFO frames/bytes, retains short writes,
@@ -372,8 +373,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   reconnect matrices remain deferred.
   One bounded Raft transport runtime now composes durable wakeups, exact deadline-clamped polling,
   inbound/outbound readiness, FIFO activity/results, retry-safe routing, and application pickup.
-  Result-ring saturation, mixed external completion producers, many-group/peer skew, storage stalls,
-  disconnect/reconnect storms, and deterministic multi-node production-carrier faults remain.
+  A focused saturation test now retains an unroutable timer result at the FIFO head, fills the
+  result ring with a later application completion, and leaves another durable application completion
+  in its bounded owner without allowing pickup or over-admission. High-contention mixed external
+  completion producers, many-group/peer skew, storage stalls, disconnect/reconnect storms, and
+  deterministic multi-node production-carrier faults remain.
 - Broad leader-churn and partition matrices, semantic dependency-aware trace shrinking, clock
   changes, physical disk failures, ASan/UBSan/TSan, fuzzing, independent model checking,
   commit/catch-up/snapshot benchmarks, and API review.

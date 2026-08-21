@@ -266,6 +266,135 @@ TEST(RaftTransportRuntimeTest, PollsDeadlineAndDurableWakeupIntoOwnedTimerResult
   ASSERT_TRUE(durable->shutdown().is_ok());
 }
 
+TEST(RaftTransportRuntimeTest, RetainsSaturatedResultRingBehindRoutingBackpressure) {
+  TemporaryDirectory directory;
+  auto durable = raft::AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group(), {1U, 3U}}});
+  ASSERT_TRUE(durable.has_value()) << durable.error().to_string();
+  Authorizer authorizer;
+  Authenticator inbound_authenticator;
+  inbound_authenticator.principal = 700U;
+  auto receiver = RaftTransportReceiver::create(
+      {.local_node_id = 1U, .authorizer = &authorizer, .runtime = &*durable});
+  ASSERT_TRUE(receiver.has_value());
+  auto inbound = RaftTransportTcpServer::start(
+      {.tls = {.certificate_chain_file = fixture("server.pem").string(),
+               .private_key_file = fixture("server-key.pem").string(),
+               .trust_store_file = fixture("ca.pem").string()},
+       .authenticator = &inbound_authenticator,
+       .receiver = &*receiver,
+       .maximum_connections = 1U});
+  ASSERT_TRUE(inbound.has_value()) << inbound.error().to_string();
+
+  auto client_context = network::TlsClientContext::create(client_tls_config());
+  // Voter 3 is deliberately absent so its election request remains caller-owned under routing
+  // backpressure; peer 2 keeps the manager configuration valid without satisfying that route.
+  auto configured_peer = network::TcpListener::bind({});
+  ASSERT_TRUE(client_context.has_value());
+  ASSERT_TRUE(configured_peer.has_value());
+  Authenticator outbound_authenticator;
+  auto outbound = RaftTransportPeerManager::create(
+      {.local_node_id = 1U,
+       .peers = {{.connector =
+                      {.remote_endpoint = configured_peer->bound_endpoint(),
+                       .tls_context = &*client_context,
+                       .carrier = {.local_node_id = 1U,
+                                   .peer_node_id = 2U,
+                                   .authenticator = &outbound_authenticator,
+                                   .node_authorizer = &authorizer,
+                                   .peer_ipv4_address = configured_peer->bound_endpoint().address,
+                                   .limits = {.maximum_queued_frames = 1U,
+                                              .maximum_queued_bytes = 4096U,
+                                              .handshake_timeout = std::chrono::milliseconds{100},
+                                              .frame_write_timeout =
+                                                  std::chrono::milliseconds{100}}},
+                       .connect_timeout = std::chrono::milliseconds{100}},
+                  .limits = {.initial_backoff = std::chrono::milliseconds{10},
+                             .maximum_backoff = std::chrono::milliseconds{20}}}},
+       .pool = {.maximum_peers = 1U}});
+  ASSERT_TRUE(outbound.has_value()) << outbound.error().to_string();
+  DeadlineSource deadlines;
+  deadlines.delay = std::chrono::milliseconds{1};
+  auto timers = raft::RaftTimerDriver::create(
+      {.runtime = &*durable,
+       .election_deadlines = &deadlines,
+       .limits = {.maximum_inflight_actions = 2U,
+                  .maximum_completed_actions = 2U,
+                  .timers = {.maximum_groups = 1U,
+                             .maximum_actions_per_poll = 1U,
+                             .heartbeat_interval = std::chrono::seconds{5}}}});
+  ASSERT_TRUE(timers.has_value());
+
+  {
+    auto transport = RaftTransportRuntime::create(&*durable, std::move(*timers),
+                                                  std::move(*inbound), std::move(*outbound),
+                                                  {.maximum_pending_results = 2U,
+                                                   .maximum_pending_application_requests = 1U,
+                                                   .maximum_results_per_poll = 2U,
+                                                   .maximum_poll_descriptors = 8U});
+    ASSERT_TRUE(transport.has_value()) << transport.error().to_string();
+    const auto start = std::chrono::steady_clock::now();
+    ASSERT_TRUE(transport
+                    ->add_group({.group_id = group(),
+                                 .node_id = 1U,
+                                 .role = raft::Role::kFollower,
+                                 .current_term = 0U},
+                                start)
+                    .is_ok());
+    deadlines.delay = std::chrono::seconds{5};
+
+    for (std::size_t iteration = 0U; iteration < 1024U && transport->metrics().timer_results == 0U;
+         ++iteration) {
+      ASSERT_TRUE(transport->poll_once(std::chrono::milliseconds{100}).is_ok())
+          << transport->failure().to_string();
+    }
+    EXPECT_EQ(transport->metrics().timer_results, 1U);
+    EXPECT_EQ(transport->metrics().pending_results, 1U);
+    EXPECT_EQ(transport->metrics().routed_results, 0U);
+    EXPECT_GE(transport->metrics().routing_backpressure, 1U);
+    auto blocked = transport->take_completed();
+    ASSERT_FALSE(blocked.has_value());
+    EXPECT_EQ(blocked.error().code(), common::StatusCode::kUnavailable);
+
+    auto second = transport->try_submit_application(
+        {group(), raft::ProposeOperation{.type = 1U, .payload = {std::byte{0x42U}}}});
+    ASSERT_TRUE(second.has_value()) << second.error().to_string();
+    for (std::size_t iteration = 0U;
+         iteration < 1024U && transport->metrics().application_results == 0U; ++iteration) {
+      ASSERT_TRUE(transport->poll_once(std::chrono::milliseconds{100}).is_ok())
+          << transport->failure().to_string();
+    }
+    EXPECT_EQ(transport->metrics().application_results, 1U);
+    EXPECT_EQ(transport->metrics().pending_results, 2U);
+    EXPECT_EQ(transport->metrics().pending_application_requests, 0U);
+    EXPECT_EQ(transport->metrics().routed_results, 0U);
+    blocked = transport->take_completed();
+    ASSERT_FALSE(blocked.has_value());
+    EXPECT_EQ(blocked.error().code(), common::StatusCode::kUnavailable);
+
+    const std::uint64_t wakeups_before_third = transport->metrics().durable_wakeups;
+    auto third = transport->try_submit_application({group(), raft::BeginReadBarrierOperation{}});
+    ASSERT_TRUE(third.has_value()) << third.error().to_string();
+    ASSERT_GT(*third, *second);
+    for (std::size_t iteration = 0U;
+         iteration < 1024U && transport->metrics().durable_wakeups == wakeups_before_third;
+         ++iteration) {
+      ASSERT_TRUE(transport->poll_once(std::chrono::milliseconds{100}).is_ok())
+          << transport->failure().to_string();
+    }
+    EXPECT_GT(transport->metrics().durable_wakeups, wakeups_before_third);
+    EXPECT_EQ(transport->metrics().pending_results, 2U);
+    EXPECT_EQ(transport->metrics().application_results, 1U);
+    EXPECT_EQ(transport->metrics().pending_application_requests, 1U);
+    auto overflow = transport->try_submit_application(
+        {group(), raft::ProposeOperation{.type = 2U, .payload = {std::byte{0x24U}}}});
+    ASSERT_FALSE(overflow.has_value());
+    EXPECT_EQ(overflow.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_FALSE(transport->failed());
+  }
+  ASSERT_TRUE(durable->shutdown().is_ok());
+}
+
 TEST(RaftTransportRuntimeTest, RoutesDurableInboundResponseThroughUnifiedPollOwner) {
   TemporaryDirectory directory1;
   TemporaryDirectory directory2;

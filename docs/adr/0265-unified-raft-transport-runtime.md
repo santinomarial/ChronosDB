@@ -42,11 +42,11 @@ and result ownership without a periodic tick or hidden output queue. Component d
 durable runtime must outlive it; ordinary peer failures remain reconnect-local, while structural,
 poll, listener, timer, or unexpected routing errors fail the owner closed.
 
-Focused tests prove exact deadline wakeup into a synchronized single-voter election result and a
-real two-node mutual-TLS request/response path through inbound admission, asynchronous durability,
-ordered timer activity, outbound route establishment, and response receipt. Multi-node churn,
-result-ring saturation, mixed producers, storage stalls, and long fault schedules remain Phase 18
-work.
+Focused tests prove exact deadline wakeup into a synchronized single-voter election result, bounded
+result-ring saturation behind a missing outbound route, and a real two-node mutual-TLS
+request/response path through inbound admission, asynchronous durability, ordered timer activity,
+outbound route establishment, and response receipt. Multi-node churn, high-contention mixed
+producers, storage stalls, and long fault schedules remain Phase 18 work.
 
 ## References
 

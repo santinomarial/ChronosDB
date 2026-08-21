@@ -71,6 +71,10 @@ failure, descriptor-bound overflow, and unexpected routing errors fail the aggre
 Application admission returns `RESOURCE_EXHAUSTED` before durable submission when its fixed slot
 bound is full.
 
+Focused saturation coverage leaves one voter destination without a configured route, retains that
+timer result at the FIFO head, fills the result ring with a later application completion, and proves
+that the next completed application remains in its fixed slot while further admission is rejected.
+
 ## Complexity, tradeoffs, and interview questions
 
 Each poll-table rebuild is linear in active inbound plus configured outbound peers. Deadline scans
