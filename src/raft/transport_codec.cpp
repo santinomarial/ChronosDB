@@ -207,6 +207,8 @@ void store_u32(const std::span<std::byte> bytes, const std::size_t offset,
           if (!snapshot.is_ok())
             return snapshot;
         } else if constexpr (std::is_same_v<T, InstallSnapshotResponse>) {
+          if (value.last_included_index == std::numeric_limits<LogIndex>::max())
+            return invalid("Raft snapshot response installed index is exhausted");
           if (value.success && value.last_included_index == 0U)
             return invalid("successful Raft snapshot response has a zero installed index");
         } else if constexpr (std::is_same_v<T, ReadBarrierRequest>) {

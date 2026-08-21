@@ -55,7 +55,7 @@ Every payload starts with a nonzero 64-bit term.
    is 72 bytes before voters. Application snapshot bytes travel through their separate bounded
    transfer protocol; this message preserves the two-stage installation request only.
 6. `INSTALL_SNAPSHOT_RESPONSE` is 24 bytes: term, success Boolean, seven zero bytes, and installed
-   last-included index.
+   last-included index. The index cannot equal `UINT64_MAX` in either response state.
 7. `READ_BARRIER_REQUEST` is 24 bytes: term, source-equal leader, and nonzero opaque context.
 8. `READ_BARRIER_RESPONSE` is 24 bytes: term, nonzero context, accepted Boolean, and seven zero
    bytes.
@@ -65,7 +65,8 @@ term cannot exceed the message term. Neither a vote last-log index nor an Append
 can equal `UINT64_MAX`, which is reserved for exhaustion detection rather than an existing entry.
 AppendEntries `leader_commit` cannot equal that reserved value either. A snapshot request's last-
 included term likewise cannot exceed its message term. The reserved maximum index is never a valid
-installed snapshot boundary. A successful snapshot response names a nonzero installed index.
+installed snapshot boundary. A successful snapshot response names a nonzero installed index; a
+failed response may name zero.
 
 ## Validation and compatibility
 
@@ -105,10 +106,11 @@ Deterministic checksum-repaired hostile matrices exercise every header reserved 
 frame and payload lengths, route/version/kind fields, append counts/entry lengths/reserved and
 trailing bytes, snapshot/message term ordering, snapshot counts/voter ordering/reserved bytes, and
 vote/append-predecessor/snapshot maximum-index rejection, append-response match/conflict term/index
-state, maximum leader-commit and response-match rejection, and fixed-message Boolean/term domains.
-A structure-aware fuzzer combines arbitrary input with generated canonical variants, single-byte
-and truncated mutations, optional header/payload/frame checksum repair, two-fragment reader
-delivery, exact canonical re-encoding, and write-cursor validation under a 64 KiB test cap.
+state, maximum leader-commit, response-match, and snapshot-response rejection, and fixed-message
+Boolean/term domains. A structure-aware fuzzer combines arbitrary input with generated canonical
+variants, single-byte and truncated mutations, optional header/payload/frame checksum repair,
+two-fragment reader delivery, exact canonical re-encoding, and write-cursor validation under a 64
+KiB test cap.
 
 ## Authenticated dispatch
 

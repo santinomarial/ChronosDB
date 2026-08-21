@@ -145,6 +145,24 @@ TEST(RaftTransportCodecTest, RejectsNoncanonicalAppendResponseState) {
   expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
 }
 
+TEST(RaftTransportCodecTest, RejectsNoncanonicalSnapshotResponseState) {
+  const std::vector<Message> malformed{
+      InstallSnapshotResponse{4U, true, 0U},
+      InstallSnapshotResponse{4U, true, std::numeric_limits<LogIndex>::max()},
+      InstallSnapshotResponse{4U, false, std::numeric_limits<LogIndex>::max()},
+  };
+  for (const Message& message : malformed) {
+    auto encoded = encode_raft_transport_envelope_v1(envelope(message));
+    ASSERT_FALSE(encoded.has_value());
+    EXPECT_EQ(encoded.error().code(), common::StatusCode::kInvalidArgument);
+  }
+
+  std::vector<std::byte> candidate =
+      encode_raft_transport_envelope_v1(envelope(InstallSnapshotResponse{4U, false, 0U})).value();
+  store_u64(candidate, 112U, std::numeric_limits<LogIndex>::max());
+  expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
+}
+
 TEST(RaftTransportCodecTest, RejectsDamageUnknownKindsAndNoncanonicalRoutes) {
   auto encoded =
       encode_raft_transport_envelope_v1(envelope(AppendEntriesRequest{4U, 1U, 0U, 0U, {}, 0U}))

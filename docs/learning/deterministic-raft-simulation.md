@@ -90,6 +90,8 @@ They also reject it as `leader_commit` before term or role observation because n
 can have committed the reserved index.
 AppendEntries responses reject it as `match_index` before observation because no follower can own
 an entry at the reserved position, even when reporting a failed replication attempt.
+InstallSnapshot responses likewise reject it because a follower cannot have installed a snapshot at
+the reserved boundary; a failed response may still report the zero empty-snapshot boundary.
 
 Useful questions include: why can a queued message survive a sender crash; why must durable state be
 installed before outbound admission; why does replay use explicit message IDs; why is a snapshot

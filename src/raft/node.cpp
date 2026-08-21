@@ -567,9 +567,10 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
             return invalid("InstallSnapshot identity or metadata is invalid");
           }
         } else if constexpr (std::is_same_v<T, InstallSnapshotResponse>) {
-          if (value.success &&
-              (value.last_included_index == 0U || value.last_included_index > impl_->last_index()))
-            return invalid("InstallSnapshot response exceeds the local log");
+          if (value.last_included_index == std::numeric_limits<LogIndex>::max() ||
+              (value.success && (value.last_included_index == 0U ||
+                                 value.last_included_index > impl_->last_index())))
+            return invalid("InstallSnapshot response state is invalid");
         } else if constexpr (std::is_same_v<T, ReadBarrierRequest>) {
           if (value.leader_id != source || value.context == 0U)
             return invalid("read-barrier request identity or context is invalid");

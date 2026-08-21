@@ -49,12 +49,13 @@ allocator sweeps fail every observed encode allocation for all eight kinds and e
 payload and snapshot-voter decode allocation, requiring `RESOURCE_EXHAUSTED` until exact success.
 Checksum-repaired matrices cover header lengths/routes/versions/kinds/reserved bytes plus vote and
 append-predecessor/leader-commit maximum-index state, append counts/lengths/reserved bytes/trailing
-payload, append-response match/conflict term/index state, snapshot term/maximum-index/voters/
-reserved bytes, and fixed-message Boolean/term fields with exact corruption, unsupported, or
-resource classification. A bounded structure-aware libFuzzer target drives raw bytes, all eight
-canonical variants, repaired mutations, fragmented reading, and write-cursor validation under
-ASan/UBSan. Cross-compiler golden fixtures, sustained fuzzing, authenticated carrier integration,
-mixed-version processes, and network fault simulation remain in the Phase 18 ledger.
+payload, append-response match/conflict term/index state, snapshot-request term/maximum-index/
+voters/reserved bytes, snapshot-response maximum-index state, and fixed-message Boolean/term fields
+with exact corruption, unsupported, or resource classification. A bounded structure-aware
+libFuzzer target drives raw bytes, all eight canonical variants, repaired mutations, fragmented
+reading, and write-cursor validation under ASan/UBSan. Cross-compiler golden fixtures, sustained
+fuzzing, authenticated carrier integration, mixed-version processes, and network fault simulation
+remain in the Phase 18 ledger.
 
 **Retrospective note (2026-08-12):** [ADR 0245](0245-bounded-raft-transport-partial-io.md) adds the
 header-first reader and owning short-write cursor without changing the v1 bytes. [ADR 0246](0246-authenticated-raft-transport-receiver.md)

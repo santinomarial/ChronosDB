@@ -430,6 +430,8 @@ The same three paths reject it as `leader_commit` before an impossible higher-te
 change candidate role or persistent state.
 Failed AppendEntries responses reject it as the follower's actual `match_index` through direct-core,
 outbound encoding, and checksum-repaired decoding before higher-term observation.
+InstallSnapshot responses reject it as the follower's installed boundary through the same three
+paths while preserving zero as a canonical failed response.
 
 The implemented group-scoped transport envelope additionally has checksum-repaired hostile
 length/count/reserved/value matrices, exhaustive owned-allocation failure sweeps, and a bounded

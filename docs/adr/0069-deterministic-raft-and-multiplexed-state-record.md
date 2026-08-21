@@ -22,6 +22,7 @@ cannot carry term, manifest/checksum identity, configuration index, or voters. L
 Remote candidates cannot advertise that reserved value as an existing last-log index, and remote
 leaders cannot name it as an AppendEntries predecessor or committed index.
 AppendEntries responses cannot report it as the follower's actual last known match index.
+InstallSnapshot responses cannot report it as the follower's installed snapshot boundary.
 
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable

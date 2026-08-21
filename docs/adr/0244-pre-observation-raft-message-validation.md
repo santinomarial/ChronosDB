@@ -23,6 +23,8 @@ heartbeat even though the deterministic core rejected it. Both boundaries admitt
 as `leader_commit`, allowing an impossible higher-term commit claim to change candidate state.
 Failed AppendEntries responses could likewise report the reserved value as their last known match
 index and change candidate state before leader-context processing.
+Failed InstallSnapshot responses could report it as their installed boundary and cause the same
+higher-term state change.
 
 ## Decision
 
@@ -41,7 +43,9 @@ the leader's log. A failed response requires a nonzero conflict index; an option
 be nonzero and no greater than the response term. Failed responses may retain the follower's last-
 known match index because the core emits that diagnostic during conflict repair. In both response
 states that actual match position must remain below `UINT64_MAX`.
-A successful snapshot response must name a nonzero installed index within the leader's log.
+A successful snapshot response must name a nonzero installed index within the leader's log. A
+failed response may report the zero empty-snapshot boundary, but both response states must remain
+below `UINT64_MAX`.
 Existing read-context, append-entry, and snapshot-metadata checks remain in the same pre-observation
 validation pass.
 
@@ -98,6 +102,8 @@ Maximum-index leader-commit coverage uses the same three paths and proves that a
 higher-term commit advertisement cannot change candidate role or persistent state.
 Maximum-index AppendEntries match coverage rejects a failed response through direct-core, outbound
 encoding, and checksum-valid decoding before a higher-term response can change candidate state.
+Maximum-index snapshot-response coverage applies the same three paths while preserving zero as the
+canonical failed response for a follower without an installed snapshot.
 
 ## References
 

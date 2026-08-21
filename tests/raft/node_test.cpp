@@ -218,6 +218,7 @@ TEST(RaftNodeTest, RejectsNoncanonicalTermsAndResponseStateBeforeObservingTerm) 
       InstallSnapshotRequest{9U, 2U, std::move(future_term_snapshot)},
       InstallSnapshotRequest{9U, 2U, std::move(exhausted_index_snapshot)},
       InstallSnapshotResponse{9U, true, 0U},
+      InstallSnapshotResponse{9U, false, std::numeric_limits<LogIndex>::max()},
       ReadBarrierResponse{9U, 0U, true},
   };
   for (const Message& message : malformed) {
