@@ -290,6 +290,39 @@ TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresBoundedMessageDeliveryA
   EXPECT_EQ(invalid_depth.error().code(), common::StatusCode::kInvalidArgument);
 }
 
+TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresOptionalMessageDuplication) {
+  auto two_nodes = config();
+  two_nodes.node_ids = {1U, 2U};
+  two_nodes.initial_voters = {1U, 2U};
+  const std::vector<RaftSimulationAction> setup{RaftSimulationStartElection{1U}};
+
+  auto complete = DeterministicRaftSimulator::explore_network_schedules(
+      two_nodes, setup, {.maximum_depth = 1U, .maximum_replays = 4U, .include_duplication = true});
+
+  ASSERT_TRUE(complete.has_value()) << complete.error().to_string();
+  EXPECT_TRUE(complete->search_complete);
+  EXPECT_EQ(complete->replayed_prefixes, 4U);
+  EXPECT_FALSE(complete->failure.has_value());
+
+  two_nodes.limits.maximum_pending_messages = 1U;
+  auto queue_failure = DeterministicRaftSimulator::explore_network_schedules(
+      two_nodes, setup, {.maximum_depth = 1U, .maximum_replays = 4U, .include_duplication = true});
+  ASSERT_TRUE(queue_failure.has_value()) << queue_failure.error().to_string();
+  EXPECT_FALSE(queue_failure->search_complete);
+  EXPECT_EQ(queue_failure->replayed_prefixes, 4U);
+  ASSERT_TRUE(queue_failure->failure.has_value());
+  const common::Status failure = queue_failure->failure.value_or(
+      common::Status{common::StatusCode::kInternal, "missing duplication failure"});
+  EXPECT_EQ(failure.code(), common::StatusCode::kResourceExhausted);
+  ASSERT_EQ(queue_failure->failing_trace.size(), setup.size() + 1U);
+  const auto& duplicate = std::get<RaftSimulationDuplicate>(queue_failure->failing_trace.back());
+  EXPECT_EQ(duplicate.message_id, 1U);
+  auto replay = DeterministicRaftSimulator::create(two_nodes);
+  ASSERT_TRUE(replay.has_value()) << replay.error().to_string();
+  EXPECT_EQ(replay->replay(queue_failure->failing_trace).code(),
+            common::StatusCode::kResourceExhausted);
+}
+
 TEST(DeterministicRaftSimulatorTest, ExhaustiveExplorationRetainsTheFirstFailingSchedule) {
   auto simulation = DeterministicRaftSimulator::create(config());
   ASSERT_TRUE(simulation.has_value()) << simulation.error().to_string();

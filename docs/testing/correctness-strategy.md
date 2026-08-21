@@ -398,8 +398,10 @@ matrices and broader exhaustive action-schedule enumeration remain deferred.
 Failure minimization deletes deterministic coarse chunks before refining toward individual actions,
 preserves the original status-code oracle, and respects the configured candidate-replay limit.
 Bounded exhaustive exploration branches every queued message into delivery or loss after a valid
-setup trace. Tests prove complete depth-two enumeration, explicit replay-bound truncation, invalid-
-setup rejection, and exact retention of the first failing membership-stale-message schedule.
+setup trace and optionally adds duplication. Tests prove complete depth-two delivery/loss
+enumeration, complete depth-one delivery/loss/duplication enumeration, explicit replay-bound
+truncation, invalid-setup rejection, and exact retention of both duplicate queue exhaustion and the
+first failing membership-stale-message schedule.
 
 Raft recovery payload-bound coverage supplies a nonempty legacy snapshot with no voter checkpoint.
 Backfilling three bootstrap voters must reject a budget that can encode only two and accept the

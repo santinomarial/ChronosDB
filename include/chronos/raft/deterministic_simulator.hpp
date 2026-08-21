@@ -146,6 +146,7 @@ struct RaftSeededSimulationSchedule {
 struct RaftExhaustiveNetworkSchedule {
   std::size_t maximum_depth{};
   std::size_t maximum_replays{};
+  bool include_duplication{};
 };
 
 struct RaftExhaustiveNetworkResult {
@@ -172,7 +173,8 @@ public:
   [[nodiscard]] common::Status step(RaftSimulationAction action);
   [[nodiscard]] common::Status replay(std::span<const RaftSimulationAction> actions);
   [[nodiscard]] common::Status run_seeded(RaftSeededSimulationSchedule schedule);
-  // Exhaustively branches every queued message into delivery or loss after a valid setup trace.
+  // Exhaustively branches every queued message into delivery or loss after a valid setup trace;
+  // schedules may also opt into bounded duplicate-message branches.
   // `search_complete` is false when the replay bound truncates the frontier or a failure is found.
   [[nodiscard]] static common::Result<RaftExhaustiveNetworkResult>
   explore_network_schedules(const RaftSimulationConfig& config,

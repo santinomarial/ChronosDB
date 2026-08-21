@@ -73,11 +73,13 @@ is exhausted. A candidate is retained only when it reproduces the original failu
 oracle. Semantic dependency-aware shrinking can be added after corpus evidence shows a need.
 
 Bounded network exploration replays a caller-provided valid setup and then uses deterministic
-depth-first enumeration over delivery and loss for every currently queued message. Its memory and
-replay work are bounded by `maximum_replays`, and each suffix is bounded by `maximum_depth` plus the
-configured trace limit. A complete result proves this action domain was exhausted through that
-depth; a false completion flag reports frontier truncation rather than silently claiming coverage.
-The first non-successful action is returned with its exact replayable trace and status.
+depth-first enumeration over delivery and loss for every currently queued message. A schedule may
+also enumerate duplication after those two outcomes for each ascending message identity. Its memory
+and replay work are bounded by `maximum_replays`, and each suffix is bounded by `maximum_depth` plus
+the configured trace limit. A complete result proves the selected action domain was exhausted
+through that depth; a false completion flag reports frontier truncation rather than silently
+claiming coverage. The first non-successful action is returned with its exact replayable trace and
+status.
 
 ## Verification and likely interview questions
 
@@ -86,7 +88,8 @@ persistence failure, exact replay, seeded schedules that automatically produce j
 local-compaction churn plus completed read barriers, generated completion of a pending external
 snapshot install, explicit joint membership and compaction, trace shrinking, and bound validation.
 Focused exhaustive coverage enumerates all two-node election message delivery/loss prefixes through
-depth two and retains an exact stale-message failure after membership removal.
+depth two, exhausts opt-in delivery/loss/duplication at depth one, retains exact duplicate queue-
+exhaustion replay, and retains an exact stale-message failure after membership removal.
 The production core additionally rejects AppendEntries predecessors below an
 installed snapshot without interpreting the compacted entry as retained log storage, and its
 higher-term regression requires persistence before the negative response. The same core serializes

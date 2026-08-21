@@ -234,7 +234,7 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   persistence failure, application, automatically generated membership/compaction/read-barrier
   churn, exact replay including generated completion of a prepared external snapshot install,
   safety-model comparison, bounded chunk-first deletion shrinking, and replay-bounded exhaustive
-  delivery/loss enumeration after a valid setup trace.
+  delivery/loss/optional-duplication enumeration after a valid setup trace.
 - Extend the implemented hostile higher-term/payload-identity, pre-observation term/position/
   response-state, and exact compacted-prefix predecessor regression checks into exhaustive
   persistence-before-response, sequence-exhaustion schedules, response-state, and broader snapshot-

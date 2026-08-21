@@ -848,6 +848,8 @@ common::Result<RaftExhaustiveNetworkResult> DeterministicRaftSimulator::explore_
       for (const RaftSimulationMessageRoute& message : *messages) {
         branches.emplace_back(RaftSimulationDeliver{message.message_id});
         branches.emplace_back(RaftSimulationDrop{message.message_id});
+        if (schedule.include_duplication)
+          branches.emplace_back(RaftSimulationDuplicate{message.message_id});
       }
       const std::size_t remaining = schedule.maximum_replays - result.replayed_prefixes;
       const std::size_t available = remaining > frontier.size() ? remaining - frontier.size() : 0U;

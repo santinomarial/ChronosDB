@@ -48,10 +48,12 @@ only candidates with the original failure status code. It starts with determinis
 reduces granularity toward individual actions, and never exceeds `maximum_shrink_replays`.
 
 `explore_network_schedules` accepts one valid setup trace and exhaustively branches every queued
-message into delivery or explicit loss through a bounded suffix depth. Message identities are
-visited in ascending order. `maximum_replays` bounds retained frontier work and replayed prefixes;
-the result distinguishes a completed search from a truncated search and retains the exact first
-failing trace and status. The one setup-validation replay is outside that exploration count.
+message into delivery or explicit loss through a bounded suffix depth. Callers may opt into a third
+duplicate-message branch. Message identities are visited in ascending order and each identity's
+actions are ordered delivery, loss, then optional duplication. `maximum_replays` bounds retained
+frontier work and replayed prefixes; the result distinguishes a completed search from a truncated
+search and retains the exact first failing trace and status. The one setup-validation replay is
+outside that exploration count.
 
 ## Consequences
 
@@ -81,6 +83,7 @@ local snapshot compaction, shrink an irrelevant-prefix failure to one essential 
 65-action failure to at most four actions with only four candidate replays. A two-node election
 exhaustively covers all delivery/loss prefixes through depth two, reports replay-bound truncation,
 rejects invalid setup, and retains a membership-removal stale-message failure for exact replay.
+Opt-in duplication exhausts all three depth-one outcomes and retains exact queue-exhaustion replay.
 
 ## References
 

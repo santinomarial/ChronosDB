@@ -220,5 +220,6 @@ now supplies bounded explicit and seeded schedules for partitions, delay/reorder
 loss, crash/restart, atomic full-state persistence faults, membership, snapshots, safety checking,
 replay, and bounded chunk-first deletion shrinking. Seeded schedules derive valid joint-membership
 begin/finalize and local snapshot-compaction candidates from current state and replay the generated
-churn exactly. It also exhaustively branches bounded delivery/loss suffixes after valid setup traces.
-Broader exhaustive campaigns, clock changes, and physical log syscall faults remain deferred.
+churn exactly. It also exhaustively branches bounded delivery/loss suffixes plus opt-in duplication
+after valid setup traces. Broader exhaustive campaigns, clock changes, and physical log syscall
+faults remain deferred.
