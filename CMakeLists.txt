@@ -1211,6 +1211,7 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_raft_allocation_failure_tests
+    tests/raft/async_durable_worker_extension_set_allocation_failure_test.cpp
     tests/raft/node_allocation_failure_test.cpp
     tests/raft/transport_codec_allocation_failure_test.cpp
     tests/support/failing_allocator.cpp

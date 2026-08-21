@@ -61,10 +61,15 @@ failure in reverse invocation order, and does not repeat callbacks during idempo
 shutdown. An asynchronous-owner matrix combines extension success/failure with every nonempty
 physical close-failure combination. Extension failure wins because its cleanup runs first, physical
 cleanup always continues, an already accepted durable election remains successful, and repeated
-shutdown invokes neither layer again.
+shutdown invokes neither layer again. Dedicated allocation sweeps cover both set-owned creation
+allocations and both batch-composition allocations. They prove transferred children and partial
+contexts are released, context destruction stays on the owner thread, and preparation can retry.
+Injected child allocation failures are classified as resource exhaustion during initialization,
+preparation, completion, and shutdown; initialization still cleans every attempted child, and
+shutdown still completes reverse cleanup.
 
-Allocation fault injection, shutdown under active production application, and long-running hook
-watchdog measurements remain Phase 18 work.
+Shutdown under active production application and long-running hook watchdog measurements remain
+Phase 18 work.
 
 ## References
 

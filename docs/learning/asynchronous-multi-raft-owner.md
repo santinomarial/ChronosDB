@@ -116,6 +116,12 @@ then reopens the exact term and vote.
 When multiple children return shutdown failures, all children still run and the first failure in
 reverse invocation order wins. The runtime retains that exact status for later shutdown callers
 without invoking child cleanup again.
+The composed extension classifies allocation failure separately from an arbitrary child exception.
+Exhaustive sweeps cover its two creation allocations and its batch context-vector and composite-
+context allocations. A failed creation releases transferred child ownership; a failed preparation
+destroys every partial child context on the worker and can be retried. A child allocation failure
+during any lifecycle hook is resource exhaustion, while initialization and shutdown preserve their
+complete reverse-cleanup rules.
 Extension shutdown precedes physical-log close because extension cleanup may still use the durable
 owner. If both layers fail, the extension status therefore remains the root cause, while the active
 file, advisory lock, and directory are still all closed exactly once. If the extension succeeds,

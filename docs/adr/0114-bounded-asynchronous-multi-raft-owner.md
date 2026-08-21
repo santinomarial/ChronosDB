@@ -87,9 +87,9 @@ failure, rejection, notification, and zero-pending metrics. An exhaustive physic
 drains one accepted election under every nonempty active-file/lock/directory close-failure
 combination, both with and without an extension shutdown failure. It proves exact first-failure
 arbitration, complete physical cleanup, idempotence, terminal metrics, successful completion
-preservation, and exact reopen. Broader queue-interleaving stress, allocation injection,
-worker-start injection, other syscall-level I/O failure injection, thousands-of-groups fairness,
-and latency/throughput measurements remain in Phase 18.
+preservation, and exact reopen. Broader queue-interleaving stress, asynchronous-owner allocation
+injection, worker-start injection, other syscall-level I/O failure injection,
+thousands-of-groups fairness, and latency/throughput measurements remain in Phase 18.
 
 ## Migration or rollback considerations
 

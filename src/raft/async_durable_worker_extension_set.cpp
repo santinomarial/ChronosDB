@@ -16,6 +16,10 @@ namespace {
   return {common::StatusCode::kInternal, operation};
 }
 
+[[nodiscard]] common::Status extension_allocation_failure(const char* operation) {
+  return {common::StatusCode::kResourceExhausted, operation};
+}
+
 class ExtensionSetBatchContext final : public AsyncDurableRaftWorkerBatchContext {
 public:
   explicit ExtensionSetBatchContext(
@@ -98,6 +102,9 @@ common::Status AsyncDurableRaftWorkerExtensionSet::initialize(DurableMultiRaftRu
     common::Status status;
     try {
       status = extension->initialize(runtime);
+    } catch (const std::bad_alloc&) {
+      return extension_allocation_failure(
+          "durable Raft child extension initialization exhausted memory");
     } catch (...) {
       return extension_exception("durable Raft child extension initialization threw");
     }
@@ -157,6 +164,9 @@ common::Status AsyncDurableRaftWorkerExtensionSet::complete_batch(
     try {
       status = extensions_[index]->complete_batch(
           runtime, std::move(composed->child_contexts()[index]), results);
+    } catch (const std::bad_alloc&) {
+      return extension_allocation_failure(
+          "durable Raft child extension batch completion exhausted memory");
     } catch (...) {
       return extension_exception("durable Raft child extension batch completion threw");
     }
@@ -175,6 +185,9 @@ common::Status AsyncDurableRaftWorkerExtensionSet::shutdown(DurableMultiRaftRunt
     common::Status status;
     try {
       status = extensions_[attempted_initializations_]->shutdown(runtime);
+    } catch (const std::bad_alloc&) {
+      status =
+          extension_allocation_failure("durable Raft child extension shutdown exhausted memory");
     } catch (...) {
       status = extension_exception("durable Raft child extension shutdown threw");
     }

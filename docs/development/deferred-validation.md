@@ -376,6 +376,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   successful completion, continues earlier-child cleanup, returns the hook failure idempotently,
   and reopens the exact term/vote. A separate three-child test proves returned failures preserve
   complete reverse cleanup and exact first-failure arbitration across repeated runtime shutdown. A
+  dedicated allocation executable now sweeps every extension-set-owned creation and batch-context
+  allocation, proves transferred children and partial contexts are released on the owner thread,
+  retries preparation after failure, and injects child allocation failures through initialization,
+  preparation, completion, and reverse shutdown cleanup. Broader asynchronous-owner allocation
+  injection remains deferred. A
   bounded generation-tagged timer scheduler now emits exact election/heartbeat actions and rejects
   stale completion rearming; its bounded driver submits two-operation action/observation batches
   through the asynchronous durable owner and retains complete post-sync results for routing.
