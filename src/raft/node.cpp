@@ -988,9 +988,9 @@ common::Result<Transition> RaftNode::complete_snapshot_install(const NodeId sour
     return common::make_unexpected(invalid("snapshot completion does not match pending install"));
   }
   const Term request_term = pending.term;
-  impl_->pending_snapshot.reset();
   Transition transition;
   if (!installed || request_term != impl_->state.current_term) {
+    impl_->pending_snapshot.reset();
     transition.outbound.push_back(OutboundMessage{
         source, InstallSnapshotResponse{impl_->state.current_term, false,
                                         impl_->state.snapshot.last_included_index}});
@@ -1015,6 +1015,7 @@ common::Result<Transition> RaftNode::complete_snapshot_install(const NodeId sour
   if (!membership.has_value())
     return common::make_unexpected(membership.error());
 
+  impl_->pending_snapshot.reset();
   impl_->state.snapshot = std::move(snapshot);
   impl_->state.log = std::move(retained);
   impl_->state.commit_index = new_commit;

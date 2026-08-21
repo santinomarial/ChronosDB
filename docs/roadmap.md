@@ -796,7 +796,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   persistence transition. Pending external snapshot installation also excludes local compaction,
   preventing competing immutable snapshot identities at one index. Exact remote duplicates
   coalesce, while different pending requests fail negatively without replacing the original
-  completion identity. Snapshot metadata whose last-included term exceeds its request term now
+  completion identity. A committed-prefix conflict preserves that identity until exact explicit
+  rejection. Snapshot metadata whose last-included term exceeds its request term now
   fails direct-core and transport admission before higher-term observation. Recovered snapshots
   cannot exceed current term, and failed append feedback requires a nonzero conflict index with any
   conflict term bounded by its response term. Recovered term-zero state cannot contain a vote, and

@@ -661,6 +661,40 @@ TEST(RaftNodeTest, SerializesPendingSnapshotInstallAgainstLocalCompaction) {
   EXPECT_EQ(rejected_follower->persistent_state().snapshot, local);
 }
 
+TEST(RaftNodeTest, PreservesPendingSnapshotAfterCommittedPrefixConflict) {
+  PersistentState state{};
+  state.current_term = 2U;
+  state.log = {LogEntry{1U, 1U, 1U, {std::byte{0x11}}}, LogEntry{2U, 2U, 1U, {std::byte{0x22}}}};
+  state.commit_index = 2U;
+  state.applied_index = 2U;
+  auto follower = RaftNode::create(1U, {1U, 2U, 3U}, state);
+  ASSERT_TRUE(follower.has_value());
+
+  SnapshotMetadata conflicting{};
+  conflicting.last_included_index = 1U;
+  conflicting.last_included_term = 2U;
+  conflicting.manifest_generation = 9U;
+  conflicting.part_set_checksum.fill(std::byte{0x99});
+  conflicting.voters = {1U, 2U, 3U};
+  auto pending = follower->receive(2U, InstallSnapshotRequest{2U, 2U, conflicting});
+  ASSERT_TRUE(pending.has_value()) << pending.error().to_string();
+  ASSERT_TRUE(pending->snapshot_install.has_value());
+  const PersistentState before_completion = follower->persistent_state();
+
+  auto rejected = follower->complete_snapshot_install(2U, conflicting, true);
+
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
+  EXPECT_EQ(follower->persistent_state(), before_completion);
+
+  auto declined = follower->complete_snapshot_install(2U, conflicting, false);
+  ASSERT_TRUE(declined.has_value()) << declined.error().to_string();
+  EXPECT_FALSE(declined->persistent_state.has_value());
+  ASSERT_EQ(declined->outbound.size(), 1U);
+  EXPECT_EQ(std::get<InstallSnapshotResponse>(declined->outbound.front().message),
+            (InstallSnapshotResponse{2U, false, 0U}));
+}
+
 TEST(RaftNodeTest, CoalescesDuplicateAndRejectsCompetingPendingSnapshots) {
   PersistentState state{};
   state.current_term = 2U;

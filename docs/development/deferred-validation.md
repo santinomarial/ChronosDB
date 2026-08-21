@@ -243,7 +243,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   transition before response publication. Pending remote installation now also excludes local
   compaction until explicit completion/rejection; focused coverage proves the rejected compaction
   changes no state, the original snapshot still installs with its exact retained suffix, and an
-  explicit negative completion releases local compaction. Exact remote duplicates now coalesce,
+  explicit negative completion releases local compaction. A committed-prefix conflict also leaves
+  the pending identity intact until that exact installation is explicitly rejected. Exact remote
+  duplicates now coalesce,
   competing requests receive negative responses without replacing pending identity, and a higher-
   term competitor persists its term/vote transition before rejection and retry. Snapshot requests
   whose last-included term exceeds their message term now fail core and transport validation before

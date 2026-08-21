@@ -404,6 +404,9 @@ Snapshot request retransmission preserves the same single-owner rule: an exact d
 no second application task, a different request returns a negative response without replacing the
 first completion, and a higher-term competitor returns its term/vote persistence state before that
 response. Resolution of the old request permits a later retry.
+An installed completion that conflicts with the committed local prefix returns `CORRUPTION` with
+complete persistent-state preservation and retains the pending identity for an exact explicit
+negative completion.
 
 Snapshot metadata cannot claim an entry term newer than its enclosing leader request. Direct-core
 coverage submits that impossible relation to a candidate and requires `INVALID_ARGUMENT` with exact

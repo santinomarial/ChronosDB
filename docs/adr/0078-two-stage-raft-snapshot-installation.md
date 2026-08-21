@@ -34,7 +34,8 @@ Only `complete_snapshot_install(..., installed=true)` may atomically install the
 metadata, membership checkpoint, commit/applied boundary, and compatible retained suffix. Its
 persistent transition crosses `DurableMultiRaftRuntime`'s synchronization boundary before the
 success response is released. Rejection returns a negative response without changing the snapshot.
-Conflicts with an already committed local prefix fail as corruption.
+Conflicts with an already committed local prefix fail as corruption without consuming the pending
+completion identity; the owner can still explicitly reject that exact installation.
 
 Local `compact_snapshot` is allowed only for a strictly newer applied prefix under a stable
 configuration, with an exact local term and nonzero application manifest generation. It is
@@ -85,3 +86,5 @@ An impossible higher-term request whose snapshot term is newer than its own lead
 before term/vote/role observation or external installation publication.
 The same boundary rejects `UINT64_MAX` before publication so explicit completion can never persist a
 snapshot that recovery must reject as index-exhausted.
+Committed-prefix conflict coverage also requires complete persistent-state preservation and proves
+the pending authority remains available for an explicit negative completion.

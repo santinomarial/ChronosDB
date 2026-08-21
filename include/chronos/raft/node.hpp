@@ -44,7 +44,8 @@ public:
   [[nodiscard]] common::Result<Transition> begin_membership_change(std::vector<NodeId> new_voters);
   [[nodiscard]] common::Result<Transition> finalize_membership_change();
   // Exactly one external installation may be pending. Duplicate requests coalesce; a competing
-  // request receives a negative response without replacing the original completion identity.
+  // request receives a negative response without replacing the original completion identity. A
+  // completion error preserves that identity until explicit success or rejection.
   [[nodiscard]] common::Result<Transition>
   complete_snapshot_install(NodeId source, SnapshotMetadata snapshot, bool installed);
   // Local compaction is unavailable while an externally owned snapshot installation is pending.
