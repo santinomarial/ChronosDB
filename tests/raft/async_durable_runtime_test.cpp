@@ -155,6 +155,9 @@ private:
 
 class BlockingWorkerExtension final : public AsyncDurableRaftWorkerExtension {
 public:
+  explicit BlockingWorkerExtension(const std::size_t block_on_prepare = 1U) noexcept
+      : block_on_prepare_(block_on_prepare) {}
+
   common::Status initialize(DurableMultiRaftRuntime&) override {
     return common::Status::ok();
   }
@@ -163,8 +166,8 @@ public:
   prepare_batch(DurableMultiRaftRuntime&,
                 const std::span<const DurableRaftRequest> requests) override {
     std::unique_lock lock{mutex_};
-    if (!blocked_once_) {
-      blocked_once_ = true;
+    ++prepare_count_;
+    if (prepare_count_ == block_on_prepare_) {
       worker_blocked_ = true;
       condition_.notify_all();
       condition_.wait(lock, [this] { return released_; });
@@ -197,9 +200,10 @@ public:
   }
 
 private:
+  std::size_t block_on_prepare_;
+  std::size_t prepare_count_{};
   std::mutex mutex_;
   std::condition_variable condition_;
-  bool blocked_once_{};
   bool worker_blocked_{};
   bool released_{};
 };
@@ -469,6 +473,95 @@ TEST(AsyncDurableMultiRaftRuntimeTest, FailsClosedAfterTerminalDurableRuntimeErr
   EXPECT_TRUE(runtime->metrics().terminal_failure);
   EXPECT_EQ(runtime->try_submit({{group, HeartbeatOperation{}}}).error(), failed.error());
   EXPECT_EQ(runtime->shutdown(), failed.error());
+}
+
+TEST(AsyncDurableMultiRaftRuntimeTest, FansOutOneTerminalFailureToQueuedCompletionsDuringShutdown) {
+  constexpr std::size_t kQueuedCompletions = 8U;
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{7U});
+  RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+  log_config.maximum_records = 1U;
+  auto extension = std::make_shared<BlockingWorkerExtension>(2U);
+  auto runtime =
+      AsyncDurableMultiRaftRuntime::create_new(1U, log_config, {{group, {1U}}}, {}, extension);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  [[maybe_unused]] BlockingWorkerReleaseGuard release_on_exit{extension.get()};
+
+  auto election = runtime->try_submit({{group, StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  auto elected = election->wait();
+  ASSERT_TRUE(elected.has_value()) << elected.error().to_string();
+
+  std::vector<AsyncDurableRaftCompletion> failed_completions;
+  failed_completions.reserve(kQueuedCompletions + 1U);
+  auto failing =
+      runtime->try_submit({{group, ProposeOperation{.type = 1U, .payload = {std::byte{0x42U}}}}});
+  ASSERT_TRUE(failing.has_value()) << failing.error().to_string();
+  failed_completions.push_back(std::move(*failing));
+  if (!extension->wait_until_blocked()) {
+    extension->release();
+    EXPECT_TRUE(runtime->shutdown().is_ok());
+    FAIL() << "durable worker did not reach the controlled failure boundary";
+  }
+  for (std::size_t index = 0U; index < kQueuedCompletions; ++index) {
+    auto queued = runtime->try_observe_group(group);
+    ASSERT_TRUE(queued.has_value()) << queued.error().to_string();
+    failed_completions.push_back(std::move(*queued));
+  }
+
+  common::Status shutdown_status;
+  std::thread shutdown_caller{[&] { shutdown_status = runtime->shutdown(); }};
+  bool admission_closed{};
+  for (std::size_t attempt = 0U; attempt < 1'000'000U; ++attempt) {
+    if (!runtime->is_accepting()) {
+      admission_closed = true;
+      break;
+    }
+    std::this_thread::yield();
+  }
+  if (!admission_closed) {
+    extension->release();
+    shutdown_caller.join();
+    FAIL() << "shutdown did not close admission at the controlled failure boundary";
+  }
+  const common::Status closed_admission = runtime->try_observe_group(group).error();
+  extension->release();
+  shutdown_caller.join();
+
+  EXPECT_EQ(closed_admission.code(), common::StatusCode::kUnavailable);
+  const common::Status terminal = runtime->terminal_status();
+  EXPECT_EQ(terminal.code(), common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(shutdown_status, terminal);
+  EXPECT_EQ(runtime->try_observe_group(group).error(), terminal);
+
+  ASSERT_EQ(failed_completions.size(), kQueuedCompletions + 1U);
+  for (std::size_t index = 0U; index < failed_completions.size(); ++index) {
+    AsyncDurableRaftCompletion& completion = failed_completions[index];
+    EXPECT_EQ(completion.submission_sequence(), index + 2U);
+    EXPECT_TRUE(completion.is_ready());
+    auto failed = completion.wait();
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error(), terminal);
+  }
+
+  const AsyncDurableMultiRaftMetrics metrics = runtime->metrics();
+  EXPECT_FALSE(metrics.accepting);
+  EXPECT_TRUE(metrics.terminal_failure);
+  EXPECT_EQ(metrics.admitted_batches, kQueuedCompletions + 2U);
+  EXPECT_EQ(metrics.completed_batches, 1U);
+  EXPECT_EQ(metrics.failed_batches, kQueuedCompletions + 1U);
+  EXPECT_EQ(metrics.rejected_batches, 2U);
+  EXPECT_EQ(metrics.pending_batches, 0U);
+  EXPECT_EQ(metrics.pending_operations, 0U);
+  EXPECT_EQ(metrics.written_completion_notifications, 3U);
+  EXPECT_EQ(metrics.coalesced_completion_notifications, 0U);
+
+  pollfd descriptor{.fd = runtime->completion_descriptor(), .events = POLLIN};
+  ASSERT_EQ(::poll(&descriptor, 1U, 0), 1);
+  EXPECT_NE(descriptor.revents & POLLIN, 0);
+  ASSERT_TRUE(runtime->drain_completion_notifications().is_ok());
+  descriptor.revents = 0;
+  EXPECT_EQ(::poll(&descriptor, 1U, 0), 0);
 }
 
 TEST(AsyncDurableMultiRaftRuntimeTest, WakesAndDrainsCompletionDescriptor) {

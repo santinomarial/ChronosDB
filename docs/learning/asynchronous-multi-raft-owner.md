@@ -99,6 +99,13 @@ batch results. A top-level durable batch or checkpoint/reclamation failure is am
 to partial in-memory or filesystem progress, so the worker fails closed, gives all remaining
 accepted work the same terminal failure, and stops. Shutdown returns the retained storage/worker
 failure.
+
+Focused coverage blocks a deterministic durable record-limit failure with eight observations queued
+behind it, starts shutdown, and verifies orderly admission closure returns `UNAVAILABLE` before the
+failure while the current and all accepted queued completions later receive the identical retained
+terminal status. Failure and rejection metrics, notification counts, and pending ownership all
+converge exactly after the join.
+
 Initialization failure prevents admission and still invokes extension shutdown for partial cleanup.
 For a composed extension, that cleanup includes the child whose initialization returned failure;
 shutdown continues through earlier children even when a later child returns an error or throws.

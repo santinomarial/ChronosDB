@@ -36,7 +36,9 @@ descriptor, draining clears readiness, and the owning completion is ready. A con
 race also proves concurrent shutdown retains every accepted completion and leaves the descriptor
 drainable after the worker joins. A bounded unread-completion test fills the real platform pipe,
 observes coalescing without terminal failure or missing completions, drains readiness, and proves the
-next completion writes a fresh signal. Broader shutdown/fault timing matrices remain Phase 18 work.
+next completion writes a fresh signal. A controlled durable failure also publishes one wakeup for a
+queued failure fanout and one for the current failed batch while shutdown joins the worker. Broader
+syscall-level notification/storage fault timing matrices remain Phase 18 work.
 
 ## References
 

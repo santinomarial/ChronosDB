@@ -77,9 +77,12 @@ state. Boundary tests reject empty, oversized, aggregate-outbound-exhausting, cl
 invalid completion use; outbound rejection preserves admission and accepts a smaller batch. A
 controlled full-bound race admits exactly 64 observations from eight producers, releases two
 concurrent shutdown callers against final admission attempts, and proves every accepted completion
-drains once with convergent shutdown status and exact terminal metrics. Broader queue-interleaving
-stress, allocation injection, worker-start injection, I/O failure fanout, thousands-of-groups
-fairness, and latency/throughput measurements remain in Phase 18.
+drains once with convergent shutdown status and exact terminal metrics. A controlled record-limit
+failure blocks the worker with eight accepted observations queued behind it, begins shutdown, and
+proves the current and every queued completion receive one retained terminal status with exact
+failure, rejection, notification, and zero-pending metrics. Broader queue-interleaving stress,
+allocation injection, worker-start injection, syscall-level I/O failure injection,
+thousands-of-groups fairness, and latency/throughput measurements remain in Phase 18.
 
 ## Migration or rollback considerations
 

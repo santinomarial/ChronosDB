@@ -361,10 +361,13 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   controlled full-bound race retains all 64 accepted completions across eight producers and two
   concurrent shutdown callers, with exact metrics and a drainable joined descriptor. A bounded test
   also fills the real unread completion pipe, observes successful coalescing, drains it, and proves
-  later completions resume physical wakeups. A bounded generation-tagged timer scheduler now emits
-  exact election/heartbeat actions and rejects stale completion rearming; its bounded driver submits
-  two-operation action/observation batches through the asynchronous durable owner and retains
-  complete post-sync results for routing.
+  later completions resume physical wakeups. A controlled record-limit failure during shutdown now
+  fans one retained terminal status out to the current batch and eight queued observations with
+  exact terminal accounting and notification counts. Syscall-level storage/notification failures
+  and alternate hook/close-failure schedules remain deferred. A bounded generation-tagged timer
+  scheduler now emits exact election/heartbeat actions and rejects stale completion rearming; its
+  bounded driver submits two-operation action/observation batches through the asynchronous durable
+  owner and retains complete post-sync results for routing.
   Timer and transport owners now expose their exact earliest monotonic deadlines; clock-change and
   high-cardinality deadline-scan validation remain deferred.
   Runtime-lifetime FIFO submission identities now order timer and multi-connection inbound results.
