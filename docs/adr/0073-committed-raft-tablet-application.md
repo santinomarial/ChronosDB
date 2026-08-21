@@ -24,6 +24,9 @@ entries in ascending index order through the same committed-command function use
 and publishes each command at `(RAFT, group_id, log_index)`. After all entries succeed, one durable
 runtime batch persists the final applied index. Unknown, corrupt, misrouted, conflicting, or
 unrepresentable commands fail the tablet state machine closed.
+The deterministic core prepares both its replacement persistent state and the returned durable
+transition before publishing an applied-index advance. Allocation failure is
+`RESOURCE_EXHAUSTED`, leaves the prior unapplied range intact, and permits exact retry.
 
 Recovery accepts only fresh unpublished tablet and retry owners. Because the v1 Raft log currently
 retains complete entry history, recovery replays every entry through `commit_index`, regardless of
@@ -55,4 +58,6 @@ Invariants 1, 3, 4, 5, 6, 8, 11, 14, and 18 apply. Focused tests prove uncommitt
 ordered committed publication, exact duplicate suppression, durable applied-index advancement,
 fail-closed corrupt committed bytes, and complete reconstruction after durable runtime reopen. Crash
 injection at application/applied-index boundaries, application snapshots, log reclamation, schema
-catalog recovery, multi-group scheduling, and true quorum acknowledgment remain required.
+catalog recovery, multi-group scheduling, and true quorum acknowledgment remain required. A
+deterministic allocation sweep fails every post-apply state copy, requires the full committed-
+unapplied range and persistent state to remain exact, and then advances identically on retry.

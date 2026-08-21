@@ -301,6 +301,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   snapshot base, in-memory state, and returned durable state are owned before the live log prefix is
   erased. Mixed membership-entry compaction boundaries remain part of broader snapshot/member churn
   validation.
+  Applied-index advancement now has an allocation sweep proving both post-apply state copies are
+  owned before the committed-unapplied boundary moves. Broader application-publication/crash
+  schedules remain covered by the tablet-state-machine validation ledger.
   Stale, higher-term-conflict, and accepted replacement AppendEntries-request sweeps now cover every
   observed validation and transition allocation through exact feedback and committed suffix
   publication. Broader membership-changing request allocation schedules remain deferred.

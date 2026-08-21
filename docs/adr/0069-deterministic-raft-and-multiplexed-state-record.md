@@ -94,6 +94,10 @@ snapshot base, and both copies of the compacted persistent state before erasing 
 Allocation failure leaves the installed snapshot, retained log, membership base, and durable state
 unchanged for exact retry.
 
+Applied-index advancement also owns both the node's replacement persistent state and the returned
+durable transition before changing application progress. Allocation failure cannot consume an
+applied entry without the state required to persist that fact and remains exactly retryable.
+
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
 record boundary is [`multiplexed-raft-log-v1.md`](../formats/multiplexed-raft-log-v1.md). A dedicated
@@ -159,6 +163,9 @@ negative response or installed-state transition.
 The local-compaction sweep retains a nonempty suffix and fails every voter, state, and returned-
 transition allocation. Each failure preserves the exact uncompacted state, and retry publishes the
 complete compacted checkpoint and suffix together.
+An applied-index sweep fails both post-apply state copies while two committed entries remain
+available. Each failure preserves the original applied boundary and complete unapplied range; retry
+returns the exact advanced state.
 
 **Retrospective note (2026-08-12):** [ADR 0252](0252-replayable-deterministic-raft-fault-simulator.md)
 now supplies bounded explicit and seeded schedules for partitions, delay/reordering, duplication,

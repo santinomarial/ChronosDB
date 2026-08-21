@@ -1581,9 +1581,20 @@ common::Result<Transition> RaftNode::mark_applied(const LogIndex index) {
   Transition transition;
   if (index == impl_->state.applied_index)
     return transition;
-  impl_->state.applied_index = index;
-  transition.persistent_state = impl_->state;
-  return transition;
+  try {
+    PersistentState prepared_state = impl_->state;
+    prepared_state.applied_index = index;
+    transition.persistent_state.emplace(prepared_state);
+
+    static_assert(std::is_nothrow_move_assignable_v<PersistentState>);
+    static_assert(std::is_nothrow_move_constructible_v<Transition>);
+    impl_->state = std::move(prepared_state);
+    return transition;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("Raft applied-index allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("Raft applied-index state exceeds container limits"));
+  }
 }
 
 std::span<const LogEntry> RaftNode::committed_unapplied() const noexcept {

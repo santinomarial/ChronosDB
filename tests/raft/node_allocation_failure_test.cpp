@@ -1136,6 +1136,60 @@ TEST(RaftNodeAllocationFailureTest,
 }
 
 TEST(RaftNodeAllocationFailureTest,
+     AppliedIndexAdvancementPreservesProgressUntilDurableTransitionPublication) {
+  PersistentState initial{};
+  initial.current_term = 1U;
+  initial.log = {LogEntry{1U, 1U, 1U, {std::byte{0x11U}}},
+                 LogEntry{2U, 1U, 1U, {std::byte{0x22U}}}};
+  initial.commit_index = 2U;
+  PersistentState expected = initial;
+  expected.applied_index = 1U;
+
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 64U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    auto created = RaftNode::create(1U, {1U, 2U, 3U}, initial);
+    ASSERT_TRUE(created.has_value()) << created.error().to_string();
+    RaftNode follower = std::move(*created);
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(follower.mark_applied(1U));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      EXPECT_EQ(follower.persistent_state(), expected);
+      const PersistentState* persistent = returned_persistent_state(**result);
+      ASSERT_NE(persistent, nullptr);
+      EXPECT_EQ(*persistent, expected);
+      EXPECT_TRUE((**result).outbound.empty());
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(follower.persistent_state(), initial);
+    EXPECT_EQ(follower.committed_unapplied().size(), 2U);
+    auto retry = follower.mark_applied(1U);
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    EXPECT_EQ(follower.persistent_state(), expected);
+    const PersistentState* persistent = returned_persistent_state(*retry);
+    ASSERT_NE(persistent, nullptr);
+    EXPECT_EQ(*persistent, expected);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest,
      HigherTermReadBarrierRequestPreparesResponseBeforeTermObservation) {
   std::size_t failure_count = 0U;
   bool reached_success = false;

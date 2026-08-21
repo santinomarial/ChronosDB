@@ -390,6 +390,11 @@ SPSC tests cover empty/full transitions, counter wraparound, publication/reclama
 
 Before production integration, virtual-time simulation explores elections, replication, membership, snapshot installation, crashes, disk errors, partitions, duplication, delay, and reordering. Traces are seed-replayable and shrinkable. Safety checkers cover election safety, log matching, leader completeness, committed apply order, read-mode histories, and absence of uncommitted visibility.
 
+Applied-index allocation coverage starts with two committed, unapplied entries and fails every owned
+copy of the first post-apply persistent state. Each failure must return `RESOURCE_EXHAUSTED`, retain
+both entries in `committed_unapplied()`, and preserve the exact persistent state; the same index must
+then advance with its complete durable transition on retry.
+
 The deterministic core separately checks the installed-snapshot predecessor boundary. A request
 whose predecessor is already compacted receives a negative conflict response without indexing
 retained log storage; if it carries a higher term, the returned transition contains the exact
