@@ -48,6 +48,9 @@ failed response may report the zero empty-snapshot boundary, but both response s
 below `UINT64_MAX`.
 Existing read-context, append-entry, and snapshot-metadata checks remain in the same pre-observation
 validation pass.
+An AppendEntries request that would replace a committed entry is corruption, whether it changes the
+entry term or reuses the term with different type or payload bytes. That comparison also completes
+before a higher request term is observed.
 
 An AppendEntries predecessor below the installed snapshot index is unavailable even when it is
 index zero. Index zero is the canonical empty-log predecessor only before any snapshot exists; once
@@ -104,6 +107,9 @@ Maximum-index AppendEntries match coverage rejects a failed response through dir
 encoding, and checksum-valid decoding before a higher-term response can change candidate state.
 Maximum-index snapshot-response coverage applies the same three paths while preserving zero as the
 canonical failed response for a follower without an installed snapshot.
+Committed-prefix overwrite coverage presents higher-term requests with both a different entry term
+and matching-term divergent bytes, requires `CORRUPTION`, and proves exact term, vote, role, and
+persistent-state preservation.
 
 ## References
 

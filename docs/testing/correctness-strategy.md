@@ -415,6 +415,10 @@ messages from impossible history. Failed AppendEntries responses require a nonze
 and bound any optional conflict term by the response term; direct candidate-state preservation plus
 encoder and checksum-repaired decoder cases cover both invalid combinations.
 
+Higher-term AppendEntries overwrite coverage targets an already committed entry with both a
+different term and same-term divergent bytes. Both cases require `CORRUPTION` while preserving the
+complete persistent state, current term, vote, and follower role.
+
 Canonical empty-state recovery rejects a vote in term zero and requires an index-zero snapshot to
 have zero term, Manifest generation, part-set checksum, and configuration index with no voters.
 Focused cases exercise term-zero vote plus nonzero manifest and checksum identity.

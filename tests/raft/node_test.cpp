@@ -253,6 +253,33 @@ TEST(RaftNodeTest, RejectsDivergentBytesAtMatchingTermAndIndex) {
   EXPECT_EQ(node->persistent_state(), state);
 }
 
+TEST(RaftNodeTest, RejectsCommittedOverwriteBeforeObservingHigherTerm) {
+  PersistentState state{};
+  state.current_term = 2U;
+  state.voted_for = 3U;
+  state.log = {LogEntry{1U, 1U, 1U, {std::byte{0x11}}}, LogEntry{2U, 2U, 1U, {std::byte{0x22}}}};
+  state.commit_index = 2U;
+  state.applied_index = 1U;
+  const std::vector<AppendEntriesRequest> hostile{
+      AppendEntriesRequest{3U, 2U, 0U, 0U, {LogEntry{1U, 3U, 1U, {std::byte{0x33}}}}, 0U},
+      AppendEntriesRequest{3U, 2U, 0U, 0U, {LogEntry{1U, 1U, 1U, {std::byte{0x44}}}}, 0U},
+  };
+
+  for (const AppendEntriesRequest& request : hostile) {
+    SCOPED_TRACE(request.entries.front().term);
+    auto node = RaftNode::create(1U, {1U, 2U, 3U}, state);
+    ASSERT_TRUE(node.has_value()) << node.error().to_string();
+
+    auto rejected = node->receive(2U, request);
+
+    ASSERT_FALSE(rejected.has_value());
+    EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
+    EXPECT_EQ(node->persistent_state(), state);
+    EXPECT_EQ(node->current_term(), 2U);
+    EXPECT_EQ(node->role(), Role::kFollower);
+  }
+}
+
 TEST(RaftNodeTest, RejectsAppendPrefixBeforeSnapshotWithoutReadingCompactedEntry) {
   PersistentState state{};
   state.current_term = 2U;

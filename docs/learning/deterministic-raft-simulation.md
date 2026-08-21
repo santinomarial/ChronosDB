@@ -82,6 +82,9 @@ vote, and an index-zero snapshot has no external or membership identity. Long se
 exhaustive schedules, timer clock changes, physical disk faults, and minimized corpus retention
 remain in the hardening ledger. Snapshot index `UINT64_MAX` is rejected before external installation
 because installing it would create a durable state the exhaustion-aware recovery path cannot reopen.
+Higher-term AppendEntries requests cannot replace a committed entry by changing its term or by
+retaining its term while changing type or payload bytes; both failures preserve the complete local
+persistent state and role because validation precedes term observation.
 Vote requests reject the same reserved last-log index before term or vote observation because no
 canonical candidate can own an entry at that position.
 AppendEntries requests reject it as a predecessor even for an entry-free heartbeat because no
