@@ -46,6 +46,12 @@ includes a higher-term grant or stale-log rejection and a same-term first vote. 
 therefore cannot advance the term, record a vote, change role, or omit the response required for an
 exact retry.
 
+Starting a local election is prepare-before-publish as well. The core first owns the prospective
+term/vote state, self-vote set, complete outbound vote batch, and returned persistent-state copy.
+If the self vote is already a quorum, it also prepares complete leader replication maps and the
+initial heartbeat batch. Only non-throwing moves and scalar changes may then publish candidacy or
+leadership. Allocation failure preserves the prior role, leader, pending work, and durable state.
+
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
 record boundary is [`multiplexed-raft-log-v1.md`](../formats/multiplexed-raft-log-v1.md). A dedicated
@@ -84,6 +90,9 @@ Every observed persistent-state-copy failure preserves exact leadership and dura
 exact retry returns one follower demotion with the matching persistence transition.
 RequestVote request sweeps separately cover higher-term grant/rejection and same-term first-vote
 paths, requiring response and persistence preparation to fail before any node mutation.
+Election-start sweeps cover a multi-voter leader with pending read work and a single-voter follower
+that becomes leader immediately. Every observed allocation failure preserves exact state and retry
+publishes the complete expected transition.
 
 **Retrospective note (2026-08-12):** [ADR 0252](0252-replayable-deterministic-raft-fault-simulator.md)
 now supplies bounded explicit and seeded schedules for partitions, delay/reordering, duplication,

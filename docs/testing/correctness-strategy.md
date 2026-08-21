@@ -441,6 +441,10 @@ RequestVote request sweeps cover a higher-term up-to-date candidate, a higher-te
 and a same-term first vote. Every response reservation and persistent-state-copy failure must leave
 term, vote, role, leader identity, and durable state unchanged; retry must return the exact grant bit
 and matching persistent state together.
+Election-start sweeps fail every prospective state, self-vote, outbound, replication-map, and
+returned-state allocation. The multi-voter case must preserve the old leader and pending read
+barrier until the complete candidate transition is owned; the single-voter case must remain a
+term-zero follower until its complete immediate-leader transition is owned.
 The paired AppendEntries authority case submits an empty higher-term heartbeat from that same
 nonvoter position and requires exact leader-state preservation because no matching membership
 suffix proves the sender active. The positive new-only-leader case continues to install and commit

@@ -455,26 +455,69 @@ common::Result<Transition> RaftNode::start_election() {
     return common::make_unexpected(
         common::Status{common::StatusCode::kOutOfRange, "Raft term or log index is exhausted"});
   }
-  ++impl_->state.current_term;
-  impl_->role = Role::kCandidate;
-  impl_->leader_id.reset();
-  impl_->state.voted_for = impl_->id;
-  impl_->votes = {impl_->id};
-  impl_->pending_read_barrier.reset();
-  Transition transition;
-  if (impl_->vote_quorum()) {
-    impl_->initialize_leader(transition);
-  } else {
-    const RequestVoteRequest request{impl_->state.current_term, impl_->id, impl_->last_index(),
-                                     impl_->last_term()};
-    for (const NodeId peer : impl_->voters) {
-      if (peer != impl_->id) {
-        transition.outbound.push_back(OutboundMessage{peer, request});
+
+  try {
+    PersistentState prepared_state = impl_->state;
+    ++prepared_state.current_term;
+    prepared_state.voted_for = impl_->id;
+    std::set<NodeId> prepared_votes{impl_->id};
+    const auto self_voted = [&](const NodeId node) { return node == impl_->id; };
+    bool immediate_leader = false;
+    const std::optional<JointConfiguration>& joint_state = impl_->joint;
+    if (joint_state.has_value()) {
+      const JointConfiguration& joint = joint_state.value();
+      immediate_leader = Impl::has_majority(joint.old_voters, self_voted) &&
+                         Impl::has_majority(joint.new_voters, self_voted);
+    } else {
+      immediate_leader = Impl::has_majority(impl_->committed_voters, self_voted);
+    }
+
+    Transition transition;
+    transition.outbound.reserve(impl_->voters.size() - 1U);
+    std::map<NodeId, LogIndex> prepared_next_index;
+    std::map<NodeId, LogIndex> prepared_match_index;
+    if (immediate_leader) {
+      for (const NodeId peer : impl_->voters) {
+        prepared_next_index.emplace(peer, impl_->last_index() + 1U);
+        prepared_match_index.emplace(peer, peer == impl_->id ? impl_->last_index() : 0U);
+        if (peer != impl_->id) {
+          transition.outbound.push_back(
+              OutboundMessage{peer, AppendEntriesRequest{prepared_state.current_term,
+                                                         impl_->id,
+                                                         impl_->last_index(),
+                                                         impl_->last_term(),
+                                                         {},
+                                                         prepared_state.commit_index}});
+        }
+      }
+    } else {
+      const RequestVoteRequest request{prepared_state.current_term, impl_->id, impl_->last_index(),
+                                       impl_->last_term()};
+      for (const NodeId peer : impl_->voters) {
+        if (peer != impl_->id)
+          transition.outbound.push_back(OutboundMessage{peer, request});
       }
     }
+    transition.persistent_state.emplace(prepared_state);
+
+    static_assert(std::is_nothrow_move_assignable_v<PersistentState>);
+    static_assert(std::is_nothrow_move_assignable_v<std::set<NodeId>>);
+    static_assert(std::is_nothrow_move_assignable_v<std::map<NodeId, LogIndex>>);
+    impl_->state = std::move(prepared_state);
+    impl_->role = immediate_leader ? Role::kLeader : Role::kCandidate;
+    impl_->leader_id = immediate_leader ? std::optional<NodeId>{impl_->id} : std::nullopt;
+    impl_->votes = std::move(prepared_votes);
+    impl_->pending_read_barrier.reset();
+    if (immediate_leader) {
+      impl_->next_index = std::move(prepared_next_index);
+      impl_->match_index = std::move(prepared_match_index);
+    }
+    return transition;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("Raft election preparation allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("Raft election preparation exceeds container limits"));
   }
-  transition.persistent_state = impl_->state;
-  return transition;
 }
 
 common::Result<Transition> RaftNode::receive(const NodeId source, Message message) {

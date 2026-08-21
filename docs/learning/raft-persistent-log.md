@@ -40,6 +40,9 @@ higher-term response can demote a node. Allocation failure therefore leaves the 
 success always gives this owner the complete state it must append and synchronize.
 Vote admission uses the same ownership rule: its prospective grant/rejection response and any term
 or vote persistence change exist before the deterministic node publishes the decision.
+Local election start likewise owns the next term/vote state and complete candidate or immediate-
+leader transition before mutation, so the durable owner never receives a partially constructed
+election result.
 
 The maximum physical sequence is a terminal record identity. Once recovered or emitted, the
 Multi-Raft owner rejects and fails closed before invoking another deterministic group transition;

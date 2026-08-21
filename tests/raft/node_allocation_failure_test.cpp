@@ -105,6 +105,31 @@ void expect_vote_request_transition(const RaftNode& node, const Transition& tran
   EXPECT_FALSE(transition.read_barrier_ready.has_value());
 }
 
+void expect_election_transition(const RaftNode& node, const Transition& transition,
+                                PersistentState expected, const Role role,
+                                const std::size_t expected_outbound) {
+  ++expected.current_term;
+  expected.voted_for = 1U;
+  EXPECT_EQ(node.role(), role);
+  EXPECT_EQ(node.current_term(), expected.current_term);
+  EXPECT_EQ(node.leader_id(), role == Role::kLeader ? std::optional<NodeId>{1U} : std::nullopt);
+  EXPECT_EQ(node.persistent_state(), expected);
+  const PersistentState* persistent = returned_persistent_state(transition);
+  ASSERT_NE(persistent, nullptr);
+  EXPECT_EQ(*persistent, expected);
+  ASSERT_EQ(transition.outbound.size(), expected_outbound);
+  for (const OutboundMessage& outbound : transition.outbound) {
+    const auto* request = std::get_if<RequestVoteRequest>(&outbound.message);
+    ASSERT_NE(request, nullptr);
+    EXPECT_EQ(*request,
+              (RequestVoteRequest{expected.current_term, 1U, expected.log.empty() ? 0U : 1U,
+                                  expected.log.empty() ? 0U : 1U}));
+  }
+  EXPECT_FALSE(transition.advanced_commit_index.has_value());
+  EXPECT_FALSE(transition.snapshot_install.has_value());
+  EXPECT_FALSE(transition.read_barrier_ready.has_value());
+}
+
 void expect_read_barrier_allocation_atomic(const bool joint_membership,
                                            const std::size_t expected_probe_count) {
   std::size_t failure_count = 0U;
@@ -444,6 +469,94 @@ TEST(RaftNodeAllocationFailureTest, SameTermVoteRequestPreparesFirstVoteBeforeMu
     auto retry = follower.receive(2U, request);
     ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
     expect_vote_request_transition(follower, *retry, before, 1U, 2U, true);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest, MultiVoterElectionStartPreservesStateUntilPublication) {
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 64U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    RaftNode leader = leader_ready_for_read_barrier(false);
+    auto barrier = leader.begin_read_barrier();
+    ASSERT_TRUE(barrier.has_value()) << barrier.error().to_string();
+    const std::uint64_t context = read_context(*barrier);
+    const PersistentState before = leader.persistent_state();
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(leader.start_election());
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      expect_election_transition(leader, **result, before, Role::kCandidate, 2U);
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(leader.role(), Role::kLeader);
+    EXPECT_EQ(leader.current_term(), 1U);
+    EXPECT_EQ(leader.leader_id(), 1U);
+    EXPECT_EQ(leader.persistent_state(), before);
+    auto completed = leader.receive(2U, ReadBarrierResponse{1U, context, true});
+    ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
+    ASSERT_NE(completed_read_barrier(*completed), nullptr);
+
+    auto retry = leader.start_election();
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    expect_election_transition(leader, *retry, before, Role::kCandidate, 2U);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest, SingleVoterElectionStartPreservesStateUntilLeadership) {
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 32U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    auto created = RaftNode::create(1U, {1U});
+    ASSERT_TRUE(created.has_value()) << created.error().to_string();
+    RaftNode node = std::move(*created);
+    const PersistentState before = node.persistent_state();
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(node.start_election());
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      expect_election_transition(node, **result, before, Role::kLeader, 0U);
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(node.role(), Role::kFollower);
+    EXPECT_EQ(node.current_term(), 0U);
+    EXPECT_FALSE(node.leader_id().has_value());
+    EXPECT_EQ(node.persistent_state(), before);
+
+    auto retry = node.start_election();
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    expect_election_transition(node, *retry, before, Role::kLeader, 0U);
   }
   EXPECT_GT(failure_count, 0U);
   EXPECT_TRUE(reached_success);
