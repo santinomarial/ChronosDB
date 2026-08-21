@@ -35,12 +35,19 @@ pending, so a stable frozen quorum cannot become obsolete before completion. Con
 They need not be durable because a restarted node must win a later term before leading again, and
 only an exact current pending term/context can complete.
 
+Issuance prepares the frozen voter ownership, acknowledgement set, and complete outbound probe
+batch before publishing either the pending barrier or the next context. Allocation or container-
+limit failure returns `RESOURCE_EXHAUSTED` with no pending operation and no consumed context, so an
+exact retry cannot be mistaken for a concurrent barrier and reuses the same context.
+
 ## Consequences
 
 - A successful barrier establishes a linearization point between issuance and quorum completion.
 - Lagging voters can confirm leadership without modifying replication progress or first receiving a
   snapshot.
 - Joint membership preserves its two-quorum safety rule for reads as well as election and commit.
+- Allocation failure during issuance is retryable and cannot leave a hidden pending barrier or a
+  gap in the term-local context sequence.
 - Production transport framing and binding the returned index to a tablet snapshot remain separate
   integration work; the in-memory value messages are not a released wire format.
 
@@ -59,6 +66,8 @@ only an exact current pending term/context can complete.
 Invariants 4–6, 8, 14, and 18 apply. Focused tests cover the current-term commit prerequisite,
 context matching, apply gating, stable and frozen joint quorums, higher-term demotion, stale response
 rejection after reelection, recipient persistence, nonvoter request rejection before higher-term
-observation, and single-voter completion. Production wire
+observation, single-voter completion, and allocation failure at every observed issuance allocation.
+The allocation sweep requires exact role, term, leader, persistent-state, and retry-context
+preservation until the complete transition can be published. Production wire
 versioning, tablet snapshot acquisition, exhaustive schedules, partitions, duplication, restart,
 and long randomized simulation remain Phase 14 integration and hardening work.

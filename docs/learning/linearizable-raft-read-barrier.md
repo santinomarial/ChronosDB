@@ -49,6 +49,12 @@ serializes calls just as it does for elections and replication. Request/response
 a transition, but a response cannot complete a later barrier unless its exact term and context are
 pending. Leadership changes synchronously discard pending state.
 
+Barrier issuance is prepare-before-publish. The node first owns the frozen voter vectors, local
+acknowledgement set, and complete outbound transition in temporaries. Only after that fallible work
+succeeds does it move the pending barrier into node state and advance the context. That final move
+is required to be non-throwing, so allocation failure leaves no hidden pending owner and an exact
+retry uses the same context.
+
 The Multi-Raft wrapper preserves the group on outbound probes and completion. A barrier start or
 ordinary same-term response has no durable state of its own, so the durable owner does not invent a
 physical-log record. If a recipient observes a higher term, its normal persistent transition is
@@ -60,7 +66,9 @@ Followers persist a higher term before the runtime sends their response under th
 contract. Rejections, stale terms, stale contexts, duplicates, and nonmatching responses do not
 complete a barrier. Loss or partition leaves the one barrier pending and causes a later attempt to
 return `UNAVAILABLE`; the owner may resolve this through its request deadline or a leadership
-change. Each barrier sends `O(voters)` messages and retains `O(voters)` bounded state.
+change. Allocation or container-limit failure while issuing a barrier returns `RESOURCE_EXHAUSTED`
+without changing role, term, leader identity, persistent state, pending ownership, or the next
+context. Each barrier sends `O(voters)` messages and retains `O(voters)` bounded state.
 
 ## Tradeoffs and likely interview questions
 

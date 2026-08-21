@@ -12,6 +12,7 @@
 #include <optional>
 #include <ranges>
 #include <set>
+#include <stdexcept>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -1169,29 +1170,41 @@ common::Result<Transition> RaftNode::begin_read_barrier() {
   }
 
   const std::uint64_t context = impl_->next_read_context;
-  impl_->next_read_context =
-      context == std::numeric_limits<std::uint64_t>::max() ? 0U : context + 1U;
-  std::vector<NodeId> new_voters;
-  std::vector<NodeId> old_voters = impl_->committed_voters;
-  const std::optional<JointConfiguration>& joint_state = impl_->joint;
-  if (joint_state.has_value()) {
-    const JointConfiguration& joint = *joint_state;
-    old_voters = joint.old_voters;
-    new_voters = joint.new_voters;
-  }
-  impl_->pending_read_barrier = PendingReadBarrier{impl_->state.current_term, context,
-                                                   impl_->state.commit_index, std::move(old_voters),
-                                                   std::move(new_voters),     {impl_->id}};
-  Transition transition;
-  impl_->finish_read_barrier(transition);
-  if (transition.read_barrier_ready.has_value())
+  try {
+    std::vector<NodeId> new_voters;
+    std::vector<NodeId> old_voters = impl_->committed_voters;
+    const std::optional<JointConfiguration>& joint_state = impl_->joint;
+    if (joint_state.has_value()) {
+      const JointConfiguration& joint = *joint_state;
+      old_voters = joint.old_voters;
+      new_voters = joint.new_voters;
+    }
+    PendingReadBarrier pending{impl_->state.current_term, context,
+                               impl_->state.commit_index, std::move(old_voters),
+                               std::move(new_voters),     {impl_->id}};
+    Transition transition;
+    if (Impl::read_barrier_quorum(pending)) {
+      transition.read_barrier_ready =
+          ReadBarrier{pending.term, pending.context, pending.read_index};
+    } else {
+      transition.outbound.reserve(impl_->voters.size());
+      const ReadBarrierRequest request{impl_->state.current_term, impl_->id, context};
+      for (const NodeId peer : impl_->voters) {
+        if (peer != impl_->id)
+          transition.outbound.push_back(OutboundMessage{peer, request});
+      }
+      static_assert(std::is_nothrow_move_constructible_v<PendingReadBarrier>);
+      impl_->pending_read_barrier.emplace(std::move(pending));
+    }
+    impl_->next_read_context =
+        context == std::numeric_limits<std::uint64_t>::max() ? 0U : context + 1U;
     return transition;
-  const ReadBarrierRequest request{impl_->state.current_term, impl_->id, context};
-  for (const NodeId peer : impl_->voters) {
-    if (peer != impl_->id)
-      transition.outbound.push_back(OutboundMessage{peer, request});
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("Raft read-barrier issuance allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("Raft read-barrier issuance exceeds container limits"));
   }
-  return transition;
 }
 
 common::Result<Transition> RaftNode::mark_applied(const LogIndex index) {

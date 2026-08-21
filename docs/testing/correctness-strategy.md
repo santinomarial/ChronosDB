@@ -417,6 +417,11 @@ Read-barrier authority coverage submits a higher-term leadership probe from a no
 leader and requires `INVALID_ARGUMENT` before term, role, leader identity, or persistent state can
 change. Existing learner catch-up coverage still accepts AppendEntries from a new-only leader,
 keeping the membership ADR's replication exception distinct from leadership authority.
+Read-barrier issuance also has dedicated stable- and joint-membership deterministic allocator
+sweeps. Every observed allocation must return `RESOURCE_EXHAUSTED`, preserve the leader's role,
+term, identity, and complete persistent state, and permit an immediate retry that publishes the
+exact complete probe batch with the same context. Each sweep must then reach successful issuance
+after all failure points are exhausted.
 The paired AppendEntries authority case submits an empty higher-term heartbeat from that same
 nonvoter position and requires exact leader-state preservation because no matching membership
 suffix proves the sender active. The positive new-only-leader case continues to install and commit
