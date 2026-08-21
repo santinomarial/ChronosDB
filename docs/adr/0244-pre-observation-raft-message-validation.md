@@ -142,6 +142,10 @@ AppendEntries-request sweeps cover stale rejection, a higher-term predecessor co
 leader with pending read work, and a higher-term two-entry suffix replacement through commit. Each
 validation and transition-preparation failure is resource exhaustion with exact state preservation;
 retry returns matching feedback and any complete persistent transition.
+Membership-changing variants admit an uncommitted joint suffix from a newly authorized voter and
+commit a final suffix on an existing joint follower. Every failed candidate-log, membership,
+persistent-state, notification, or response allocation preserves the exact stable or joint node;
+retry publishes the complete active configuration and response together.
 InstallSnapshot-request sweeps cover stale rejection, a higher-term acknowledgement of an older
 already-installed snapshot, and a higher-term new pending installation. Every owned response,
 persistent-state, pending-identity, and returned-task allocation fails with resource exhaustion

@@ -79,3 +79,7 @@ the identical acknowledgement then commits once, reaches every new voter, and de
 Prior-term exact joint and final retry sweeps fail every delegated current-term no-op allocation.
 The retained membership entry and joint state remain exact until retry publishes one no-op at the
 same next index, with no duplicate configuration command.
+Follower request sweeps separately accept an uncommitted joint entry from a new-only source and
+commit a final entry from joint state. Allocation failure preserves the exact prior configuration;
+retry publishes the complete active voter set, persistent transition, response, and any commit
+notification atomically.

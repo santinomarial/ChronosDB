@@ -171,6 +171,9 @@ retry then produces either the retained suffix or the same snapshot request.
 AppendEntries-request sweeps separately cover stale rejection, higher-term predecessor conflict,
 and higher-term replacement plus commit. Every observed validation, membership, persistent-state,
 and response allocation preserves exact node state; retry publishes the complete expected outcome.
+Membership-changing request variants cover joint-suffix admission from a newly authorized voter and
+final-suffix commit from joint state. Failures preserve the exact stable or joint follower; retry
+publishes the new active configuration, durable state, commit notification, and response together.
 InstallSnapshot-request sweeps cover stale rejection, a higher-term already-installed
 acknowledgement, and a higher-term new pending installation. Every observed response, persistent-
 state, pending-identity, and returned-task allocation preserves exact leadership and pending work;

@@ -872,6 +872,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   snapshot follow-up before publication.
   AppendEntries requests now retain their validated candidate state and own stale/conflict feedback
   or accepted suffix persistence and commit feedback before changing term, role, log, or membership.
+  Joint-admission and final-commit allocation sweeps now prove the same boundary for follower
+  membership changes, including authority established by the incoming joint suffix.
   InstallSnapshot requests now own stale/already-installed/competing feedback, any post-term
   persistence, and both the core pending identity and external task for a new installation before
   changing role, leader identity, or pending work.

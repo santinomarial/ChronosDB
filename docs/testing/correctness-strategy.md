@@ -504,6 +504,11 @@ AppendEntries-request sweeps cover stale feedback allocation, higher-term confli
 demotion persistence, and accepted higher-term suffix replacement through commit. Every validation,
 membership, state-copy, and response allocation must preserve the exact prior node; retry must
 publish feedback, leader identity, commit notification, and persistent state together.
+Membership-changing variants first require a stable follower to accept an uncommitted joint suffix
+that proves a new-only source active, then require a joint follower to accept and commit the final
+suffix. Every failure must preserve the exact stable or joint configuration, term, leader identity,
+log, and commit index. Retry must publish the complete active set, persistent state, success response,
+and final commit notification together.
 InstallSnapshot-request sweeps cover stale feedback, higher-term acknowledgement of an older
 installed snapshot, and a higher-term new pending installation. Every response, post-term state,
 pending-request, and returned-task allocation must preserve the exact prior leader and pending read

@@ -49,6 +49,11 @@ construction, and returned persistent-state ownership finish before the live nod
 entry or active configuration. A failed append therefore leaves no partial membership transition
 and may be retried at the same log index.
 
+Follower-side AppendEntries admission has the same resource-exhaustion boundary. The validated
+candidate log, replay-derived joint or stable configuration, exact persistent state, optional commit
+notification, and success response are all owned before term, leader identity, log, commit, or
+membership changes. A failed request leaves the prior configuration exactly retryable.
+
 The configured voter array supplied at group creation is the bootstrap configuration. Recovery
 replays membership commands from the retained Raft log to reconstruct the active configuration.
 Until Raft snapshots preserve a membership checkpoint, compacting away those commands is not

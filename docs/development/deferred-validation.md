@@ -317,7 +317,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   deferred.
   Stale, higher-term-conflict, and accepted replacement AppendEntries-request sweeps now cover every
   observed validation and transition allocation through exact feedback and committed suffix
-  publication. Broader membership-changing request allocation schedules remain deferred.
+  publication. Joint-admission and final-commit variants now prove follower membership state,
+  persistence, response, and notification publish together. Mixed membership-conflict topologies
+  remain deferred.
   High-contention schedules remain deferred. An otherwise nonvoter AppendEntries source must now be
   established by a matching valid candidate suffix before term observation, while the new-only-
   leader catch-up case remains accepted; broader membership-transition and snapshot source-
