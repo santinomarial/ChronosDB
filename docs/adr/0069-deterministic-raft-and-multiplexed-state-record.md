@@ -52,6 +52,12 @@ If the self vote is already a quorum, it also prepares complete leader replicati
 initial heartbeat batch. Only non-throwing moves and scalar changes may then publish candidacy or
 leadership. Allocation failure preserves the prior role, leader, pending work, and durable state.
 
+Candidate vote-response handling follows the same rule. Before counting an admitted same-term
+grant, the core owns the complete replacement vote set and computes its stable or joint quorum. If
+the grant completes a quorum, it also owns the complete leader replication maps and initial
+heartbeat batch. Allocation failure leaves that voter uncounted and the candidate unchanged, so an
+exact retry cannot inherit partial leadership state.
+
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
 record boundary is [`multiplexed-raft-log-v1.md`](../formats/multiplexed-raft-log-v1.md). A dedicated
@@ -93,6 +99,9 @@ paths, requiring response and persistence preparation to fail before any node mu
 Election-start sweeps cover a multi-voter leader with pending read work and a single-voter follower
 that becomes leader immediately. Every observed allocation failure preserves exact state and retry
 publishes the complete expected transition.
+A five-voter vote-response sweep distinguishes a failed acknowledgement from a leaked one: a
+different single grant remains below quorum after failure, while retrying the original grant
+publishes complete leadership and all initial heartbeats.
 
 **Retrospective note (2026-08-12):** [ADR 0252](0252-replayable-deterministic-raft-fault-simulator.md)
 now supplies bounded explicit and seeded schedules for partitions, delay/reordering, duplication,

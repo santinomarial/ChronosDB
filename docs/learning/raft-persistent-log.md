@@ -43,6 +43,10 @@ or vote persistence change exist before the deterministic node publishes the dec
 Local election start likewise owns the next term/vote state and complete candidate or immediate-
 leader transition before mutation, so the durable owner never receives a partially constructed
 election result.
+While candidate acknowledgements do not change persistent state, they obey the same atomic
+transition boundary: the replacement vote set and, at quorum, every leader replication map and
+initial heartbeat are owned before candidacy changes. Resource exhaustion therefore neither leaks
+a counted vote nor exposes partially initialized leadership.
 
 The maximum physical sequence is a terminal record identity. Once recovered or emitted, the
 Multi-Raft owner rejects and fails closed before invoking another deterministic group transition;

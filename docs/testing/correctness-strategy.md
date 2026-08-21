@@ -445,6 +445,10 @@ Election-start sweeps fail every prospective state, self-vote, outbound, replica
 returned-state allocation. The multi-voter case must preserve the old leader and pending read
 barrier until the complete candidate transition is owned; the single-voter case must remain a
 term-zero follower until its complete immediate-leader transition is owned.
+A five-voter candidate sweep fails every vote-set, leader-map, and heartbeat allocation while
+processing a same-term grant. After failure, one different remote grant must remain below quorum;
+retrying the original grant must then publish complete leadership and all four initial heartbeats.
+This detects both leaked acknowledgements and partial leader initialization.
 The paired AppendEntries authority case submits an empty higher-term heartbeat from that same
 nonvoter position and requires exact leader-state preservation because no matching membership
 suffix proves the sender active. The positive new-only-leader case continues to install and commit

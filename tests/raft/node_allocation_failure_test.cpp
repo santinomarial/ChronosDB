@@ -2,6 +2,7 @@
 #include "chronos/raft/node.hpp"
 #include "support/failing_allocator.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -130,6 +131,31 @@ void expect_election_transition(const RaftNode& node, const Transition& transiti
   EXPECT_FALSE(transition.read_barrier_ready.has_value());
 }
 
+void expect_vote_quorum_transition(const RaftNode& node, const Transition& transition,
+                                   const PersistentState& expected) {
+  EXPECT_EQ(node.role(), Role::kLeader);
+  EXPECT_EQ(node.current_term(), 1U);
+  EXPECT_EQ(node.leader_id(), 1U);
+  EXPECT_EQ(node.persistent_state(), expected);
+  EXPECT_FALSE(transition.persistent_state.has_value());
+  ASSERT_EQ(transition.outbound.size(), 4U);
+  std::array<bool, 6U> seen_destination{};
+  for (const OutboundMessage& outbound : transition.outbound) {
+    ASSERT_GE(outbound.destination, 2U);
+    ASSERT_LE(outbound.destination, 5U);
+    EXPECT_FALSE(seen_destination[outbound.destination]);
+    seen_destination[outbound.destination] = true;
+    const auto* request = std::get_if<AppendEntriesRequest>(&outbound.message);
+    ASSERT_NE(request, nullptr);
+    EXPECT_EQ(*request, (AppendEntriesRequest{1U, 1U, 0U, 0U, {}, 0U}));
+  }
+  EXPECT_TRUE(std::ranges::all_of(seen_destination.begin() + 2, seen_destination.end(),
+                                  [](const bool seen) { return seen; }));
+  EXPECT_FALSE(transition.advanced_commit_index.has_value());
+  EXPECT_FALSE(transition.snapshot_install.has_value());
+  EXPECT_FALSE(transition.read_barrier_ready.has_value());
+}
+
 void expect_read_barrier_allocation_atomic(const bool joint_membership,
                                            const std::size_t expected_probe_count) {
   std::size_t failure_count = 0U;
@@ -233,6 +259,60 @@ TEST(RaftNodeAllocationFailureTest,
     const ReadBarrier* barrier = completed_read_barrier(*retry);
     ASSERT_NE(barrier, nullptr);
     EXPECT_EQ(barrier->context, context);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest,
+     VoteResponsePreservesCandidateQuorumUntilLeadershipPublication) {
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 64U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    auto created = RaftNode::create(1U, {1U, 2U, 3U, 4U, 5U});
+    ASSERT_TRUE(created.has_value()) << created.error().to_string();
+    RaftNode node = std::move(*created);
+    auto election = node.start_election();
+    ASSERT_TRUE(election.has_value()) << election.error().to_string();
+    ASSERT_EQ(node.role(), Role::kCandidate);
+    const PersistentState before = node.persistent_state();
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(node.receive(2U, RequestVoteResponse{1U, true}));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      EXPECT_EQ(node.role(), Role::kCandidate);
+      EXPECT_TRUE((**result).outbound.empty());
+      auto elected = node.receive(3U, RequestVoteResponse{1U, true});
+      ASSERT_TRUE(elected.has_value()) << elected.error().to_string();
+      expect_vote_quorum_transition(node, *elected, before);
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(node.role(), Role::kCandidate);
+    EXPECT_EQ(node.current_term(), 1U);
+    EXPECT_FALSE(node.leader_id().has_value());
+    EXPECT_EQ(node.persistent_state(), before);
+
+    auto other_vote = node.receive(3U, RequestVoteResponse{1U, true});
+    ASSERT_TRUE(other_vote.has_value()) << other_vote.error().to_string();
+    EXPECT_EQ(node.role(), Role::kCandidate);
+    EXPECT_TRUE(other_vote->outbound.empty());
+    auto retry = node.receive(2U, RequestVoteResponse{1U, true});
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    expect_vote_quorum_transition(node, *retry, before);
   }
   EXPECT_GT(failure_count, 0U);
   EXPECT_TRUE(reached_success);

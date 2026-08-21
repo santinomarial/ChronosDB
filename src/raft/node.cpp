@@ -208,13 +208,6 @@ public:
     return static_cast<std::size_t>(std::ranges::count_if(members, predicate)) >= majority(members);
   }
 
-  [[nodiscard]] bool vote_quorum() const {
-    const auto voted = [&](const NodeId node) { return votes.contains(node); };
-    return joint.has_value()
-               ? has_majority(joint->old_voters, voted) && has_majority(joint->new_voters, voted)
-               : has_majority(committed_voters, voted);
-  }
-
   [[nodiscard]] bool replication_quorum(const LogIndex index) const {
     const auto replicated = [&](const NodeId node) {
       const auto found = match_index.find(node);
@@ -306,19 +299,6 @@ public:
         transition.outbound.push_back(OutboundMessage{peer, replication_for(peer)});
       }
     }
-  }
-
-  void initialize_leader(Transition& transition) {
-    role = Role::kLeader;
-    leader_id = id;
-    next_index.clear();
-    match_index.clear();
-    pending_read_barrier.reset();
-    for (const NodeId peer : voters) {
-      next_index.emplace(peer, last_index() + 1U);
-      match_index.emplace(peer, peer == id ? last_index() : 0U);
-    }
-    append_to_all(transition);
   }
 
   [[nodiscard]] bool candidate_log_is_current(const LogIndex index,
@@ -678,12 +658,18 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
   const auto message_term = std::visit([](const auto& value) { return value.term; }, message);
   Transition transition;
   const bool request_vote_request = std::holds_alternative<RequestVoteRequest>(message);
+  const bool request_vote_response = std::holds_alternative<RequestVoteResponse>(message);
   const bool read_barrier_request = std::holds_alternative<ReadBarrierRequest>(message);
   const bool response_message = std::holds_alternative<RequestVoteResponse>(message) ||
                                 std::holds_alternative<AppendEntriesResponse>(message) ||
                                 std::holds_alternative<InstallSnapshotResponse>(message) ||
                                 std::holds_alternative<ReadBarrierResponse>(message);
   bool prepared_vote_granted = false;
+  bool prepared_vote_response = false;
+  bool prepared_vote_quorum = false;
+  std::set<NodeId> prepared_response_votes;
+  std::map<NodeId, LogIndex> prepared_response_next_index;
+  std::map<NodeId, LogIndex> prepared_response_match_index;
   if (request_vote_request || read_barrier_request || response_message) {
     try {
       if (request_vote_request) {
@@ -698,6 +684,43 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
         transition.outbound.reserve(1U);
         transition.outbound.push_back(
             OutboundMessage{source, RequestVoteResponse{prospective_term, prepared_vote_granted}});
+      }
+      if (request_vote_response) {
+        const RequestVoteResponse& response = std::get<RequestVoteResponse>(message);
+        if (response.term == impl_->state.current_term && impl_->role == Role::kCandidate &&
+            response.granted) {
+          prepared_response_votes = impl_->votes;
+          prepared_response_votes.insert(source);
+          prepared_vote_response = true;
+          const auto voted = [&](const NodeId node) {
+            return prepared_response_votes.contains(node);
+          };
+          const std::optional<JointConfiguration>& joint_state = impl_->joint;
+          if (joint_state.has_value()) {
+            const JointConfiguration& joint = joint_state.value();
+            prepared_vote_quorum = Impl::has_majority(joint.old_voters, voted) &&
+                                   Impl::has_majority(joint.new_voters, voted);
+          } else {
+            prepared_vote_quorum = Impl::has_majority(impl_->committed_voters, voted);
+          }
+          if (prepared_vote_quorum) {
+            transition.outbound.reserve(impl_->voters.size() - 1U);
+            for (const NodeId peer : impl_->voters) {
+              prepared_response_next_index.emplace(peer, impl_->last_index() + 1U);
+              prepared_response_match_index.emplace(peer,
+                                                    peer == impl_->id ? impl_->last_index() : 0U);
+              if (peer != impl_->id) {
+                transition.outbound.push_back(
+                    OutboundMessage{peer, AppendEntriesRequest{impl_->state.current_term,
+                                                               impl_->id,
+                                                               impl_->last_index(),
+                                                               impl_->last_term(),
+                                                               {},
+                                                               impl_->state.commit_index}});
+              }
+            }
+          }
+        }
       }
       if (read_barrier_request)
         transition.outbound.reserve(1U);
@@ -742,9 +765,17 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
             return common::Status::ok();
           }
           if (value.granted) {
-            impl_->votes.insert(source);
-            if (impl_->vote_quorum()) {
-              impl_->initialize_leader(transition);
+            if (!prepared_vote_response)
+              return corruption("prepared Raft vote response state is unavailable");
+            static_assert(std::is_nothrow_move_assignable_v<std::set<NodeId>>);
+            static_assert(std::is_nothrow_move_assignable_v<std::map<NodeId, LogIndex>>);
+            impl_->votes = std::move(prepared_response_votes);
+            if (prepared_vote_quorum) {
+              impl_->role = Role::kLeader;
+              impl_->leader_id = impl_->id;
+              impl_->next_index = std::move(prepared_response_next_index);
+              impl_->match_index = std::move(prepared_response_match_index);
+              impl_->pending_read_barrier.reset();
             }
           }
           return common::Status::ok();

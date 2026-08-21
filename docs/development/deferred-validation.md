@@ -280,6 +280,8 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   persistence allocation fail before mutation and remain exactly retryable.
   Multi-voter and immediate single-voter election-start sweeps now prove every owned allocation
   fails before term, vote, role, pending-work, or replication-state publication.
+  A five-voter same-term vote-response sweep now proves failed acknowledgement, leader-map, and
+  heartbeat allocations publish neither the vote nor partial leadership before exact retry.
   High-contention schedules remain deferred. An otherwise nonvoter AppendEntries source must now be
   established by a matching valid candidate suffix before term observation, while the new-only-
   leader catch-up case remains accepted; broader membership-transition and snapshot source-
