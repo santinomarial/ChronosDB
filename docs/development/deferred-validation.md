@@ -276,6 +276,8 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   and the pending barrier across every persistent-state-copy failure before returning the exact
   demotion transition on retry. The same sweep now covers vote, append, and snapshot responses, so
   all four canonical response variants own their post-term persistent state before demotion.
+  Vote-request sweeps now prove higher-term grant/rejection and same-term first-vote response and
+  persistence allocation fail before mutation and remain exactly retryable.
   High-contention schedules remain deferred. An otherwise nonvoter AppendEntries source must now be
   established by a matching valid candidate suffix before term observation, while the new-only-
   leader catch-up case remains accepted; broader membership-transition and snapshot source-

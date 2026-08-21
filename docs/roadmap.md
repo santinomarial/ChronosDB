@@ -858,6 +858,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   demote them and discard the pending barrier, closing both allocation edges around term observation.
   Vote, append, and snapshot responses now use that same pre-observation persistence preparation,
   so no canonical higher-term response can demote a node before its durable transition is owned.
+  Vote requests now prepare their prospective grant/rejection response and exact term/vote state
+  before mutation, including higher-term and same-term first-vote paths.
   A bounded generation-tagged monotonic timer scheduler now emits election and heartbeat actions,
   retries rejected admission without shifting deadlines, and rejects stale completion rearming;
   its bounded driver now composes those actions with ordered asynchronous durable observations and

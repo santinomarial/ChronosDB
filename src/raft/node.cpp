@@ -634,19 +634,38 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
 
   const auto message_term = std::visit([](const auto& value) { return value.term; }, message);
   Transition transition;
+  const bool request_vote_request = std::holds_alternative<RequestVoteRequest>(message);
   const bool read_barrier_request = std::holds_alternative<ReadBarrierRequest>(message);
   const bool response_message = std::holds_alternative<RequestVoteResponse>(message) ||
                                 std::holds_alternative<AppendEntriesResponse>(message) ||
                                 std::holds_alternative<InstallSnapshotResponse>(message) ||
                                 std::holds_alternative<ReadBarrierResponse>(message);
-  if (read_barrier_request || response_message) {
+  bool prepared_vote_granted = false;
+  if (request_vote_request || read_barrier_request || response_message) {
     try {
+      if (request_vote_request) {
+        const RequestVoteRequest& request = std::get<RequestVoteRequest>(message);
+        const Term prospective_term = std::max(impl_->state.current_term, request.term);
+        const std::optional<NodeId> prospective_vote =
+            request.term > impl_->state.current_term ? std::nullopt : impl_->state.voted_for;
+        prepared_vote_granted =
+            impl_->voter(impl_->id) && request.term == prospective_term &&
+            (!prospective_vote.has_value() || *prospective_vote == source) &&
+            impl_->candidate_log_is_current(request.last_log_index, request.last_log_term);
+        transition.outbound.reserve(1U);
+        transition.outbound.push_back(
+            OutboundMessage{source, RequestVoteResponse{prospective_term, prepared_vote_granted}});
+      }
       if (read_barrier_request)
         transition.outbound.reserve(1U);
-      if (message_term > impl_->state.current_term) {
+      if (message_term > impl_->state.current_term || prepared_vote_granted) {
         PersistentState& prepared = transition.persistent_state.emplace(impl_->state);
-        prepared.current_term = message_term;
-        prepared.voted_for.reset();
+        if (message_term > impl_->state.current_term) {
+          prepared.current_term = message_term;
+          prepared.voted_for.reset();
+        }
+        if (prepared_vote_granted)
+          prepared.voted_for = source;
       }
     } catch (const std::bad_alloc&) {
       return common::make_unexpected(
@@ -667,18 +686,12 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
       [&](auto&& value) -> common::Status {
         using T = std::remove_cvref_t<decltype(value)>;
         if constexpr (std::is_same_v<T, RequestVoteRequest>) {
-          bool granted = false;
-          if (impl_->voter(impl_->id) && value.term == impl_->state.current_term &&
-              (!impl_->state.voted_for.has_value() || *impl_->state.voted_for == source) &&
-              impl_->candidate_log_is_current(value.last_log_index, value.last_log_term)) {
+          if (prepared_vote_granted) {
             impl_->state.voted_for = source;
             impl_->role = Role::kFollower;
             impl_->leader_id.reset();
-            granted = true;
             persistence_changed = true;
           }
-          transition.outbound.push_back(
-              OutboundMessage{source, RequestVoteResponse{impl_->state.current_term, granted}});
           return common::Status::ok();
         } else if constexpr (std::is_same_v<T, RequestVoteResponse>) {
           if (value.term < impl_->state.current_term || impl_->role != Role::kCandidate ||

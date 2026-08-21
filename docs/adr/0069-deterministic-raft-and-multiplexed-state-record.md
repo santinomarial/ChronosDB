@@ -40,6 +40,12 @@ or container-limit failure returns `RESOURCE_EXHAUSTED` with the complete node u
 then demotes the node and returns that already owned state, so the durable runtime cannot lose the
 persistence transition to a later allocation failure.
 
+An admitted RequestVote request similarly computes its grant against the prospective term and vote
+state, reserves the exact response, and owns any changed persistent state before publication. This
+includes a higher-term grant or stale-log rejection and a same-term first vote. Allocation failure
+therefore cannot advance the term, record a vote, change role, or omit the response required for an
+exact retry.
+
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
 record boundary is [`multiplexed-raft-log-v1.md`](../formats/multiplexed-raft-log-v1.md). A dedicated
@@ -76,6 +82,8 @@ remain deferred.
 Dedicated allocation sweeps cover vote, append, snapshot, and read-barrier higher-term responses.
 Every observed persistent-state-copy failure preserves exact leadership and durable state, while an
 exact retry returns one follower demotion with the matching persistence transition.
+RequestVote request sweeps separately cover higher-term grant/rejection and same-term first-vote
+paths, requiring response and persistence preparation to fail before any node mutation.
 
 **Retrospective note (2026-08-12):** [ADR 0252](0252-replayable-deterministic-raft-fault-simulator.md)
 now supplies bounded explicit and seeded schedules for partitions, delay/reordering, duplication,

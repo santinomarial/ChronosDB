@@ -69,6 +69,12 @@ state before observation. Allocation or container-limit failure returns `RESOURC
 no term, vote, role, leader, replication, or pending-work change. This preparation applies to vote,
 append, snapshot, and read-barrier responses.
 
+For a structurally valid RequestVote request, the grant decision is also computed before term or
+vote observation using the prospective higher-term vote reset, the existing same-term vote, and
+candidate-log freshness. The core prepares its one response and exact changed persistent state
+before publishing a grant or rejection. Allocation failure is `RESOURCE_EXHAUSTED` and leaves the
+request fully retryable.
+
 Recovered persistent state must also be inductive: an installed snapshot's last-included term may
 not exceed the node's current term. Retained entries already obey the same relation.
 
@@ -118,6 +124,9 @@ persistent-state preservation.
 Canonical higher-term response allocation sweeps fail every owned persistent-state copy for all
 four response variants, require exact node-state preservation, and then require the same response
 to return its matching follower persistence transition on retry.
+Vote-request allocation sweeps cover higher-term current-log grant, higher-term stale-log rejection,
+and same-term first vote. Each failure preserves exact state, while retry returns the expected grant
+bit and identical term/vote state in both the node and persistence transition.
 
 ## References
 

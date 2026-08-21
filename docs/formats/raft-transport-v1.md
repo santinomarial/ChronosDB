@@ -90,6 +90,9 @@ before observation, so allocation failure cannot separate a term change from the
 the durable runtime. Every canonical higher-term response receives the same persistent-state
 preparation before it can demote the sender; this covers vote, append, snapshot, and read-barrier
 responses, including pending-barrier abandonment.
+An admitted RequestVote request also prepares its canonical grant/rejection response and any exact
+prospective term/vote state before mutation. Allocation failure therefore cannot record a vote or
+advance a term without returning the persistence transition required by the durable runtime.
 
 Minor-version compatibility is exact in v1. Reserved fields must remain zero until a later accepted
 version defines them.
