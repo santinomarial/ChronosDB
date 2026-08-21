@@ -25,6 +25,13 @@ complete tablet then metadata application; shutdown runs metadata then tablet. T
 destroys the coordinator before asking the runtime to drain, so no new observation/proposal can be
 admitted while extensions are being torn down.
 
+Destroying the coordinator drops pending response owners, not work already accepted by the
+asynchronous runtime. A production-lifecycle test advances one request through its ordered route
+observation until the tablet proposal is admitted, then calls shutdown without polling that result.
+The worker drains the proposal through tablet and metadata callbacks before reverse extension and
+physical-log teardown. Reopen recovers the exact metadata route and applied rows, and resubmitting
+the same identity in a new leader term returns a matching retry rather than adding rows.
+
 The asynchronous runtime object must not move after coordinator construction because the
 coordinator borrows it directly. Startup therefore allocates the final implementation and moves the
 runtime there first. Application objects are shared heap owners, so moving their `shared_ptr`

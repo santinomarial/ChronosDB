@@ -66,10 +66,13 @@ allocations and both batch-composition allocations. They prove transferred child
 contexts are released, context destruction stays on the owner thread, and preparation can retry.
 Injected child allocation failures are classified as resource exhaustion during initialization,
 preparation, completion, and shutdown; initialization still cleans every attempted child, and
-shutdown still completes reverse cleanup.
+shutdown still completes reverse cleanup. The production replicated-ingest owner now shuts down
+with one coordinator request still owning an admitted tablet proposal. Destroying that coordinator
+owner does not cancel the accepted durable work: shutdown drains both real application callbacks,
+reopens the exact metadata route and applied rows, and a new-term exact retry is classified as a
+matching retry.
 
-Shutdown under active production application and long-running hook watchdog measurements remain
-Phase 18 work.
+Long-running hook watchdog measurements remain Phase 18 work.
 
 ## References
 

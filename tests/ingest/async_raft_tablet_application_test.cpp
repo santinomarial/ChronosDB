@@ -170,6 +170,7 @@ TEST(AsyncRaftTabletApplicationTest, AppliesOnlyTouchedGroupsBeforePublishingCom
   EXPECT_EQ((*extension)->pending_quorum_completions(), 0U);
 
   EXPECT_TRUE(runtime->shutdown().is_ok());
+  EXPECT_FALSE((*extension)->initialized());
   EXPECT_EQ((*extension)->tablet_count(), 0U);
   EXPECT_EQ((*extension)->snapshot(group_id(0x41U)).error().code(),
             common::StatusCode::kUnavailable);

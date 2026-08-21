@@ -44,8 +44,12 @@ Protocol 2; those are higher lifecycle stages.
 No durable or network bytes change. Focused tests cover pre-worker cross-group rejection, a complete
 new-runtime write and acknowledgement, idempotent ordered shutdown, exact log reopen, restored
 metadata/tablet publications, a new-term matching retry, and accessor invalidation after shutdown.
-Worker-start and allocation fault injection, partial shutdown faults, TSan, multi-node transport,
-and process crash cuts remain hardening work.
+A production-lifecycle case advances a request through authoritative routing until its tablet
+proposal is admitted, then shuts down without coordinator result pickup. Coordinator destruction
+drops only the response owner; the durable worker drains application, closes in lifecycle order,
+and reopens the exact catalog, rows, and retry identity. Worker-start and allocation fault
+injection, partial shutdown faults, TSan, multi-node transport, and process crash cuts remain
+hardening work.
 
 ## Affected invariants
 

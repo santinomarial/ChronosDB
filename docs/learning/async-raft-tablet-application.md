@@ -61,7 +61,8 @@ completion is single-consumer and must not block the durable worker.
 
 Shutdown runs on the worker before the physical log closes, destroys every machine while its
 borrowed runtime is still alive, clears pending configurations after partial initialization, and
-makes new snapshot/receipt observations unavailable.
+makes new snapshot/receipt observations unavailable. Lifecycle inspection reports the application
+as uninitialized after that boundary, matching its zero tablet count and unavailable observations.
 
 ## Failure behavior
 

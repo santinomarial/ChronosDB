@@ -1,4 +1,5 @@
 #include "chronos/columnar/columnar_batch_codec.hpp"
+#include "chronos/head/mutable_head.hpp"
 #include "chronos/network/messages.hpp"
 #include "chronos/raft/metadata_codec.hpp"
 #include "chronos/raft/schema_definition_codec.hpp"
@@ -215,6 +216,73 @@ TEST(ReplicatedIngestRuntimeTest, OwnsCreateShutdownAndExactRecoveryComposition)
   ASSERT_TRUE(election.has_value());
   ASSERT_TRUE(election->wait().has_value());
   EXPECT_TRUE(reopened->coordinator()->admit(request()).is_ok());
+  auto response = await_response(*reopened);
+  ASSERT_TRUE(response.has_value()) << response.error().to_string();
+  auto acknowledgement =
+      network::decode_quorum_sync_ingest_acknowledgement(response->frame.payload);
+  ASSERT_TRUE(acknowledgement.has_value());
+  EXPECT_EQ(acknowledgement->outcome, network::IngestOutcome::kMatchingRetry);
+  EXPECT_EQ(acknowledgement->log_index, 2U);
+  EXPECT_TRUE(reopened->shutdown().is_ok());
+}
+
+TEST(ReplicatedIngestRuntimeTest,
+     ShutdownDrainsAnAdmittedApplicationAfterDiscardingThePendingCoordinatorOwner) {
+  TemporaryDirectory directory;
+  {
+    auto configured = config(directory.path());
+    ASSERT_TRUE(configured.has_value());
+    auto owner = ReplicatedIngestRuntime::create_new(std::move(*configured));
+    ASSERT_TRUE(owner.has_value()) << owner.error().to_string();
+    elect_and_publish_route(*owner);
+
+    raft::AsyncDurableMultiRaftRuntime* const runtime = owner->runtime();
+    ReplicatedIngestCoordinator* const coordinator = owner->coordinator();
+    ASSERT_NE(runtime, nullptr);
+    ASSERT_NE(coordinator, nullptr);
+    const std::uint64_t admitted_before_request = runtime->metrics().admitted_batches;
+    ASSERT_TRUE(coordinator->admit(request()).is_ok());
+    ASSERT_EQ(runtime->metrics().admitted_batches, admitted_before_request + 1U);
+
+    bool proposal_admitted = false;
+    for (std::size_t attempt = 0U; attempt < 10'000U; ++attempt) {
+      auto response = coordinator->poll();
+      ASSERT_TRUE(response.has_value()) << response.error().to_string();
+      ASSERT_FALSE(response->has_value());
+      const std::uint64_t admitted = runtime->metrics().admitted_batches;
+      if (admitted == admitted_before_request + 2U) {
+        proposal_admitted = true;
+        break;
+      }
+      ASSERT_EQ(admitted, admitted_before_request + 1U);
+      std::this_thread::yield();
+    }
+    ASSERT_TRUE(proposal_admitted);
+    EXPECT_EQ(coordinator->metrics().pending_requests, 1U);
+
+    EXPECT_TRUE(owner->shutdown().is_ok());
+    EXPECT_TRUE(owner->shutdown().is_ok());
+    EXPECT_FALSE(owner->is_running());
+  }
+
+  auto configured = config(directory.path());
+  ASSERT_TRUE(configured.has_value());
+  auto reopened = ReplicatedIngestRuntime::open_existing(std::move(*configured));
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  auto catalog = reopened->metadata_application()->catalog_snapshot();
+  ASSERT_TRUE(catalog.has_value()) << catalog.error().to_string();
+  ASSERT_EQ((*catalog)->tablet_group_bindings.size(), 1U);
+  EXPECT_EQ((*catalog)->tablet_group_bindings.front().group_id, group_id(0x51U));
+  auto snapshot = reopened->tablet_application()->snapshot(group_id(0x51U));
+  ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+  EXPECT_EQ(snapshot->visible_row_count(), 2U);
+  EXPECT_EQ(snapshot->applied_position(), head::HeadCommitPosition::raft(group_id(0x51U), 1U));
+
+  auto election =
+      reopened->runtime()->try_submit({{group_id(0x51U), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  ASSERT_TRUE(election->wait().has_value());
+  ASSERT_TRUE(reopened->coordinator()->admit(request()).is_ok());
   auto response = await_response(*reopened);
   ASSERT_TRUE(response.has_value()) << response.error().to_string();
   auto acknowledgement =

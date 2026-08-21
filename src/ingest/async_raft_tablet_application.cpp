@@ -351,7 +351,7 @@ std::size_t AsyncRaftTabletApplication::pending_quorum_completions() const {
 
 bool AsyncRaftTabletApplication::initialized() const {
   std::lock_guard lock{impl_->mutex};
-  return impl_->initialized;
+  return impl_->initialized && !impl_->shutdown;
 }
 
 bool AsyncRaftTabletApplication::failed() const {

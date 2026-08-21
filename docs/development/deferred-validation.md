@@ -380,7 +380,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   allocation, proves transferred children and partial contexts are released on the owner thread,
   retries preparation after failure, and injects child allocation failures through initialization,
   preparation, completion, and reverse shutdown cleanup. Broader asynchronous-owner allocation
-  injection remains deferred. A
+  injection remains deferred. The production replicated-ingest owner now shuts down after routing
+  has admitted a tablet proposal but before the coordinator picks up its result. Coordinator
+  destruction drops only the response owner; worker shutdown drains the real tablet-plus-metadata
+  application set, and reopen recovers the exact catalog, rows, applied index, and matching-retry
+  identity. Long-running extension-hook watchdog evidence remains deferred. A
   bounded generation-tagged timer scheduler now emits exact election/heartbeat actions and rejects
   stale completion rearming; its bounded driver submits two-operation action/observation batches
   through the asynchronous durable owner and retains complete post-sync results for routing.

@@ -74,7 +74,10 @@ before construction returns, all hooks use one worker thread, committed applicat
 `applied_index` and construct a quorum receipt before proposal completion, shutdown remains on that
 thread, reopen retains the applied frontier, and initialization failure prevents admission. The
 concrete tablet tests prove touched-group application before completion, untouched-group isolation,
-pre-admission restart reconstruction, duplicate-group rejection, and terminal corruption handling.
+pre-admission restart reconstruction, duplicate-group rejection, terminal corruption handling, and
+inactive lifecycle reporting after worker shutdown. The production tablet-plus-metadata composition
+also drains an admitted tablet proposal after its coordinator result owner is destroyed and recovers
+the exact application state on reopen.
 
 The metadata extension, proposal-result index extraction, transport/client integration, crash cut
 points, TSan, and scheduling measurements remain subsequent work.
