@@ -167,8 +167,9 @@ void fragmented_connection_receive(benchmark::State& state) {
   }
   state.SetBytesProcessed(static_cast<std::int64_t>(state.iterations()) *
                           static_cast<std::int64_t>(encoded.size()));
-  state.counters["fragments"] =
-      static_cast<double>((encoded.size() + fragment_size - 1U) / fragment_size);
+  const std::size_t fragment_count =
+      encoded.size() / fragment_size + (encoded.size() % fragment_size == 0U ? 0U : 1U);
+  state.counters["fragments"] = static_cast<double>(fragment_count);
   state.SetLabel("buffer construction excluded; append, header validation, CRC, and compaction");
 }
 

@@ -18,6 +18,8 @@ namespace {
 
 inline constexpr std::size_t kBenchmarkMemoryLimit = std::size_t{256U} * 1024U * 1024U;
 
+// Row count and deterministic data salt are independent benchmark fixture controls.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 [[nodiscard]] columnar::OwnedPhysicalColumn make_column(const std::uint32_t rows,
                                                         const std::uint64_t salt) {
   columnar::ColumnVectorBuffers buffers;

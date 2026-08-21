@@ -29,6 +29,8 @@ void append_u32(std::vector<std::byte>& output, const std::uint32_t value) {
     output.push_back(static_cast<std::byte>((value >> (byte * 8U)) & 0xffU));
 }
 
+// Row count, data offset/seed, and group cardinality are independent benchmark fixture controls.
+// NOLINTBEGIN(bugprone-easily-swappable-parameters)
 [[nodiscard]] columnar::OwnedPhysicalColumn
 make_string_column(const std::uint32_t rows, const std::uint32_t offset, const bool replacing) {
   columnar::ColumnVectorBuffers buffers;
@@ -90,6 +92,7 @@ make_string_column(const std::uint32_t rows, const std::uint32_t offset, const b
              std::move(buffers))
       .value();
 }
+// NOLINTEND(bugprone-easily-swappable-parameters)
 
 class ManyChunkSource final : public PhysicalOperator {
 public:
@@ -202,6 +205,8 @@ variable_extremum_source(const QueryResourceContext& resources, const std::uint3
                                             definitions);
 }
 
+// Chunk size and group cardinality are separate benchmark axes selected by named state ranges.
+// NOLINTBEGIN(bugprone-easily-swappable-parameters)
 [[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
 grouped_source(const QueryResourceContext& resources, const std::uint32_t total_rows,
                const std::uint32_t chunk_rows, const std::uint32_t group_count) {
@@ -242,6 +247,7 @@ grouped_source(const QueryResourceContext& resources, const std::uint32_t total_
   return GroupedAggregateOperator::create(std::make_unique<ManyChunkSource>(std::move(chunks)),
                                           keys, definitions);
 }
+// NOLINTEND(bugprone-easily-swappable-parameters)
 
 [[nodiscard]] common::Result<std::size_t> drain(PhysicalOperator& pipeline,
                                                 const QueryResourceContext& resources) {

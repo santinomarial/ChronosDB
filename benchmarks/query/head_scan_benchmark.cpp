@@ -33,6 +33,8 @@ struct HeadScanBenchmarkFixture {
                                     {0U, 1U, 2U, 3U}, limits);
   }
 
+  // Output capacity and exact event time are independent benchmark fixture controls.
+  // NOLINTBEGIN(bugprone-easily-swappable-parameters)
   [[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
   exact_source(const std::uint32_t rows, const std::int64_t event_time) const {
     HeadScanLimits limits;
@@ -47,6 +49,7 @@ struct HeadScanBenchmarkFixture {
          .upper = TimestampRangeBound{.value = event_time, .inclusive = true}},
         limits);
   }
+  // NOLINTEND(bugprone-easily-swappable-parameters)
 
   test::HeadFixture head;
   QueryResourceContext resources;

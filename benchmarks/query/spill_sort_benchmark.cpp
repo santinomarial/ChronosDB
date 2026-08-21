@@ -54,6 +54,8 @@ private:
   std::size_t cursor_{};
 };
 
+// Chunk offset, row count, and key cardinality are independent benchmark fixture controls.
+// NOLINTBEGIN(bugprone-easily-swappable-parameters)
 [[nodiscard]] AccountedVectorChunk make_chunk(const QueryResourceContext& resources,
                                               const std::uint32_t first, const std::uint32_t rows,
                                               const std::uint32_t distinct_keys) {
@@ -84,6 +86,7 @@ private:
                                       resources)
       .value();
 }
+// NOLINTEND(bugprone-easily-swappable-parameters)
 
 [[nodiscard]] std::unique_ptr<PhysicalOperator> pipeline(const QueryResourceContext& resources,
                                                          const std::filesystem::path& path,

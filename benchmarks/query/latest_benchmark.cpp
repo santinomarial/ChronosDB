@@ -30,6 +30,8 @@ private:
   std::optional<AccountedVectorChunk> chunk_;
 };
 
+// Byte value and encoded width are deliberately separate fixture controls.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void store(std::vector<std::byte>& bytes, const std::size_t offset, const std::uint64_t value,
            const std::size_t width) {
   for (std::size_t byte = 0U; byte < width; ++byte)
@@ -51,6 +53,8 @@ void store(std::vector<std::byte>& bytes, const std::size_t offset, const std::u
       .value();
 }
 
+// Row count and repeated fixture value are independent benchmark controls.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 [[nodiscard]] columnar::OwnedPhysicalColumn u32_column(const std::uint32_t rows,
                                                        const std::uint32_t value) {
   columnar::ColumnVectorBuffers buffers;
