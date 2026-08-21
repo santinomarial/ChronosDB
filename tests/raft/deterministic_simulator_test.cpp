@@ -363,7 +363,7 @@ TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresBoundedMessageDeliveryA
   two_nodes.initial_voters = {1U, 2U};
   const std::vector<RaftSimulationAction> setup{RaftSimulationStartElection{1U}};
 
-  auto complete = DeterministicRaftSimulator::explore_network_schedules(
+  auto complete = DeterministicRaftSimulator::explore_fault_schedules(
       two_nodes, setup, {.maximum_depth = 2U, .maximum_replays = 5U});
 
   ASSERT_TRUE(complete.has_value()) << complete.error().to_string();
@@ -372,7 +372,7 @@ TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresBoundedMessageDeliveryA
   EXPECT_FALSE(complete->failure.has_value());
   EXPECT_TRUE(complete->failing_trace.empty());
 
-  auto bounded = DeterministicRaftSimulator::explore_network_schedules(
+  auto bounded = DeterministicRaftSimulator::explore_fault_schedules(
       two_nodes, setup, {.maximum_depth = 2U, .maximum_replays = 4U});
   ASSERT_TRUE(bounded.has_value()) << bounded.error().to_string();
   EXPECT_FALSE(bounded->search_complete);
@@ -380,17 +380,17 @@ TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresBoundedMessageDeliveryA
   EXPECT_FALSE(bounded->failure.has_value());
 
   const std::vector<RaftSimulationAction> invalid_trace{RaftSimulationDeliver{999U}};
-  auto invalid_setup = DeterministicRaftSimulator::explore_network_schedules(
+  auto invalid_setup = DeterministicRaftSimulator::explore_fault_schedules(
       two_nodes, invalid_trace, {.maximum_depth = 1U, .maximum_replays = 1U});
   ASSERT_FALSE(invalid_setup.has_value());
   EXPECT_EQ(invalid_setup.error().code(), common::StatusCode::kInvalidArgument);
-  auto invalid_bounds = DeterministicRaftSimulator::explore_network_schedules(
+  auto invalid_bounds = DeterministicRaftSimulator::explore_fault_schedules(
       two_nodes, {}, {.maximum_depth = 1U, .maximum_replays = 0U});
   ASSERT_FALSE(invalid_bounds.has_value());
   EXPECT_EQ(invalid_bounds.error().code(), common::StatusCode::kInvalidArgument);
   auto tight_trace = two_nodes;
   tight_trace.limits.maximum_trace_actions = setup.size();
-  auto invalid_depth = DeterministicRaftSimulator::explore_network_schedules(
+  auto invalid_depth = DeterministicRaftSimulator::explore_fault_schedules(
       tight_trace, setup, {.maximum_depth = 1U, .maximum_replays = 1U});
   ASSERT_FALSE(invalid_depth.has_value());
   EXPECT_EQ(invalid_depth.error().code(), common::StatusCode::kInvalidArgument);
@@ -402,7 +402,7 @@ TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresOptionalMessageDuplicat
   two_nodes.initial_voters = {1U, 2U};
   const std::vector<RaftSimulationAction> setup{RaftSimulationStartElection{1U}};
 
-  auto complete = DeterministicRaftSimulator::explore_network_schedules(
+  auto complete = DeterministicRaftSimulator::explore_fault_schedules(
       two_nodes, setup, {.maximum_depth = 1U, .maximum_replays = 4U, .include_duplication = true});
 
   ASSERT_TRUE(complete.has_value()) << complete.error().to_string();
@@ -411,7 +411,7 @@ TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresOptionalMessageDuplicat
   EXPECT_FALSE(complete->failure.has_value());
 
   two_nodes.limits.maximum_pending_messages = 1U;
-  auto queue_failure = DeterministicRaftSimulator::explore_network_schedules(
+  auto queue_failure = DeterministicRaftSimulator::explore_fault_schedules(
       two_nodes, setup, {.maximum_depth = 1U, .maximum_replays = 4U, .include_duplication = true});
   ASSERT_TRUE(queue_failure.has_value()) << queue_failure.error().to_string();
   EXPECT_FALSE(queue_failure->search_complete);
@@ -427,6 +427,27 @@ TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresOptionalMessageDuplicat
   ASSERT_TRUE(replay.has_value()) << replay.error().to_string();
   EXPECT_EQ(replay->replay(queue_failure->failing_trace).code(),
             common::StatusCode::kResourceExhausted);
+}
+
+TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresNodeCrashAndRestart) {
+  auto one_node = config();
+  one_node.node_ids = {1U};
+  one_node.initial_voters = {1U};
+
+  auto complete = DeterministicRaftSimulator::explore_fault_schedules(
+      one_node, {}, {.maximum_depth = 2U, .maximum_replays = 3U, .include_node_lifecycle = true});
+
+  ASSERT_TRUE(complete.has_value()) << complete.error().to_string();
+  EXPECT_TRUE(complete->search_complete);
+  EXPECT_EQ(complete->replayed_prefixes, 3U);
+  EXPECT_FALSE(complete->failure.has_value());
+
+  auto bounded = DeterministicRaftSimulator::explore_fault_schedules(
+      one_node, {}, {.maximum_depth = 2U, .maximum_replays = 2U, .include_node_lifecycle = true});
+  ASSERT_TRUE(bounded.has_value()) << bounded.error().to_string();
+  EXPECT_FALSE(bounded->search_complete);
+  EXPECT_EQ(bounded->replayed_prefixes, 2U);
+  EXPECT_FALSE(bounded->failure.has_value());
 }
 
 TEST(DeterministicRaftSimulatorTest, ExhaustiveExplorationRetainsTheFirstFailingSchedule) {
@@ -467,7 +488,7 @@ TEST(DeterministicRaftSimulatorTest, ExhaustiveExplorationRetainsTheFirstFailing
 
   const std::vector<RaftSimulationAction> setup(simulation->trace().begin(),
                                                 simulation->trace().end());
-  auto explored = DeterministicRaftSimulator::explore_network_schedules(
+  auto explored = DeterministicRaftSimulator::explore_fault_schedules(
       config(), setup, {.maximum_depth = 1U, .maximum_replays = 2U});
 
   ASSERT_TRUE(explored.has_value()) << explored.error().to_string();

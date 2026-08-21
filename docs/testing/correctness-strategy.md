@@ -398,10 +398,11 @@ matrices and broader exhaustive action-schedule enumeration remain deferred.
 Failure minimization deletes deterministic coarse chunks before refining toward individual actions,
 preserves the original status-code oracle, and respects the configured candidate-replay limit.
 Bounded exhaustive exploration branches every queued message into delivery or loss after a valid
-setup trace and optionally adds duplication. Tests prove complete depth-two delivery/loss
-enumeration, complete depth-one delivery/loss/duplication enumeration, explicit replay-bound
-truncation, invalid-setup rejection, and exact retention of both duplicate queue exhaustion and the
-first failing membership-stale-message schedule.
+setup trace and optionally adds duplication plus live-state node crash/restart. Tests prove complete
+depth-two delivery/loss enumeration, complete depth-one delivery/loss/duplication enumeration,
+complete one-node crash/restart enumeration through depth two, explicit replay-bound truncation,
+invalid-setup rejection, and exact retention of both duplicate queue exhaustion and the first
+failing membership-stale-message schedule.
 Recovered simulator initialization exact-restarts a terminal-term durable image and rejects another
 election without mutation. Construction also rejects image cardinality mismatch, locally invalid
 state, and individually valid same-term logs whose bytes violate cross-node log matching.

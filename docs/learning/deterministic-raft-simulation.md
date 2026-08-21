@@ -78,14 +78,15 @@ is exhausted. A candidate is retained only when it reproduces the original failu
 `maximum_shrink_replays` is a hard bound excluding the one initial replay used to establish that
 oracle. Semantic dependency-aware shrinking can be added after corpus evidence shows a need.
 
-Bounded network exploration replays a caller-provided valid setup and then uses deterministic
+Bounded fault exploration replays a caller-provided valid setup and then uses deterministic
 depth-first enumeration over delivery and loss for every currently queued message. A schedule may
 also enumerate duplication after those two outcomes for each ascending message identity. Its memory
-and replay work are bounded by `maximum_replays`, and each suffix is bounded by `maximum_depth` plus
-the configured trace limit. A complete result proves the selected action domain was exhausted
-through that depth; a false completion flag reports frontier truncation rather than silently
-claiming coverage. The first non-successful action is returned with its exact replayable trace and
-status.
+and replay work are bounded by `maximum_replays`. Opt-in node failures then append exactly one crash
+or restart branch per ascending configured node according to its replayed live state. Each suffix is
+bounded by `maximum_depth` plus the configured trace limit. A complete result proves the selected
+action domain was exhausted through that depth; a false completion flag reports frontier truncation
+rather than silently claiming coverage. The first non-successful action is returned with its exact
+replayable trace and status.
 
 ## Verification and likely interview questions
 
@@ -95,7 +96,8 @@ local-compaction churn plus completed read barriers, generated completion of a p
 snapshot install, explicit joint membership and compaction, trace shrinking, and bound validation.
 Focused exhaustive coverage enumerates all two-node election message delivery/loss prefixes through
 depth two, exhausts opt-in delivery/loss/duplication at depth one, retains exact duplicate queue-
-exhaustion replay, and retains an exact stale-message failure after membership removal.
+exhaustion replay, completely enumerates one-node crash/restart through depth two, and retains an
+exact stale-message failure after membership removal.
 Recovered-state coverage preserves a terminal-term image across crash/restart, proves the next
 election fails without mutation, and rejects both malformed local images and cross-node log-
 matching violations before the first action. A combined terminal-boundary schedule separately proves

@@ -53,13 +53,14 @@ before a link mutation. `shrink_failing_trace` performs bounded deletion-based r
 only candidates with the original failure status code. It starts with deterministic coarse chunks,
 reduces granularity toward individual actions, and never exceeds `maximum_shrink_replays`.
 
-`explore_network_schedules` accepts one valid setup trace and exhaustively branches every queued
+`explore_fault_schedules` accepts one valid setup trace and exhaustively branches every queued
 message into delivery or explicit loss through a bounded suffix depth. Callers may opt into a third
-duplicate-message branch. Message identities are visited in ascending order and each identity's
-actions are ordered delivery, loss, then optional duplication. `maximum_replays` bounds retained
-frontier work and replayed prefixes; the result distinguishes a completed search from a truncated
-search and retains the exact first failing trace and status. The one setup-validation replay is
-outside that exploration count.
+duplicate-message branch and live-state node lifecycle branches. Message identities are visited in
+ascending order and each identity's actions are ordered delivery, loss, then optional duplication.
+When enabled, ascending node IDs follow with exactly crash for an active node or restart for an
+inactive node. `maximum_replays` bounds retained frontier work and replayed prefixes; the result
+distinguishes a completed search from a truncated search and retains the exact first failing trace
+and status. The one setup-validation replay is outside that exploration count.
 
 ## Consequences
 
@@ -90,6 +91,8 @@ local snapshot compaction, shrink an irrelevant-prefix failure to one essential 
 exhaustively covers all delivery/loss prefixes through depth two, reports replay-bound truncation,
 rejects invalid setup, and retains a membership-removal stale-message failure for exact replay.
 Opt-in duplication exhausts all three depth-one outcomes and retains exact queue-exhaustion replay.
+One-node lifecycle coverage completely enumerates crash then restart through depth two and reports
+replay-bound truncation when the restart prefix cannot be retained.
 Recovered-image coverage restarts a node at terminal term, rejects the next election without state
 mutation, rejects image-count mismatch and invalid local state, and rejects two individually valid
 images whose same-term log entries violate log matching. Independent boundary schedules elect from
