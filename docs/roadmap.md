@@ -788,6 +788,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   focused term-conflict and same-term byte-divergence state-preservation coverage. Canonical
   joint/final membership commands enforce a construction-time `u16` voter-limit bound and old-and-
   new election and commit quorums, recover from the retained log, and safely remove leaders.
+  Exact full-state payload accounting now bounds the aggregate snapshot voters, retained-entry
+  framing, and payload bytes on recovery and before every log- or snapshot-changing transition, so
+  an individually legal entry cannot create an unencodable persistent state.
   Focused 3-node election, commit, failover, stale leader, restart catch-up, and membership tests
   pass. A two-stage snapshot protocol now withholds acknowledgment until external application
   installation is confirmed and the compacted Raft state is synchronized. AppendEntries
@@ -872,6 +875,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   leaders, isolation, node loss, reopen, metadata order, rotation, tail repair, corruption, and
   terminal physical-sequence rejection before group mutation. Undersized one-transition outbound
   configurations now fail construction instead of discovering overflow after a core state change.
+  The durable runtime also tightens the core's aggregate state budget to its configured segment
+  target before constructing groups, preventing a record-size failure after a transition mutates
+  volatile state.
   A single-thread-affine durable runtime now batches caller-provided operations behind one local sync
   and withholds outbound messages until it completes. It reserves aggregate worst-case outbound
   fanout before dispatch, so an undersized batch cannot partially mutate group state. Mutable heads,

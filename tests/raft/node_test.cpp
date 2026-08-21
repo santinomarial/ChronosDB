@@ -469,6 +469,44 @@ TEST(RaftNodeTest, JointElectionRequiresOldAndNewMajorities) {
   EXPECT_TRUE(restarted->persistent_state().log.back().payload.empty());
 }
 
+TEST(RaftNodeTest, RejectsProposalThatCannotFitFullPersistentStateBeforeMutation) {
+  auto node = RaftNode::create(1U, {1U});
+  ASSERT_TRUE(node.has_value()) << node.error().to_string();
+  ASSERT_TRUE(node->start_election().has_value());
+  ASSERT_EQ(node->role(), Role::kLeader);
+  const PersistentState before = node->persistent_state();
+
+  auto rejected =
+      node->propose(1U, std::vector<std::byte>(RaftLimits{}.maximum_entry_bytes, std::byte{0x42U}));
+
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(node->persistent_state(), before);
+}
+
+TEST(RaftNodeTest, RejectsOversizedFollowerSuffixBeforeHigherTermObservation) {
+  RaftLimits limits;
+  limits.maximum_persistent_state_bytes =
+      kRaftPersistentStateFixedSizeV1 + kRaftPersistentLogEntryFixedSizeV1 + 1U;
+  auto node = RaftNode::create(1U, {1U, 2U}, {}, limits);
+  ASSERT_TRUE(node.has_value()) << node.error().to_string();
+  const PersistentState before = node->persistent_state();
+
+  auto rejected = node->receive(
+      2U, AppendEntriesRequest{.term = 2U,
+                               .leader_id = 2U,
+                               .previous_log_index = 0U,
+                               .previous_log_term = 0U,
+                               .entries = {{1U, 2U, 1U, {std::byte{0x11U}, std::byte{0x22U}}}},
+                               .leader_commit = 0U});
+
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(node->current_term(), 0U);
+  EXPECT_EQ(node->role(), Role::kFollower);
+  EXPECT_EQ(node->persistent_state(), before);
+}
+
 TEST(RaftNodeTest, RejectsReservedProposalsLearnerElectionsAndInvalidMembershipHistory) {
   auto learner = RaftNode::create(4U, {1U, 2U, 3U});
   ASSERT_TRUE(learner.has_value());

@@ -23,6 +23,11 @@ Remote candidates cannot advertise that reserved value as an existing last-log i
 leaders cannot name it as an AppendEntries predecessor or committed index.
 AppendEntries responses cannot report it as the follower's actual last known match index.
 InstallSnapshot responses cannot report it as the follower's installed snapshot boundary.
+The core also owns the exact aggregate byte budget of the version-1 persistent-state payload:
+fixed state, snapshot voters, retained entry framing, and entry payloads. Recovery and every log- or
+snapshot-changing transition must fit that budget before any persistent or volatile core state
+changes. A capacity rejection is therefore retryable after compaction and cannot create state that
+the full-state codec will reject only after mutation.
 
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
@@ -49,8 +54,10 @@ Invariants 1, 4–6, 8, 10–12, 14, and 17 apply. Focused deterministic tests c
 replication/commit, failover, stale-term rejection, restart catch-up, independent groups with
 different leaders, node loss, reopen, metadata order, record round trip, and corruption. Focused disk
 tests additionally cover rotation, reopen, explicit incomplete-tail repair, and corruption
-rejection. Recovery validation also rejects an installed snapshot term above current term before a
-node can emit messages from impossible history. Focused coverage rejects term-zero votes and every
+rejection. An entry that individually meets the entry limit but would exceed the aggregate record
+budget is rejected with exact state preservation. Recovery validation also rejects an installed
+snapshot term above current term before a node can emit messages from impossible history. Focused
+coverage rejects term-zero votes and every
 nonzero external identity tested on an empty snapshot. Randomized simulation, partitions,
 application snapshot codecs, coordinated fsync batching/crash testing, and production transport
 remain deferred.

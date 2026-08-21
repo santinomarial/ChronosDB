@@ -1,5 +1,6 @@
 #include "chronos/common/status.hpp"
 #include "chronos/raft/durable_runtime.hpp"
+#include "chronos/raft/multiplexed_log.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -178,6 +179,41 @@ TEST(DurableMultiRaftRuntimeTest, RejectsBatchOutboundExhaustionBeforeGroupMutat
   EXPECT_EQ(runtime->find_group(group)->role(), Role::kCandidate);
   EXPECT_EQ(runtime->find_group(group)->current_term(), 1U);
   EXPECT_EQ(runtime->durable_physical_sequence(), 1U);
+}
+
+TEST(DurableMultiRaftRuntimeTest, TightensPersistentStateBudgetToSegmentTarget) {
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{22U});
+  constexpr std::uint64_t kTargetSize = 300U;
+  constexpr std::size_t kMaximumPayload = kTargetSize - kRaftSegmentHeaderSize -
+                                          kMultiplexedLogHeaderSize - kMultiplexedLogTrailerSize -
+                                          kRaftPersistentStateFixedSizeV1 -
+                                          kRaftPersistentLogEntryFixedSizeV1;
+  auto runtime = DurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string(), .target_segment_size = kTargetSize},
+      {{group, {1U}}});
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  ASSERT_TRUE(runtime->execute_batch({{group, StartElectionOperation{}}}).has_value());
+  const std::uint64_t elected_sequence = runtime->durable_physical_sequence();
+
+  auto rejected = runtime->execute_batch(
+      {{group,
+        ProposeOperation{.type = 1U, .payload = std::vector<std::byte>(kMaximumPayload + 1U)}}});
+
+  ASSERT_TRUE(rejected.has_value()) << rejected.error().to_string();
+  ASSERT_EQ(rejected->size(), 1U);
+  EXPECT_EQ(rejected->front().status.code(), common::StatusCode::kResourceExhausted);
+  EXPECT_FALSE(rejected->front().transition.has_value());
+  EXPECT_FALSE(runtime->failed());
+  EXPECT_TRUE(runtime->find_group(group)->persistent_state().log.empty());
+  EXPECT_EQ(runtime->durable_physical_sequence(), elected_sequence);
+
+  auto admitted = runtime->execute_batch(
+      {{group, ProposeOperation{.type = 1U, .payload = std::vector<std::byte>(kMaximumPayload)}}});
+  ASSERT_TRUE(admitted.has_value()) << admitted.error().to_string();
+  ASSERT_TRUE(admitted->front().status.is_ok()) << admitted->front().status.to_string();
+  EXPECT_EQ(runtime->find_group(group)->commit_index(), 1U);
+  EXPECT_EQ(runtime->durable_physical_sequence(), elected_sequence + 1U);
 }
 
 TEST(DurableMultiRaftRuntimeTest, SurfacesGroupReadBarrierWithoutInventingPersistence) {

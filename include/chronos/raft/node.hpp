@@ -2,6 +2,7 @@
 #define CHRONOS_RAFT_NODE_HPP_
 
 #include "chronos/common/result.hpp"
+#include "chronos/raft/persistent_state_budget.hpp"
 #include "chronos/raft/types.hpp"
 
 #include <cstddef>
@@ -18,6 +19,8 @@ struct RaftLimits {
   std::size_t maximum_log_entries{1U << 20U};
   std::size_t maximum_entry_bytes{std::size_t{16U} * 1024U * 1024U};
   std::size_t maximum_append_entries{1024U};
+  // Exact v1 persistent-state payload budget, including snapshot voters and retained entries.
+  std::size_t maximum_persistent_state_bytes{kMaximumRaftPersistentStatePayloadSize};
 };
 
 class RaftNode {

@@ -1,7 +1,9 @@
 #include "chronos/raft/durable_runtime.hpp"
 
+#include "chronos/raft/multiplexed_log.hpp"
 #include "durable_batch_admission.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <map>
 #include <memory>
@@ -25,6 +27,22 @@ namespace {
 
 [[nodiscard]] common::Status exhausted(const char* message) {
   return common::Status{common::StatusCode::kResourceExhausted, message};
+}
+
+[[nodiscard]] common::Result<DurableMultiRaftLimits>
+storage_bounded_limits(const RaftPersistentLogConfig& log_config, DurableMultiRaftLimits limits) {
+  constexpr std::size_t kPhysicalFraming =
+      kRaftSegmentHeaderSize + kMultiplexedLogHeaderSize + kMultiplexedLogTrailerSize;
+  if (log_config.target_segment_size <= kPhysicalFraming ||
+      log_config.target_segment_size > kMaximumRaftSegmentSize) {
+    return common::make_unexpected(
+        invalid("Raft persistent-log target cannot contain a full-state record"));
+  }
+  const std::size_t storage_payload =
+      static_cast<std::size_t>(log_config.target_segment_size - kPhysicalFraming);
+  limits.runtime.raft.maximum_persistent_state_bytes =
+      std::min(limits.runtime.raft.maximum_persistent_state_bytes, storage_payload);
+  return limits;
 }
 
 [[nodiscard]] common::Result<MultiRaftRuntime>
@@ -96,10 +114,14 @@ DurableMultiRaftRuntime::operator=(DurableMultiRaftRuntime&&) noexcept = default
 
 common::Result<DurableMultiRaftRuntime> DurableMultiRaftRuntime::create_new(
     const NodeId local_node_id, const RaftPersistentLogConfig& log_config,
-    std::vector<RaftGroupConfiguration> groups, const DurableMultiRaftLimits limits) {
+    std::vector<RaftGroupConfiguration> groups, DurableMultiRaftLimits limits) {
   if (limits.maximum_batch_operations == 0U || limits.maximum_batch_outbound == 0U) {
     return common::make_unexpected(invalid("durable Multi-Raft batch limits are invalid"));
   }
+  auto bounded_limits = storage_bounded_limits(log_config, limits);
+  if (!bounded_limits.has_value())
+    return common::make_unexpected(bounded_limits.error());
+  limits = *bounded_limits;
   auto runtime = restore_runtime(local_node_id, limits, std::move(groups), {});
   if (!runtime.has_value())
     return common::make_unexpected(runtime.error());
@@ -113,10 +135,14 @@ common::Result<DurableMultiRaftRuntime> DurableMultiRaftRuntime::create_new(
 common::Result<DurableMultiRaftRuntime> DurableMultiRaftRuntime::open_existing(
     const NodeId local_node_id, const RaftPersistentLogConfig& log_config,
     const RaftPersistentLogOpenOptions& open_options, std::vector<RaftGroupConfiguration> groups,
-    const DurableMultiRaftLimits limits) {
+    DurableMultiRaftLimits limits) {
   if (limits.maximum_batch_operations == 0U || limits.maximum_batch_outbound == 0U) {
     return common::make_unexpected(invalid("durable Multi-Raft batch limits are invalid"));
   }
+  auto bounded_limits = storage_bounded_limits(log_config, limits);
+  if (!bounded_limits.has_value())
+    return common::make_unexpected(bounded_limits.error());
+  limits = *bounded_limits;
   auto log = RaftPersistentLog::open_existing(log_config, open_options);
   if (!log.has_value())
     return common::make_unexpected(log.error());

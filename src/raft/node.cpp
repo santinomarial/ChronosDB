@@ -28,6 +28,33 @@ namespace {
   return common::Status{common::StatusCode::kCorruption, message};
 }
 
+[[nodiscard]] common::Status exhausted(const char* message) {
+  return common::Status{common::StatusCode::kResourceExhausted, message};
+}
+
+[[nodiscard]] common::Status persistent_state_fits(const std::size_t snapshot_voter_count,
+                                                   const std::span<const LogEntry> log,
+                                                   const RaftLimits& limits) noexcept {
+  const auto size = raft_persistent_state_payload_size(snapshot_voter_count, log);
+  return size.has_value() && *size <= limits.maximum_persistent_state_bytes
+             ? common::Status::ok()
+             : exhausted("Raft persistent state exceeds its byte bound");
+}
+
+[[nodiscard]] common::Status appended_entry_fits(const PersistentState& state,
+                                                 const std::size_t payload_size,
+                                                 const RaftLimits& limits) noexcept {
+  auto size = raft_persistent_state_payload_size(state.snapshot.voters.size(), state.log);
+  if (!size.has_value())
+    return exhausted("Raft persistent state exceeds its byte bound");
+  auto appended = common::checked_add(*size, kRaftPersistentLogEntryFixedSizeV1);
+  if (appended.has_value())
+    appended = common::checked_add(*appended, payload_size);
+  return appended.has_value() && *appended <= limits.maximum_persistent_state_bytes
+             ? common::Status::ok()
+             : exhausted("Raft persistent state exceeds its byte bound");
+}
+
 struct JointConfiguration {
   std::vector<NodeId> old_voters;
   std::vector<NodeId> new_voters;
@@ -343,7 +370,8 @@ common::Result<RaftNode> RaftNode::create(const NodeId node_id, std::vector<Node
   if (node_id == 0U || voters.empty() || voters.size() > limits.maximum_voters ||
       limits.maximum_voters == 0U || limits.maximum_voters > kMaximumMembershipVoters ||
       limits.maximum_log_entries == 0U || limits.maximum_entry_bytes == 0U ||
-      limits.maximum_append_entries == 0U) {
+      limits.maximum_append_entries == 0U || limits.maximum_persistent_state_bytes == 0U ||
+      limits.maximum_persistent_state_bytes > kMaximumRaftPersistentStatePayloadSize) {
     return common::make_unexpected(invalid("Raft identity, membership, or limits are invalid"));
   }
   std::ranges::sort(voters);
@@ -384,6 +412,9 @@ common::Result<RaftNode> RaftNode::create(const NodeId node_id, std::vector<Node
   }
   if (persistent.log.size() > limits.maximum_log_entries) {
     return common::make_unexpected(invalid("Raft persistent log exceeds configured capacity"));
+  }
+  if (!persistent_state_fits(persistent.snapshot.voters.size(), persistent.log, limits).is_ok()) {
+    return common::make_unexpected(invalid("Raft persistent state exceeds configured capacity"));
   }
   const LogIndex last = persistent.log.empty() ? persistent.snapshot.last_included_index
                                                : persistent.log.back().index;
@@ -552,6 +583,11 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
                                               impl_->limits);
           if (!membership.has_value())
             return membership.error();
+          if (const common::Status fits = persistent_state_fits(impl_->state.snapshot.voters.size(),
+                                                                candidate_log, impl_->limits);
+              !fits.is_ok()) {
+            return fits;
+          }
           validated_membership = std::move(*membership);
         } else if constexpr (std::is_same_v<T, AppendEntriesResponse>) {
           if (value.match_index == std::numeric_limits<LogIndex>::max() ||
@@ -792,6 +828,10 @@ common::Result<Transition> RaftNode::propose(const std::uint8_t type,
       impl_->last_index() >= std::numeric_limits<LogIndex>::max() - 1U) {
     return common::make_unexpected(invalid("Raft proposal type, size, or log bound invalid"));
   }
+  if (const common::Status fits = appended_entry_fits(impl_->state, payload.size(), impl_->limits);
+      !fits.is_ok()) {
+    return common::make_unexpected(fits);
+  }
   const LogIndex index = impl_->last_index() + 1U;
   impl_->state.log.push_back(LogEntry{index, impl_->state.current_term, type, std::move(payload)});
   impl_->match_index[impl_->id] = index;
@@ -841,6 +881,10 @@ common::Result<Transition> RaftNode::commit_current_term() {
   if (impl_->state.log.size() >= impl_->limits.maximum_log_entries ||
       impl_->last_index() >= std::numeric_limits<LogIndex>::max() - 1U) {
     return common::make_unexpected(invalid("Raft current-term no-op exceeds log bounds"));
+  }
+  if (const common::Status fits = appended_entry_fits(impl_->state, 0U, impl_->limits);
+      !fits.is_ok()) {
+    return common::make_unexpected(fits);
   }
   const LogIndex index = impl_->last_index() + 1U;
   impl_->state.log.push_back(LogEntry{index, impl_->state.current_term, kLeaderNoopEntryType, {}});
@@ -895,6 +939,10 @@ common::Result<Transition> RaftNode::begin_membership_change(std::vector<NodeId>
     return common::make_unexpected(payload.error());
   if (payload->size() > impl_->limits.maximum_entry_bytes)
     return common::make_unexpected(invalid("Raft membership command exceeds entry size limit"));
+  if (const common::Status fits = appended_entry_fits(impl_->state, payload->size(), impl_->limits);
+      !fits.is_ok()) {
+    return common::make_unexpected(fits);
+  }
 
   const LogIndex index = impl_->last_index() + 1U;
   impl_->state.log.push_back(
@@ -955,6 +1003,10 @@ common::Result<Transition> RaftNode::finalize_membership_change() {
     return common::make_unexpected(payload.error());
   if (payload->size() > impl_->limits.maximum_entry_bytes)
     return common::make_unexpected(invalid("Raft membership command exceeds entry size limit"));
+  if (const common::Status fits = appended_entry_fits(impl_->state, payload->size(), impl_->limits);
+      !fits.is_ok()) {
+    return common::make_unexpected(fits);
+  }
 
   const LogIndex index = impl_->last_index() + 1U;
   impl_->state.log.push_back(
@@ -1015,6 +1067,11 @@ common::Result<Transition> RaftNode::complete_snapshot_install(const NodeId sour
   auto membership = derive_membership(snapshot.voters, retained, new_commit, impl_->limits);
   if (!membership.has_value())
     return common::make_unexpected(membership.error());
+  if (const common::Status fits =
+          persistent_state_fits(snapshot.voters.size(), retained, impl_->limits);
+      !fits.is_ok()) {
+    return common::make_unexpected(fits);
+  }
 
   impl_->pending_snapshot.reset();
   impl_->state.snapshot = std::move(snapshot);
@@ -1057,6 +1114,12 @@ common::Result<Transition> RaftNode::compact_snapshot(SnapshotMetadata snapshot)
   if (!valid_snapshot(snapshot, impl_->limits.maximum_voters))
     return common::make_unexpected(invalid("Raft snapshot metadata is invalid"));
   const std::size_t retained_offset = impl_->offset_for(snapshot.last_included_index) + 1U;
+  if (const common::Status fits = persistent_state_fits(
+          snapshot.voters.size(),
+          std::span<const LogEntry>{impl_->state.log}.subspan(retained_offset), impl_->limits);
+      !fits.is_ok()) {
+    return common::make_unexpected(fits);
+  }
   impl_->state.log.erase(impl_->state.log.begin(),
                          impl_->state.log.begin() + static_cast<std::ptrdiff_t>(retained_offset));
   impl_->state.snapshot = std::move(snapshot);

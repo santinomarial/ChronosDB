@@ -263,6 +263,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   InstallSnapshot responses reject it as an impossible installed boundary through all three paths.
   Node construction now also exact-bounds `maximum_voters` to the membership command's `u16`
   representation; broader hostile limit combinations remain part of exhaustive configuration tests.
+  Core recovery and every log- or snapshot-changing transition now enforce the exact aggregate
+  persistent-state payload budget before mutation; exhaustive mixed append/replacement/compaction
+  boundary generation remains deferred.
 - Persistent file owner, vote/log fsync ordering, crash/restart at every transition, idempotent
   recovery, application to tablet state, snapshot creation/install, and log compaction. Extend the
   implemented read barrier through production transport and tablet snapshot acquisition.
@@ -298,7 +301,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   metrics. Multi-Raft construction now rejects an outbound bound smaller than the maximum legal
   single-transition fanout, and durable batches reserve their aggregate operation-mix fanout before
   dispatch; focused asynchronous terminal-failure coverage uses a real persistent-log record-cap
-  failure rather than an invalid runtime configuration.
+  failure rather than an invalid runtime configuration. The durable owner now tightens each core's
+  aggregate state budget to the segment target before group construction, with exact focused
+  accepted/rejected boundary coverage; broader target-size and recovered-state matrices remain.
 - Exercise the v1.1 snapshot membership checkpoint with golden minor-0/minor-1 fixtures,
   mixed-version processes, hostile voter counts, snapshot-install crash points, and reclamation.
 - Connect the implemented two-stage Raft snapshot request/completion boundary to versioned tablet

@@ -1134,6 +1134,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/raft/membership_test.cpp
     tests/raft/node_header_self_contained.cpp
     tests/raft/node_test.cpp
+    tests/raft/persistent_state_budget_header_self_contained.cpp
     tests/raft/rebalancing_header_self_contained.cpp
     tests/raft/rebalancing_test.cpp
     tests/raft/runtime_timer_header_self_contained.cpp

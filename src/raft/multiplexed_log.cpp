@@ -4,6 +4,7 @@
 #include "chronos/common/byte_writer.hpp"
 #include "chronos/common/checked_math.hpp"
 #include "chronos/common/crc32c.hpp"
+#include "chronos/raft/persistent_state_budget.hpp"
 
 #include <algorithm>
 #include <array>
@@ -21,37 +22,18 @@ inline constexpr std::array<std::byte, 8U> kMagic{
     std::byte{0x4d}, std::byte{0x52}, std::byte{0x4c}, std::byte{0x00},
 };
 inline constexpr std::size_t kStateFixedSizeV1_0 = 96U;
-inline constexpr std::size_t kStateFixedSizeV1_1 = 112U;
-inline constexpr std::size_t kEntryFixedSize = 32U;
+inline constexpr std::size_t kStateFixedSizeV1_1 = kRaftPersistentStateFixedSizeV1;
+inline constexpr std::size_t kEntryFixedSize = kRaftPersistentLogEntryFixedSizeV1;
+static_assert(kMaximumRaftPersistentStatePayloadSize == kMaximumMultiplexedLogRecordSize -
+                                                            kMultiplexedLogHeaderSize -
+                                                            kMultiplexedLogTrailerSize);
 
 [[nodiscard]] common::Status corrupt(const char* message) {
   return common::Status{common::StatusCode::kCorruption, message};
 }
 
 [[nodiscard]] common::Result<std::size_t> payload_size(const PersistentState& state) {
-  const auto voter_bytes = common::checked_multiply(state.snapshot.voters.size(), sizeof(NodeId));
-  if (!voter_bytes.has_value())
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kOutOfRange, "snapshot voter size overflows"});
-  const auto initial_size = common::checked_add(kStateFixedSizeV1_1, voter_bytes.value());
-  if (!initial_size.has_value())
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kOutOfRange, "snapshot voter size overflows"});
-  std::size_t size = initial_size.value();
-  for (const LogEntry& entry : state.log) {
-    const auto entry_size = common::checked_add(size, kEntryFixedSize);
-    if (!entry_size.has_value()) {
-      return common::make_unexpected(common::Status{common::StatusCode::kOutOfRange,
-                                                    "multiplexed log payload size overflows"});
-    }
-    const auto next_size = common::checked_add(entry_size.value(), entry.payload.size());
-    if (!next_size.has_value()) {
-      return common::make_unexpected(common::Status{common::StatusCode::kOutOfRange,
-                                                    "multiplexed log payload size overflows"});
-    }
-    size = next_size.value();
-  }
-  return size;
+  return raft_persistent_state_payload_size(state.snapshot.voters.size(), state.log);
 }
 
 [[nodiscard]] common::Status write_state(common::ByteWriter& writer, const PersistentState& state) {

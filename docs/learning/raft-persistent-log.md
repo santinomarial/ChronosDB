@@ -18,7 +18,9 @@ every earlier record.
 
 Bounds apply before allocation: segment size is at most 1 GiB, record size is at most 16 MiB, and
 configuration limits total segments, records, and recovered groups. Public headers contain no POSIX
-types.
+types. Minor-1 persistent-state payload accounting is exact:
+`112 + 8 * snapshot_voters + sum(32 + entry_payload_bytes)`. The core checks that aggregate rather
+than relying only on per-entry and entry-count bounds.
 
 ## Ownership, lifetime, and synchronization
 
@@ -40,6 +42,10 @@ otherwise the group could change in memory before discovering that no persistenc
 The same fail-before-transition rule applies to the node-local outbound bound: configuration must
 hold the exact maximum fanout implied by `maximum_voters`, including one response for a single-voter
 configuration.
+The durable owner also derives a per-group state budget from the segment target by subtracting the
+segment header and record header/trailer. The core applies the resulting smaller of the configured
+and physical budgets to recovery, proposals, follower suffix replacement, membership commands,
+leader no-ops, snapshot completion, and compaction before changing state.
 The durable batch owner applies that rule cumulatively before dispatch. Observation, applied-index,
 and local-compaction operations reserve no outbound messages; snapshot completion reserves one;
 every other operation reserves the configured maximum core fanout. Capacity rejection is
@@ -80,5 +86,7 @@ advanced remains unsafe.
 - Why must the successor header be durable before its first record?
 - Why can only an incomplete highest-segment suffix be repaired?
 - Why does a physical sequence not replace a group's logical Raft index?
+- Why must aggregate persistent-state size be checked before a deterministic transition mutates the
+  group?
 - What proof is required before reclaiming an old shared segment?
 - Why must the recovery anchor become durable before the first old segment is removed?

@@ -42,6 +42,13 @@ membership base for suffix validation.
 Each log entry contains logical index (8), term (8), type (1), seven required-zero bytes, payload
 length (4), four required-zero bytes, and payload.
 
+For minor 1, the exact persistent-state payload size is
+`112 + 8 * snapshot_voter_count + sum(32 + entry_payload_size)`. The deterministic core applies
+this aggregate bound to recovered state and every transition that can replace a snapshot or retain,
+append, or replace log entries. Capacity failure is reported before term, vote, log, commit, apply,
+snapshot, role, or pending-install state can change. The default payload budget is the 16 MiB record
+limit less the 64-byte record header and 4-byte trailer.
+
 Logical entry type `253` is the Raft leader progress no-op. Its payload must be empty. Types `254`
 and `255` contain [Raft Membership Command v1](raft-membership-command-v1.md) joint and final
 commands. These three types are reserved for Raft internals; application proposal interfaces reject
@@ -83,6 +90,10 @@ may rotate sooner. The maximum physical record remains 16 MiB.
 Physical sequence `UINT64_MAX` may identify the terminal record, but no later runtime transition or
 checkpoint is admitted because another contiguous record identity cannot be assigned. Transition
 rejection occurs before the group core can mutate in-memory state.
+`DurableMultiRaftRuntime` further tightens each group's persistent-state payload budget to the
+configured segment target less the 64-byte segment header, 64-byte record header, and 4-byte record
+trailer. Consequently, every state admitted by its core can be encoded as one full-state record in
+an otherwise empty segment; a smaller target cannot cause a post-mutation encoder or append failure.
 
 ## Installation and durability
 

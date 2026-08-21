@@ -423,6 +423,12 @@ different term and same-term divergent bytes. Both cases require `CORRUPTION` wh
 complete persistent state, current term, vote, and follower role.
 Membership configuration coverage rejects `maximum_voters = 65536` at node construction and accepts
 the exact `u16` format maximum, preventing a delayed encoder-only failure during reconfiguration.
+Aggregate persistent-state coverage proposes one default-limit 16 MiB entry whose own payload is
+legal but whose full-state record framing is not, and requires `RESOURCE_EXHAUSTED` with exact core
+state preservation. A higher-term follower suffix that crosses a smaller configured budget is also
+rejected before term, role, or persistent-state observation. Durable-runtime boundary coverage uses
+a 300-byte segment target: the exact 24-byte first-entry payload succeeds, while 25 bytes is rejected
+nonterminally before group state or the durable physical sequence changes.
 
 Multi-Raft physical-sequence exhaustion coverage restores a group at the terminal `UINT64_MAX`
 identity, attempts an election, and requires `OUT_OF_RANGE` plus fail-closed admission before the
