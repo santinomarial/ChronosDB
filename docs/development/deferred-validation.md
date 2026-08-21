@@ -241,8 +241,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   begin/finalize, applied-frontier snapshot compaction, pending snapshot rejection/safe completion,
   and live-state crash/restart enumeration after a valid setup trace. Per-action attempt counters
   now exact-match retained seeded and replay traces, including the terminal failing action, while
-  separate effect counters preserve outcome measurement. Simulation-rate benchmarking and the
-  remaining long/mixed campaigns are still open.
+  separate effect counters preserve outcome measurement. A local benchmark target now measures
+  seeded generation and fixed-trace replay with the safety oracle enabled in declared three- and
+  five-voter topologies. A complete clean-host result artifact and the remaining long/mixed
+  campaigns are still open.
 - Extend the implemented hostile higher-term/payload-identity, pre-observation term/position/
   response-state, and exact compacted-prefix predecessor regression checks into exhaustive
   persistence-before-response, broader sequence-exhaustion schedules, response-state, and broader

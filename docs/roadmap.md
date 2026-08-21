@@ -855,8 +855,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   frontier snapshot compaction, pending snapshot-install rejection/safe completion, and live-state
   crash/restart faults after a valid setup trace, and reports replay-limit truncation without
   claiming completion. Variant-indexed attempt counters now exact-match retained seeded and replay
-  traces, including the terminal failing action, while effect counters remain distinct. Simulations
-  may begin from
+  traces, including the terminal failing action, while effect counters remain distinct. A local
+  benchmark target now times seeded generation and fixed-trace replay, with the safety oracle
+  enabled, for declared three- and five-voter topologies; it publishes no baseline and leaves the
+  wider measurement gate open. Simulations may begin from
   exact per-node recovered persistent images; a combined terminal-term and terminal-index schedule
   proves proposals and post-restart elections fail without mutation. Deeper mixed-action campaigns,
   broader application payload domains, clock changes, physical-log faults, and the full exit evidence

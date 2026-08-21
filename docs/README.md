@@ -199,6 +199,8 @@ existence of a design document alone is not implementation evidence.
   controls, correctness gate, artifact schema, and evidence limitations.
 - [Phase 10 native-network baseline](benchmarks/native-network-phase-10.md): clean-commit portable
   codec/queue and Ubuntu epoll measurements with raw repetitions and applicability limits.
+- [Raft simulator rate harness](benchmarks/raft-simulator.md): fixed three- and five-voter seeded
+  generation and replay workloads with the safety oracle enabled.
 - [ChronosBench](benchmarks/chronosbench.md): planned correctness-checked workload scenarios.
 
 ## Reviews

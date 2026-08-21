@@ -1,13 +1,15 @@
 # Benchmark Publication Contract
 
-> **Status: contract implemented by focused foundation, WAL, Manifest-flush, native-network, and
-> logical-subscription harnesses; no result is published here.** The [Phase 1 foundation
+> **Status: contract implemented by focused foundation, WAL, Manifest-flush, native-network,
+> logical-subscription, and Raft-simulator harnesses; no result is published here.** The [Phase 1 foundation
 > baseline](phase-1-foundation-baseline.md), [WAL](wal-benchmarks.md), and
 > [flush](flush-benchmarks.md) harnesses
 > emit reviewable local measurement artifacts. The
 > [Phase 10 native-network baseline](native-network-phase-10.md) publishes a deliberately limited
 > containerized microbenchmark result. The [Phase 11 subscription
 > suite](subscription-phase-11.md) defines bounded cases but does not yet publish a clean baseline.
+> The [Raft simulator rate harness](raft-simulator.md) defines fixed three- and five-voter seeded
+> and replay workloads without publishing a baseline.
 > The broader ChronosBench suite remains unimplemented. This
 > contract governs every measurement under
 > [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md).

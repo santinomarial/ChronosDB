@@ -2192,6 +2192,19 @@ if(CHRONOS_BUILD_BENCHMARKS)
   chronos_enable_static_analysis(chronos_live_benchmarks)
 
   add_executable(
+    chronos_raft_benchmarks
+    benchmarks/raft/deterministic_simulator_benchmark.cpp
+  )
+  set_target_properties(chronos_raft_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_raft_benchmarks PRIVATE cxx_std_23)
+  target_link_libraries(
+    chronos_raft_benchmarks PRIVATE chronos::raft benchmark::benchmark_main
+  )
+  chronos_set_project_warnings(chronos_raft_benchmarks)
+  chronos_enable_sanitizers(chronos_raft_benchmarks)
+  chronos_enable_static_analysis(chronos_raft_benchmarks)
+
+  add_executable(
     chronos_network_benchmarks
     benchmarks/network/network_benchmark.cpp
     benchmarks/support/counting_allocator.cpp

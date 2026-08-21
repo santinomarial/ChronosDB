@@ -78,7 +78,11 @@ node-local physical manifest fields may differ.
 Step cost includes safety checking. Durable-state and committed-prefix checks are linear in retained
 entries; pairwise log matching is intentionally quadratic in simulated nodes and comparable log
 length. Network lookup is linear in the configured message bound. These choices make ownership and
-failure reproduction obvious. Optimizing them requires measured simulation-rate evidence.
+failure reproduction obvious. Optimizing them requires measured simulation-rate evidence. The
+`chronos_raft_benchmarks` harness isolates seeded generation from fixed-trace replay in declared
+three- and five-voter topologies. Both paths include the safety oracle and exclude simulator
+construction/destruction; the replay case also excludes its one-time trace generation. Its local
+action rates are diagnostic observations until a benchmark-contract result artifact is published.
 
 Deletion shrinking uses deterministic delta-debugging: it first removes coarse contiguous chunks,
 then increases granularity until individual actions have been tested or the configured replay budget

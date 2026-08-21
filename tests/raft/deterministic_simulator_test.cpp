@@ -275,6 +275,36 @@ TEST(DeterministicRaftSimulatorTest, RunsReproducibleSeededFaultSchedules) {
   }
 }
 
+TEST(DeterministicRaftSimulatorTest, DeclaredBenchmarkWorkloadsCompleteAndReplayExactly) {
+  constexpr std::uint64_t seed = 20'260'821U;
+  constexpr std::size_t action_count = 1'024U;
+  for (const std::size_t node_count : {3U, 5U}) {
+    RaftSimulationConfig workload;
+    for (std::size_t index = 0U; index < node_count; ++index) {
+      const NodeId node_id = static_cast<NodeId>(index) + 1U;
+      workload.node_ids.push_back(node_id);
+      workload.initial_voters.push_back(node_id);
+    }
+    workload.limits.maximum_trace_actions = action_count;
+
+    auto simulation = DeterministicRaftSimulator::create(workload);
+    ASSERT_TRUE(simulation.has_value()) << simulation.error().to_string();
+    ASSERT_TRUE(simulation->run_seeded({.seed = seed, .actions = action_count}).is_ok())
+        << "nodes=" << node_count << " " << simulation->status().to_string();
+    ASSERT_EQ(simulation->trace().size(), action_count);
+    EXPECT_EQ(simulation->stats().actions, action_count);
+    EXPECT_EQ(simulation->stats().action_attempts, trace_action_attempts(simulation->trace()));
+
+    const std::vector<RaftSimulationAction> trace(simulation->trace().begin(),
+                                                  simulation->trace().end());
+    auto replay = DeterministicRaftSimulator::create(workload);
+    ASSERT_TRUE(replay.has_value()) << replay.error().to_string();
+    ASSERT_TRUE(replay->replay(trace).is_ok())
+        << "nodes=" << node_count << " " << replay->status().to_string();
+    EXPECT_EQ(replay->stats(), simulation->stats());
+  }
+}
+
 TEST(DeterministicRaftSimulatorTest, GeneratesReplayableMembershipAndSnapshotChurn) {
   auto churn_config = config();
   churn_config.node_ids.push_back(4U);

@@ -95,7 +95,9 @@ memory ordering are involved.
 The virtual network and trace reserve their declared capacities up front. Message payloads and
 action payloads remain bounded by Raft and trace limits. Safety checking intentionally favors a
 clear oracle over speed and compares retained prefixes quadratically across the small simulated
-cluster. Simulation-rate measurement must precede optimization.
+cluster. The `chronos_raft_benchmarks` target measures seeded generation and fixed-trace replay with
+the safety oracle enabled in declared three- and five-voter topologies. Simulator lifetime is
+excluded from timing, and the harness publishes no baseline or optimization claim.
 
 This foundation does not close the full Phase 14 campaign. Deeper mixed-action campaigns, broader
 application-input domains, long seed matrices, injected timer/clock changes, physical segmented-log
@@ -143,7 +145,8 @@ images whose same-term log entries violate log matching. Recovered membership na
 node also fails construction before it can create an unroutable transition. Independent boundary
 schedules elect from the penultimate term with a penultimate-index snapshot: one rejects another
 proposal at the reserved next index, while the other restarts at terminal term and rejects another
-election without mutation.
+election without mutation. A focused regression also runs and exact-replays the fixed seed and
+three- and five-voter workloads declared by the simulator-rate benchmark.
 
 ## References
 
