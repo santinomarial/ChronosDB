@@ -471,6 +471,37 @@ TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresDirectionalLinkChanges)
   EXPECT_FALSE(bounded->failure.has_value());
 }
 
+TEST(DeterministicRaftSimulatorTest, ExhaustivelyArmsPersistenceFailureOncePerActiveNode) {
+  auto one_node = config();
+  one_node.node_ids = {1U};
+  one_node.initial_voters = {1U};
+
+  auto complete = DeterministicRaftSimulator::explore_fault_schedules(
+      one_node, {},
+      {.maximum_depth = 2U, .maximum_replays = 2U, .include_persistence_failures = true});
+
+  ASSERT_TRUE(complete.has_value()) << complete.error().to_string();
+  EXPECT_TRUE(complete->search_complete);
+  EXPECT_EQ(complete->replayed_prefixes, 2U);
+  EXPECT_FALSE(complete->failure.has_value());
+
+  auto bounded = DeterministicRaftSimulator::explore_fault_schedules(
+      one_node, {},
+      {.maximum_depth = 2U, .maximum_replays = 1U, .include_persistence_failures = true});
+  ASSERT_TRUE(bounded.has_value()) << bounded.error().to_string();
+  EXPECT_FALSE(bounded->search_complete);
+  EXPECT_EQ(bounded->replayed_prefixes, 1U);
+  EXPECT_FALSE(bounded->failure.has_value());
+
+  const std::vector<RaftSimulationAction> crashed{RaftSimulationCrash{1U}};
+  auto inactive = DeterministicRaftSimulator::explore_fault_schedules(
+      one_node, crashed,
+      {.maximum_depth = 1U, .maximum_replays = 1U, .include_persistence_failures = true});
+  ASSERT_TRUE(inactive.has_value()) << inactive.error().to_string();
+  EXPECT_TRUE(inactive->search_complete);
+  EXPECT_EQ(inactive->replayed_prefixes, 1U);
+}
+
 TEST(DeterministicRaftSimulatorTest, ExhaustiveExplorationRetainsTheFirstFailingSchedule) {
   auto simulation = DeterministicRaftSimulator::create(config());
   ASSERT_TRUE(simulation.has_value()) << simulation.error().to_string();

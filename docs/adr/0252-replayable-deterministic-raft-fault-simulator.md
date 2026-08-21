@@ -59,7 +59,8 @@ duplicate-message branch, directional link changes, and live-state node lifecycl
 identities are visited in ascending order and each identity's actions are ordered delivery, loss,
 then optional duplication. Optional link branches follow in ascending source/destination order,
 exclude self-links, and toggle the replayed state so each action is a partition or healing rather
-than a no-op. Finally, ascending node IDs contribute exactly crash for an active node or restart for
+than a no-op. Optional persistence branches next arm each ascending active node only when it is not
+already armed. Finally, ascending node IDs contribute exactly crash for an active node or restart for
 an inactive node. `maximum_replays` bounds retained frontier work and replayed prefixes; the result
 distinguishes a completed search from a truncated search and retains the exact first failing trace
 and status. The one setup-validation replay is outside that exploration count.
@@ -97,6 +98,8 @@ One-node lifecycle coverage completely enumerates crash then restart through dep
 replay-bound truncation when the restart prefix cannot be retained.
 Two-node link coverage exhausts both directional toggles through depth two, including healing, and
 reports truncation one replay below the complete seven-prefix tree.
+One-node persistence coverage exhausts one arm action, reports truncation when that prefix cannot be
+retained, and proves armed or crashed nodes do not contribute invalid repeat branches.
 Recovered-image coverage restarts a node at terminal term, rejects the next election without state
 mutation, rejects image-count mismatch and invalid local state, and rejects two individually valid
 images whose same-term log entries violate log matching. Independent boundary schedules elect from

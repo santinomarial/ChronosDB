@@ -866,6 +866,13 @@ common::Result<RaftExhaustiveFaultResult> DeterministicRaftSimulator::explore_fa
           }
         }
       }
+      if (schedule.include_persistence_failures) {
+        for (const NodeId node_id : config.node_ids) {
+          const Impl::NodeSlot* const node = simulation->implementation_->find_node(node_id);
+          if (node != nullptr && node->active.has_value() && !node->fail_next_persistence)
+            branches.emplace_back(RaftSimulationFailNextPersistence{node_id});
+        }
+      }
       if (schedule.include_node_lifecycle) {
         for (const NodeId node_id : config.node_ids) {
           if (simulation->active_node(node_id) == nullptr)
