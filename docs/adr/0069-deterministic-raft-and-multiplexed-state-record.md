@@ -89,6 +89,11 @@ membership, exact in-memory and returned persistent states, commit notification,
 before installing any of them. Resource exhaustion preserves the pending identity and exact node
 state so the same external completion remains retryable.
 
+Local snapshot compaction prepares the canonical voter checkpoint, retained suffix, replacement
+snapshot base, and both copies of the compacted persistent state before erasing any live log entry.
+Allocation failure leaves the installed snapshot, retained log, membership base, and durable state
+unchanged for exact retry.
+
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
 record boundary is [`multiplexed-raft-log-v1.md`](../formats/multiplexed-raft-log-v1.md). A dedicated
@@ -151,6 +156,9 @@ Snapshot-completion sweeps separately cover explicit rejection and successful in
 retained suffix. Every observed response, suffix, membership, and persistent-state allocation
 preserves the pending completion identity and exact node state; retry publishes the complete
 negative response or installed-state transition.
+The local-compaction sweep retains a nonempty suffix and fails every voter, state, and returned-
+transition allocation. Each failure preserves the exact uncompacted state, and retry publishes the
+complete compacted checkpoint and suffix together.
 
 **Retrospective note (2026-08-12):** [ADR 0252](0252-replayable-deterministic-raft-fault-simulator.md)
 now supplies bounded explicit and seeded schedules for partitions, delay/reordering, duplication,

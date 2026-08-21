@@ -399,6 +399,10 @@ Two-stage snapshot installation is exclusive with local compaction. A rejected s
 snapshot changes no persistent state or pending identity, and completing the original installation
 retains only the exact compatible suffix before its success response becomes eligible. An explicit
 negative completion clears that pending authority before local compaction is admitted.
+The local-compaction allocation sweep uses an applied three-entry state and compacts through the
+second entry while retaining the third. Every voter-checkpoint, replacement-state, and returned-
+state allocation must fail with `RESOURCE_EXHAUSTED` before the live prefix or snapshot base changes;
+the identical compaction must then succeed on retry.
 
 Snapshot request retransmission preserves the same single-owner rule: an exact duplicate publishes
 no second application task, a different request returns a negative response without replacing the

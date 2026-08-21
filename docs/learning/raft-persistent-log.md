@@ -89,6 +89,9 @@ the new persistent state, commit notification, and response. Rejection likewise 
 before releasing the pending identity. Allocation failure therefore leaves the same completion
 authority available for retry without exposing a partially installed Raft snapshot.
 Local compaction similarly requires an already applied exact term/index and stable configuration.
+It prepares the canonical voter checkpoint, retained suffix, replacement base voters, and returned
+durable state before erasing the live prefix, so resource exhaustion leaves the uncompacted state
+available for exact retry.
 
 For a committed or joint configuration, a leader may issue a `QuorumSyncReceipt` after its
 synchronized commit index covers an entry. Raft commit embodies either the committed majority or

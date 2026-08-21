@@ -297,6 +297,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   pending identity and successful installation owns its retained suffix, membership, durable state,
   commit notification, and acknowledgement before publication. Stale-term completion allocation
   schedules remain part of broader snapshot/member churn validation.
+  A retained-suffix local-compaction sweep now proves the canonical voter checkpoint, replacement
+  snapshot base, in-memory state, and returned durable state are owned before the live log prefix is
+  erased. Mixed membership-entry compaction boundaries remain part of broader snapshot/member churn
+  validation.
   Stale, higher-term-conflict, and accepted replacement AppendEntries-request sweeps now cover every
   observed validation and transition allocation through exact feedback and committed suffix
   publication. Broader membership-changing request allocation schedules remain deferred.

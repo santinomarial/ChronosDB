@@ -876,6 +876,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   Snapshot completion now owns rejection feedback or the complete retained-suffix, membership,
   durable-state, commit-notification, and acknowledgement transition before releasing its pending
   identity or installing snapshot state.
+  Local compaction now owns the canonical voter checkpoint, retained suffix, replacement snapshot
+  base, and complete durable transition before erasing the live log prefix.
   A bounded generation-tagged monotonic timer scheduler now emits election and heartbeat actions,
   retries rejected admission without shifting deadlines, and rejects stale completion rearming;
   its bounded driver now composes those actions with ordered asynchronous durable observations and

@@ -1073,6 +1073,69 @@ TEST(RaftNodeAllocationFailureTest,
 }
 
 TEST(RaftNodeAllocationFailureTest,
+     LocalSnapshotCompactionPreservesStateUntilDurableTransitionPublication) {
+  PersistentState initial{};
+  initial.current_term = 2U;
+  initial.log = {LogEntry{1U, 1U, 1U, {std::byte{0x11U}}}, LogEntry{2U, 1U, 1U, {std::byte{0x22U}}},
+                 LogEntry{3U, 2U, 1U, {std::byte{0x33U}}}};
+  initial.commit_index = 3U;
+  initial.applied_index = 3U;
+  SnapshotMetadata snapshot{};
+  snapshot.last_included_index = 2U;
+  snapshot.last_included_term = 1U;
+  snapshot.manifest_generation = 11U;
+  snapshot.part_set_checksum.fill(std::byte{0xA5U});
+  PersistentState expected = initial;
+  expected.snapshot = snapshot;
+  expected.snapshot.voters = {1U, 2U, 3U};
+  expected.log = {initial.log.back()};
+
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 96U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    auto created = RaftNode::create(1U, {1U, 2U, 3U}, initial);
+    ASSERT_TRUE(created.has_value()) << created.error().to_string();
+    RaftNode follower = std::move(*created);
+    SnapshotMetadata candidate = snapshot;
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(follower.compact_snapshot(std::move(candidate)));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      EXPECT_EQ(follower.persistent_state(), expected);
+      const PersistentState* persistent = returned_persistent_state(**result);
+      ASSERT_NE(persistent, nullptr);
+      EXPECT_EQ(*persistent, expected);
+      EXPECT_TRUE((**result).outbound.empty());
+      EXPECT_FALSE((**result).advanced_commit_index.has_value());
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(follower.persistent_state(), initial);
+    auto retry = follower.compact_snapshot(snapshot);
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    EXPECT_EQ(follower.persistent_state(), expected);
+    const PersistentState* persistent = returned_persistent_state(*retry);
+    ASSERT_NE(persistent, nullptr);
+    EXPECT_EQ(*persistent, expected);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest,
      HigherTermReadBarrierRequestPreparesResponseBeforeTermObservation) {
   std::size_t failure_count = 0U;
   bool reached_success = false;

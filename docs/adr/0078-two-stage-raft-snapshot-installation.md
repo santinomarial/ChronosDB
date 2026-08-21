@@ -54,6 +54,9 @@ configuration, with an exact local term and nonzero application manifest generat
 unavailable while an externally owned snapshot installation is pending; that installation must be
 completed or explicitly rejected before another snapshot identity can be created. Raft fills the
 canonical voter checkpoint and removes only entries covered by that application snapshot.
+Compaction owns the voter checkpoint, compatible retained suffix, new snapshot base, and exact
+in-memory and returned persistent states before replacing the live state. Allocation failure is
+`RESOURCE_EXHAUSTED` and leaves the uncompacted state exactly retryable.
 
 ## Consequences and alternatives
 
@@ -102,6 +105,9 @@ Completion sweeps cover explicit rejection and successful installation with a co
 suffix. Every failed response, suffix, membership, and state-copy allocation preserves both the
 pending authority and byte-for-value node state; retry returns the exact negative response or full
 durable installation transition.
+Local-compaction allocation coverage retains a suffix beyond the snapshot boundary and requires
+every voter/state-copy failure to preserve the exact original checkpoint, log, and membership base.
+Retry must return the complete compacted persistent state.
 An impossible higher-term request whose snapshot term is newer than its own leader term is rejected
 before term/vote/role observation or external installation publication.
 The same boundary rejects `UINT64_MAX` before publication so explicit completion can never persist a
