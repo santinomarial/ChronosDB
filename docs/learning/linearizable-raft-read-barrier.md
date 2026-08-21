@@ -25,7 +25,9 @@ One pending barrier stores its leader term, nonzero context, committed index, fr
 voter configuration, and a set of acknowledgements. Starting requires a committed entry in the
 leader's current term: this prevents a newly elected leader from relying on a commit index that may
 only reflect an older configuration or term. Responses count only when term, context, acceptance,
-and source voter all match. During joint consensus both old and new majorities are required.
+and source voter all match. Recipients likewise require the request source to be an active voter
+before observing its term. Learners may receive log and snapshot replication, but cannot assert
+leadership through this exception. During joint consensus both old and new majorities are required.
 
 Barrier completion is not application visibility. The read index names a committed prefix, while
 `applied_index` names the prefix installed in the state machine. Serving before the latter reaches

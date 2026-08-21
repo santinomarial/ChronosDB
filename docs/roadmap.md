@@ -844,6 +844,7 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   traces. Long/exhaustive campaigns, clock changes, physical-log faults, and the full exit evidence
   remain deferred. Linearizable reads now use one bounded explicit current-term leadership
   probe, require a current-term committed entry, freeze stable or joint voter quorums at issuance,
+  reject nonvoter probe sources before higher-term observation while retaining learner replication,
   abandon pending work on leadership change, and return an exact committed read index that must be
   applied before visibility.
   A bounded generation-tagged monotonic timer scheduler now emits election and heartbeat actions,

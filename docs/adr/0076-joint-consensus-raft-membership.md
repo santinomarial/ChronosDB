@@ -24,8 +24,10 @@ may be in flight per group.
 
 The bootstrap voter list remains external group configuration. A node need not initially be a
 voter, which permits a learner target to accept log replication, but a nonvoter cannot campaign or
-grant a vote. Recovery deterministically derives membership from the complete retained log and
-rejects corrupt or impossible transitions. Generic application proposals cannot use the reserved
+grant a vote. That learner exception covers AppendEntries and snapshot installation only; a
+nonvoter cannot issue a leadership read-barrier probe. Recovery deterministically derives
+membership from the complete retained log and rejects corrupt or impossible transitions. Generic
+application proposals cannot use the reserved
 entry types. Metadata and tablet application owners advance over membership entries as internal
 no-ops. A removed leader propagates its final commit transition and then steps down.
 The configured voter bound must fit Membership Command v1's unsigned 16-bit count fields. Values
@@ -56,4 +58,5 @@ Invariants 4, 8, 9, 10, 13, 14, and 18 apply. Focused tests cover canonical enco
 old/new commit and election quorums, premature-final rejection, leader removal, learner election
 rejection, invalid-history preflight, durable reopen, Multi-Raft operations, and ordered tablet and
 metadata application across internal entries. Limit coverage rejects an unencodable configured
-voter bound at node construction and accepts the exact format maximum.
+voter bound at node construction and accepts the exact format maximum. A higher-term read-barrier
+request from a nonvoter is rejected before term, role, leader identity, or persistent state changes.

@@ -413,6 +413,11 @@ coverage submits that impossible relation to a candidate and requires `INVALID_A
 role and persistent-state preservation; checksum-valid wire decoding and outbound encoding reject
 the same relation before installation ownership can be published.
 
+Read-barrier authority coverage submits a higher-term leadership probe from a nonvoter to a current
+leader and requires `INVALID_ARGUMENT` before term, role, leader identity, or persistent state can
+change. Existing learner catch-up coverage still accepts AppendEntries from a new-only leader,
+keeping the membership ADR's replication exception distinct from leadership authority.
+
 Persistent-state recovery rejects a snapshot term above current term before the node can produce
 messages from impossible history. Failed AppendEntries responses require a nonzero conflict index
 and bound any optional conflict term by the response term; direct candidate-state preservation plus

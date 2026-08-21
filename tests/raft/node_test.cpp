@@ -956,5 +956,23 @@ TEST(RaftNodeTest, ReadBarrierProbeStepsDownReceiverAndSingleVoterCompletesLocal
   EXPECT_EQ(completed->read_index, 1U);
 }
 
+TEST(RaftNodeTest, RejectsNonvoterReadBarrierBeforeHigherTermObservation) {
+  auto leader = RaftNode::create(1U, {1U, 2U, 3U});
+  ASSERT_TRUE(leader.has_value());
+  ASSERT_TRUE(leader->start_election().has_value());
+  ASSERT_TRUE(leader->receive(2U, RequestVoteResponse{1U, true}).has_value());
+  ASSERT_EQ(leader->role(), Role::kLeader);
+  const PersistentState before = leader->persistent_state();
+
+  auto rejected = leader->receive(4U, ReadBarrierRequest{2U, 4U, 7U});
+
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(leader->current_term(), 1U);
+  EXPECT_EQ(leader->role(), Role::kLeader);
+  EXPECT_EQ(leader->leader_id(), 1U);
+  EXPECT_EQ(leader->persistent_state(), before);
+}
+
 } // namespace
 } // namespace chronos::raft

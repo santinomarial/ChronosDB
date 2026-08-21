@@ -477,10 +477,12 @@ common::Result<Transition> RaftNode::start_election() {
 }
 
 common::Result<Transition> RaftNode::receive(const NodeId source, Message message) {
-  const bool replication_request = std::holds_alternative<AppendEntriesRequest>(message) ||
-                                   std::holds_alternative<InstallSnapshotRequest>(message) ||
-                                   std::holds_alternative<ReadBarrierRequest>(message);
-  if (source == 0U || source == impl_->id || (!impl_->voter(source) && !replication_request)) {
+  // Learners accept log and snapshot replication before becoming voters. Leadership probes are
+  // different: only an active voter can be a leader authorized to issue one.
+  const bool learner_replication_request = std::holds_alternative<AppendEntriesRequest>(message) ||
+                                           std::holds_alternative<InstallSnapshotRequest>(message);
+  if (source == 0U || source == impl_->id ||
+      (!impl_->voter(source) && !learner_replication_request)) {
     return common::make_unexpected(
         invalid("Raft message source is invalid or not an active voter"));
   }

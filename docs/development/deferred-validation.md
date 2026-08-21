@@ -265,7 +265,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   representation; broader hostile limit combinations remain part of exhaustive configuration tests.
   Core recovery and every log- or snapshot-changing transition now enforce the exact aggregate
   persistent-state payload budget before mutation; exhaustive mixed append/replacement/compaction
-  boundary generation remains deferred.
+  boundary generation remains deferred. Read-barrier requests now require an active-voter source
+  before term observation without removing the learner log/snapshot replication exception; broader
+  membership-transition source-authority schedules remain deferred.
 - Persistent file owner, vote/log fsync ordering, crash/restart at every transition, idempotent
   recovery, application to tablet state, snapshot creation/install, and log compaction. Extend the
   implemented read barrier through production transport and tablet snapshot acquisition.

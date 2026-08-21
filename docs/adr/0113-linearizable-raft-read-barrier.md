@@ -19,7 +19,9 @@ entry from its current term is committed. The barrier freezes the current commit
 stable voter set, or both old and new voter sets during joint consensus. It sends an explicit
 `ReadBarrierRequest` with a nonzero term-local context to every other active voter. Valid recipients
 adopt the request's current or newer leader term using the normal persist-before-response boundary
-and return an accepted response. A response from a higher term demotes the sender.
+and return an accepted response. The recipient rejects a source outside its active voter union
+before observing the request term; the learner exception for log and snapshot replication does not
+grant leadership-probe authority. A response from a higher term demotes the sender.
 
 The leader counts only accepted responses in its current term from the frozen configuration and for
 the exact pending context. Completion requires a stable majority or separate old and new
@@ -56,6 +58,7 @@ only an exact current pending term/context can complete.
 
 Invariants 4–6, 8, 14, and 18 apply. Focused tests cover the current-term commit prerequisite,
 context matching, apply gating, stable and frozen joint quorums, higher-term demotion, stale response
-rejection after reelection, recipient persistence, and single-voter completion. Production wire
+rejection after reelection, recipient persistence, nonvoter request rejection before higher-term
+observation, and single-voter completion. Production wire
 versioning, tablet snapshot acquisition, exhaustive schedules, partitions, duplication, restart,
 and long randomized simulation remain Phase 14 integration and hardening work.

@@ -79,7 +79,10 @@ damage is `CORRUPTION`; configured bound violations are `RESOURCE_EXHAUSTED`.
 The receiver rejects an unauthenticated peer before decoding, authorizes its stable principal for
 the claimed source node, exact-matches the destination to its local node, and only then calls the
 group-scoped durable runtime. The envelope does not replace the runtime's persist-before-send rule:
-outbound bytes are released only after any associated persistent transition has synchronized.
+outbound bytes are released only after any associated persistent transition has synchronized. The
+codec cannot establish group membership. At dispatch, the deterministic core admits read-barrier
+requests only from an active voter and performs that check before observing a higher term; the
+nonvoter learner exception remains limited to AppendEntries and snapshot requests.
 
 Minor-version compatibility is exact in v1. Reserved fields must remain zero until a later accepted
 version defines them.
