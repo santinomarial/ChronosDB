@@ -237,9 +237,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   delivery/loss/optional-duplication enumeration after a valid setup trace.
 - Extend the implemented hostile higher-term/payload-identity, pre-observation term/position/
   response-state, and exact compacted-prefix predecessor regression checks into exhaustive
-  persistence-before-response, sequence-exhaustion schedules, response-state, and broader snapshot-
-  boundary properties. Focused physical-sequence exhaustion coverage now proves a recovered
-  terminal identity fails closed before group term/vote/role mutation. Higher-term committed-log
+  persistence-before-response, broader sequence-exhaustion schedules, response-state, and broader
+  snapshot-boundary properties. Focused simulator recovery now preserves an exact terminal-term
+  image across restart and rejects another election before mutation. Focused physical-sequence
+  exhaustion coverage proves a recovered terminal identity fails closed before group term/vote/role
+  mutation. Higher-term committed-log
   overwrite coverage rejects both term replacement and matching-term divergent bytes before the
   same state changes. The exact snapshot-index-one alias now returns a negative conflict response
   without reading compacted storage, including a persistent higher-term/vote

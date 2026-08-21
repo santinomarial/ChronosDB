@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -75,6 +76,63 @@ TEST(DeterministicRaftSimulatorTest, InitializesAndRestartsFromAnExactEmptyDurab
   ASSERT_TRUE(simulation->step(RaftSimulationRestart{2U}).is_ok());
   ASSERT_NE(simulation->active_node(2U), nullptr);
   EXPECT_EQ(*simulation->durable_state(2U), empty);
+}
+
+TEST(DeterministicRaftSimulatorTest, InitializesAndRestartsFromRecoveredTermExhaustion) {
+  PersistentState recovered;
+  recovered.current_term = std::numeric_limits<Term>::max();
+  recovered.voted_for = 1U;
+  auto recovered_config = config();
+  recovered_config.node_ids = {1U};
+  recovered_config.initial_voters = {1U};
+  recovered_config.initial_persistent_states = {recovered};
+
+  auto simulation = DeterministicRaftSimulator::create(recovered_config);
+
+  ASSERT_TRUE(simulation.has_value()) << simulation.error().to_string();
+  ASSERT_NE(simulation->durable_state(1U), nullptr);
+  EXPECT_EQ(*simulation->durable_state(1U), recovered);
+  ASSERT_NE(simulation->active_node(1U), nullptr);
+  EXPECT_EQ(simulation->active_node(1U)->persistent_state(), recovered);
+  ASSERT_TRUE(simulation->step(RaftSimulationCrash{1U}).is_ok());
+  ASSERT_TRUE(simulation->step(RaftSimulationRestart{1U}).is_ok());
+  ASSERT_NE(simulation->active_node(1U), nullptr);
+  EXPECT_EQ(simulation->active_node(1U)->persistent_state(), recovered);
+
+  const common::Status exhausted = simulation->step(RaftSimulationStartElection{1U});
+
+  EXPECT_EQ(exhausted.code(), common::StatusCode::kOutOfRange);
+  ASSERT_NE(simulation->active_node(1U), nullptr);
+  EXPECT_EQ(simulation->active_node(1U)->role(), Role::kFollower);
+  EXPECT_EQ(simulation->active_node(1U)->persistent_state(), recovered);
+  EXPECT_EQ(*simulation->durable_state(1U), recovered);
+
+  recovered_config.initial_persistent_states.push_back(recovered);
+  auto mismatched = DeterministicRaftSimulator::create(recovered_config);
+  ASSERT_FALSE(mismatched.has_value());
+  EXPECT_EQ(mismatched.error().code(), common::StatusCode::kInvalidArgument);
+  recovered_config.initial_persistent_states.resize(1U);
+  recovered_config.initial_persistent_states.front().current_term = 0U;
+  auto invalid = DeterministicRaftSimulator::create(std::move(recovered_config));
+  ASSERT_FALSE(invalid.has_value());
+  EXPECT_EQ(invalid.error().code(), common::StatusCode::kInvalidArgument);
+}
+
+TEST(DeterministicRaftSimulatorTest, RejectsUnsafeRecoveredClusterImages) {
+  PersistentState first;
+  first.current_term = 1U;
+  first.log.push_back(LogEntry{1U, 1U, 1U, {std::byte{0x11U}}});
+  PersistentState second = first;
+  second.log.front().payload.front() = std::byte{0x22U};
+  auto recovered_config = config();
+  recovered_config.node_ids = {1U, 2U};
+  recovered_config.initial_voters = {1U, 2U};
+  recovered_config.initial_persistent_states = {std::move(first), std::move(second)};
+
+  auto simulation = DeterministicRaftSimulator::create(std::move(recovered_config));
+
+  ASSERT_FALSE(simulation.has_value());
+  EXPECT_EQ(simulation.error().code(), common::StatusCode::kCorruption);
 }
 
 TEST(DeterministicRaftSimulatorTest, ReplaysPartitionDuplicateCommitCrashAndPersistenceFailure) {

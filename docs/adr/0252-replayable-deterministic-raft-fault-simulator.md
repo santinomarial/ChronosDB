@@ -20,6 +20,12 @@ partition links, crash/restart nodes, fail the next persistent transition, apply
 membership, and complete or compact snapshots. Message delivery order is virtual network time:
 leaving a message queued delays it without consulting a wall clock.
 
+Configuration may start every node from canonical term-zero state or supply exactly one complete
+recovered persistent image per node in sorted node-ID order. Construction validates each image
+through the production core and then runs the cross-node safety checker before releasing the
+simulator. Crash/restart therefore uses the exact supplied durable image, including boundary states
+that cannot be reached economically by generating a trace from term zero.
+
 For each core transition, the simulator first checks virtual-network capacity and routes. If the
 transition contains persistent state, that complete state becomes the node's durable image before
 any outbound message is admitted. An armed persistence failure discards the transition's messages,
@@ -84,6 +90,9 @@ local snapshot compaction, shrink an irrelevant-prefix failure to one essential 
 exhaustively covers all delivery/loss prefixes through depth two, reports replay-bound truncation,
 rejects invalid setup, and retains a membership-removal stale-message failure for exact replay.
 Opt-in duplication exhausts all three depth-one outcomes and retains exact queue-exhaustion replay.
+Recovered-image coverage restarts a node at terminal term, rejects the next election without state
+mutation, rejects image-count mismatch and invalid local state, and rejects two individually valid
+images whose same-term log entries violate log matching.
 
 ## References
 

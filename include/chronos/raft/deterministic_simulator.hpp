@@ -114,6 +114,9 @@ struct RaftSimulationLimits {
 struct RaftSimulationConfig {
   std::vector<NodeId> node_ids;
   std::vector<NodeId> initial_voters;
+  // Empty starts every node from canonical term-zero state. Otherwise this vector contains one
+  // complete durable image per node, in the exact order of `node_ids`.
+  std::vector<PersistentState> initial_persistent_states;
   RaftSimulationLimits limits;
 };
 

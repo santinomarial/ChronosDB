@@ -459,6 +459,8 @@ DeterministicRaftSimulator::operator=(DeterministicRaftSimulator&&) noexcept = d
 common::Result<DeterministicRaftSimulator>
 DeterministicRaftSimulator::create(RaftSimulationConfig config) {
   if (!strictly_sorted_nodes(config.node_ids) || !strictly_sorted_nodes(config.initial_voters) ||
+      (!config.initial_persistent_states.empty() &&
+       config.initial_persistent_states.size() != config.node_ids.size()) ||
       config.limits.maximum_pending_messages == 0U || config.limits.maximum_trace_actions == 0U ||
       config.limits.maximum_shrink_replays == 0U)
     return common::make_unexpected(make_status(common::StatusCode::kInvalidArgument,
@@ -474,12 +476,16 @@ DeterministicRaftSimulator::create(RaftSimulationConfig config) {
   try {
     std::vector<Impl::NodeSlot> nodes;
     nodes.reserve(config.node_ids.size());
-    for (const NodeId id : config.node_ids) {
-      auto node = RaftNode::create(id, config.initial_voters, {}, config.limits.raft);
+    for (std::size_t index = 0U; index < config.node_ids.size(); ++index) {
+      const NodeId id = config.node_ids[index];
+      PersistentState durable = config.initial_persistent_states.empty()
+                                    ? PersistentState{}
+                                    : std::move(config.initial_persistent_states[index]);
+      auto node = RaftNode::create(id, config.initial_voters, durable, config.limits.raft);
       if (!node.has_value())
         return common::make_unexpected(node.error());
       nodes.push_back({.id = id,
-                       .durable = PersistentState{},
+                       .durable = std::move(durable),
                        .active = std::move(*node),
                        .pending_snapshot = std::nullopt,
                        .fail_next_persistence = false,

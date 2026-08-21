@@ -10,6 +10,12 @@ uses the production deterministic `RaftNode`; it does not contain a second conse
 Named schedule values keep width-compatible depth, replay, seed, and action limits from being
 transposed at a call site.
 
+`RaftSimulationConfig::initial_persistent_states` is either empty or owns one complete image for
+each sorted configured node. This permits direct recovery and exhaustion schedules without billions
+of setup actions. Construction still validates every image with `RaftNode::create` and checks the
+whole recovered cluster before returning, so violations recognized by the existing safety oracle
+fail before the first action.
+
 ## Data structures and ownership
 
 Each configured node has two distinct owners: an optional live core and a durable `PersistentState`
@@ -90,6 +96,9 @@ snapshot install, explicit joint membership and compaction, trace shrinking, and
 Focused exhaustive coverage enumerates all two-node election message delivery/loss prefixes through
 depth two, exhausts opt-in delivery/loss/duplication at depth one, retains exact duplicate queue-
 exhaustion replay, and retains an exact stale-message failure after membership removal.
+Recovered-state coverage preserves a terminal-term image across crash/restart, proves the next
+election fails without mutation, and rejects both malformed local images and cross-node log-
+matching violations before the first action.
 The production core additionally rejects AppendEntries predecessors below an
 installed snapshot without interpreting the compacted entry as retained log storage, and its
 higher-term regression requires persistence before the negative response. The same core serializes

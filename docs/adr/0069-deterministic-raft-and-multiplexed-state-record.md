@@ -221,5 +221,6 @@ loss, crash/restart, atomic full-state persistence faults, membership, snapshots
 replay, and bounded chunk-first deletion shrinking. Seeded schedules derive valid joint-membership
 begin/finalize and local snapshot-compaction candidates from current state and replay the generated
 churn exactly. It also exhaustively branches bounded delivery/loss suffixes plus opt-in duplication
-after valid setup traces. Broader exhaustive campaigns, clock changes, and physical log syscall
-faults remain deferred.
+after valid setup traces. Exact recovered per-node images now permit direct terminal-term restart
+schedules without generating unreachable-length prefixes. Broader exhaustive campaigns, clock
+changes, and physical log syscall faults remain deferred.
