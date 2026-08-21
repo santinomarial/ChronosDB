@@ -447,9 +447,6 @@ common::Result<RaftNode> RaftNode::create(const NodeId node_id, std::vector<Node
   if (persistent.log.size() > limits.maximum_log_entries) {
     return common::make_unexpected(invalid("Raft persistent log exceeds configured capacity"));
   }
-  if (!persistent_state_fits(persistent.snapshot.voters.size(), persistent.log, limits).is_ok()) {
-    return common::make_unexpected(invalid("Raft persistent state exceeds configured capacity"));
-  }
   const LogIndex last = persistent.log.empty() ? persistent.snapshot.last_included_index
                                                : persistent.log.back().index;
   std::vector<NodeId> base_voters = voters;
@@ -462,6 +459,9 @@ common::Result<RaftNode> RaftNode::create(const NodeId node_id, std::vector<Node
     if (!valid_snapshot(persistent.snapshot, limits.maximum_voters)) {
       return common::make_unexpected(invalid("Raft snapshot membership checkpoint is invalid"));
     }
+  }
+  if (!persistent_state_fits(persistent.snapshot.voters.size(), persistent.log, limits).is_ok()) {
+    return common::make_unexpected(invalid("Raft persistent state exceeds configured capacity"));
   }
   auto membership = derive_membership(base_voters, persistent.log, persistent.commit_index, limits);
   if (!membership.has_value()) {

@@ -266,8 +266,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   Node construction now also exact-bounds `maximum_voters` to the membership command's `u16`
   representation; broader hostile limit combinations remain part of exhaustive configuration tests.
   Core recovery and every log- or snapshot-changing transition now enforce the exact aggregate
-  persistent-state payload budget before mutation; exhaustive mixed append/replacement/compaction
-  boundary generation remains deferred. Read-barrier requests now require an active-voter source
+  persistent-state payload budget before mutation. Legacy snapshot recovery now performs voter
+  backfill before that check and covers the first rejected and exact accepted canonical sizes;
+  exhaustive mixed append/replacement/compaction boundary generation remains deferred. Read-
+  barrier requests now require an active-voter source
   before term observation. Focused stable- and joint-membership allocation sweeps now prove barrier
   issuance publishes neither pending ownership nor its next context until the exact complete probe
   batch is owned. A focused joint-quorum response sweep proves acknowledgement allocation failure

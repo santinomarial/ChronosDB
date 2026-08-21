@@ -175,6 +175,28 @@ TEST(RaftNodeTest, RejectsPersistentSnapshotNewerThanCurrentTerm) {
   EXPECT_EQ(node.error().code(), common::StatusCode::kInvalidArgument);
 }
 
+TEST(RaftNodeTest, BoundsLegacySnapshotVoterBackfillByCanonicalPersistentSize) {
+  PersistentState state{};
+  state.current_term = 1U;
+  state.snapshot.last_included_index = 1U;
+  state.snapshot.last_included_term = 1U;
+  state.snapshot.manifest_generation = 1U;
+  state.commit_index = 1U;
+  state.applied_index = 1U;
+  RaftLimits limits{};
+  limits.maximum_persistent_state_bytes = kRaftPersistentStateFixedSizeV1 + 2U * sizeof(NodeId);
+
+  auto rejected = RaftNode::create(1U, {1U, 2U, 3U}, state, limits);
+
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+
+  limits.maximum_persistent_state_bytes += sizeof(NodeId);
+  auto exact = RaftNode::create(1U, {1U, 2U, 3U}, std::move(state), limits);
+  ASSERT_TRUE(exact.has_value()) << exact.error().to_string();
+  EXPECT_EQ(exact->persistent_state().snapshot.voters, (std::vector<NodeId>{1U, 2U, 3U}));
+}
+
 TEST(RaftNodeTest, RejectsUnencodableMembershipVoterLimitAtConstruction) {
   RaftLimits limits{};
   limits.maximum_voters = kMaximumMembershipVoters + 1U;

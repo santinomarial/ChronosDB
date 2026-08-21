@@ -33,6 +33,9 @@ fixed state, snapshot voters, retained entry framing, and entry payloads. Recove
 snapshot-changing transition must fit that budget before any persistent or volatile core state
 changes. A capacity rejection is therefore retryable after compaction and cannot create state that
 the full-state codec will reject only after mutation.
+Recovery canonicalizes a nonempty legacy snapshot with no encoded voter checkpoint by copying the
+bootstrap voters first, then applies the aggregate byte bound to that canonical state. The legacy
+input shape cannot bypass the bytes that its minor-1 durable replacement will encode.
 
 Every canonical higher-term response prepares an exact copy of its post-term persistent state
 before changing term, vote, role, leader identity, replication state, or pending work. Allocation
@@ -141,7 +144,9 @@ replication/commit, failover, stale-term rejection, restart catch-up, independen
 different leaders, node loss, reopen, metadata order, record round trip, and corruption. Focused disk
 tests additionally cover rotation, reopen, explicit incomplete-tail repair, and corruption
 rejection. An entry that individually meets the entry limit but would exceed the aggregate record
-budget is rejected with exact state preservation. Recovery validation also rejects an installed
+budget is rejected with exact state preservation. Recovery also rejects legacy snapshot-voter
+backfill when the canonical checkpoint exceeds the payload budget and accepts its exact boundary.
+Recovery validation additionally rejects an installed
 snapshot term above current term before a node can emit messages from impossible history. Focused
 coverage rejects term-zero votes and every
 nonzero external identity tested on an empty snapshot. Randomized simulation, partitions,

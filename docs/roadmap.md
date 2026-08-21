@@ -793,7 +793,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   leader catch-up while rejecting unproven nonvoter heartbeats.
   Exact full-state payload accounting now bounds the aggregate snapshot voters, retained-entry
   framing, and payload bytes on recovery and before every log- or snapshot-changing transition, so
-  an individually legal entry cannot create an unencodable persistent state.
+  an individually legal entry cannot create an unencodable persistent state. Recovery fills a
+  legacy nonempty snapshot's missing voter checkpoint before applying that bound, so canonicalizing
+  old state cannot create an over-budget replacement.
   Focused 3-node election, commit, failover, stale leader, restart catch-up, and membership tests
   pass. A two-stage snapshot protocol now withholds acknowledgment until external application
   installation is confirmed and the compacted Raft state is synchronized. AppendEntries

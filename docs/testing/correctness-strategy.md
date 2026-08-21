@@ -398,6 +398,10 @@ matrices and exhaustive bounded schedule enumeration remain deferred.
 Failure minimization deletes deterministic coarse chunks before refining toward individual actions,
 preserves the original status-code oracle, and respects the configured candidate-replay limit.
 
+Raft recovery payload-bound coverage supplies a nonempty legacy snapshot with no voter checkpoint.
+Backfilling three bootstrap voters must reject a budget that can encode only two and accept the
+exact next eight-byte boundary, proving validation measures the canonical recovered state.
+
 Applied-index allocation coverage starts with two committed, unapplied entries and fails every owned
 copy of the first post-apply persistent state. Each failure must return `RESOURCE_EXHAUSTED`, retain
 both entries in `committed_unapplied()`, and preserve the exact persistent state; the same index must

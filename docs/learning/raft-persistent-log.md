@@ -21,6 +21,9 @@ configuration limits total segments, records, and recovered groups. Public heade
 types. Minor-1 persistent-state payload accounting is exact:
 `112 + 8 * snapshot_voters + sum(32 + entry_payload_bytes)`. The core checks that aggregate rather
 than relying only on per-entry and entry-count bounds.
+Legacy snapshots without an encoded voter checkpoint are canonicalized from bootstrap membership
+before that accounting runs. This prevents a minor-0-shaped input from passing a smaller check and
+then becoming an over-budget minor-1 state once its voters are owned in memory.
 
 ## Ownership, lifetime, and synchronization
 
@@ -85,7 +88,8 @@ configuration.
 The durable owner also derives a per-group state budget from the segment target by subtracting the
 segment header and record header/trailer. The core applies the resulting smaller of the configured
 and physical budgets to recovery, proposals, follower suffix replacement, membership commands,
-leader no-ops, snapshot completion, and compaction before changing state.
+leader no-ops, snapshot completion, and compaction before changing state. Recovery includes any
+bootstrap voters added while canonicalizing a legacy nonempty snapshot.
 The durable batch owner applies that rule cumulatively before dispatch. Observation, applied-index,
 and local-compaction operations reserve no outbound messages; snapshot completion reserves one;
 every other operation reserves the configured maximum core fanout. Capacity rejection is

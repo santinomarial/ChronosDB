@@ -51,6 +51,9 @@ this aggregate bound to recovered state and every transition that can replace a 
 append, or replace log entries. Capacity failure is reported before term, vote, log, commit, apply,
 snapshot, role, or pending-install state can change. The default payload budget is the 16 MiB record
 limit less the 64-byte record header and 4-byte trailer.
+When a legacy nonempty snapshot has no encoded voter checkpoint, semantic recovery first copies the
+bootstrap voters into the canonical snapshot and then evaluates this minor-1 size formula. Budget
+validation therefore includes every voter that a subsequent full-state record must encode.
 
 Logical entry type `253` is the Raft leader progress no-op. Its payload must be empty. Types `254`
 and `255` contain [Raft Membership Command v1](raft-membership-command-v1.md) joint and final
@@ -63,7 +66,7 @@ payload and full-record integrity, required-zero bytes, bounded entry count, and
 `RaftNode::create` performs the semantic validation: contiguous logical indexes, bounded entries,
 snapshot and retained-log terms no greater than the current term, valid vote/snapshot state,
 logical and snapshot indexes below the reserved `UINT64_MAX`, canonical term-zero and empty-snapshot
-state, bounded checkpoint voters, and
+state, bounded checkpoint voters, canonical post-legacy-backfill payload size, and
 `applied <= commit <= last`.
 
 ## Segment v1 envelope
