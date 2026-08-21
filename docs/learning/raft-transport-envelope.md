@@ -121,6 +121,11 @@ payloads because the runtime owns messages beyond a network read buffer's lifeti
 adds one exact frame allocation after fixed-header validation; the default 64 MiB limit therefore
 requires a separate carrier-wide admission budget.
 
+The transport cases in `chronos_raft_benchmarks` isolate canonical encode from checked owned decode
+for fixed, heartbeat, small-entry, batched-entry, and snapshot-metadata shapes. Frame-byte counters
+include the complete header, payload, and trailer. Local throughput is diagnostic until a complete
+benchmark-contract artifact records host, build, repetitions, allocations, and resource use.
+
 The separate envelope keeps clocks, retry, TLS, and descriptors out of the consensus core. It costs
 one outer CRC pass and can reject a core-produced append batch that exceeds its configured transport
 bound; explicit batching is preferable to unbounded socket ownership.

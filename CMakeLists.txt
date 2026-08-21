@@ -2194,6 +2194,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
   add_executable(
     chronos_raft_benchmarks
     benchmarks/raft/deterministic_simulator_benchmark.cpp
+    benchmarks/raft/transport_codec_benchmark.cpp
   )
   set_target_properties(chronos_raft_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_raft_benchmarks PRIVATE cxx_std_23)

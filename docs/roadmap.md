@@ -858,7 +858,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   traces, including the terminal failing action, while effect counters remain distinct. A local
   benchmark target now times seeded generation and fixed-trace replay, with the safety oracle
   enabled, for declared three- and five-voter topologies; it publishes no baseline and leaves the
-  wider measurement gate open. Simulations may begin from
+  wider measurement gate open. Canonical Raft envelope encode and checked owned decode now have
+  separate local cases for fixed, heartbeat, small/batched AppendEntries, and snapshot-metadata
+  shapes, also without a published baseline. Simulations may begin from
   exact per-node recovered persistent images; a combined terminal-term and terminal-index schedule
   proves proposals and post-restart elections fail without mutation. Deeper mixed-action campaigns,
   broader application payload domains, clock changes, physical-log faults, and the full exit evidence

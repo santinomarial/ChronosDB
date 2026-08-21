@@ -119,6 +119,65 @@ TEST(RaftTransportCodecTest, RoundTripsEveryCurrentMessageWithExactRouteIdentity
   }
 }
 
+TEST(RaftTransportCodecTest, RoundTripsEveryDeclaredBenchmarkWorkload) {
+  const RaftTransportEnvelope vote = envelope(RequestVoteResponse{.term = 4U, .granted = true});
+  auto vote_bytes = encode_raft_transport_envelope_v1(vote);
+  ASSERT_TRUE(vote_bytes.has_value()) << vote_bytes.error().to_string();
+  EXPECT_EQ(vote_bytes->size(), 116U);
+  auto decoded_vote = decode_raft_transport_envelope_v1(*vote_bytes);
+  ASSERT_TRUE(decoded_vote.has_value()) << decoded_vote.error().to_string();
+  EXPECT_EQ(*decoded_vote, vote);
+
+  const std::array<std::array<std::size_t, 3U>, 3U> append_shapes{
+      std::array<std::size_t, 3U>{0U, 0U, 148U},
+      std::array<std::size_t, 3U>{1U, 128U, 300U},
+      std::array<std::size_t, 3U>{32U, 4'096U, 131'988U},
+  };
+  for (const auto& [entry_count, payload_bytes, expected_frame_bytes] : append_shapes) {
+    std::vector<LogEntry> entries;
+    entries.reserve(entry_count);
+    for (std::size_t ordinal = 0U; ordinal < entry_count; ++ordinal) {
+      std::vector<std::byte> payload(payload_bytes);
+      for (std::size_t offset = 0U; offset < payload.size(); ++offset)
+        payload[offset] = static_cast<std::byte>((ordinal * 131U + offset * 17U) & 0xffU);
+      entries.push_back({.index = static_cast<LogIndex>(ordinal) + 8U,
+                         .term = 4U,
+                         .type = static_cast<std::uint8_t>(ordinal % 253U + 1U),
+                         .payload = std::move(payload)});
+    }
+    const RaftTransportEnvelope expected = envelope(AppendEntriesRequest{
+        .term = 4U,
+        .leader_id = 1U,
+        .previous_log_index = 7U,
+        .previous_log_term = 3U,
+        .entries = std::move(entries),
+        .leader_commit = 7U,
+    });
+    auto encoded = encode_raft_transport_envelope_v1(expected);
+    ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+    EXPECT_EQ(encoded->size(), expected_frame_bytes);
+    auto decoded = decode_raft_transport_envelope_v1(*encoded);
+    ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+    EXPECT_EQ(*decoded, expected);
+  }
+
+  for (const std::size_t voter_count : {3U, 5U}) {
+    SnapshotMetadata metadata = snapshot();
+    metadata.configuration_index = 7U;
+    metadata.voters.clear();
+    for (std::size_t ordinal = 0U; ordinal < voter_count; ++ordinal)
+      metadata.voters.push_back(static_cast<NodeId>(ordinal) + 1U);
+    const RaftTransportEnvelope expected =
+        envelope(InstallSnapshotRequest{.term = 4U, .leader_id = 1U, .snapshot = metadata});
+    auto encoded = encode_raft_transport_envelope_v1(expected);
+    ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+    EXPECT_EQ(encoded->size(), 188U + voter_count * sizeof(NodeId));
+    auto decoded = decode_raft_transport_envelope_v1(*encoded);
+    ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+    EXPECT_EQ(*decoded, expected);
+  }
+}
+
 TEST(RaftTransportCodecTest, RejectsNoncanonicalAppendResponseState) {
   const std::vector<Message> malformed{
       AppendEntriesResponse{4U, false, 12U, 5U, 7U},

@@ -40,6 +40,11 @@ This decision does not yet provide connection pooling, election timers, retransm
 Raft socket scheduling, or automatic metadata routing. Those owners compose above the codec without
 changing deterministic state-machine semantics.
 
+The `chronos_raft_benchmarks` target measures canonical encode and checked owned decode separately
+for a fixed vote response, empty/small/batched AppendEntries, and three-/five-voter snapshot
+metadata. It includes every v1 checksum but excludes carrier, persistence, fsync, and snapshot-byte
+transfer cost. The harness publishes no baseline or optimization claim.
+
 ## Validation
 
 Focused tests round-trip all eight message kinds with exact route identity, carry a conflict-repair
@@ -55,7 +60,8 @@ with exact corruption, unsupported, or resource classification. A bounded struct
 libFuzzer target drives raw bytes, all eight canonical variants, repaired mutations, fragmented
 reading, and write-cursor validation under ASan/UBSan. Cross-compiler golden fixtures, sustained
 fuzzing, authenticated carrier integration, mixed-version processes, and network fault simulation
-remain in the Phase 18 ledger.
+remain in the Phase 18 ledger. A focused regression exact-round-trips every fixed shape declared by
+the transport codec benchmark.
 
 **Retrospective note (2026-08-12):** [ADR 0245](0245-bounded-raft-transport-partial-io.md) adds the
 header-first reader and owning short-write cursor without changing the v1 bytes. [ADR 0246](0246-authenticated-raft-transport-receiver.md)

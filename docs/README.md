@@ -201,6 +201,8 @@ existence of a design document alone is not implementation evidence.
   codec/queue and Ubuntu epoll measurements with raw repetitions and applicability limits.
 - [Raft simulator rate harness](benchmarks/raft-simulator.md): fixed three- and five-voter seeded
   generation and replay workloads with the safety oracle enabled.
+- [Raft transport codec harness](benchmarks/raft-transport.md): canonical fixed, AppendEntries, and
+  snapshot-metadata encode/decode workloads with exact frame-byte accounting.
 - [ChronosBench](benchmarks/chronosbench.md): planned correctness-checked workload scenarios.
 
 ## Reviews
