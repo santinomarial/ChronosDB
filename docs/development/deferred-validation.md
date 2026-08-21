@@ -282,6 +282,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   fails before term, vote, role, pending-work, or replication-state publication.
   A five-voter same-term vote-response sweep now proves failed acknowledgement, leader-map, and
   heartbeat allocations publish neither the vote nor partial leadership before exact retry.
+  Five-voter successful and rejected AppendEntries-response sweeps now prove follower progress,
+  commit, derived membership state, and retry rewinds remain unpublished until their persistent
+  state and complete outbound batches are owned. Membership-removal allocation schedules remain
+  deferred.
   High-contention schedules remain deferred. An otherwise nonvoter AppendEntries source must now be
   established by a matching valid candidate suffix before term observation, while the new-only-
   leader catch-up case remains accepted; broader membership-transition and snapshot source-

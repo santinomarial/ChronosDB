@@ -47,6 +47,11 @@ While candidate acknowledgements do not change persistent state, they obey the s
 transition boundary: the replacement vote set and, at quorum, every leader replication map and
 initial heartbeat are owned before candidacy changes. Resource exhaustion therefore neither leaks
 a counted vote nor exposes partially initialized leadership.
+AppendEntries acknowledgements extend that boundary to follower progress and commit. The leader
+prepares replacement match/next maps, derives any newly committed membership, copies the exact
+post-commit durable state, and constructs every resulting replication message before publication.
+A failed rejection retry similarly leaves its prior next index intact. The durable owner therefore
+never receives an error after an unreported commit mutation.
 
 The maximum physical sequence is a terminal record identity. Once recovered or emitted, the
 Multi-Raft owner rejects and fails closed before invoking another deterministic group transition;

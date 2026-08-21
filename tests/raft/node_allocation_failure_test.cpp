@@ -28,6 +28,46 @@ namespace {
   return std::move(*leader);
 }
 
+[[nodiscard]] RaftNode leader_with_two_pending_entries() {
+  RaftLimits limits;
+  limits.maximum_append_entries = 1U;
+  auto leader = RaftNode::create(1U, {1U, 2U, 3U, 4U, 5U}, {}, limits);
+  EXPECT_TRUE(leader.has_value());
+  EXPECT_TRUE(leader->start_election().has_value());
+  EXPECT_TRUE(leader->receive(4U, RequestVoteResponse{1U, true}).has_value());
+  EXPECT_TRUE(leader->receive(5U, RequestVoteResponse{1U, true}).has_value());
+  EXPECT_EQ(leader->role(), Role::kLeader);
+  EXPECT_TRUE(leader->propose(1U, {std::byte{0x41U}}).has_value());
+  EXPECT_TRUE(leader->propose(1U, {std::byte{0x42U}}).has_value());
+  return std::move(*leader);
+}
+
+[[nodiscard]] const AppendEntriesRequest* append_request_for(const Transition& transition,
+                                                             const NodeId destination) {
+  const auto found =
+      std::ranges::find(transition.outbound, destination, &OutboundMessage::destination);
+  if (found == transition.outbound.end())
+    return nullptr;
+  return std::get_if<AppendEntriesRequest>(&found->message);
+}
+
+struct ExpectedAppend {
+  LogIndex previous{};
+  LogIndex entry_index{};
+  LogIndex commit_index{};
+};
+
+void expect_single_append(const Transition& transition, const NodeId destination,
+                          const ExpectedAppend expected) {
+  ASSERT_EQ(transition.outbound.size(), 1U);
+  const AppendEntriesRequest* request = append_request_for(transition, destination);
+  ASSERT_NE(request, nullptr);
+  EXPECT_EQ(request->previous_log_index, expected.previous);
+  ASSERT_EQ(request->entries.size(), 1U);
+  EXPECT_EQ(request->entries.front().index, expected.entry_index);
+  EXPECT_EQ(request->leader_commit, expected.commit_index);
+}
+
 [[nodiscard]] std::uint64_t read_context(const Transition& transition) {
   EXPECT_FALSE(transition.outbound.empty());
   const auto* request = std::get_if<ReadBarrierRequest>(&transition.outbound.front().message);
@@ -313,6 +353,115 @@ TEST(RaftNodeAllocationFailureTest,
     auto retry = node.receive(2U, RequestVoteResponse{1U, true});
     ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
     expect_vote_quorum_transition(node, *retry, before);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest,
+     SuccessfulAppendResponsePreservesProgressAndCommitUntilPublication) {
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    RaftNode leader = leader_with_two_pending_entries();
+    auto first = leader.receive(3U, AppendEntriesResponse{1U, true, 1U, std::nullopt, 0U});
+    ASSERT_TRUE(first.has_value()) << first.error().to_string();
+    ASSERT_EQ(leader.commit_index(), 0U);
+    const PersistentState before = leader.persistent_state();
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(leader.receive(2U, AppendEntriesResponse{1U, true, 1U, std::nullopt, 0U}));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      EXPECT_EQ(leader.commit_index(), 1U);
+      ASSERT_TRUE((**result).persistent_state.has_value());
+      EXPECT_EQ((**result).advanced_commit_index, 1U);
+      EXPECT_EQ((**result).outbound.size(), 4U);
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(leader.role(), Role::kLeader);
+    EXPECT_EQ(leader.current_term(), 1U);
+    EXPECT_EQ(leader.leader_id(), 1U);
+    EXPECT_EQ(leader.commit_index(), 0U);
+    EXPECT_EQ(leader.persistent_state(), before);
+
+    auto heartbeat = leader.heartbeat();
+    ASSERT_TRUE(heartbeat.has_value()) << heartbeat.error().to_string();
+    const AppendEntriesRequest* unchanged = append_request_for(*heartbeat, 2U);
+    ASSERT_NE(unchanged, nullptr);
+    EXPECT_EQ(unchanged->previous_log_index, 0U);
+    ASSERT_EQ(unchanged->entries.size(), 1U);
+    EXPECT_EQ(unchanged->entries.front().index, 1U);
+    EXPECT_EQ(unchanged->leader_commit, 0U);
+
+    auto retry = leader.receive(2U, AppendEntriesResponse{1U, true, 1U, std::nullopt, 0U});
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    EXPECT_EQ(leader.commit_index(), 1U);
+    EXPECT_EQ(retry->advanced_commit_index, 1U);
+    EXPECT_EQ(retry->outbound.size(), 4U);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest, RejectedAppendResponsePreservesProgressUntilRetryPublication) {
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 64U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    RaftNode leader = leader_with_two_pending_entries();
+    auto advanced = leader.receive(2U, AppendEntriesResponse{1U, true, 1U, std::nullopt, 0U});
+    ASSERT_TRUE(advanced.has_value()) << advanced.error().to_string();
+    expect_single_append(*advanced, 2U, ExpectedAppend{1U, 2U, 0U});
+    const PersistentState before = leader.persistent_state();
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(leader.receive(2U, AppendEntriesResponse{1U, false, 0U, std::nullopt, 1U}));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      expect_single_append(**result, 2U, ExpectedAppend{0U, 1U, 0U});
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(leader.role(), Role::kLeader);
+    EXPECT_EQ(leader.commit_index(), 0U);
+    EXPECT_EQ(leader.persistent_state(), before);
+
+    auto heartbeat = leader.heartbeat();
+    ASSERT_TRUE(heartbeat.has_value()) << heartbeat.error().to_string();
+    const AppendEntriesRequest* unchanged = append_request_for(*heartbeat, 2U);
+    ASSERT_NE(unchanged, nullptr);
+    EXPECT_EQ(unchanged->previous_log_index, 1U);
+    ASSERT_EQ(unchanged->entries.size(), 1U);
+    EXPECT_EQ(unchanged->entries.front().index, 2U);
+
+    auto retry = leader.receive(2U, AppendEntriesResponse{1U, false, 0U, std::nullopt, 1U});
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    expect_single_append(*retry, 2U, ExpectedAppend{0U, 1U, 0U});
   }
   EXPECT_GT(failure_count, 0U);
   EXPECT_TRUE(reached_success);

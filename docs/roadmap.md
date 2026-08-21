@@ -864,6 +864,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   and any immediate-leader replication maps before publishing the new term or role.
   Candidate vote responses now prepare the replacement acknowledgement set and, at quorum, every
   leader replication map and initial heartbeat before publishing the vote or leadership.
+  AppendEntries responses now prepare replacement follower progress and any derived membership,
+  durable commit state, leader removal, and complete replication batch before publication.
   A bounded generation-tagged monotonic timer scheduler now emits election and heartbeat actions,
   retries rejected admission without shifting deadlines, and rejects stale completion rearming;
   its bounded driver now composes those actions with ordered asynchronous durable observations and

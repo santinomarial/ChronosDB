@@ -58,6 +58,13 @@ the grant completes a quorum, it also owns the complete leader replication maps 
 heartbeat batch. Allocation failure leaves that voter uncounted and the candidate unchanged, so an
 exact retry cannot inherit partial leadership state.
 
+Leader AppendEntries-response handling is also prepare-before-publish. A successful response owns
+replacement match/next progress before deciding commit; if it advances commit, the core additionally
+owns the derived membership, exact post-commit persistent state, adjusted replication maps, and
+complete broadcast batch. A rejection owns its replacement next index and retry message together.
+Allocation failure therefore publishes neither follower progress nor a durable commit, membership
+change, leader removal, or retry rewind without the matching complete transition.
+
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
 record boundary is [`multiplexed-raft-log-v1.md`](../formats/multiplexed-raft-log-v1.md). A dedicated
@@ -102,6 +109,10 @@ publishes the complete expected transition.
 A five-voter vote-response sweep distinguishes a failed acknowledgement from a leaked one: a
 different single grant remains below quorum after failure, while retrying the original grant
 publishes complete leadership and all initial heartbeats.
+Five-voter AppendEntries-response sweeps cover successful progress through commit and rejected
+progress through rewind. Heartbeat output proves every failed allocation preserves the prior
+per-follower position; commit state remains byte-for-byte unchanged until its persistent state and
+complete broadcast are owned.
 
 **Retrospective note (2026-08-12):** [ADR 0252](0252-replayable-deterministic-raft-fault-simulator.md)
 now supplies bounded explicit and seeded schedules for partitions, delay/reordering, duplication,

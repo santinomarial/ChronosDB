@@ -276,8 +276,10 @@ public:
     }
   }
 
-  [[nodiscard]] Message replication_for(const NodeId peer) const {
-    const LogIndex next = next_index.at(peer);
+  [[nodiscard]] Message replication_for(const NodeId peer,
+                                        const std::map<NodeId, LogIndex>& prepared_next_index,
+                                        const LogIndex leader_commit) const {
+    const LogIndex next = prepared_next_index.at(peer);
     if (next <= state.snapshot.last_included_index)
       return InstallSnapshotRequest{state.current_term, id, state.snapshot};
     const LogIndex previous = next - 1U;
@@ -289,8 +291,12 @@ public:
       entries.insert(entries.end(), state.log.begin() + static_cast<std::ptrdiff_t>(begin),
                      state.log.begin() + static_cast<std::ptrdiff_t>(begin + count));
     }
-    return AppendEntriesRequest{state.current_term, id, previous, previous_term, std::move(entries),
-                                state.commit_index};
+    return AppendEntriesRequest{state.current_term, id,           previous, previous_term,
+                                std::move(entries), leader_commit};
+  }
+
+  [[nodiscard]] Message replication_for(const NodeId peer) const {
+    return replication_for(peer, next_index, state.commit_index);
   }
 
   void append_to_all(Transition& transition) const {
@@ -659,6 +665,7 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
   Transition transition;
   const bool request_vote_request = std::holds_alternative<RequestVoteRequest>(message);
   const bool request_vote_response = std::holds_alternative<RequestVoteResponse>(message);
+  const bool append_entries_response = std::holds_alternative<AppendEntriesResponse>(message);
   const bool read_barrier_request = std::holds_alternative<ReadBarrierRequest>(message);
   const bool response_message = std::holds_alternative<RequestVoteResponse>(message) ||
                                 std::holds_alternative<AppendEntriesResponse>(message) ||
@@ -670,6 +677,16 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
   std::set<NodeId> prepared_response_votes;
   std::map<NodeId, LogIndex> prepared_response_next_index;
   std::map<NodeId, LogIndex> prepared_response_match_index;
+  bool prepared_append_response = false;
+  bool prepared_append_commit = false;
+  bool prepared_append_step_down = false;
+  common::Status prepared_append_status = common::Status::ok();
+  std::optional<PersistentState> prepared_append_state;
+  std::vector<NodeId> prepared_append_committed_voters;
+  std::vector<NodeId> prepared_append_voters;
+  std::optional<JointConfiguration> prepared_append_joint;
+  std::map<NodeId, LogIndex> prepared_append_next_index;
+  std::map<NodeId, LogIndex> prepared_append_match_index;
   if (request_vote_request || read_barrier_request || response_message) {
     try {
       if (request_vote_request) {
@@ -722,6 +739,113 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
           }
         }
       }
+      if (append_entries_response) {
+        const AppendEntriesResponse& response = std::get<AppendEntriesResponse>(message);
+        if (response.term == impl_->state.current_term && impl_->role == Role::kLeader) {
+          prepared_append_next_index = impl_->next_index;
+          prepared_append_match_index = impl_->match_index;
+          const auto next_position = prepared_append_next_index.find(source);
+          const auto match_position = prepared_append_match_index.find(source);
+          if (next_position == prepared_append_next_index.end() ||
+              match_position == prepared_append_match_index.end()) {
+            prepared_append_status =
+                corruption("prepared Raft replication progress is unavailable");
+          } else if (response.success) {
+            match_position->second = std::max(match_position->second, response.match_index);
+            next_position->second = match_position->second + 1U;
+
+            std::optional<LogIndex> commit_index;
+            const auto replicated = [&](const NodeId node) {
+              const auto found = prepared_append_match_index.find(node);
+              return found != prepared_append_match_index.end() &&
+                     found->second >= commit_index.value();
+            };
+            for (LogIndex candidate = impl_->last_index(); candidate > impl_->state.commit_index;
+                 --candidate) {
+              if (impl_->term_at(candidate) != impl_->state.current_term)
+                continue;
+              commit_index = candidate;
+              const std::optional<JointConfiguration>& joint_state = impl_->joint;
+              const bool quorum = joint_state.has_value()
+                                      ? Impl::has_majority(joint_state->old_voters, replicated) &&
+                                            Impl::has_majority(joint_state->new_voters, replicated)
+                                      : Impl::has_majority(impl_->committed_voters, replicated);
+              if (quorum)
+                break;
+              commit_index.reset();
+            }
+
+            if (commit_index.has_value()) {
+              auto membership = derive_membership(impl_->base_voters, impl_->state.log,
+                                                  commit_index.value(), impl_->limits);
+              if (!membership.has_value()) {
+                prepared_append_status = membership.error();
+              } else {
+                prepared_append_state.emplace(impl_->state);
+                prepared_append_state->commit_index = commit_index.value();
+                prepared_append_committed_voters = std::move(membership->committed_voters);
+                prepared_append_voters = std::move(membership->active_voters);
+                prepared_append_joint = std::move(membership->joint);
+
+                for (auto iterator = prepared_append_next_index.begin();
+                     iterator != prepared_append_next_index.end();) {
+                  if (!std::ranges::binary_search(prepared_append_voters, iterator->first)) {
+                    prepared_append_match_index.erase(iterator->first);
+                    iterator = prepared_append_next_index.erase(iterator);
+                  } else {
+                    ++iterator;
+                  }
+                }
+                for (const NodeId member : prepared_append_voters) {
+                  if (!prepared_append_next_index.contains(member)) {
+                    prepared_append_next_index.emplace(
+                        member, member == impl_->id ? impl_->last_index() + 1U : 1U);
+                    prepared_append_match_index.emplace(
+                        member, member == impl_->id ? impl_->last_index() : 0U);
+                  }
+                }
+
+                transition.outbound.reserve(prepared_append_voters.size() - 1U);
+                for (const NodeId peer : prepared_append_voters) {
+                  if (peer != impl_->id) {
+                    transition.outbound.push_back(OutboundMessage{
+                        peer, impl_->replication_for(peer, prepared_append_next_index,
+                                                     commit_index.value())});
+                  }
+                }
+                transition.advanced_commit_index = commit_index;
+                transition.persistent_state.emplace(prepared_append_state.value());
+                prepared_append_step_down =
+                    !std::ranges::binary_search(prepared_append_voters, impl_->id);
+                prepared_append_commit = true;
+              }
+            } else if (next_position->second <= impl_->last_index()) {
+              transition.outbound.reserve(1U);
+              transition.outbound.push_back(
+                  OutboundMessage{source, impl_->replication_for(source, prepared_append_next_index,
+                                                                 impl_->state.commit_index)});
+            }
+          } else {
+            LogIndex next = response.conflict_index == 0U ? 1U : response.conflict_index;
+            if (response.conflict_term.has_value()) {
+              for (const LogEntry& entry : impl_->state.log | std::views::reverse) {
+                if (entry.term == *response.conflict_term) {
+                  next = entry.index + 1U;
+                  break;
+                }
+              }
+            }
+            next_position->second =
+                std::max<LogIndex>(1U, std::min(next, impl_->last_index() + 1U));
+            transition.outbound.reserve(1U);
+            transition.outbound.push_back(
+                OutboundMessage{source, impl_->replication_for(source, prepared_append_next_index,
+                                                               impl_->state.commit_index)});
+          }
+          if (prepared_append_status.is_ok())
+            prepared_append_response = true;
+        }
+      }
       if (read_barrier_request)
         transition.outbound.reserve(1U);
       if (message_term > impl_->state.current_term || prepared_vote_granted) {
@@ -741,6 +865,8 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
           exhausted("Raft receive transition preparation exceeds container limits"));
     }
   }
+  if (!prepared_append_status.is_ok())
+    return common::make_unexpected(prepared_append_status);
 
   bool persistence_changed = false;
   if (message_term > impl_->state.current_term) {
@@ -838,33 +964,22 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
               value.term != impl_->state.current_term) {
             return common::Status::ok();
           }
-          if (value.success) {
-            impl_->match_index[source] = std::max(impl_->match_index[source], value.match_index);
-            impl_->next_index[source] = impl_->match_index[source] + 1U;
-            auto advanced = impl_->advance_commit(transition);
-            if (!advanced.has_value())
-              return advanced.error();
-            if (*advanced) {
-              persistence_changed = true;
-              impl_->append_to_all(transition);
-              impl_->step_down_if_removed();
-            } else if (impl_->next_index[source] <= impl_->last_index()) {
-              transition.outbound.push_back(
-                  OutboundMessage{source, impl_->replication_for(source)});
-            }
-          } else {
-            LogIndex next = value.conflict_index == 0U ? 1U : value.conflict_index;
-            if (value.conflict_term.has_value()) {
-              for (const LogEntry& entry : impl_->state.log | std::views::reverse) {
-                if (entry.term == *value.conflict_term) {
-                  next = entry.index + 1U;
-                  break;
-                }
-              }
-            }
-            impl_->next_index[source] =
-                std::max<LogIndex>(1U, std::min(next, impl_->last_index() + 1U));
-            transition.outbound.push_back(OutboundMessage{source, impl_->replication_for(source)});
+          if (!prepared_append_response)
+            return corruption("prepared Raft append response state is unavailable");
+          static_assert(std::is_nothrow_move_assignable_v<PersistentState>);
+          static_assert(std::is_nothrow_move_assignable_v<std::vector<NodeId>>);
+          static_assert(std::is_nothrow_move_assignable_v<std::optional<JointConfiguration>>);
+          static_assert(std::is_nothrow_move_assignable_v<std::map<NodeId, LogIndex>>);
+          impl_->next_index = std::move(prepared_append_next_index);
+          impl_->match_index = std::move(prepared_append_match_index);
+          if (prepared_append_commit) {
+            impl_->state = std::move(prepared_append_state.value());
+            impl_->committed_voters = std::move(prepared_append_committed_voters);
+            impl_->voters = std::move(prepared_append_voters);
+            impl_->joint = std::move(prepared_append_joint);
+            persistence_changed = true;
+            if (prepared_append_step_down)
+              impl_->become_follower(impl_->state.current_term, std::nullopt);
           }
           return common::Status::ok();
         } else if constexpr (std::is_same_v<T, InstallSnapshotRequest>) {

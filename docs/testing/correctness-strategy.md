@@ -449,6 +449,10 @@ A five-voter candidate sweep fails every vote-set, leader-map, and heartbeat all
 processing a same-term grant. After failure, one different remote grant must remain below quorum;
 retrying the original grant must then publish complete leadership and all four initial heartbeats.
 This detects both leaked acknowledgements and partial leader initialization.
+Five-voter AppendEntries-response sweeps inject every successful progress, membership derivation,
+persistent-state, and broadcast allocation through commit, plus every rejected-progress retry
+allocation. After failure, an explicit heartbeat must expose the old source next index, durable
+commit must remain exact, and retry must publish the complete commit or rewind transition.
 The paired AppendEntries authority case submits an empty higher-term heartbeat from that same
 nonvoter position and requires exact leader-state preservation because no matching membership
 suffix proves the sender active. The positive new-only-leader case continues to install and commit
