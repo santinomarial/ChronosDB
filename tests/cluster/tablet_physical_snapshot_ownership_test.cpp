@@ -221,15 +221,18 @@ catching_movement(const OwnershipFixture& fixture, const std::vector<std::byte>&
 [[nodiscard]] common::Result<raft::GroupSnapshotInstall>
 request_snapshot(raft::DurableMultiRaftRuntime& runtime, const OwnershipFixture& fixture,
                  raft::SnapshotMetadata metadata) {
+  const raft::Term leader_term = metadata.last_included_term;
   auto requested = runtime.execute_batch(
-      {{fixture.group_id,
-        raft::ReceiveOperation{1U, raft::InstallSnapshotRequest{2U, 1U, std::move(metadata)}}}});
+      {{fixture.group_id, raft::ReceiveOperation{1U, raft::InstallSnapshotRequest{
+                                                         leader_term, 1U, std::move(metadata)}}}});
   if (!requested.has_value())
     return common::make_unexpected(requested.error());
-  if (requested->size() != 1U || !requested->front().status.is_ok()) {
+  if (requested->size() != 1U) {
     return common::make_unexpected(common::Status{common::StatusCode::kInternal,
-                                                  "test snapshot request did not become pending"});
+                                                  "test snapshot request result count is invalid"});
   }
+  if (!requested->front().status.is_ok())
+    return common::make_unexpected(requested->front().status);
   const auto& transition = requested->front().transition;
   if (!transition.has_value() || !transition.value().snapshot_install.has_value()) {
     return common::make_unexpected(common::Status{common::StatusCode::kInternal,
