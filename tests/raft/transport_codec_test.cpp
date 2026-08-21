@@ -243,6 +243,9 @@ TEST(RaftTransportCodecTest, RejectsChecksumRepairedHostilePayloadFields) {
   candidate = heartbeat;
   store_u64(candidate, 112U, std::numeric_limits<LogIndex>::max());
   expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
+  candidate = heartbeat;
+  store_u64(candidate, 128U, std::numeric_limits<LogIndex>::max());
+  expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
 
   for (const std::size_t offset : {140U, 141U, 142U, 143U, 161U, 162U, 163U}) {
     SCOPED_TRACE(offset);
@@ -440,6 +443,11 @@ TEST(RaftTransportCodecTest, EnforcesFrameEntrySnapshotAndPositionBoundsBeforeAl
       envelope(AppendEntriesRequest{4U, 1U, std::numeric_limits<LogIndex>::max(), 4U, {}, 0U}));
   ASSERT_FALSE(exhausted_predecessor.has_value());
   EXPECT_EQ(exhausted_predecessor.error().code(), common::StatusCode::kInvalidArgument);
+
+  auto exhausted_commit = encode_raft_transport_envelope_v1(
+      envelope(AppendEntriesRequest{4U, 1U, 0U, 0U, {}, std::numeric_limits<LogIndex>::max()}));
+  ASSERT_FALSE(exhausted_commit.has_value());
+  EXPECT_EQ(exhausted_commit.error().code(), common::StatusCode::kInvalidArgument);
 }
 
 } // namespace

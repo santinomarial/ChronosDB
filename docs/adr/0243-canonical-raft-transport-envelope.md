@@ -48,11 +48,12 @@ source/embedded-identity mismatch, and enforce frame, entry, and voter bounds. D
 allocator sweeps fail every observed encode allocation for all eight kinds and every owned append-
 payload and snapshot-voter decode allocation, requiring `RESOURCE_EXHAUSTED` until exact success.
 Checksum-repaired matrices cover header lengths/routes/versions/kinds/reserved bytes plus vote and
-append-predecessor maximum-index state, append counts/lengths/reserved bytes/trailing payload,
-append-response conflict term/index state, snapshot term/maximum-index/voters/reserved bytes, and
-fixed-message Boolean/term fields with exact corruption, unsupported, or resource classification. A
-bounded structure-aware libFuzzer target drives raw bytes, all eight canonical variants, repaired
-mutations, fragmented reading, and write-cursor validation under ASan/UBSan. Cross-compiler golden
+append-predecessor/leader-commit maximum-index state, append counts/lengths/reserved bytes/trailing
+payload, append-response conflict term/index state, snapshot term/maximum-index/voters/reserved
+bytes, and fixed-message Boolean/term fields with exact corruption, unsupported, or resource
+classification. A bounded structure-aware libFuzzer target drives raw bytes, all eight canonical
+variants, repaired mutations, fragmented reading, and write-cursor validation under ASan/UBSan.
+Cross-compiler golden
 fixtures, sustained fuzzing, authenticated carrier integration, mixed-version processes, and
 network fault simulation remain in the Phase 18 ledger.
 

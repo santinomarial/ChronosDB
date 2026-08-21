@@ -19,7 +19,8 @@ snapshot admission also accepted the maximum logical index even though recovery 
 exhaustion detection. Vote requests could advertise the same impossible last-log index and obtain a
 vote after higher-term observation even though no canonical local state can contain that entry. The
 transport codec also admitted the reserved value as the predecessor of an empty AppendEntries
-heartbeat even though the deterministic core rejected it.
+heartbeat even though the deterministic core rejected it. Both boundaries admitted the same value
+as `leader_commit`, allowing an impossible higher-term commit claim to change candidate state.
 
 ## Decision
 
@@ -27,10 +28,11 @@ Every received Raft message must carry a nonzero term before role or persistent 
 RequestVote last-log index/term and AppendEntries previous index/term use exact zero-pair semantics;
 their log term cannot exceed the message term, and a candidate's advertised last-log index must
 remain below the reserved `UINT64_MAX`. An AppendEntries predecessor must remain below the same
-bound even when the request contains no entries. Existing source/candidate/leader identity checks
-remain mandatory. An InstallSnapshot request likewise requires its nonzero last-included term not
-to exceed the request term and its last-included index to remain below `UINT64_MAX` before any role,
-term, vote, or pending external-install state changes.
+bound even when the request contains no entries, and `leader_commit` must also remain below that
+reserved value. Existing source/candidate/leader identity checks remain mandatory. An
+InstallSnapshot request likewise requires its nonzero last-included term not to exceed the request
+term and its last-included index to remain below `UINT64_MAX` before any role, term, vote, or pending
+external-install state changes.
 
 A successful AppendEntries response cannot carry conflict state, and its match index cannot exceed
 the leader's log. A failed response requires a nonzero conflict index; an optional conflict term must
@@ -89,6 +91,8 @@ Maximum-index vote coverage applies the same three-path rejection and proves the
 step down or persist a vote for an impossible log advertisement.
 Maximum-index AppendEntries predecessor coverage proves direct-core rejection without candidate
 state changes and rejects both an outbound empty heartbeat and its checksum-valid decoded form.
+Maximum-index leader-commit coverage uses the same three paths and proves that an impossible
+higher-term commit advertisement cannot change candidate role or persistent state.
 
 ## References
 

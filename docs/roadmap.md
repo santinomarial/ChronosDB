@@ -803,7 +803,7 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   installation. Vote requests also reject that reserved last-log index before higher-term
   observation, preventing votes for an impossible candidate history. AppendEntries requests reject
   the same value as a predecessor, including entry-free heartbeats, through core and transport
-  admission. A bounded canonical
+  admission, and reject it as `leader_commit` before higher-term observation. A bounded canonical
   group/source/destination transport envelope now round-trips vote, append, snapshot, and read-
   barrier messages without introducing sockets into the deterministic core. Header-first bounded
   stream ownership now validates allocation-relevant fields before exact frame allocation and

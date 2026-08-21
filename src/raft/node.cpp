@@ -473,6 +473,7 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
           if (value.leader_id != source ||
               ((value.previous_log_index == 0U) != (value.previous_log_term == 0U)) ||
               value.previous_log_term > value.term ||
+              value.leader_commit == std::numeric_limits<LogIndex>::max() ||
               value.entries.size() > impl_->limits.maximum_append_entries) {
             return invalid("AppendEntries identity, previous position, or batch bound is invalid");
           }

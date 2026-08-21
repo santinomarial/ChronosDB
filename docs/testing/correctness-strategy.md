@@ -426,6 +426,8 @@ Vote requests reject the same value as an advertised last-log index through all 
 higher-term or vote state changes, because canonical persistent state cannot contain that entry.
 AppendEntries requests reject it as an impossible predecessor through direct-core admission plus
 outbound encoding and checksum-repaired decoding of an entry-free heartbeat.
+The same three paths reject it as `leader_commit` before an impossible higher-term commit claim can
+change candidate role or persistent state.
 
 The implemented group-scoped transport envelope additionally has checksum-repaired hostile
 length/count/reserved/value matrices, exhaustive owned-allocation failure sweeps, and a bounded

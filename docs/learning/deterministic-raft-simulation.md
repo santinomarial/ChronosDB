@@ -86,6 +86,8 @@ Vote requests reject the same reserved last-log index before term or vote observ
 canonical candidate can own an entry at that position.
 AppendEntries requests reject it as a predecessor even for an entry-free heartbeat because no
 canonical leader can own the predecessor that such a heartbeat claims.
+They also reject it as `leader_commit` before term or role observation because no canonical leader
+can have committed the reserved index.
 
 Useful questions include: why can a queued message survive a sender crash; why must durable state be
 installed before outbound admission; why does replay use explicit message IDs; why is a snapshot

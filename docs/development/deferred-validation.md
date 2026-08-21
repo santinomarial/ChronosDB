@@ -253,6 +253,7 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   Vote requests now reject that reserved last-log index through direct-core and transport admission
   before a higher term or vote can be observed.
   Empty AppendEntries heartbeats also reject it as an impossible predecessor through both paths.
+  AppendEntries `leader_commit` rejects the same reserved value before higher-term observation.
 - Persistent file owner, vote/log fsync ordering, crash/restart at every transition, idempotent
   recovery, application to tablet state, snapshot creation/install, and log compaction. Extend the
   implemented read barrier through production transport and tablet snapshot acquisition.
