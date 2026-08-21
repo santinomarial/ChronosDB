@@ -139,9 +139,11 @@ Deterministic allocation sweeps cover all encode, owned-variable decode, header-
 move-owned cursor-validation paths through exact success. The structure-aware fuzzer exact-
 reencodes accepted arbitrary bytes; generates every message kind; mutates, truncates, and optionally
 repairs nested checksums; and drives two-fragment reader plus cursor ownership under ASan/UBSan.
-Phase 18 retains cross-compiler goldens, sustained fuzzing, connection churn, partitions/reordering/
-duplication, and mixed-version processes. Focused real mutual-TLS coverage exercises fragmented
-persistent input and bounded authenticated FIFO output.
+Independently generated immutable fixtures now bind every current message kind to exact complete
+frame bytes, and the normal GCC, Clang/libc++, and AppleClang jobs compare both production encode
+and decode against them. Phase 18 retains sustained fuzzing, connection churn, partitions/
+reordering/duplication, and mixed-version processes. Focused real mutual-TLS coverage exercises
+fragmented persistent input and bounded authenticated FIFO output.
 
 Useful questions include: why is CRC not authentication; why must persistence precede sending; why
 does snapshot metadata travel separately from snapshot bytes; how does route identity prevent

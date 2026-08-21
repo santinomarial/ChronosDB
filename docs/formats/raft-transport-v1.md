@@ -125,6 +125,12 @@ variants, single-byte and truncated mutations, optional header/payload/frame che
 two-fragment reader delivery, exact canonical re-encoding, and write-cursor validation under a 64
 KiB test cap.
 
+Eight immutable lowercase-hex golden fixtures cover every current message kind with complete header,
+payload, and trailer bytes. They were derived directly from this specification using independent
+little-endian packing and a standalone bitwise CRC32C implementation. Production encoding must
+equal those bytes, and production decoding must recover their exact envelopes in the Linux GCC,
+Linux Clang/libc++, and macOS AppleClang test matrix.
+
 ## Authenticated dispatch
 
 `RaftTransportReceiver` requires a transport-authenticated nonzero stable principal before it

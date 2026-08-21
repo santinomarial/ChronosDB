@@ -1170,6 +1170,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/raft/tablet_movement_snapshot_chunk_storage_header_self_contained.cpp
     tests/raft/tablet_movement_snapshot_chunk_storage_test.cpp
     tests/raft/transport_codec_header_self_contained.cpp
+    tests/raft/transport_codec_golden_test.cpp
     tests/raft/transport_codec_test.cpp
     tests/raft/multi_raft_header_self_contained.cpp
     tests/raft/multi_raft_test.cpp
@@ -1193,6 +1194,10 @@ if(CHRONOS_BUILD_TESTS)
   )
   set_target_properties(chronos_raft_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_raft_tests PRIVATE cxx_std_23)
+  target_compile_definitions(
+    chronos_raft_tests
+    PRIVATE CHRONOS_RAFT_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/raft"
+  )
   target_link_libraries(chronos_raft_tests PRIVATE chronos::raft GTest::gtest_main)
   chronos_set_project_warnings(chronos_raft_tests)
   chronos_enable_sanitizers(chronos_raft_tests)

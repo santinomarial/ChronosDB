@@ -820,9 +820,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   group/source/destination transport envelope now round-trips vote, append, snapshot, and read-
   barrier messages without introducing sockets into the deterministic core. Header-first bounded
   stream ownership now validates allocation-relevant fields before exact frame allocation and
-  retains complete outbound bytes across short writes. Checksum-repaired hostile field matrices,
-  exhaustive allocation sweeps, and a structure-aware raw/canonical/mutated-frame fuzzer now cover
-  the complete codec and stream-owner boundary under sanitizers. An authenticated receiver now
+  retains complete outbound bytes across short writes. Eight independently generated immutable
+  golden frames bind every current message kind to exact bytes in the standard GCC, Clang/libc++,
+  and AppleClang matrix. Checksum-repaired hostile field matrices, exhaustive allocation sweeps, and
+  a structure-aware raw/canonical/mutated-frame fuzzer now cover the complete codec and stream-owner
+  boundary under sanitizers. An authenticated receiver now
   authorizes the claimed source, exact-matches the local destination, and admits the message through
   the asynchronous durable runtime before exposing response bytes. A persistent bounded inbound
   mutual-TLS session now reads exact fragmented frames, admits one durable operation, and publishes

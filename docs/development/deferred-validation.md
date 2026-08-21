@@ -193,9 +193,8 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
 
 ## Phase 14 — deterministic Raft
 
-- Raft Transport Envelope v1 cross-compiler golden fixtures, sustained fuzzing, carrier-wide
-  admission schedules, runtime poll composition across inbound/outbound/timer/durable completion,
-  mixed-version processes, and
+- Raft Transport Envelope v1 sustained fuzzing, carrier-wide admission schedules, runtime poll
+  composition across inbound/outbound/timer/durable completion, mixed-version processes, and
   carrier-integrated duplicate/loss/reorder/partition simulation. Focused coverage round-trips every
   current message, including an actual conflict-repair response, rejects damage, unknown kinds,
   route mismatch and bounds, and exercises the header-first exact-allocation reader and owned
@@ -225,7 +224,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   reserved bytes, append and snapshot counts/lengths/reserved bytes, trailing payload, voter order,
   and fixed-message value domains. A structure-aware ASan/UBSan libFuzzer target combines raw bytes
   with every generated message kind, checksum-repaired mutation, truncation, fragmented reading,
-  exact successful re-encoding, and cursor validation; sustained campaigns remain open.
+  exact successful re-encoding, and cursor validation. Independently generated immutable golden
+  frames now cover every current message kind and run unchanged in the Linux GCC, Linux
+  Clang/libc++, and macOS AppleClang jobs; sustained campaigns remain open.
 - Long seed matrices, deeper mixed-action schedules, broader application payload domains, semantic
   dependency-aware trace shrinking, timer/clock changes, and physical segmented-log syscall faults.
   The bounded simulator

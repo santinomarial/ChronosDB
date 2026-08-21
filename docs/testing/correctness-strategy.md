@@ -616,6 +616,8 @@ The implemented group-scoped transport envelope additionally has checksum-repair
 length/count/reserved/value matrices, exhaustive owned-allocation failure sweeps, and a bounded
 structure-aware libFuzzer target. Accepted arbitrary frames must exact-reencode, while generated
 canonical and mutated variants also exercise fragmented reader and write-cursor ownership.
+Eight independently generated immutable fixtures cover every current message kind and require exact
+complete-frame bytes plus exact decode under the standard GCC, Clang/libc++, and AppleClang matrix.
 
 ## Test review gate
 
