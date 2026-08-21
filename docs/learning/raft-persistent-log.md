@@ -37,6 +37,9 @@ boundary completes. The same rule now covers persisted `applied_index` advanceme
 The maximum physical sequence is a terminal record identity. Once recovered or emitted, the
 Multi-Raft owner rejects and fails closed before invoking another deterministic group transition;
 otherwise the group could change in memory before discovering that no persistence identity remains.
+The same fail-before-transition rule applies to the node-local outbound bound: configuration must
+hold the exact maximum fanout implied by `maximum_voters`, including one response for a single-voter
+configuration.
 
 Snapshot installation is deliberately two-stage. A received request exposes pending metadata but
 sends no success response. After the application owner durably installs the named manifest/part

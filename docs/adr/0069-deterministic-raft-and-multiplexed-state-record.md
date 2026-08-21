@@ -30,6 +30,8 @@ record boundary is [`multiplexed-raft-log-v1.md`](../formats/multiplexed-raft-lo
 metadata state machine consumes only consecutive committed metadata-group indexes.
 Once the recovered or emitted physical sequence reaches `UINT64_MAX`, the runtime fails closed
 before invoking another group transition so no unpersistable in-memory state can be installed.
+Its configured outbound batch must hold `max(1, maximum_voters - 1)` messages, the exact worst case
+for one legal core transition; smaller configurations are rejected before any group exists.
 
 ## Consequences and alternatives
 

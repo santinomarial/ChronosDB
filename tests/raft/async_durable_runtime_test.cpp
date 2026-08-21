@@ -350,15 +350,18 @@ TEST(AsyncDurableMultiRaftRuntimeTest, CheckpointsAndReclaimsSharedLogOnTheOwnin
 TEST(AsyncDurableMultiRaftRuntimeTest, FailsClosedAfterTerminalDurableRuntimeError) {
   TemporaryDirectory directory;
   const GroupId group = group_id(std::byte{3U});
-  AsyncDurableMultiRaftLimits limits{};
-  limits.durable.runtime.maximum_queued_outbound = 1U;
-  auto runtime = AsyncDurableMultiRaftRuntime::create_new(
-      1U, {.directory_path = directory.path().string()}, {{group, {1U, 2U, 3U}}}, limits);
+  RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+  log_config.maximum_records = 1U;
+  auto runtime = AsyncDurableMultiRaftRuntime::create_new(1U, log_config, {{group, {1U}}});
   ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
   auto election = runtime->try_submit({{group, StartElectionOperation{}}});
   ASSERT_TRUE(election.has_value());
+  ASSERT_TRUE(election->wait().has_value());
+  auto proposal =
+      runtime->try_submit({{group, ProposeOperation{.type = 1U, .payload = {std::byte{0x42U}}}}});
+  ASSERT_TRUE(proposal.has_value());
 
-  auto failed = election->wait();
+  auto failed = proposal->wait();
 
   ASSERT_FALSE(failed.has_value());
   EXPECT_EQ(failed.error().code(), common::StatusCode::kResourceExhausted);

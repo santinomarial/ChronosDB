@@ -128,23 +128,17 @@ TEST(MultiRaftTest, ReopensPersistedGroupStateAtSharedPhysicalSequence) {
   EXPECT_EQ(reopened->find_group(group)->last_log_index(), 1U);
 }
 
-TEST(MultiRaftTest, OutboundOverflowFailsRuntimeClosed) {
+TEST(MultiRaftTest, RejectsOutboundLimitThatCannotContainOneCoreTransition) {
   MultiRaftLimits limits{};
   limits.maximum_queued_outbound = 1U;
   auto runtime = MultiRaftRuntime::create(1U, limits);
-  ASSERT_TRUE(runtime.has_value());
-  const GroupId group = group_id(std::byte{7});
-  ASSERT_TRUE(runtime->add_group(group, {1U, 2U, 3U}).is_ok());
 
-  auto overflow = runtime->start_election(group);
+  ASSERT_FALSE(runtime.has_value());
+  EXPECT_EQ(runtime.error().code(), common::StatusCode::kInvalidArgument);
 
-  ASSERT_FALSE(overflow.has_value());
-  EXPECT_EQ(overflow.error().code(), common::StatusCode::kResourceExhausted);
-  EXPECT_TRUE(runtime->failed());
-  auto repeated = runtime->start_election(group);
-  ASSERT_FALSE(repeated.has_value());
-  EXPECT_EQ(repeated.error().code(), common::StatusCode::kUnavailable);
-  EXPECT_EQ(runtime->group_count(), 1U);
+  limits.maximum_queued_outbound = limits.raft.maximum_voters - 1U;
+  runtime = MultiRaftRuntime::create(1U, limits);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
 }
 
 TEST(MultiRaftTest, RejectsExhaustedPhysicalSequenceBeforeMutatingGroup) {

@@ -422,6 +422,9 @@ complete persistent state, current term, vote, and follower role.
 Multi-Raft physical-sequence exhaustion coverage restores a group at the terminal `UINT64_MAX`
 identity, attempts an election, and requires `OUT_OF_RANGE` plus fail-closed admission before the
 group's term, vote, role, or persistent state changes.
+Multi-Raft limit coverage also rejects construction unless the outbound batch can retain the exact
+worst-case fanout of one legal core transition. The asynchronous terminal-error case separately
+exhausts the real persistent-log record cap after one durable election.
 
 Canonical empty-state recovery rejects a vote in term zero and requires an index-zero snapshot to
 have zero term, Manifest generation, part-set checksum, and configuration index with no voters.

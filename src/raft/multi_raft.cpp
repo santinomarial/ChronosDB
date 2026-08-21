@@ -107,7 +107,10 @@ MultiRaftRuntime& MultiRaftRuntime::operator=(MultiRaftRuntime&&) noexcept = def
 
 common::Result<MultiRaftRuntime> MultiRaftRuntime::create(const NodeId local_node_id,
                                                           const MultiRaftLimits limits) {
-  if (local_node_id == 0U || limits.maximum_groups == 0U || limits.maximum_queued_outbound == 0U) {
+  const std::size_t maximum_core_outbound =
+      limits.raft.maximum_voters > 1U ? limits.raft.maximum_voters - 1U : 1U;
+  if (local_node_id == 0U || limits.maximum_groups == 0U || limits.raft.maximum_voters == 0U ||
+      limits.maximum_queued_outbound < maximum_core_outbound) {
     return common::make_unexpected(invalid("Multi-Raft node identity or limits are invalid"));
   }
   return MultiRaftRuntime{std::make_unique<Impl>(local_node_id, limits)};

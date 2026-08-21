@@ -51,6 +51,7 @@ struct MultiRaftTransition {
 
 struct MultiRaftLimits {
   std::size_t maximum_groups{4096U};
+  // Must hold every message from one legal core transition: max(1, maximum_voters - 1).
   std::size_t maximum_queued_outbound{65'536U};
   RaftLimits raft;
 };
