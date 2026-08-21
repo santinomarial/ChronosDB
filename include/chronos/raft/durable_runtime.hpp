@@ -107,6 +107,7 @@ struct DurableRaftResult {
 
 struct DurableMultiRaftLimits {
   std::size_t maximum_batch_operations{1024U};
+  // Each submitted batch reserves the worst-case fanout of its operation mix before dispatch.
   std::size_t maximum_batch_outbound{65'536U};
   MultiRaftLimits runtime;
 };

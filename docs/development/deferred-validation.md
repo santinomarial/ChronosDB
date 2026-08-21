@@ -292,8 +292,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   tail repair, corruption rejection, caller-batched sync, and anchored all-group physical-prefix
   reclamation with injected I/O failures, process-crash testing, asynchronous scheduling, and
   metrics. Multi-Raft construction now rejects an outbound bound smaller than the maximum legal
-  single-transition fanout; focused asynchronous terminal-failure coverage uses a real persistent-
-  log record-cap failure rather than an invalid runtime configuration.
+  single-transition fanout, and durable batches reserve their aggregate operation-mix fanout before
+  dispatch; focused asynchronous terminal-failure coverage uses a real persistent-log record-cap
+  failure rather than an invalid runtime configuration.
 - Exercise the v1.1 snapshot membership checkpoint with golden minor-0/minor-1 fixtures,
   mixed-version processes, hostile voter counts, snapshot-install crash points, and reclamation.
 - Connect the implemented two-stage Raft snapshot request/completion boundary to versioned tablet

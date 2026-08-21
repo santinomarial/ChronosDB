@@ -152,6 +152,34 @@ TEST(DurableMultiRaftRuntimeTest, ReturnsVoteMessagesOnlyAfterStateIsDurable) {
   EXPECT_EQ(reopened->find_group(group)->persistent_state().voted_for, 1U);
 }
 
+TEST(DurableMultiRaftRuntimeTest, RejectsBatchOutboundExhaustionBeforeGroupMutation) {
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{21U});
+  DurableMultiRaftLimits limits{};
+  limits.maximum_batch_outbound = 3U;
+  limits.runtime.raft.maximum_voters = 3U;
+  auto runtime = DurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group, {1U, 2U, 3U}}}, limits);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+
+  auto rejected = runtime->execute_batch(
+      {{group, StartElectionOperation{}}, {group, StartElectionOperation{}}});
+
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kResourceExhausted);
+  EXPECT_FALSE(runtime->failed());
+  EXPECT_EQ(runtime->find_group(group)->role(), Role::kFollower);
+  EXPECT_EQ(runtime->find_group(group)->current_term(), 0U);
+  EXPECT_FALSE(runtime->find_group(group)->persistent_state().voted_for.has_value());
+  EXPECT_EQ(runtime->durable_physical_sequence(), 0U);
+
+  auto admitted = runtime->execute_batch({{group, StartElectionOperation{}}});
+  ASSERT_TRUE(admitted.has_value()) << admitted.error().to_string();
+  EXPECT_EQ(runtime->find_group(group)->role(), Role::kCandidate);
+  EXPECT_EQ(runtime->find_group(group)->current_term(), 1U);
+  EXPECT_EQ(runtime->durable_physical_sequence(), 1U);
+}
+
 TEST(DurableMultiRaftRuntimeTest, SurfacesGroupReadBarrierWithoutInventingPersistence) {
   TemporaryDirectory directory;
   const GroupId group = group_id(std::byte{13U});

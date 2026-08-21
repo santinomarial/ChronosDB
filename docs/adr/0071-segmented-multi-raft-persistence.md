@@ -45,6 +45,9 @@ group core. This prevents an operation from changing volatile term, vote, log, c
 snapshot state when no physical persistence identity remains for the resulting transition.
 The node-local outbound bound is also validated against the maximum voter count at construction, so
 every single core transition fits before the core may change state.
+Before a durable batch dispatches its first operation, it reserves the configured worst-case
+outbound fanout of the complete operation mix. An undersized aggregate batch bound returns a
+nonterminal resource-exhaustion error without changing any group's volatile or persistent state.
 
 ## Consequences and alternatives
 
@@ -60,6 +63,7 @@ Invariants 1, 4, 5, 8, 10, 14, and 18 apply. Focused tests cover rotation, share
 latest-state reconstruction, sequence continuation, exclusive ownership, explicit incomplete-tail
 repair, fail-closed complete-record corruption, batched persist-before-send release, durable
 applied-index recovery, terminal-sequence pre-admission, one-transition outbound-bound validation,
-and anchored all-group prefix reclamation. Injected syscall failures,
+aggregate durable-batch outbound pre-admission, and anchored all-group prefix reclamation. Injected
+syscall failures,
 process crash points, asynchronous reclamation scheduling, sustained corruption campaigns, and
 Linux power-loss qualification remain required.

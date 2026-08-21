@@ -872,7 +872,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   terminal physical-sequence rejection before group mutation. Undersized one-transition outbound
   configurations now fail construction instead of discovering overflow after a core state change.
   A single-thread-affine durable runtime now batches caller-provided operations behind one local sync
-  and withholds outbound messages until it completes. Mutable heads, tablet publications, row
+  and withholds outbound messages until it completes. It reserves aggregate worst-case outbound
+  fanout before dispatch, so an undersized batch cannot partially mutate group state. Mutable heads,
+  tablet publications, row
   versions, and retry outcomes now distinguish WAL histories from Raft group/index histories;
   frozen CSEG/Manifest v1 boundaries reject Raft identities they cannot represent. Asynchronous
   committed command application now decodes exact COLUMNAR_APPEND bytes, preserves uncommitted

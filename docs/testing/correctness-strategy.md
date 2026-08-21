@@ -425,6 +425,9 @@ group's term, vote, role, or persistent state changes.
 Multi-Raft limit coverage also rejects construction unless the outbound batch can retain the exact
 worst-case fanout of one legal core transition. The asynchronous terminal-error case separately
 exhausts the real persistent-log record cap after one durable election.
+Durable batch limit coverage submits two legal broadcast transitions whose aggregate reservation
+exceeds the configured batch bound, then requires nonterminal rejection before term, vote, role, or
+the durable physical frontier changes and proves a smaller subsequent batch remains usable.
 
 Canonical empty-state recovery rejects a vote in term zero and requires an index-zero snapshot to
 have zero term, Manifest generation, part-set checksum, and configuration index with no voters.

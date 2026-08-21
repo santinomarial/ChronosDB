@@ -25,6 +25,39 @@ namespace {
   return common::Status{common::StatusCode::kResourceExhausted, message};
 }
 
+[[nodiscard]] std::size_t maximum_outbound_for_operation(const DurableRaftOperation& operation,
+                                                         const std::size_t maximum_voters) {
+  const std::size_t maximum_core_outbound = maximum_voters > 1U ? maximum_voters - 1U : 1U;
+  return std::visit(
+      [maximum_core_outbound](const auto& value) -> std::size_t {
+        using T = std::remove_cvref_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, ObserveGroupOperation> ||
+                      std::is_same_v<T, CompactSnapshotOperation> ||
+                      std::is_same_v<T, MarkAppliedOperation>) {
+          return 0U;
+        } else if constexpr (std::is_same_v<T, CompleteSnapshotInstallOperation>) {
+          return 1U;
+        } else {
+          return maximum_core_outbound;
+        }
+      },
+      operation);
+}
+
+[[nodiscard]] common::Status admit_batch_outbound(const std::vector<DurableRaftRequest>& requests,
+                                                  const DurableMultiRaftLimits& limits) {
+  std::size_t reserved = 0U;
+  for (const DurableRaftRequest& request : requests) {
+    const std::size_t operation_bound =
+        maximum_outbound_for_operation(request.operation, limits.runtime.raft.maximum_voters);
+    if (operation_bound > limits.maximum_batch_outbound - reserved) {
+      return exhausted("durable Multi-Raft batch exceeds its outbound-message bound");
+    }
+    reserved += operation_bound;
+  }
+  return common::Status::ok();
+}
+
 [[nodiscard]] common::Result<MultiRaftRuntime>
 restore_runtime(const NodeId local_node_id, const DurableMultiRaftLimits& limits,
                 std::vector<RaftGroupConfiguration> groups,
@@ -136,6 +169,10 @@ DurableMultiRaftRuntime::execute_batch(std::vector<DurableRaftRequest> requests)
   }
   if (requests.empty() || requests.size() > impl_->limits.maximum_batch_operations) {
     return common::make_unexpected(invalid("durable Multi-Raft batch size is invalid"));
+  }
+  if (const common::Status admitted = admit_batch_outbound(requests, impl_->limits);
+      !admitted.is_ok()) {
+    return common::make_unexpected(admitted);
   }
   std::vector<DurableRaftResult> results;
   results.reserve(requests.size());

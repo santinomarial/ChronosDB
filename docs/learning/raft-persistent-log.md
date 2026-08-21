@@ -40,6 +40,10 @@ otherwise the group could change in memory before discovering that no persistenc
 The same fail-before-transition rule applies to the node-local outbound bound: configuration must
 hold the exact maximum fanout implied by `maximum_voters`, including one response for a single-voter
 configuration.
+The durable batch owner applies that rule cumulatively before dispatch. Observation, applied-index,
+and local-compaction operations reserve no outbound messages; snapshot completion reserves one;
+every other operation reserves the configured maximum core fanout. Capacity rejection is
+nonterminal because no group transition or log append has started.
 
 Snapshot installation is deliberately two-stage. A received request exposes pending metadata but
 sends no success response. After the application owner durably installs the named manifest/part
