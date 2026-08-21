@@ -72,7 +72,15 @@ owner does not cancel the accepted durable work: shutdown drains both real appli
 reopens the exact metadata route and applied rows, and a new-term exact retry is classified as a
 matching retry.
 
-Long-running hook watchdog measurements remain Phase 18 work.
+The asynchronous owner now measures the aggregate top-level `initialize`, `prepare_batch`,
+`complete_batch`, and `shutdown` callbacks with the monotonic clock. Per-hook metrics retain
+saturating invocation, completion, and threshold-violation counts plus the maximum completed
+duration. A live metrics snapshot also names an active hook, recomputes its elapsed duration, and
+reports whether it has crossed the configured positive watchdog threshold. The default threshold
+is one second. This watchdog is deliberately observational: it neither preempts a callback nor
+changes its returned status or durable outcome. A manual-clock test holds preparation active,
+observes the live threshold crossing, then proves exact completed measurements for all four hooks
+without wall-clock sleeps.
 
 ## References
 

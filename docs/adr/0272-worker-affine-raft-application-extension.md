@@ -61,8 +61,10 @@ group/term/index receipt completion; it cannot borrow a mutable machine or the s
   but the process returns no success and must recover the authoritative committed state on restart.
 - Deployments without an extension retain the prior queue, metrics, completion, and shutdown
   behavior.
-- Long application work delays Raft completions. Application batching/fairness must be measured and
-  bounded by the concrete extension rather than hidden here.
+- Long application work delays Raft completions. The asynchronous owner exposes per-hook maximum
+  durations and watchdog-threshold violations, including a live elapsed measurement while one hook
+  is active. These metrics diagnose a blocked owner without attempting unsafe callback preemption;
+  application batching and fairness remain the concrete extension's responsibility.
 - The concrete tablet extension costs one bounded group-identity copy/sort per batch and avoids a
   scan of every resident tablet. Snapshot readers serialize with worker application while they pin
   the immutable tablet view.
@@ -77,7 +79,9 @@ concrete tablet tests prove touched-group application before completion, untouch
 pre-admission restart reconstruction, duplicate-group rejection, terminal corruption handling, and
 inactive lifecycle reporting after worker shutdown. The production tablet-plus-metadata composition
 also drains an admitted tablet proposal after its coordinator result owner is destroyed and recovers
-the exact application state on reopen.
+the exact application state on reopen. A deterministic manual-clock test observes an active
+preparation beyond its watchdog threshold and then proves exact completed timing and violation
+metrics for initialization, preparation, completion, and shutdown.
 
 The metadata extension, proposal-result index extraction, transport/client integration, crash cut
 points, TSan, and scheduling measurements remain subsequent work.

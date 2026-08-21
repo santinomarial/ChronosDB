@@ -45,7 +45,10 @@ detaches the owner thread.
 One worker preserves the existing thread-affinity proof and total physical persistence order while
 removing disk waits from producers. Batch-level FIFO gives a deterministic initial fairness rule;
 the existing per-batch operation limit bounds how long one admission can monopolize the worker.
-Metrics expose pending/high-water work and accepted, rejected, completed, and failed batches.
+Metrics expose pending/high-water work and accepted, rejected, completed, and failed batches. When
+an extension is installed, monotonic per-hook metrics also expose invocation/completion counts,
+maximum completed duration, threshold violations, and a live active-hook elapsed duration. The
+watchdog is observational and does not preempt worker-affine application code.
 
 ## Alternatives considered
 
@@ -87,9 +90,11 @@ failure, rejection, notification, and zero-pending metrics. An exhaustive physic
 drains one accepted election under every nonempty active-file/lock/directory close-failure
 combination, both with and without an extension shutdown failure. It proves exact first-failure
 arbitration, complete physical cleanup, idempotence, terminal metrics, successful completion
-preservation, and exact reopen. Broader queue-interleaving stress, asynchronous-owner allocation
-injection, worker-start injection, other syscall-level I/O failure injection,
-thousands-of-groups fairness, and latency/throughput measurements remain in Phase 18.
+preservation, and exact reopen. Deterministic manual-clock validation holds an extension preparation
+active across its configured watchdog threshold and proves both live detection and exact completed
+metrics for every lifecycle hook. Broader queue-interleaving stress, asynchronous-owner allocation
+injection, worker-start injection, other syscall-level I/O failure injection, thousands-of-groups
+fairness, and whole-owner latency/throughput measurements remain in Phase 18.
 
 ## Migration or rollback considerations
 

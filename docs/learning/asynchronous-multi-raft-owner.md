@@ -23,6 +23,11 @@ An optional `AsyncDurableRaftWorkerExtension` composes application state with th
 `complete_batch` receives that context and the post-sync results before completion publication.
 `shutdown` runs before the log closes. These hooks let a higher-level ingest/metadata library own
 state machines that borrow the synchronous runtime without creating a reverse Raft dependency.
+The runtime measures each top-level extension hook against a positive configurable monotonic
+watchdog threshold. Metrics identify a currently active hook and its elapsed duration, and retain
+per-hook invocation/completion counts, threshold violations, and maximum completed duration. This
+is diagnosis rather than cancellation: a hook retains sole ownership until it returns, and crossing
+the threshold cannot change persistence or result publication.
 When more than one application owner is required, `AsyncDurableRaftWorkerExtensionSet` composes a
 flat bounded list. It initializes, prepares, and completes children in declaration order, retains
 one opaque child context per batch, and shuts down every attempted child in reverse order. The
@@ -57,6 +62,12 @@ The runtime retains one FIFO of owning task objects. Admission counts every acce
 operation until execution finishes, including the active task, so popping from the queue does not
 silently create capacity. Limits exist at both levels because one vector can contain many bounded
 operations. Metrics report the same retained quantities and high-water marks.
+Extension measurements live under the same metrics mutex. The worker records an active hook and its
+monotonic start before invocation; `metrics()` copies that state and computes a fresh live elapsed
+duration. On every normal or exceptional return, the worker clears the active identity and updates
+the matching completed count, maximum duration, and saturating threshold-violation count. The
+configured threshold is also copied into each snapshot so monitoring interprets the counters under
+the same runtime contract.
 
 Only the worker calls `DurableMultiRaftRuntime`. Therefore its deterministic group transitions,
 node-global physical sequence, append/sync batch, and persist-before-outbound contract remain
@@ -129,6 +140,10 @@ the first physical close error becomes terminal. An exhaustive real-filesystem m
 branches for every nonempty combination of those three physical failures after one accepted durable
 election; the completion stays successful, metrics converge, repeated shutdown is inert, and the
 exact term and vote reopen.
+Watchdog threshold crossings are not failures. Forced interruption could abandon a partially
+applied application callback while the worker still owns the synchronous Raft runtime, so the
+runtime only reports the live or completed overrun. The callback's own status and the existing
+fail-closed rules remain authoritative.
 
 ## Complexity, tradeoffs, and interview questions
 

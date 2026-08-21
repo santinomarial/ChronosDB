@@ -4,11 +4,16 @@
 #include "chronos/common/result.hpp"
 #include "chronos/raft/durable_runtime.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
 #include <vector>
+
+namespace chronos::common {
+class TimeSource;
+} // namespace chronos::common
 
 namespace chronos::raft {
 
@@ -50,7 +55,38 @@ public:
 struct AsyncDurableMultiRaftLimits {
   std::size_t maximum_pending_batches{1024U};
   std::size_t maximum_pending_operations{65'536U};
+  // Observability threshold only: hooks are not preempted and exceeding it does not change the
+  // durable outcome. Must be positive.
+  std::chrono::nanoseconds worker_extension_hook_watchdog_threshold{std::chrono::seconds{1}};
   DurableMultiRaftLimits durable;
+};
+
+enum class AsyncDurableRaftWorkerHook : std::uint8_t {
+  kNone,
+  kInitialize,
+  kPrepareBatch,
+  kCompleteBatch,
+  kShutdown,
+};
+
+struct AsyncDurableRaftWorkerHookMetrics {
+  std::uint64_t invocations{};
+  std::uint64_t completions{};
+  std::uint64_t watchdog_violations{};
+  std::chrono::nanoseconds maximum_duration{};
+};
+
+struct AsyncDurableRaftWorkerExtensionMetrics {
+  std::chrono::nanoseconds watchdog_threshold{};
+  AsyncDurableRaftWorkerHookMetrics initialize;
+  AsyncDurableRaftWorkerHookMetrics prepare_batch;
+  AsyncDurableRaftWorkerHookMetrics complete_batch;
+  AsyncDurableRaftWorkerHookMetrics shutdown;
+  // The live fields let another thread detect a hook that has not returned yet. Elapsed time is
+  // recomputed for each metrics() snapshot and is not a synchronization or progress guarantee.
+  AsyncDurableRaftWorkerHook active_hook{AsyncDurableRaftWorkerHook::kNone};
+  std::chrono::nanoseconds active_hook_elapsed{};
+  bool active_hook_watchdog_violation{};
 };
 
 struct AsyncDurableMultiRaftMetrics {
@@ -70,6 +106,7 @@ struct AsyncDurableMultiRaftMetrics {
   std::size_t pending_operations{};
   std::size_t high_water_pending_batches{};
   std::size_t high_water_pending_operations{};
+  AsyncDurableRaftWorkerExtensionMetrics worker_extension;
   bool accepting{};
   bool terminal_failure{};
 };
@@ -187,7 +224,7 @@ private:
   create_new_with(NodeId local_node_id, const RaftPersistentLogConfig& log_config,
                   std::vector<RaftGroupConfiguration> groups, AsyncDurableMultiRaftLimits limits,
                   std::shared_ptr<AsyncDurableRaftWorkerExtension> extension,
-                  io::detail::PosixSyscalls& syscalls);
+                  io::detail::PosixSyscalls& syscalls, const common::TimeSource& time_source);
   std::unique_ptr<Impl> impl_;
 
   friend class detail::AsyncDurableMultiRaftRuntimeTestAccess;

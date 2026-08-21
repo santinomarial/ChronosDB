@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <barrier>
 #include <chrono>
 #include <condition_variable>
@@ -58,6 +59,92 @@ class RecordingBatchContext final : public AsyncDurableRaftWorkerBatchContext {
 public:
   explicit RecordingBatchContext(const std::size_t count) noexcept : request_count(count) {}
   std::size_t request_count;
+};
+
+class ManualTimeSource final : public common::TimeSource {
+public:
+  [[nodiscard]] common::WallTimePoint wall_now() const noexcept override {
+    return common::WallTimePoint{};
+  }
+
+  [[nodiscard]] common::MonotonicTimePoint monotonic_now() const noexcept override {
+    return common::MonotonicTimePoint{std::chrono::nanoseconds{nanoseconds_.load()}};
+  }
+
+  void advance(const std::chrono::nanoseconds duration) noexcept {
+    nanoseconds_.fetch_add(duration.count());
+  }
+
+private:
+  std::atomic<std::int64_t> nanoseconds_;
+};
+
+class WatchdogWorkerExtension final : public AsyncDurableRaftWorkerExtension {
+public:
+  explicit WatchdogWorkerExtension(ManualTimeSource& time_source) noexcept
+      : time_source_(time_source) {}
+
+  common::Status initialize(DurableMultiRaftRuntime&) override {
+    time_source_.advance(std::chrono::nanoseconds{2});
+    return common::Status::ok();
+  }
+
+  common::Result<std::unique_ptr<AsyncDurableRaftWorkerBatchContext>>
+  prepare_batch(DurableMultiRaftRuntime&,
+                const std::span<const DurableRaftRequest> requests) override {
+    std::unique_lock lock{mutex_};
+    prepare_blocked_ = true;
+    condition_.notify_all();
+    condition_.wait(lock, [this] { return prepare_released_; });
+    return std::unique_ptr<AsyncDurableRaftWorkerBatchContext>{
+        std::make_unique<RecordingBatchContext>(requests.size())};
+  }
+
+  common::Status complete_batch(DurableMultiRaftRuntime&,
+                                std::unique_ptr<AsyncDurableRaftWorkerBatchContext>,
+                                std::span<const DurableRaftResult>) override {
+    time_source_.advance(std::chrono::nanoseconds{4});
+    return common::Status::ok();
+  }
+
+  common::Status shutdown(DurableMultiRaftRuntime&) override {
+    time_source_.advance(std::chrono::nanoseconds{12});
+    return common::Status::ok();
+  }
+
+  [[nodiscard]] bool wait_until_prepare_blocked() {
+    std::unique_lock lock{mutex_};
+    return condition_.wait_for(lock, std::chrono::seconds{1}, [this] { return prepare_blocked_; });
+  }
+
+  void release_prepare() {
+    {
+      const std::lock_guard lock{mutex_};
+      prepare_released_ = true;
+    }
+    condition_.notify_all();
+  }
+
+private:
+  ManualTimeSource& time_source_;
+  std::mutex mutex_;
+  std::condition_variable condition_;
+  bool prepare_blocked_{};
+  bool prepare_released_{};
+};
+
+class WatchdogWorkerReleaseGuard {
+public:
+  explicit WatchdogWorkerReleaseGuard(WatchdogWorkerExtension& extension) noexcept
+      : extension_(extension) {}
+  ~WatchdogWorkerReleaseGuard() {
+    extension_.release_prepare();
+  }
+  WatchdogWorkerReleaseGuard(const WatchdogWorkerReleaseGuard&) = delete;
+  WatchdogWorkerReleaseGuard& operator=(const WatchdogWorkerReleaseGuard&) = delete;
+
+private:
+  WatchdogWorkerExtension& extension_;
 };
 
 class ApplyingWorkerExtension final : public AsyncDurableRaftWorkerExtension {
@@ -321,6 +408,92 @@ TEST(AsyncDurableMultiRaftRuntimeTest, RunsApplicationExtensionBeforePublishingC
       1U, {.directory_path = directory.path().string()}, {}, {{group, {1U}}});
   ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
   EXPECT_EQ(reopened->find_group(group)->applied_index(), 1U);
+}
+
+TEST(AsyncDurableMultiRaftRuntimeTest, MeasuresLiveAndCompletedWorkerExtensionHooks) {
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{0x0aU});
+  ManualTimeSource time_source;
+  auto extension = std::make_shared<WatchdogWorkerExtension>(time_source);
+  AsyncDurableMultiRaftLimits limits{};
+  limits.worker_extension_hook_watchdog_threshold = std::chrono::nanoseconds{10};
+  auto runtime = detail::AsyncDurableMultiRaftRuntimeTestAccess::create_new_with_time_source(
+      1U, {.directory_path = directory.path().string()}, {{group, {1U}}}, limits, extension,
+      io::detail::system_posix_syscalls(), time_source);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  [[maybe_unused]] WatchdogWorkerReleaseGuard release_on_exit{*extension};
+
+  AsyncDurableMultiRaftMetrics metrics = runtime->metrics();
+  EXPECT_EQ(metrics.worker_extension.watchdog_threshold, std::chrono::nanoseconds{10});
+  EXPECT_EQ(metrics.worker_extension.initialize.invocations, 1U);
+  EXPECT_EQ(metrics.worker_extension.initialize.completions, 1U);
+  EXPECT_EQ(metrics.worker_extension.initialize.maximum_duration, std::chrono::nanoseconds{2});
+  EXPECT_EQ(metrics.worker_extension.initialize.watchdog_violations, 0U);
+  EXPECT_EQ(metrics.worker_extension.active_hook, AsyncDurableRaftWorkerHook::kNone);
+
+  auto observation = runtime->try_observe_group(group);
+  ASSERT_TRUE(observation.has_value()) << observation.error().to_string();
+  if (!extension->wait_until_prepare_blocked()) {
+    extension->release_prepare();
+    EXPECT_TRUE(runtime->shutdown().is_ok());
+    FAIL() << "durable worker did not reach the controlled extension hook";
+  }
+  time_source.advance(std::chrono::nanoseconds{11});
+
+  metrics = runtime->metrics();
+  EXPECT_EQ(metrics.worker_extension.active_hook, AsyncDurableRaftWorkerHook::kPrepareBatch);
+  EXPECT_EQ(metrics.worker_extension.active_hook_elapsed, std::chrono::nanoseconds{11});
+  EXPECT_TRUE(metrics.worker_extension.active_hook_watchdog_violation);
+  EXPECT_EQ(metrics.worker_extension.prepare_batch.invocations, 1U);
+  EXPECT_EQ(metrics.worker_extension.prepare_batch.completions, 0U);
+  EXPECT_EQ(metrics.worker_extension.prepare_batch.watchdog_violations, 0U);
+
+  extension->release_prepare();
+  auto observed = observation->wait();
+  ASSERT_TRUE(observed.has_value()) << observed.error().to_string();
+  ASSERT_EQ(observed->size(), 1U);
+  EXPECT_TRUE(observed->front().status.is_ok());
+  EXPECT_TRUE(observed->front().observation.has_value());
+
+  metrics = runtime->metrics();
+  EXPECT_EQ(metrics.worker_extension.active_hook, AsyncDurableRaftWorkerHook::kNone);
+  EXPECT_EQ(metrics.worker_extension.active_hook_elapsed, std::chrono::nanoseconds::zero());
+  EXPECT_FALSE(metrics.worker_extension.active_hook_watchdog_violation);
+  EXPECT_EQ(metrics.worker_extension.prepare_batch.completions, 1U);
+  EXPECT_EQ(metrics.worker_extension.prepare_batch.maximum_duration, std::chrono::nanoseconds{11});
+  EXPECT_EQ(metrics.worker_extension.prepare_batch.watchdog_violations, 1U);
+  EXPECT_EQ(metrics.worker_extension.complete_batch.invocations, 1U);
+  EXPECT_EQ(metrics.worker_extension.complete_batch.completions, 1U);
+  EXPECT_EQ(metrics.worker_extension.complete_batch.maximum_duration, std::chrono::nanoseconds{4});
+  EXPECT_EQ(metrics.worker_extension.complete_batch.watchdog_violations, 0U);
+
+  EXPECT_TRUE(runtime->shutdown().is_ok());
+  metrics = runtime->metrics();
+  EXPECT_EQ(metrics.worker_extension.shutdown.invocations, 1U);
+  EXPECT_EQ(metrics.worker_extension.shutdown.completions, 1U);
+  EXPECT_EQ(metrics.worker_extension.shutdown.maximum_duration, std::chrono::nanoseconds{12});
+  EXPECT_EQ(metrics.worker_extension.shutdown.watchdog_violations, 1U);
+  EXPECT_EQ(metrics.worker_extension.active_hook, AsyncDurableRaftWorkerHook::kNone);
+  EXPECT_EQ(metrics.worker_extension.initialize.invocations, 1U);
+  EXPECT_EQ(metrics.worker_extension.prepare_batch.invocations, 1U);
+  EXPECT_EQ(metrics.worker_extension.complete_batch.invocations, 1U);
+}
+
+TEST(AsyncDurableMultiRaftRuntimeTest, RejectsNonpositiveWorkerExtensionWatchdogThreshold) {
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{0x0bU});
+  AsyncDurableMultiRaftLimits limits{};
+  limits.worker_extension_hook_watchdog_threshold = std::chrono::nanoseconds::zero();
+  auto zero = AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group, {1U}}}, limits);
+  ASSERT_FALSE(zero.has_value());
+  EXPECT_EQ(zero.error().code(), common::StatusCode::kInvalidArgument);
+
+  limits.worker_extension_hook_watchdog_threshold = std::chrono::nanoseconds{-1};
+  auto negative = AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group, {1U}}}, limits);
+  ASSERT_FALSE(negative.has_value());
+  EXPECT_EQ(negative.error().code(), common::StatusCode::kInvalidArgument);
 }
 
 TEST(AsyncDurableMultiRaftRuntimeTest, FailsCreationClosedWhenExtensionCannotInitialize) {

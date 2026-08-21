@@ -1,5 +1,6 @@
 #include "chronos/raft/async_durable_runtime.hpp"
 
+#include "chronos/common/time_source.hpp"
 #include "durable_batch_admission.hpp"
 #include "io/posix_syscalls.hpp"
 
@@ -164,9 +165,12 @@ public:
 
   Impl(DurableMultiRaftRuntime runtime, const AsyncDurableMultiRaftLimits configured,
        const std::array<int, 2> completion_pipe,
-       std::shared_ptr<AsyncDurableRaftWorkerExtension> extension) noexcept
-      : runtime_(std::move(runtime)), limits_(configured), completion_pipe_(completion_pipe) {
+       std::shared_ptr<AsyncDurableRaftWorkerExtension> extension,
+       const common::TimeSource& time_source) noexcept
+      : runtime_(std::move(runtime)), limits_(configured), time_source_(time_source),
+        completion_pipe_(completion_pipe) {
     extension_ = std::move(extension);
+    metrics_.worker_extension.watchdog_threshold = limits_.worker_extension_hook_watchdog_threshold;
   }
 
   ~Impl() noexcept {
@@ -355,7 +359,15 @@ public:
 
   [[nodiscard]] AsyncDurableMultiRaftMetrics metrics() const {
     const std::lock_guard lock{mutex_};
-    return metrics_;
+    AsyncDurableMultiRaftMetrics snapshot = metrics_;
+    if (snapshot.worker_extension.active_hook != AsyncDurableRaftWorkerHook::kNone) {
+      snapshot.worker_extension.active_hook_elapsed =
+          elapsed(active_worker_extension_hook_started_at_, time_source_.monotonic_now());
+      snapshot.worker_extension.active_hook_watchdog_violation =
+          snapshot.worker_extension.active_hook_elapsed >
+          snapshot.worker_extension.watchdog_threshold;
+    }
+    return snapshot;
   }
 
   [[nodiscard]] bool is_accepting() const {
@@ -374,6 +386,72 @@ public:
   }
 
 private:
+  [[nodiscard]] static std::chrono::nanoseconds
+  elapsed(const common::MonotonicTimePoint started,
+          const common::MonotonicTimePoint finished) noexcept {
+    if (finished <= started)
+      return std::chrono::nanoseconds::zero();
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(finished - started);
+  }
+
+  [[nodiscard]] static AsyncDurableRaftWorkerHookMetrics&
+  hook_metrics(AsyncDurableRaftWorkerExtensionMetrics& metrics,
+               const AsyncDurableRaftWorkerHook hook) noexcept {
+    switch (hook) {
+    case AsyncDurableRaftWorkerHook::kInitialize:
+      return metrics.initialize;
+    case AsyncDurableRaftWorkerHook::kPrepareBatch:
+      return metrics.prepare_batch;
+    case AsyncDurableRaftWorkerHook::kCompleteBatch:
+      return metrics.complete_batch;
+    case AsyncDurableRaftWorkerHook::kShutdown:
+      return metrics.shutdown;
+    case AsyncDurableRaftWorkerHook::kNone:
+      break;
+    }
+    std::terminate();
+  }
+
+  void begin_worker_extension_hook(const AsyncDurableRaftWorkerHook hook) {
+    const common::MonotonicTimePoint started = time_source_.monotonic_now();
+    const std::lock_guard lock{mutex_};
+    saturating_increment(hook_metrics(metrics_.worker_extension, hook).invocations);
+    metrics_.worker_extension.active_hook = hook;
+    metrics_.worker_extension.active_hook_elapsed = std::chrono::nanoseconds::zero();
+    metrics_.worker_extension.active_hook_watchdog_violation = false;
+    active_worker_extension_hook_started_at_ = started;
+  }
+
+  void finish_worker_extension_hook(const AsyncDurableRaftWorkerHook hook) {
+    const common::MonotonicTimePoint finished = time_source_.monotonic_now();
+    const std::lock_guard lock{mutex_};
+    AsyncDurableRaftWorkerHookMetrics& hook_snapshot =
+        hook_metrics(metrics_.worker_extension, hook);
+    const std::chrono::nanoseconds duration =
+        elapsed(active_worker_extension_hook_started_at_, finished);
+    saturating_increment(hook_snapshot.completions);
+    hook_snapshot.maximum_duration = std::max(hook_snapshot.maximum_duration, duration);
+    if (duration > metrics_.worker_extension.watchdog_threshold)
+      saturating_increment(hook_snapshot.watchdog_violations);
+    metrics_.worker_extension.active_hook = AsyncDurableRaftWorkerHook::kNone;
+    metrics_.worker_extension.active_hook_elapsed = std::chrono::nanoseconds::zero();
+    metrics_.worker_extension.active_hook_watchdog_violation = false;
+  }
+
+  template <typename Callback>
+  [[nodiscard]] auto invoke_worker_extension_hook(const AsyncDurableRaftWorkerHook hook,
+                                                  Callback&& callback) -> decltype(callback()) {
+    begin_worker_extension_hook(hook);
+    try {
+      auto result = callback();
+      finish_worker_extension_hook(hook);
+      return result;
+    } catch (...) {
+      finish_worker_extension_hook(hook);
+      throw;
+    }
+  }
+
   [[nodiscard]] common::Result<AsyncDurableRaftCompletion> reject(common::Status status) {
     const std::lock_guard lock{mutex_};
     saturating_increment(metrics_.rejected_batches);
@@ -431,7 +509,10 @@ private:
     try {
       std::unique_ptr<AsyncDurableRaftWorkerBatchContext> context;
       if (extension_ != nullptr) {
-        auto prepared = extension_->prepare_batch(runtime_, task.requests);
+        auto prepared =
+            invoke_worker_extension_hook(AsyncDurableRaftWorkerHook::kPrepareBatch, [this, &task] {
+              return extension_->prepare_batch(runtime_, task.requests);
+            });
         if (!prepared.has_value())
           return common::make_unexpected(prepared.error());
         if (*prepared == nullptr) {
@@ -444,8 +525,10 @@ private:
       BatchResult result = runtime_.execute_batch(std::move(task.requests));
       if (!result.has_value() || extension_ == nullptr)
         return result;
-      const common::Status completed =
-          extension_->complete_batch(runtime_, std::move(context), *result);
+      const common::Status completed = invoke_worker_extension_hook(
+          AsyncDurableRaftWorkerHook::kCompleteBatch, [this, &context, &result] {
+            return extension_->complete_batch(runtime_, std::move(context), *result);
+          });
       if (!completed.is_ok())
         return common::make_unexpected(completed);
       return result;
@@ -487,7 +570,9 @@ private:
     if (extension_ != nullptr) {
       common::Status extension_closed = common::Status::ok();
       try {
-        extension_closed = extension_->shutdown(runtime_);
+        extension_closed =
+            invoke_worker_extension_hook(AsyncDurableRaftWorkerHook::kShutdown,
+                                         [this] { return extension_->shutdown(runtime_); });
       } catch (const std::bad_alloc&) {
         extension_closed =
             common::Status{common::StatusCode::kResourceExhausted,
@@ -521,8 +606,11 @@ private:
   void run() {
     common::Status initialized = common::Status::ok();
     try {
-      if (extension_ != nullptr)
-        initialized = extension_->initialize(runtime_);
+      if (extension_ != nullptr) {
+        initialized = invoke_worker_extension_hook(AsyncDurableRaftWorkerHook::kInitialize, [this] {
+          return extension_->initialize(runtime_);
+        });
+      }
     } catch (const std::bad_alloc&) {
       initialized = common::Status{common::StatusCode::kResourceExhausted,
                                    "durable Raft worker extension initialization exhausted memory"};
@@ -610,6 +698,7 @@ private:
 
   DurableMultiRaftRuntime runtime_;
   AsyncDurableMultiRaftLimits limits_;
+  const common::TimeSource& time_source_;
   std::shared_ptr<AsyncDurableRaftWorkerExtension> extension_;
   mutable std::mutex mutex_;
   std::condition_variable condition_;
@@ -623,6 +712,7 @@ private:
   std::condition_variable initialization_condition_;
   common::Status initialization_status_;
   bool initialization_complete_{};
+  common::MonotonicTimePoint active_worker_extension_hook_started_at_;
   std::array<int, 2> completion_pipe_{-1, -1};
   std::uint64_t next_submission_sequence_{1U};
 };
@@ -704,15 +794,16 @@ common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::creat
     std::vector<RaftGroupConfiguration> groups, const AsyncDurableMultiRaftLimits limits,
     std::shared_ptr<AsyncDurableRaftWorkerExtension> extension) {
   return create_new_with(local_node_id, log_config, std::move(groups), limits, std::move(extension),
-                         io::detail::system_posix_syscalls());
+                         io::detail::system_posix_syscalls(), common::system_time_source());
 }
 
 common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::create_new_with(
     const NodeId local_node_id, const RaftPersistentLogConfig& log_config,
     std::vector<RaftGroupConfiguration> groups, const AsyncDurableMultiRaftLimits limits,
-    std::shared_ptr<AsyncDurableRaftWorkerExtension> extension,
-    io::detail::PosixSyscalls& syscalls) {
-  if (limits.maximum_pending_batches == 0U || limits.maximum_pending_operations == 0U) {
+    std::shared_ptr<AsyncDurableRaftWorkerExtension> extension, io::detail::PosixSyscalls& syscalls,
+    const common::TimeSource& time_source) {
+  if (limits.maximum_pending_batches == 0U || limits.maximum_pending_operations == 0U ||
+      limits.worker_extension_hook_watchdog_threshold <= std::chrono::nanoseconds::zero()) {
     return common::make_unexpected(invalid("asynchronous durable Multi-Raft limits are invalid"));
   }
   auto runtime = DurableMultiRaftRuntime::create_new_with(
@@ -724,8 +815,8 @@ common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::creat
     return common::make_unexpected(completion_pipe.error());
   std::unique_ptr<Impl> impl;
   try {
-    impl =
-        std::make_unique<Impl>(std::move(*runtime), limits, *completion_pipe, std::move(extension));
+    impl = std::make_unique<Impl>(std::move(*runtime), limits, *completion_pipe,
+                                  std::move(extension), time_source);
   } catch (const std::bad_alloc&) {
     ::close((*completion_pipe)[0]);
     ::close((*completion_pipe)[1]);
@@ -746,7 +837,8 @@ common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::open_
     const RaftPersistentLogOpenOptions& open_options, std::vector<RaftGroupConfiguration> groups,
     const AsyncDurableMultiRaftLimits limits,
     std::shared_ptr<AsyncDurableRaftWorkerExtension> extension) {
-  if (limits.maximum_pending_batches == 0U || limits.maximum_pending_operations == 0U) {
+  if (limits.maximum_pending_batches == 0U || limits.maximum_pending_operations == 0U ||
+      limits.worker_extension_hook_watchdog_threshold <= std::chrono::nanoseconds::zero()) {
     return common::make_unexpected(invalid("asynchronous durable Multi-Raft limits are invalid"));
   }
   auto runtime = DurableMultiRaftRuntime::open_existing(local_node_id, log_config, open_options,
@@ -758,8 +850,8 @@ common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::open_
     return common::make_unexpected(completion_pipe.error());
   std::unique_ptr<Impl> impl;
   try {
-    impl =
-        std::make_unique<Impl>(std::move(*runtime), limits, *completion_pipe, std::move(extension));
+    impl = std::make_unique<Impl>(std::move(*runtime), limits, *completion_pipe,
+                                  std::move(extension), common::system_time_source());
   } catch (const std::bad_alloc&) {
     ::close((*completion_pipe)[0]);
     ::close((*completion_pipe)[1]);

@@ -384,7 +384,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   has admitted a tablet proposal but before the coordinator picks up its result. Coordinator
   destruction drops only the response owner; worker shutdown drains the real tablet-plus-metadata
   application set, and reopen recovers the exact catalog, rows, applied index, and matching-retry
-  identity. Long-running extension-hook watchdog evidence remains deferred. A
+  identity. Monotonic extension-hook watchdog metrics now expose the active hook, live elapsed
+  duration, exact per-hook completed maxima, and threshold violations under deterministic
+  manual-clock validation without preempting the worker. A
   bounded generation-tagged timer scheduler now emits exact election/heartbeat actions and rejects
   stale completion rearming; its bounded driver submits two-operation action/observation batches
   through the asynchronous durable owner and retains complete post-sync results for routing.
@@ -458,8 +460,8 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   exist, and an owning transport runtime plus packaged daemon poll thread composes them with TLS
   contexts and randomized timers; add in-memory credential loading, remote leader redirection,
   metadata/tablet snapshot process recovery,
-  joint-reconfiguration restart matrices, broader queue/disconnect failure matrices, long-running
-  hook watchdog evidence, and TSan scheduling coverage.
+  joint-reconfiguration restart matrices, broader queue/disconnect failure matrices, and TSan
+  scheduling coverage.
 - Carry the implemented group-scoped read-barrier operation through authenticated production
   transport, request deadlines/coalescing, apply waiting, and exact tablet snapshot acquisition.
 - Extend the implemented metadata Raft codec/application/reopen path and complete-schema-definition
