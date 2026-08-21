@@ -426,6 +426,10 @@ A joint-quorum response sweep fails the new-only voter acknowledgement allocatio
 old-majority response still cannot complete the barrier, and then requires the exact new-only retry
 to complete it. This distinguishes strong insertion rollback from a partially counted response
 rather than relying only on unchanged durable state.
+A recipient-side sweep injects failure into both the outbound response reservation and every owned
+copy allocation for the post-term persistent state. Each failure must return `RESOURCE_EXHAUSTED`
+before term, vote, role, leader identity, or persistent state changes; an exact retry must return the
+accepted response and matching higher-term persistent transition together.
 The paired AppendEntries authority case submits an empty higher-term heartbeat from that same
 nonvoter position and requires exact leader-state preservation because no matching membership
 suffix proves the sender active. The positive new-only-leader case continues to install and commit

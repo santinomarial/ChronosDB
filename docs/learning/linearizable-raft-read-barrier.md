@@ -58,7 +58,9 @@ retry uses the same context.
 The Multi-Raft wrapper preserves the group on outbound probes and completion. A barrier start or
 ordinary same-term response has no durable state of its own, so the durable owner does not invent a
 physical-log record. If a recipient observes a higher term, its normal persistent transition is
-still appended and synchronized before the response can leave the durable batch.
+still appended and synchronized before the response can leave the durable batch. The recipient
+prepares both its response capacity and an exact post-term persistent-state value before changing
+the deterministic node, so later publication on this path is allocation-free.
 
 ## Failure behavior and complexity
 
@@ -70,6 +72,10 @@ change. Allocation or container-limit failure while issuing a barrier returns `R
 without changing role, term, leader identity, persistent state, pending ownership, or the next
 context. The acknowledgement set insertion has the same strong guarantee: allocation failure
 returns `RESOURCE_EXHAUSTED` without counting the responder, and an exact retry can add it once.
+Recipient-side response or persistent-state preparation failure also returns
+`RESOURCE_EXHAUSTED` before an admitted request can change term, vote, role, leader identity, or
+durable state. Retrying then returns the exact higher-term state that must be synchronized together
+with the accepted response.
 Each barrier sends `O(voters)` messages and retains `O(voters)` bounded state.
 
 ## Tradeoffs and likely interview questions

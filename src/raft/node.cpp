@@ -632,10 +632,26 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
     return common::make_unexpected(validation);
   }
 
-  Transition transition;
-  bool persistence_changed = false;
-
   const auto message_term = std::visit([](const auto& value) { return value.term; }, message);
+  Transition transition;
+  if (std::holds_alternative<ReadBarrierRequest>(message)) {
+    try {
+      transition.outbound.reserve(1U);
+      if (message_term > impl_->state.current_term) {
+        PersistentState& prepared = transition.persistent_state.emplace(impl_->state);
+        prepared.current_term = message_term;
+        prepared.voted_for.reset();
+      }
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(
+          exhausted("Raft read-barrier response preparation allocation failed"));
+    } catch (const std::length_error&) {
+      return common::make_unexpected(
+          exhausted("Raft read-barrier response preparation exceeds container limits"));
+    }
+  }
+
+  bool persistence_changed = false;
   if (message_term > impl_->state.current_term) {
     impl_->become_follower(message_term, std::nullopt);
     persistence_changed = true;
@@ -826,7 +842,7 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
   if (!status.is_ok()) {
     return common::make_unexpected(status);
   }
-  if (persistence_changed) {
+  if (persistence_changed && !transition.persistent_state.has_value()) {
     transition.persistent_state = impl_->state;
   }
   return transition;

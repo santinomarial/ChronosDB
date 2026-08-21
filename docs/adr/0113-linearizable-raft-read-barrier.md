@@ -21,7 +21,10 @@ stable voter set, or both old and new voter sets during joint consensus. It send
 adopt the request's current or newer leader term using the normal persist-before-response boundary
 and return an accepted response. The recipient rejects a source outside its active voter union
 before observing the request term; the learner exception for log and snapshot replication does not
-grant leadership-probe authority. A response from a higher term demotes the sender.
+grant leadership-probe authority. Before observing an admitted request term, the recipient owns the
+response slot and, for a newer term, an exact copy of the post-observation persistent state.
+Allocation or container-limit failure returns `RESOURCE_EXHAUSTED` without changing term, vote,
+role, leader identity, or persistent state. A response from a higher term demotes the sender.
 
 The leader counts only accepted responses in its current term from the frozen configuration and for
 the exact pending context. Completion requires a stable majority or separate old and new
@@ -51,6 +54,8 @@ response is safe under the set's duplicate suppression.
 - Joint membership preserves its two-quorum safety rule for reads as well as election and commit.
 - Allocation failure during issuance or acknowledgement is retryable and cannot leave a hidden
   pending barrier, partial quorum observation, or gap in the term-local context sequence.
+- Recipient response preparation fails before term observation, preserving the durable owner's
+  ability to synchronize every admitted higher-term transition before sending its response.
 - Production transport framing and binding the returned index to a tablet snapshot remain separate
   integration work; the in-memory value messages are not a released wire format.
 
@@ -73,6 +78,8 @@ observation, single-voter completion, and allocation failure at every observed i
 The allocation sweep requires exact role, term, leader, persistent-state, and retry-context
 preservation until the complete transition can be published. A joint-quorum response sweep further
 requires failed acknowledgement allocation to leave the voter uncounted, then proves exact retry
-completion only after both frozen majorities exist. Production wire
+completion only after both frozen majorities exist. A recipient sweep fails every response and
+persistent-state-copy allocation before higher-term observation, requires exact node-state
+preservation, and then validates the complete retry transition. Production wire
 versioning, tablet snapshot acquisition, exhaustive schedules, partitions, duplication, restart,
 and long randomized simulation remain Phase 14 integration and hardening work.
