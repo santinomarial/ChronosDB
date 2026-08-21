@@ -59,8 +59,9 @@ Metrics expose pending/high-water work and accepted, rejected, completed, and fa
 
 The physical log has one clear thread owner and producers receive explicit backpressure. One slow or
 large bounded batch can still delay later groups; per-group deficit scheduling and timer/transport
-integration remain future work requiring measurements. Waiting on a completion is allowed for
-control-plane callers but reactor threads must poll or hand it to a non-reactor continuation.
+integration remain future work requiring measurements. Metrics distinguish physical completion
+notifications from full-pipe coalescing. Waiting on a completion is allowed for control-plane
+callers but reactor threads must poll or hand it to a non-reactor continuation.
 
 ## Affected invariants
 

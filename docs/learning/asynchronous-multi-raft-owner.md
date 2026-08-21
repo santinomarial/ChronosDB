@@ -76,7 +76,11 @@ counter participates in publication, and no thread is detached.
 
 The completion pipe is nonblocking and close-on-exec. A successful write follows result publication;
 pipe saturation coalesces wakeups because unread data already keeps the descriptor readable. Runtime
-destruction joins the worker before closing either pipe descriptor.
+destruction joins the worker before closing either pipe descriptor. Saturating metrics count
+physical signal bytes separately from full-pipe coalescing; they provide diagnostics but do not
+replace the completion mutex or descriptor readiness as publication edges. A bounded test leaves the
+real pipe unread until coalescing occurs, consumes every completed observation, drains the pipe, and
+proves a later completion creates a fresh wakeup.
 
 Completion state is shared ownership, so it can outlive the runtime. Requests are unique ownership
 and are released after exactly one completion. Runtime destruction stops admission, drains or

@@ -18,6 +18,10 @@ publishes a complete batch through the existing completion mutex release edge an
 byte to the pipe. A full pipe is successful coalescing because its read end remains ready. Unexpected
 notification failures stop admission and fail queued work closed.
 
+Saturating metrics distinguish bytes written from writes coalesced after `EAGAIN`/`EWOULDBLOCK`.
+They are observability counters, not publication primitives; the completion mutex and readable
+descriptor remain the synchronization contract.
+
 The runtime exposes the borrowed read descriptor and an explicit drain operation. One embedding
 event loop owns draining and must inspect every completion owner it coordinates after a wakeup. The
 pipe is runtime-lifetime state: shutdown joins the worker before destruction closes either end.
@@ -30,8 +34,9 @@ timer polling. Every successful or terminal batch adds at most one byte and noti
 coalesce without losing readiness. Focused tests prove a real durable operation wakes the
 descriptor, draining clears readiness, and the owning completion is ready. A controlled full-bound
 race also proves concurrent shutdown retains every accepted completion and leaves the descriptor
-drainable after the worker joins. Actual pipe-capacity saturation and broader shutdown/fault timing
-matrices remain Phase 18 work.
+drainable after the worker joins. A bounded unread-completion test fills the real platform pipe,
+observes coalescing without terminal failure or missing completions, drains readiness, and proves the
+next completion writes a fresh signal. Broader shutdown/fault timing matrices remain Phase 18 work.
 
 ## References
 

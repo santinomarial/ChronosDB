@@ -6,6 +6,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <memory>
@@ -492,6 +493,77 @@ TEST(AsyncDurableMultiRaftRuntimeTest, WakesAndDrainsCompletionDescriptor) {
   ASSERT_EQ(result->size(), 1U);
   EXPECT_TRUE(result->front().status.is_ok());
   EXPECT_TRUE(runtime->shutdown().is_ok());
+}
+
+TEST(AsyncDurableMultiRaftRuntimeTest, CoalescesSaturatedCompletionPipeAndResumesAfterDrain) {
+  constexpr std::uint64_t kMaximumCompletionsBeforeSaturation = 1U << 20U;
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{6U});
+  auto runtime = AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group, {1U}}});
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+
+  std::uint64_t completed{};
+  while (runtime->metrics().coalesced_completion_notifications == 0U &&
+         completed < kMaximumCompletionsBeforeSaturation) {
+    auto observation = runtime->try_observe_group(group);
+    ASSERT_TRUE(observation.has_value()) << observation.error().to_string();
+    auto result = observation->wait();
+    ASSERT_TRUE(result.has_value()) << result.error().to_string();
+    ASSERT_EQ(result->size(), 1U);
+    ASSERT_TRUE(result->front().status.is_ok());
+    ASSERT_TRUE(result->front().observation.has_value());
+    ++completed;
+  }
+
+  AsyncDurableMultiRaftMetrics saturated = runtime->metrics();
+  for (std::size_t attempt = 0U;
+       saturated.written_completion_notifications + saturated.coalesced_completion_notifications <
+           completed &&
+       attempt < 1'000'000U;
+       ++attempt) {
+    std::this_thread::yield();
+    saturated = runtime->metrics();
+  }
+  ASSERT_GT(saturated.coalesced_completion_notifications, 0U)
+      << "completion pipe did not saturate after " << completed << " unread notifications";
+  EXPECT_EQ(saturated.completed_batches, completed);
+  EXPECT_EQ(saturated.written_completion_notifications +
+                saturated.coalesced_completion_notifications,
+            completed);
+  EXPECT_TRUE(saturated.accepting);
+  EXPECT_FALSE(saturated.terminal_failure);
+
+  pollfd descriptor{.fd = runtime->completion_descriptor(), .events = POLLIN};
+  ASSERT_EQ(::poll(&descriptor, 1U, 0), 1);
+  EXPECT_NE(descriptor.revents & POLLIN, 0);
+  ASSERT_TRUE(runtime->drain_completion_notifications().is_ok());
+  descriptor.revents = 0;
+  EXPECT_EQ(::poll(&descriptor, 1U, 0), 0);
+
+  auto resumed = runtime->try_observe_group(group);
+  ASSERT_TRUE(resumed.has_value()) << resumed.error().to_string();
+  auto resumed_result = resumed->wait();
+  ASSERT_TRUE(resumed_result.has_value()) << resumed_result.error().to_string();
+  ASSERT_EQ(resumed_result->size(), 1U);
+  EXPECT_TRUE(resumed_result->front().status.is_ok());
+  EXPECT_TRUE(resumed_result->front().observation.has_value());
+  EXPECT_TRUE(runtime->shutdown().is_ok());
+
+  const AsyncDurableMultiRaftMetrics drained = runtime->metrics();
+  EXPECT_EQ(drained.completed_batches, completed + 1U);
+  EXPECT_EQ(drained.written_completion_notifications,
+            saturated.written_completion_notifications + 1U);
+  EXPECT_EQ(drained.coalesced_completion_notifications,
+            saturated.coalesced_completion_notifications);
+  EXPECT_EQ(drained.written_completion_notifications + drained.coalesced_completion_notifications,
+            drained.completed_batches);
+  descriptor.revents = 0;
+  ASSERT_EQ(::poll(&descriptor, 1U, 0), 1);
+  EXPECT_NE(descriptor.revents & POLLIN, 0);
+  ASSERT_TRUE(runtime->drain_completion_notifications().is_ok());
+  descriptor.revents = 0;
+  EXPECT_EQ(::poll(&descriptor, 1U, 0), 0);
 }
 
 TEST(AsyncDurableMultiRaftRuntimeTest, ConcurrentShutdownDrainsTheExactAcceptedBound) {

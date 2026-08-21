@@ -62,6 +62,10 @@ struct AsyncDurableMultiRaftMetrics {
   std::uint64_t rejected_reclamations{};
   std::uint64_t completed_reclamations{};
   std::uint64_t failed_reclamations{};
+  // Worker notification attempts that either wrote one byte or coalesced against a full,
+  // already-readable pipe. These counters do not publish completion state.
+  std::uint64_t written_completion_notifications{};
+  std::uint64_t coalesced_completion_notifications{};
   std::size_t pending_batches{};
   std::size_t pending_operations{};
   std::size_t high_water_pending_batches{};

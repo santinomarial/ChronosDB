@@ -355,14 +355,16 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
 - Persistent file owner, vote/log fsync ordering, crash/restart at every transition, idempotent
   recovery, application to tablet state, snapshot creation/install, and log compaction. Extend the
   implemented read barrier through production transport and tablet snapshot acquisition.
-- Membership protocol, leader leases if ever proposed, completion-pipe saturation, broader shutdown
-  and fault timing matrices, timerfd integration, disk-error behavior, and storage fault injection.
+- Membership protocol, leader leases if ever proposed, broader asynchronous-owner shutdown and fault
+  timing matrices, timerfd integration, disk-error behavior, and storage fault injection.
   The asynchronous durable owner now supplies a portable coalescing completion descriptor. A
   controlled full-bound race retains all 64 accepted completions across eight producers and two
-  concurrent shutdown callers, with exact metrics and a drainable joined descriptor. A bounded
-  generation-tagged timer scheduler now emits exact election/heartbeat actions and rejects stale
-  completion rearming; its bounded driver submits two-operation action/observation batches through
-  the asynchronous durable owner and retains complete post-sync results for routing.
+  concurrent shutdown callers, with exact metrics and a drainable joined descriptor. A bounded test
+  also fills the real unread completion pipe, observes successful coalescing, drains it, and proves
+  later completions resume physical wakeups. A bounded generation-tagged timer scheduler now emits
+  exact election/heartbeat actions and rejects stale completion rearming; its bounded driver submits
+  two-operation action/observation batches through the asynchronous durable owner and retains
+  complete post-sync results for routing.
   Timer and transport owners now expose their exact earliest monotonic deadlines; clock-change and
   high-cardinality deadline-scan validation remain deferred.
   Runtime-lifetime FIFO submission identities now order timer and multi-connection inbound results.

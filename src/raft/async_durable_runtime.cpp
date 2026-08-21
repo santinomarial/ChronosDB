@@ -318,12 +318,18 @@ public:
     const std::uint8_t signal = 1U;
     while (true) {
       const ssize_t written = ::write(completion_pipe_[1], &signal, sizeof(signal));
-      if (written == static_cast<ssize_t>(sizeof(signal)))
+      if (written == static_cast<ssize_t>(sizeof(signal))) {
+        const std::lock_guard lock{mutex_};
+        saturating_increment(metrics_.written_completion_notifications);
         return common::Status::ok();
+      }
       if (written < 0 && errno == EINTR)
         continue;
-      if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+      if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        const std::lock_guard lock{mutex_};
+        saturating_increment(metrics_.coalesced_completion_notifications);
         return common::Status::ok();
+      }
       return io_error("signaling durable Raft completion");
     }
   }
