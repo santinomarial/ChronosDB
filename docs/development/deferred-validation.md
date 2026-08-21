@@ -226,14 +226,15 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   and fixed-message value domains. A structure-aware ASan/UBSan libFuzzer target combines raw bytes
   with every generated message kind, checksum-repaired mutation, truncation, fragmented reading,
   exact successful re-encoding, and cursor validation; sustained campaigns remain open.
-- Long seed matrices, exhaustive bounded schedules, semantic dependency-aware trace shrinking,
-  timer/clock changes, and physical segmented-log syscall faults. The bounded simulator now
-  derives valid joint-membership begin/finalize, local snapshot-compaction, pending snapshot-
+- Long seed matrices, broader exhaustive action schedules, semantic dependency-aware trace
+  shrinking, timer/clock changes, and physical segmented-log syscall faults. The bounded simulator
+  now derives valid joint-membership begin/finalize, local snapshot-compaction, pending snapshot-
   completion, and current-term read-barrier candidates from current state. Focused explicit and
   seeded coverage exercises partition, delay/reordering, duplicate/loss, crash/restart, atomic
   persistence failure, application, automatically generated membership/compaction/read-barrier
   churn, exact replay including generated completion of a prepared external snapshot install,
-  safety-model comparison, and bounded chunk-first deletion shrinking.
+  safety-model comparison, bounded chunk-first deletion shrinking, and replay-bounded exhaustive
+  delivery/loss enumeration after a valid setup trace.
 - Extend the implemented hostile higher-term/payload-identity, pre-observation term/position/
   response-state, and exact compacted-prefix predecessor regression checks into exhaustive
   persistence-before-response, sequence-exhaustion schedules, response-state, and broader snapshot-

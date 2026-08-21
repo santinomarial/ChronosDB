@@ -1,6 +1,7 @@
 #include "chronos/raft/deterministic_simulator.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <new>
@@ -787,6 +788,87 @@ common::Status DeterministicRaftSimulator::run_seeded(const RaftSeededSimulation
                                            "Raft seeded simulation exceeds container limits");
   }
   return implementation_->status_;
+}
+
+common::Result<RaftExhaustiveNetworkResult> DeterministicRaftSimulator::explore_network_schedules(
+    const RaftSimulationConfig& config, const std::span<const RaftSimulationAction> setup_trace,
+    const RaftExhaustiveNetworkSchedule schedule) {
+  if (schedule.maximum_replays == 0U || setup_trace.size() > config.limits.maximum_trace_actions ||
+      schedule.maximum_depth > config.limits.maximum_trace_actions - setup_trace.size()) {
+    return common::make_unexpected(
+        make_status(common::StatusCode::kInvalidArgument,
+                    "Raft exhaustive network schedule bounds are invalid"));
+  }
+  try {
+    auto setup = create(config);
+    if (!setup.has_value())
+      return common::make_unexpected(setup.error());
+    const common::Status setup_status = setup->replay(setup_trace);
+    if (!setup_status.is_ok()) {
+      return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
+                                                    "Raft exhaustive network setup trace failed: " +
+                                                        setup_status.to_string()});
+    }
+
+    std::vector<std::vector<RaftSimulationAction>> frontier;
+    frontier.emplace_back();
+    RaftExhaustiveNetworkResult result;
+    bool frontier_truncated = false;
+    while (!frontier.empty() && result.replayed_prefixes < schedule.maximum_replays) {
+      std::vector<RaftSimulationAction> suffix = std::move(frontier.back());
+      frontier.pop_back();
+      auto simulation = create(config);
+      if (!simulation.has_value())
+        return common::make_unexpected(simulation.error());
+      const common::Status replayed_setup = simulation->replay(setup_trace);
+      if (!replayed_setup.is_ok()) {
+        return common::make_unexpected(
+            make_status(common::StatusCode::kCorruption,
+                        "Raft exhaustive network setup replay changed outcome"));
+      }
+      const common::Status failure = simulation->replay(suffix);
+      ++result.replayed_prefixes;
+      if (!failure.is_ok()) {
+        result.failure = failure;
+        result.failing_trace.reserve(setup_trace.size() + suffix.size());
+        result.failing_trace.insert(result.failing_trace.end(), setup_trace.begin(),
+                                    setup_trace.end());
+        result.failing_trace.insert(result.failing_trace.end(),
+                                    std::make_move_iterator(suffix.begin()),
+                                    std::make_move_iterator(suffix.end()));
+        return result;
+      }
+      if (suffix.size() == schedule.maximum_depth)
+        continue;
+      auto messages = simulation->pending_messages();
+      if (!messages.has_value())
+        return common::make_unexpected(messages.error());
+      std::ranges::sort(*messages, {}, &RaftSimulationMessageRoute::message_id);
+      std::vector<RaftSimulationAction> branches;
+      for (const RaftSimulationMessageRoute& message : *messages) {
+        branches.emplace_back(RaftSimulationDeliver{message.message_id});
+        branches.emplace_back(RaftSimulationDrop{message.message_id});
+      }
+      const std::size_t remaining = schedule.maximum_replays - result.replayed_prefixes;
+      const std::size_t available = remaining > frontier.size() ? remaining - frontier.size() : 0U;
+      const std::size_t admitted = std::min(available, branches.size());
+      frontier_truncated = frontier_truncated || admitted != branches.size();
+      for (std::size_t branch = admitted; branch > 0U; --branch) {
+        std::vector<RaftSimulationAction> child = suffix;
+        child.push_back(std::move(branches[branch - 1U]));
+        frontier.push_back(std::move(child));
+      }
+    }
+    result.search_complete = !frontier_truncated && frontier.empty();
+    return result;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(make_status(common::StatusCode::kResourceExhausted,
+                                               "Raft exhaustive network allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        make_status(common::StatusCode::kResourceExhausted,
+                    "Raft exhaustive network schedule exceeds container limits"));
+  }
 }
 
 common::Result<std::vector<RaftSimulationAction>> DeterministicRaftSimulator::shrink_failing_trace(

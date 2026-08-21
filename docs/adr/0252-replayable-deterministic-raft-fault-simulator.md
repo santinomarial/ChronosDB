@@ -47,6 +47,12 @@ before a link mutation. `shrink_failing_trace` performs bounded deletion-based r
 only candidates with the original failure status code. It starts with deterministic coarse chunks,
 reduces granularity toward individual actions, and never exceeds `maximum_shrink_replays`.
 
+`explore_network_schedules` accepts one valid setup trace and exhaustively branches every queued
+message into delivery or explicit loss through a bounded suffix depth. Message identities are
+visited in ascending order. `maximum_replays` bounds retained frontier work and replayed prefixes;
+the result distinguishes a completed search from a truncated search and retains the exact first
+failing trace and status. The one setup-validation replay is outside that exploration count.
+
 ## Consequences
 
 Partitions, arbitrary delay/reordering, duplication, loss, process crashes, atomic persistence
@@ -59,8 +65,8 @@ action payloads remain bounded by Raft and trace limits. Safety checking intenti
 clear oracle over speed and compares retained prefixes quadratically across the small simulated
 cluster. Simulation-rate measurement must precede optimization.
 
-This foundation does not close the full Phase 14 campaign. Exhaustive bounded enumeration, long
-seed matrices, injected timer/clock changes, physical segmented-log syscall faults, and stored
+This foundation does not close the full Phase 14 campaign. Broader exhaustive action enumeration,
+long seed matrices, injected timer/clock changes, physical segmented-log syscall faults, and stored
 minimized corpora remain Phase 18 work.
 
 ## Validation
@@ -72,7 +78,9 @@ run 32 longer seeds that automatically generate and replay joint-membership begi
 snapshot-compaction, and read-barrier actions with observed barrier completion, generate and replay
 completion from an already-pending external snapshot install, drive explicit joint membership plus
 local snapshot compaction, shrink an irrelevant-prefix failure to one essential action, and reduce a
-65-action failure to at most four actions with only four candidate replays.
+65-action failure to at most four actions with only four candidate replays. A two-node election
+exhaustively covers all delivery/loss prefixes through depth two, reports replay-bound truncation,
+rejects invalid setup, and retains a membership-removal stale-message failure for exact replay.
 
 ## References
 

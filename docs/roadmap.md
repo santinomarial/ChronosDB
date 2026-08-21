@@ -848,8 +848,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   election, log, commit, and leader-completeness safety after every step and bounded chunk-shrinks
   failing traces. Seeded schedules now derive valid joint-membership begin/finalize, local snapshot-
   compaction, and current-term read-barrier actions from current state and replay that churn exactly.
-  Long/exhaustive campaigns, clock changes, physical-log faults, and the full exit evidence remain
-  deferred. Linearizable reads now use one bounded explicit current-term leadership
+  A bounded exhaustive mode now enumerates every virtual-network delivery/loss suffix after a valid
+  setup trace and reports replay-limit truncation without claiming completion. Broader exhaustive
+  action campaigns, clock changes, physical-log faults, and the full exit evidence remain deferred.
+  Linearizable reads now use one bounded explicit current-term leadership
   probe, require a current-term committed entry, freeze stable or joint voter quorums at issuance,
   reject nonvoter probe sources before higher-term observation while retaining learner replication,
   abandon pending work on leadership change, and return an exact committed read index that must be

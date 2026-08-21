@@ -31,6 +31,35 @@ void drain(DeterministicRaftSimulator& simulation) {
   FAIL() << "simulation network did not drain";
 }
 
+[[nodiscard]] std::uint64_t message_id(DeterministicRaftSimulator& simulation, const NodeId source,
+                                       const NodeId destination,
+                                       const std::uint64_t excluded = 0U) {
+  auto messages = simulation.pending_messages();
+  EXPECT_TRUE(messages.has_value());
+  if (!messages.has_value())
+    return 0U;
+  const auto found = std::ranges::find_if(*messages, [&](const auto& route) {
+    return route.source == source && route.destination == destination &&
+           route.message_id != excluded;
+  });
+  EXPECT_NE(found, messages->end());
+  return found == messages->end() ? 0U : found->message_id;
+}
+
+void drain_except(DeterministicRaftSimulator& simulation, const std::uint64_t retained) {
+  for (std::size_t delivered = 0U; delivered < 10'000U; ++delivered) {
+    auto messages = simulation.pending_messages();
+    ASSERT_TRUE(messages.has_value()) << messages.error().to_string();
+    const auto next = std::ranges::find_if(
+        *messages, [&](const auto& route) { return route.message_id != retained; });
+    if (next == messages->end())
+      return;
+    ASSERT_TRUE(simulation.step(RaftSimulationDeliver{next->message_id}).is_ok())
+        << simulation.status().to_string();
+  }
+  FAIL() << "simulation network did not drain around retained message";
+}
+
 TEST(DeterministicRaftSimulatorTest, InitializesAndRestartsFromAnExactEmptyDurableImage) {
   auto simulation = DeterministicRaftSimulator::create(config());
   ASSERT_TRUE(simulation.has_value()) << simulation.error().to_string();
@@ -220,6 +249,100 @@ TEST(DeterministicRaftSimulatorTest, GeneratesAndReplaysPendingSnapshotCompletio
   EXPECT_EQ(replay->stats(), simulation->stats());
   for (const NodeId node : config().node_ids)
     EXPECT_EQ(*replay->durable_state(node), *simulation->durable_state(node));
+}
+
+TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresBoundedMessageDeliveryAndLoss) {
+  auto two_nodes = config();
+  two_nodes.node_ids = {1U, 2U};
+  two_nodes.initial_voters = {1U, 2U};
+  const std::vector<RaftSimulationAction> setup{RaftSimulationStartElection{1U}};
+
+  auto complete = DeterministicRaftSimulator::explore_network_schedules(
+      two_nodes, setup, {.maximum_depth = 2U, .maximum_replays = 5U});
+
+  ASSERT_TRUE(complete.has_value()) << complete.error().to_string();
+  EXPECT_TRUE(complete->search_complete);
+  EXPECT_EQ(complete->replayed_prefixes, 5U);
+  EXPECT_FALSE(complete->failure.has_value());
+  EXPECT_TRUE(complete->failing_trace.empty());
+
+  auto bounded = DeterministicRaftSimulator::explore_network_schedules(
+      two_nodes, setup, {.maximum_depth = 2U, .maximum_replays = 4U});
+  ASSERT_TRUE(bounded.has_value()) << bounded.error().to_string();
+  EXPECT_FALSE(bounded->search_complete);
+  EXPECT_EQ(bounded->replayed_prefixes, 4U);
+  EXPECT_FALSE(bounded->failure.has_value());
+
+  const std::vector<RaftSimulationAction> invalid_trace{RaftSimulationDeliver{999U}};
+  auto invalid_setup = DeterministicRaftSimulator::explore_network_schedules(
+      two_nodes, invalid_trace, {.maximum_depth = 1U, .maximum_replays = 1U});
+  ASSERT_FALSE(invalid_setup.has_value());
+  EXPECT_EQ(invalid_setup.error().code(), common::StatusCode::kInvalidArgument);
+  auto invalid_bounds = DeterministicRaftSimulator::explore_network_schedules(
+      two_nodes, {}, {.maximum_depth = 1U, .maximum_replays = 0U});
+  ASSERT_FALSE(invalid_bounds.has_value());
+  EXPECT_EQ(invalid_bounds.error().code(), common::StatusCode::kInvalidArgument);
+  auto tight_trace = two_nodes;
+  tight_trace.limits.maximum_trace_actions = setup.size();
+  auto invalid_depth = DeterministicRaftSimulator::explore_network_schedules(
+      tight_trace, setup, {.maximum_depth = 1U, .maximum_replays = 1U});
+  ASSERT_FALSE(invalid_depth.has_value());
+  EXPECT_EQ(invalid_depth.error().code(), common::StatusCode::kInvalidArgument);
+}
+
+TEST(DeterministicRaftSimulatorTest, ExhaustiveExplorationRetainsTheFirstFailingSchedule) {
+  auto simulation = DeterministicRaftSimulator::create(config());
+  ASSERT_TRUE(simulation.has_value()) << simulation.error().to_string();
+  ASSERT_TRUE(simulation->step(RaftSimulationStartElection{1U}).is_ok());
+  drain(*simulation);
+  ASSERT_EQ(simulation->active_node(1U)->role(), Role::kLeader);
+
+  ASSERT_TRUE(simulation->step(RaftSimulationBeginMembershipChange{1U, {1U, 2U}}).is_ok());
+  const std::uint64_t request_three = message_id(*simulation, 1U, 3U);
+  ASSERT_NE(request_three, 0U);
+  ASSERT_TRUE(simulation->step(RaftSimulationDeliver{request_three}).is_ok());
+  const std::uint64_t response_three = message_id(*simulation, 3U, 1U);
+  ASSERT_NE(response_three, 0U);
+  ASSERT_TRUE(simulation->step(RaftSimulationDuplicate{response_three}).is_ok());
+  const std::uint64_t retained_response = message_id(*simulation, 3U, 1U, response_three);
+  ASSERT_NE(retained_response, 0U);
+  ASSERT_TRUE(simulation->step(RaftSimulationDeliver{response_three}).is_ok());
+  const std::uint64_t request_two = message_id(*simulation, 1U, 2U);
+  ASSERT_NE(request_two, 0U);
+  ASSERT_TRUE(simulation->step(RaftSimulationDeliver{request_two}).is_ok());
+  const std::uint64_t response_two = message_id(*simulation, 2U, 1U);
+  ASSERT_NE(response_two, 0U);
+  ASSERT_TRUE(simulation->step(RaftSimulationDeliver{response_two}).is_ok());
+  drain_except(*simulation, retained_response);
+  ASSERT_TRUE(simulation->active_node(1U)->joint_membership_can_finalize());
+
+  ASSERT_TRUE(simulation->step(RaftSimulationFinalizeMembershipChange{1U}).is_ok());
+  const std::uint64_t final_request_two = message_id(*simulation, 1U, 2U);
+  ASSERT_NE(final_request_two, 0U);
+  ASSERT_TRUE(simulation->step(RaftSimulationDeliver{final_request_two}).is_ok());
+  const std::uint64_t final_response_two = message_id(*simulation, 2U, 1U);
+  ASSERT_NE(final_response_two, 0U);
+  ASSERT_TRUE(simulation->step(RaftSimulationDeliver{final_response_two}).is_ok());
+  EXPECT_TRUE(
+      std::ranges::equal(simulation->active_node(1U)->voters(), std::vector<NodeId>{1U, 2U}));
+
+  const std::vector<RaftSimulationAction> setup(simulation->trace().begin(),
+                                                simulation->trace().end());
+  auto explored = DeterministicRaftSimulator::explore_network_schedules(
+      config(), setup, {.maximum_depth = 1U, .maximum_replays = 2U});
+
+  ASSERT_TRUE(explored.has_value()) << explored.error().to_string();
+  EXPECT_FALSE(explored->search_complete);
+  ASSERT_TRUE(explored->failure.has_value());
+  const common::Status failure = explored->failure.value_or(
+      common::Status{common::StatusCode::kInternal, "missing exhaustive failure"});
+  EXPECT_EQ(failure.code(), common::StatusCode::kInvalidArgument);
+  ASSERT_EQ(explored->failing_trace.size(), setup.size() + 1U);
+  EXPECT_EQ(std::get<RaftSimulationDeliver>(explored->failing_trace.back()),
+            RaftSimulationDeliver{retained_response});
+  auto replay = DeterministicRaftSimulator::create(config());
+  ASSERT_TRUE(replay.has_value()) << replay.error().to_string();
+  EXPECT_EQ(replay->replay(explored->failing_trace).code(), failure.code());
 }
 
 TEST(DeterministicRaftSimulatorTest, ShrinksAReplayFailureToItsEssentialAction) {

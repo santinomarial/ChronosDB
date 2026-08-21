@@ -4,10 +4,11 @@
 
 `DeterministicRaftSimulator` turns distributed nondeterminism into a sequence of owned
 `RaftSimulationAction` values. Callers can execute one action, replay a retained trace, generate a
-seeded schedule, inspect active and durable node state, list queued message routes, or shrink a
-failing trace. The simulator uses the production deterministic `RaftNode`; it does not contain a
-second consensus implementation. `RaftSeededSimulationSchedule` names the seed and finite action
-budget so two width-compatible integral arguments cannot be transposed at a call site.
+seeded schedule, exhaustively branch bounded virtual-network outcomes after a setup trace, inspect
+active and durable node state, list queued message routes, or shrink a failing trace. The simulator
+uses the production deterministic `RaftNode`; it does not contain a second consensus implementation.
+Named schedule values keep width-compatible depth, replay, seed, and action limits from being
+transposed at a call site.
 
 ## Data structures and ownership
 
@@ -71,12 +72,21 @@ is exhausted. A candidate is retained only when it reproduces the original failu
 `maximum_shrink_replays` is a hard bound excluding the one initial replay used to establish that
 oracle. Semantic dependency-aware shrinking can be added after corpus evidence shows a need.
 
+Bounded network exploration replays a caller-provided valid setup and then uses deterministic
+depth-first enumeration over delivery and loss for every currently queued message. Its memory and
+replay work are bounded by `maximum_replays`, and each suffix is bounded by `maximum_depth` plus the
+configured trace limit. A complete result proves this action domain was exhausted through that
+depth; a false completion flag reports frontier truncation rather than silently claiming coverage.
+The first non-successful action is returned with its exact replayable trace and status.
+
 ## Verification and likely interview questions
 
 Focused coverage includes partition, duplicate, commit propagation, crash/restart, atomic
 persistence failure, exact replay, seeded schedules that automatically produce joint-membership and
 local-compaction churn plus completed read barriers, generated completion of a pending external
 snapshot install, explicit joint membership and compaction, trace shrinking, and bound validation.
+Focused exhaustive coverage enumerates all two-node election message delivery/loss prefixes through
+depth two and retains an exact stale-message failure after membership removal.
 The production core additionally rejects AppendEntries predecessors below an
 installed snapshot without interpreting the compacted entry as retained log storage, and its
 higher-term regression requires persistence before the negative response. The same core serializes
@@ -91,8 +101,9 @@ also rejects such impossible snapshot history relative to current term. Failed a
 must name a nonzero conflict index, and their optional conflict term cannot exceed the response term,
 so malformed higher-term feedback cannot step down a candidate. Recovered term-zero state has no
 vote, and an index-zero snapshot has no external or membership identity. Long seed campaigns,
-exhaustive schedules, timer clock changes, physical disk faults, and minimized corpus retention
-remain in the hardening ledger. Snapshot index `UINT64_MAX` is rejected before external installation
+broader exhaustive action schedules, timer clock changes, physical disk faults, and minimized corpus
+retention remain in the hardening ledger. Snapshot index `UINT64_MAX` is rejected before external
+installation
 because installing it would create a durable state the exhaustion-aware recovery path cannot reopen.
 Higher-term AppendEntries requests cannot replace a committed entry by changing its term or by
 retaining its term while changing type or payload bytes; both failures preserve the complete local

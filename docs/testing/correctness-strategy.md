@@ -394,9 +394,12 @@ The current bounded simulator automatically derives valid joint-membership begin
 snapshot-compaction candidates from the evolving state. It also starts eligible current-term read
 barriers, records observed completions, and retains exact generated-action replay. Completion
 actions are generated when an external snapshot installation is already pending; broader seed
-matrices and exhaustive bounded schedule enumeration remain deferred.
+matrices and broader exhaustive action-schedule enumeration remain deferred.
 Failure minimization deletes deterministic coarse chunks before refining toward individual actions,
 preserves the original status-code oracle, and respects the configured candidate-replay limit.
+Bounded exhaustive exploration branches every queued message into delivery or loss after a valid
+setup trace. Tests prove complete depth-two enumeration, explicit replay-bound truncation, invalid-
+setup rejection, and exact retention of the first failing membership-stale-message schedule.
 
 Raft recovery payload-bound coverage supplies a nonempty legacy snapshot with no voter checkpoint.
 Backfilling three bootstrap voters must reject a budget that can encode only two and accept the

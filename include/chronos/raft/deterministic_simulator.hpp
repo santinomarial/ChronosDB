@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <variant>
 #include <vector>
@@ -142,6 +143,18 @@ struct RaftSeededSimulationSchedule {
   std::size_t actions{};
 };
 
+struct RaftExhaustiveNetworkSchedule {
+  std::size_t maximum_depth{};
+  std::size_t maximum_replays{};
+};
+
+struct RaftExhaustiveNetworkResult {
+  std::size_t replayed_prefixes{};
+  bool search_complete{};
+  std::optional<common::Status> failure;
+  std::vector<RaftSimulationAction> failing_trace;
+};
+
 // Deterministic single-threaded Raft laboratory. Explicit delivery order is virtual network time;
 // links, duplication, loss, crashes, and atomic full-state persistence are controlled by actions.
 // Every step checks election safety, log matching, leader completeness, and committed-prefix truth.
@@ -159,6 +172,12 @@ public:
   [[nodiscard]] common::Status step(RaftSimulationAction action);
   [[nodiscard]] common::Status replay(std::span<const RaftSimulationAction> actions);
   [[nodiscard]] common::Status run_seeded(RaftSeededSimulationSchedule schedule);
+  // Exhaustively branches every queued message into delivery or loss after a valid setup trace.
+  // `search_complete` is false when the replay bound truncates the frontier or a failure is found.
+  [[nodiscard]] static common::Result<RaftExhaustiveNetworkResult>
+  explore_network_schedules(const RaftSimulationConfig& config,
+                            std::span<const RaftSimulationAction> setup_trace,
+                            RaftExhaustiveNetworkSchedule schedule);
   [[nodiscard]] static common::Result<std::vector<RaftSimulationAction>>
   shrink_failing_trace(const RaftSimulationConfig& config,
                        std::span<const RaftSimulationAction> failing_trace);
