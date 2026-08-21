@@ -589,6 +589,40 @@ TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresMultiMemberLeaderHeartb
   EXPECT_EQ(no_op_excluded->replayed_prefixes, 1U);
 }
 
+TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresApplicationBoundaries) {
+  auto one_node = config();
+  one_node.node_ids = {1U};
+  one_node.initial_voters = {1U};
+  const std::vector<RaftSimulationAction> setup{RaftSimulationStartElection{1U},
+                                                RaftSimulationPropose{1U, 1U, {std::byte{0x11U}}},
+                                                RaftSimulationPropose{1U, 1U, {std::byte{0x22U}}}};
+
+  auto complete = DeterministicRaftSimulator::explore_fault_schedules(
+      one_node, setup,
+      {.maximum_depth = 2U, .maximum_replays = 4U, .include_application_advancement = true});
+
+  ASSERT_TRUE(complete.has_value()) << complete.error().to_string();
+  EXPECT_TRUE(complete->search_complete);
+  EXPECT_EQ(complete->replayed_prefixes, 4U);
+  EXPECT_FALSE(complete->failure.has_value());
+
+  auto bounded = DeterministicRaftSimulator::explore_fault_schedules(
+      one_node, setup,
+      {.maximum_depth = 2U, .maximum_replays = 3U, .include_application_advancement = true});
+  ASSERT_TRUE(bounded.has_value()) << bounded.error().to_string();
+  EXPECT_FALSE(bounded->search_complete);
+  EXPECT_EQ(bounded->replayed_prefixes, 3U);
+
+  std::vector<RaftSimulationAction> crashed = setup;
+  crashed.emplace_back(RaftSimulationCrash{1U});
+  auto inactive = DeterministicRaftSimulator::explore_fault_schedules(
+      one_node, crashed,
+      {.maximum_depth = 1U, .maximum_replays = 1U, .include_application_advancement = true});
+  ASSERT_TRUE(inactive.has_value()) << inactive.error().to_string();
+  EXPECT_TRUE(inactive->search_complete);
+  EXPECT_EQ(inactive->replayed_prefixes, 1U);
+}
+
 TEST(DeterministicRaftSimulatorTest, ExhaustiveExplorationRetainsTheFirstFailingSchedule) {
   auto simulation = DeterministicRaftSimulator::create(config());
   ASSERT_TRUE(simulation.has_value()) << simulation.error().to_string();

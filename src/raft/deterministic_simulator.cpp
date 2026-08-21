@@ -889,6 +889,18 @@ common::Result<RaftExhaustiveFaultResult> DeterministicRaftSimulator::explore_fa
             branches.emplace_back(RaftSimulationHeartbeat{node_id});
         }
       }
+      if (schedule.include_application_advancement) {
+        for (const NodeId node_id : config.node_ids) {
+          const RaftNode* const node = simulation->active_node(node_id);
+          if (node == nullptr || node->applied_index() >= node->commit_index())
+            continue;
+          for (LogIndex index = node->applied_index() + 1U;; ++index) {
+            branches.emplace_back(RaftSimulationMarkApplied{node_id, index});
+            if (index == node->commit_index())
+              break;
+          }
+        }
+      }
       if (schedule.include_node_lifecycle) {
         for (const NodeId node_id : config.node_ids) {
           if (simulation->active_node(node_id) == nullptr)

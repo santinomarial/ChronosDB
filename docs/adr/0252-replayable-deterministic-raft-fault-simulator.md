@@ -63,10 +63,12 @@ than a no-op. Optional persistence branches next arm each ascending active node 
 already armed. Optional election branches then start each ascending active nonleader whose replayed
 membership includes itself; learners and current leaders are excluded. Optional heartbeat branches
 then include each ascending leader with more than one active-configuration voter, excluding the
-single-voter no-op. Finally, ascending node IDs contribute exactly crash for an active node or restart
-for an inactive node. `maximum_replays` bounds retained frontier work and replayed prefixes; the
-result distinguishes a completed search from a truncated search and retains the exact first failing
-trace and status. The one setup-validation replay is outside that exploration count.
+single-voter no-op. Optional application branches then include every target from `applied + 1`
+through `commit`, ordered by node and index, covering incremental and batched advancement. Finally,
+ascending node IDs contribute exactly crash for an active node or restart for an inactive node.
+`maximum_replays` bounds retained frontier work and replayed prefixes; the result distinguishes a
+completed search from a truncated search and retains the exact first failing trace and status. The
+one setup-validation replay is outside that exploration count.
 
 ## Consequences
 
@@ -107,6 +109,8 @@ Election coverage admits a single-voter follower, excludes its leader successor 
 reports replay truncation, and retains exact terminal-term failure with unchanged recovered state.
 Heartbeat coverage admits a drained two-voter leader, reports replay truncation, and excludes a
 single-voter leader whose heartbeat would change neither durable nor network state.
+Application coverage exhausts direct and incremental advancement across two committed entries,
+reports replay truncation, and excludes crashed nodes.
 Recovered-image coverage restarts a node at terminal term, rejects the next election without state
 mutation, rejects image-count mismatch and invalid local state, and rejects two individually valid
 images whose same-term log entries violate log matching. Independent boundary schedules elect from

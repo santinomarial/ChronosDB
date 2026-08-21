@@ -222,7 +222,7 @@ replay, and bounded chunk-first deletion shrinking. Seeded schedules derive vali
 begin/finalize and local snapshot-compaction candidates from current state and replay the generated
 churn exactly. It also exhaustively branches bounded delivery/loss suffixes plus opt-in duplication,
 directional partition/healing, atomic persistence-failure arming, eligible elections, multi-voter
-heartbeats, and live-state crash/restart after valid setup traces. Exact recovered per-node images now
-permit direct terminal term restart schedules and reserved-next-index proposal rejection without
-generating impractically long prefixes. Broader exhaustive campaigns, clock changes, and physical log
-syscall faults remain deferred.
+heartbeats, application-frontier advancement, and live-state crash/restart after valid setup traces.
+Exact recovered per-node images now permit direct terminal-term restart schedules and rejection at
+the reserved next proposal index without generating impractically long prefixes. Broader exhaustive
+campaigns, clock changes, and physical log syscall faults remain deferred.
