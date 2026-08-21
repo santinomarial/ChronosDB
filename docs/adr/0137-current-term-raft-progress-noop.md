@@ -90,8 +90,10 @@ suppression, reserved proposal rejection, and malformed durable no-op rejection.
 state-machine tests commit the internal entry, advance their durable applied boundary, and ensure
 the next application command remains correctly ordered. Allocation sweeps cover a three-voter
 replication batch and single-voter immediate commit, failing every prospective-node, progress,
-commit, message, and returned-state allocation before exact retry. Full Raft and ingest suites remain
-required.
+commit, message, and returned-state allocation before exact retry. Membership-adjacent sweeps start
+new-term joint-quorum leaders with exact retained joint and final entries. Every failure preserves
+the retained command and configuration state; retry appends only one no-op at the original next
+index and returns the complete active-peer batch. Full Raft and ingest suites remain required.
 
 ## Migration or rollback considerations
 

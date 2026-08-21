@@ -311,8 +311,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   the complete prospective node, outbound batch, commit notification, and durable transition before
   publication. Large-payload and membership-adjacent proposal schedules remain deferred.
   Current-term progress sweeps now apply the same proof to the reserved empty no-op, including the
-  operation reached by prior-term exact-retained retries. Membership-adjacent progress schedules
-  remain deferred.
+  operation reached by prior-term exact-retained retries. Joint- and final-membership variants now
+  prove delegated no-op allocation failure preserves the retained membership command and joint
+  state before exact retry. Alternative voter topologies and post-no-op commit schedules remain
+  deferred.
   Stale, higher-term-conflict, and accepted replacement AppendEntries-request sweeps now cover every
   observed validation and transition allocation through exact feedback and committed suffix
   publication. Broader membership-changing request allocation schedules remain deferred.

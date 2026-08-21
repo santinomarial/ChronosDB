@@ -54,6 +54,9 @@ entry is committed or belongs to the current leader term. Divergent intent is in
 uncommitted match from an earlier term, the leader appends an empty current-term internal no-op, or
 reuses a current-term retained entry, so Raft can commit the old command without appending a second
 configuration entry.
+This delegation shares the no-op's prospective-node boundary. Allocation failure while retrying an
+old-term joint or final command leaves the retained membership entry, configuration flags, and
+replication position unchanged; retry adds only the no-op at the original next index.
 
 Application owners never interpret membership or leader-progress entries as row or catalog
 commands. They validate application entries, treat reserved internal entries as ordered no-ops, and

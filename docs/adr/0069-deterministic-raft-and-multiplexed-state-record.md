@@ -191,6 +191,9 @@ preserves exact leadership and durable state; retry publishes the proposal at th
 Current-term progress sweeps cover the equivalent multi-voter replication and single-voter commit
 outcomes. Every failure preserves the log and progress maps before retry publishes exactly one
 empty internal no-op at the original index.
+Membership-adjacent variants cover exact prior-term joint and final retries under a joint quorum.
+Every failure preserves the retained membership command, configuration flags, and replication
+position; retry appends one no-op without duplicating the logical membership entry.
 Membership-proposal sweeps separately cover appending the joint command and appending its final
 command after joint commit. Every prospective-node, encoding, configuration derivation,
 replication-map, outbound, and returned-state allocation preserves the exact stable or joint leader;

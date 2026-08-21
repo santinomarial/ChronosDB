@@ -76,3 +76,6 @@ the identical retry then appends once at the same index and returns the complete
 A decisive final-commit sweep separately fails membership derivation, progress replacement,
 broadcast, and durable-state allocations before a removed leader can publish any part of the commit;
 the identical acknowledgement then commits once, reaches every new voter, and demotes the leader.
+Prior-term exact joint and final retry sweeps fail every delegated current-term no-op allocation.
+The retained membership entry and joint state remain exact until retry publishes one no-op at the
+same next index, with no duplicate configuration command.

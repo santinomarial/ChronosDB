@@ -406,6 +406,12 @@ prospective-node, entry, progress, commit, replication, and returned-state alloc
 leader's log empty and heartbeat position at zero; retry must publish exactly one type-253 entry at
 index one, committing it immediately only for the single voter.
 
+Membership-adjacent progress sweeps restart leaders with exact uncommitted joint and final entries
+from the prior term, then elect them under both joint majorities. Every no-op preparation failure
+must preserve the retained command, joint/final flags, and heartbeat at the prior last index. The
+exact retry must append one type-253 entry at the original next index and replicate it to the active
+union without appending another membership command.
+
 Membership-proposal sweeps fail every observed allocation while a three-voter leader appends a
 joint command and while a joint leader appends the final command. Each failure must preserve the
 exact durable log, role, stable or joint configuration, final-pending flag, and heartbeat position.

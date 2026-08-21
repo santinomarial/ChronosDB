@@ -885,7 +885,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   Ordinary proposals now prepare the full prospective node, self progress, any immediate commit,
   complete replication batch, and returned durable state before publishing the appended entry.
   Current-term progress no-ops now share that transactional append boundary, so exact-retained
-  prior-term retries cannot leak a proof entry or commit under resource exhaustion.
+  prior-term retries cannot leak a proof entry or commit under resource exhaustion. Joint- and
+  final-membership retry sweeps now prove this boundary preserves the retained command and appends
+  only one no-op under the active joint quorum.
   Joint and final membership proposals now prepare the complete prospective node, derived active
   configuration and progress maps, outbound replication, and durable transition before publishing
   either configuration entry.
