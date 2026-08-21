@@ -61,9 +61,10 @@ Every payload starts with a nonzero 64-bit term.
    bytes.
 
 Vote last-log and append previous-log index/term fields use exact zero-pair semantics, and their log
-term cannot exceed the message term. A snapshot request's last-included term likewise cannot exceed
-its message term. Snapshot index `UINT64_MAX` is reserved for exhaustion detection and is never a
-valid installed boundary. A successful snapshot response names a nonzero installed index.
+term cannot exceed the message term. A vote last-log index cannot equal `UINT64_MAX`, which is
+reserved for exhaustion detection rather than an existing entry. A snapshot request's last-included
+term likewise cannot exceed its message term. The reserved maximum index is never a valid installed
+snapshot boundary. A successful snapshot response names a nonzero installed index.
 
 ## Validation and compatibility
 
@@ -102,7 +103,7 @@ failure remains sticky, and the sweep continues until the exact canonical operat
 Deterministic checksum-repaired hostile matrices exercise every header reserved byte, inconsistent
 frame and payload lengths, route/version/kind fields, append counts/entry lengths/reserved and
 trailing bytes, snapshot/message term ordering, snapshot counts/voter ordering/reserved bytes, and
-snapshot maximum-index rejection, append-response conflict term/index state, and fixed-message
+vote/snapshot maximum-index rejection, append-response conflict term/index state, and fixed-message
 Boolean/term domains. A structure-aware fuzzer combines arbitrary input with generated canonical
 variants, single-byte and truncated mutations, optional header/payload/frame checksum repair, two-
 fragment reader delivery, exact canonical re-encoding, and write-cursor validation under a 64 KiB

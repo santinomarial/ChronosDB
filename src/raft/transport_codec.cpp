@@ -168,6 +168,7 @@ void store_u32(const std::span<std::byte> bytes, const std::size_t offset,
         if constexpr (std::is_same_v<T, RequestVoteRequest>) {
           if (value.candidate_id != envelope.source ||
               ((value.last_log_index == 0U) != (value.last_log_term == 0U)) ||
+              value.last_log_index == std::numeric_limits<LogIndex>::max() ||
               value.last_log_term > value.term)
             return invalid("Raft vote request identity or last-log position is invalid");
         } else if constexpr (std::is_same_v<T, AppendEntriesRequest>) {

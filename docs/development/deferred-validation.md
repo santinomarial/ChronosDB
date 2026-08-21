@@ -250,6 +250,8 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   term-zero vote and any manifest/checksum or membership identity on an index-zero empty snapshot.
   Remote and transport snapshot validation now reserve `UINT64_MAX` consistently with recovery, so
   successful two-stage completion cannot create an index-exhausted checkpoint that cannot reopen.
+  Vote requests now reject that reserved last-log index through direct-core and transport admission
+  before a higher term or vote can be observed.
 - Persistent file owner, vote/log fsync ordering, crash/restart at every transition, idempotent
   recovery, application to tablet state, snapshot creation/install, and log compaction. Extend the
   implemented read barrier through production transport and tablet snapshot acquisition.

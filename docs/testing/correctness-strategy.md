@@ -422,6 +422,8 @@ Focused cases exercise term-zero vote plus nonzero manifest and checksum identit
 The reserved maximum Raft index is rejected for remote snapshot metadata before candidate term/role
 observation or external installation publication. Outbound encoding and checksum-repaired decoding
 exercise the same bound, preventing a completed install that recovery would reject as exhausted.
+Vote requests reject the same value as an advertised last-log index through all three paths before
+higher-term or vote state changes, because canonical persistent state cannot contain that entry.
 
 The implemented group-scoped transport envelope additionally has checksum-repaired hostile
 length/count/reserved/value matrices, exhaustive owned-allocation failure sweeps, and a bounded

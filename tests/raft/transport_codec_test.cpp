@@ -217,13 +217,20 @@ TEST(RaftTransportCodecTest, RejectsChecksumRepairedHostileHeaderFields) {
 }
 
 TEST(RaftTransportCodecTest, RejectsChecksumRepairedHostilePayloadFields) {
+  const std::vector<std::byte> vote_request =
+      encode_raft_transport_envelope_v1(envelope(RequestVoteRequest{4U, 1U, 7U, 3U})).value();
+
+  std::vector<std::byte> candidate = vote_request;
+  store_u64(candidate, 112U, std::numeric_limits<LogIndex>::max());
+  expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
+
   const std::vector<std::byte> append =
       encode_raft_transport_envelope_v1(
           envelope(AppendEntriesRequest{
               4U, 1U, 7U, 3U, {{8U, 4U, 1U, {std::byte{0x11}, std::byte{0x22}}}}, 7U}))
           .value();
 
-  std::vector<std::byte> candidate = append;
+  candidate = append;
   store_u32(candidate, 136U, std::numeric_limits<std::uint32_t>::max());
   expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kResourceExhausted);
   candidate = append;
@@ -375,7 +382,7 @@ TEST(RaftTransportCodecTest, OwnsOneValidatedFrameAcrossShortWritesAndMoves) {
             common::StatusCode::kCorruption);
 }
 
-TEST(RaftTransportCodecTest, EnforcesFrameEntryAndSnapshotBoundsBeforeAllocation) {
+TEST(RaftTransportCodecTest, EnforcesFrameEntrySnapshotAndPositionBoundsBeforeAllocation) {
   RaftTransportCodecLimits small;
   small.maximum_frame_bytes = 120U;
   small.maximum_entry_bytes = 64U;
@@ -416,6 +423,11 @@ TEST(RaftTransportCodecTest, EnforcesFrameEntryAndSnapshotBoundsBeforeAllocation
       envelope(InstallSnapshotRequest{4U, 1U, std::move(exhausted_snapshot)}));
   ASSERT_FALSE(exhausted.has_value());
   EXPECT_EQ(exhausted.error().code(), common::StatusCode::kInvalidArgument);
+
+  auto exhausted_vote = encode_raft_transport_envelope_v1(
+      envelope(RequestVoteRequest{4U, 1U, std::numeric_limits<LogIndex>::max(), 4U}));
+  ASSERT_FALSE(exhausted_vote.has_value());
+  EXPECT_EQ(exhausted_vote.error().code(), common::StatusCode::kInvalidArgument);
 }
 
 } // namespace

@@ -16,15 +16,17 @@ term relation: its last-included term could exceed the leader term carried by th
 append responses could likewise omit their conflict index or claim a conflict term newer than the
 response term, while recovery admitted snapshot metadata newer than the node's current term. Remote
 snapshot admission also accepted the maximum logical index even though recovery reserves it for
-exhaustion detection.
+exhaustion detection. Vote requests could advertise the same impossible last-log index and obtain a
+vote after higher-term observation even though no canonical local state can contain that entry.
 
 ## Decision
 
 Every received Raft message must carry a nonzero term before role or persistent state changes.
 RequestVote last-log index/term and AppendEntries previous index/term use exact zero-pair semantics;
-their log term cannot exceed the message term. Existing source/candidate/leader identity checks
-remain mandatory. An InstallSnapshot request likewise requires its nonzero last-included term not
-to exceed the request term and its last-included index to remain below `UINT64_MAX` before any role,
+their log term cannot exceed the message term, and a candidate's advertised last-log index must
+remain below the reserved `UINT64_MAX`. Existing source/candidate/leader identity checks remain
+mandatory. An InstallSnapshot request likewise requires its nonzero last-included term not to
+exceed the request term and its last-included index to remain below `UINT64_MAX` before any role,
 term, vote, or pending external-install state changes.
 
 A successful AppendEntries response cannot carry conflict state, and its match index cannot exceed
@@ -80,6 +82,8 @@ response term through direct-core, outbound encoding, and checksum-valid decodin
 separately rejects a persisted snapshot term above current term.
 Maximum-index snapshot coverage rejects direct-core admission without changing candidate state and
 rejects both outbound encoding and checksum-valid decoding. No external install owner is published.
+Maximum-index vote coverage applies the same three-path rejection and proves the candidate cannot
+step down or persist a vote for an impossible log advertisement.
 
 ## References
 

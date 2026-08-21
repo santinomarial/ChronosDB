@@ -800,7 +800,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   conflict term bounded by its response term. Recovered term-zero state cannot contain a vote, and
   an index-zero snapshot cannot retain external or membership identity. Snapshot index `UINT64_MAX`
   is rejected by direct-core and transport admission before it can create an unreopenable completed
-  installation. A bounded canonical
+  installation. Vote requests also reject that reserved last-log index before higher-term
+  observation, preventing votes for an impossible candidate history. A bounded canonical
   group/source/destination transport envelope now round-trips vote, append, snapshot, and read-
   barrier messages without introducing sockets into the deterministic core. Header-first bounded
   stream ownership now validates allocation-relevant fields before exact frame allocation and

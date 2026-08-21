@@ -206,6 +206,7 @@ TEST(RaftNodeTest, RejectsNoncanonicalTermsAndResponseStateBeforeObservingTerm) 
   const std::vector<Message> malformed{
       RequestVoteRequest{0U, 2U, 0U, 0U},
       RequestVoteRequest{9U, 2U, 0U, 1U},
+      RequestVoteRequest{9U, 2U, std::numeric_limits<LogIndex>::max(), 9U},
       AppendEntriesRequest{9U, 2U, 0U, 1U, {}, 0U},
       AppendEntriesResponse{9U, true, 0U, 1U, 1U},
       AppendEntriesResponse{9U, false, 0U, 0U, 1U},
