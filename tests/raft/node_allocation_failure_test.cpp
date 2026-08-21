@@ -1,4 +1,5 @@
 #include "chronos/common/status.hpp"
+#include "chronos/raft/membership.hpp"
 #include "chronos/raft/node.hpp"
 #include "support/failing_allocator.hpp"
 
@@ -363,6 +364,85 @@ void expect_snapshot_response_allocation_atomic(const bool installed) {
       ASSERT_NE(snapshot_retry, nullptr);
       EXPECT_EQ(snapshot_retry->snapshot.last_included_index, 2U);
     }
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+void expect_current_term_progress_allocation_atomic(const std::vector<NodeId>& voters,
+                                                    const bool immediate_commit) {
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    auto created = RaftNode::create(1U, voters);
+    ASSERT_TRUE(created.has_value()) << created.error().to_string();
+    RaftNode leader = std::move(*created);
+    ASSERT_TRUE(leader.start_election().has_value());
+    if (voters.size() > 1U)
+      ASSERT_TRUE(leader.receive(voters[1U], RequestVoteResponse{1U, true}).has_value());
+    ASSERT_EQ(leader.role(), Role::kLeader);
+    const PersistentState before = leader.persistent_state();
+    PersistentState expected = before;
+    expected.log = {LogEntry{1U, 1U, kLeaderNoopEntryType, {}}};
+    if (immediate_commit)
+      expected.commit_index = 1U;
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(leader.commit_current_term());
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      EXPECT_EQ(leader.persistent_state(), expected);
+      const PersistentState* persistent = returned_persistent_state(**result);
+      ASSERT_NE(persistent, nullptr);
+      EXPECT_EQ(*persistent, expected);
+      EXPECT_EQ((**result).advanced_commit_index,
+                immediate_commit ? std::optional<LogIndex>{1U} : std::nullopt);
+      ASSERT_EQ((**result).outbound.size(), voters.size() - 1U);
+      for (const OutboundMessage& outbound : (**result).outbound) {
+        const auto* request = std::get_if<AppendEntriesRequest>(&outbound.message);
+        ASSERT_NE(request, nullptr);
+        EXPECT_EQ(request->previous_log_index, 0U);
+        ASSERT_EQ(request->entries.size(), 1U);
+        EXPECT_EQ(request->entries.front(), expected.log.front());
+        EXPECT_EQ(request->leader_commit, expected.commit_index);
+      }
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(leader.role(), Role::kLeader);
+    EXPECT_EQ(leader.leader_id(), 1U);
+    EXPECT_EQ(leader.persistent_state(), before);
+    auto heartbeat = leader.heartbeat();
+    ASSERT_TRUE(heartbeat.has_value()) << heartbeat.error().to_string();
+    ASSERT_EQ(heartbeat->outbound.size(), voters.size() - 1U);
+    for (const OutboundMessage& outbound : heartbeat->outbound) {
+      const auto* request = std::get_if<AppendEntriesRequest>(&outbound.message);
+      ASSERT_NE(request, nullptr);
+      EXPECT_TRUE(request->entries.empty());
+      EXPECT_EQ(request->previous_log_index, 0U);
+    }
+
+    auto retry = leader.commit_current_term();
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    EXPECT_EQ(leader.persistent_state(), expected);
+    const PersistentState* persistent = returned_persistent_state(*retry);
+    ASSERT_NE(persistent, nullptr);
+    EXPECT_EQ(*persistent, expected);
+    EXPECT_EQ(retry->advanced_commit_index,
+              immediate_commit ? std::optional<LogIndex>{1U} : std::nullopt);
+    EXPECT_EQ(retry->outbound.size(), voters.size() - 1U);
   }
   EXPECT_GT(failure_count, 0U);
   EXPECT_TRUE(reached_success);
@@ -1318,6 +1398,16 @@ TEST(RaftNodeAllocationFailureTest,
   }
   EXPECT_GT(failure_count, 0U);
   EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest,
+     MultiVoterCurrentTermProgressPreservesStateUntilReplicationPublication) {
+  expect_current_term_progress_allocation_atomic({1U, 2U, 3U}, false);
+}
+
+TEST(RaftNodeAllocationFailureTest,
+     SingleVoterCurrentTermProgressPreservesStateUntilImmediateCommitPublication) {
+  expect_current_term_progress_allocation_atomic({1U}, true);
 }
 
 TEST(RaftNodeAllocationFailureTest,

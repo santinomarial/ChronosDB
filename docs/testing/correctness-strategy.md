@@ -401,6 +401,11 @@ outbound messages. Every failed prospective-node, log, progress, membership, mes
 allocation must preserve the exact leader and empty log. Retry must publish index one once, with the
 matching persistent state and commit notification only in the single-voter case.
 
+Current-term progress sweeps repeat both quorum shapes with the reserved empty no-op. Every failed
+prospective-node, entry, progress, commit, replication, and returned-state allocation must leave the
+leader's log empty and heartbeat position at zero; retry must publish exactly one type-253 entry at
+index one, committing it immediately only for the single voter.
+
 The deterministic core separately checks the installed-snapshot predecessor boundary. A request
 whose predecessor is already compacted receives a negative conflict response without indexing
 retained log storage; if it carries a higher term, the returned transition contains the exact

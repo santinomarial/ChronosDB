@@ -103,6 +103,10 @@ The core owns the appended entry, self replication progress, any immediate commi
 membership, complete replication batch, and returned persistent state before replacing the live
 node. Resource exhaustion therefore cannot leak an unreported proposal or commit.
 
+Explicit current-term progress no-ops use the same prospective-node append boundary. The internal
+entry, self progress, possible immediate commit, replication batch, and returned state are all owned
+before publication, including when an exact-retained prior-term retry delegates to this operation.
+
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
 record boundary is [`multiplexed-raft-log-v1.md`](../formats/multiplexed-raft-log-v1.md). A dedicated
@@ -174,6 +178,9 @@ returns the exact advanced state.
 Proposal sweeps cover a three-voter uncommitted replication batch and a single-voter immediate
 commit. Every prospective-node, log, progress, commit, outbound, and returned-state allocation
 preserves exact leadership and durable state; retry publishes the proposal at the original index.
+Current-term progress sweeps cover the equivalent multi-voter replication and single-voter commit
+outcomes. Every failure preserves the log and progress maps before retry publishes exactly one
+empty internal no-op at the original index.
 
 **Retrospective note (2026-08-12):** [ADR 0252](0252-replayable-deterministic-raft-fault-simulator.md)
 now supplies bounded explicit and seeded schedules for partitions, delay/reordering, duplication,

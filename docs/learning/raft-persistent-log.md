@@ -42,6 +42,9 @@ Ordinary proposals use the same boundary around the entire prospective node. The
 self progress, possible immediate commit and membership derivation, full replication batch, and
 returned state all exist before the live leader changes, so the durable owner never observes a
 failed call after hidden proposal progress.
+Current-term progress no-ops share that internal append mechanism. A prior-term exact-retained retry
+therefore cannot leak its required proof entry or consume an index unless the complete durable and
+replication transition can be returned.
 The deterministic core pre-owns the exact post-term persistent state before any canonical
 higher-term response can demote a node. Allocation failure therefore leaves the group unchanged;
 success always gives this owner the complete state it must append and synchronize.

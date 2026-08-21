@@ -31,6 +31,11 @@ replication state, attempts commit advancement, persists the resulting state, an
 bounded AppendEntries messages. `MultiRaftRuntime` and `DurableMultiRaftRuntime` expose the operation
 without changing their persist-before-send contract.
 
+The append path executes against a prospective copy of the complete deterministic node. It owns the
+no-op, self progress, any immediate commit and membership derivation, complete replication batch,
+and returned persistent state before replacing the live leader. Allocation failure returns
+`RESOURCE_EXHAUSTED` with exact state preservation and retry at the same index.
+
 When an exact-retained application, joint-membership, or final-membership retry finds its matching
 uncommitted entry in an earlier term, it invokes this progress operation. The retry never appends a
 second logical command. Repeated delivery after the no-op is retained is empty-success and does not
@@ -83,7 +88,10 @@ Raft rule, and application indexes advance only after ordered handling succeeds.
 Node tests cover exact application and joint-membership retries across a term change, repeated no-op
 suppression, reserved proposal rejection, and malformed durable no-op rejection. Metadata and tablet
 state-machine tests commit the internal entry, advance their durable applied boundary, and ensure
-the next application command remains correctly ordered. Full Raft and ingest suites remain required.
+the next application command remains correctly ordered. Allocation sweeps cover a three-voter
+replication batch and single-voter immediate commit, failing every prospective-node, progress,
+commit, message, and returned-state allocation before exact retry. Full Raft and ingest suites remain
+required.
 
 ## Migration or rollback considerations
 
