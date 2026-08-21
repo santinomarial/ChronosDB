@@ -889,6 +889,19 @@ common::Result<RaftExhaustiveFaultResult> DeterministicRaftSimulator::explore_fa
             branches.emplace_back(RaftSimulationHeartbeat{node_id});
         }
       }
+      if (schedule.include_read_barriers) {
+        for (const NodeId node_id : config.node_ids) {
+          const RaftNode* const node = simulation->active_node(node_id);
+          const PersistentState* const durable = simulation->durable_state(node_id);
+          if (node == nullptr || durable == nullptr || node->role() != Role::kLeader ||
+              node->read_barrier_pending() || node->commit_index() == 0U) {
+            continue;
+          }
+          const std::optional<Term> committed_term = state_term_at(*durable, node->commit_index());
+          if (committed_term.has_value() && *committed_term == node->current_term())
+            branches.emplace_back(RaftSimulationBeginReadBarrier{node_id});
+        }
+      }
       if (schedule.include_application_advancement) {
         for (const NodeId node_id : config.node_ids) {
           const RaftNode* const node = simulation->active_node(node_id);

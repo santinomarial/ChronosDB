@@ -850,12 +850,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   compaction, and current-term read-barrier actions from current state and replay that churn exactly.
   A bounded exhaustive mode now enumerates every virtual-network delivery/loss suffix plus opt-in
   duplicate-message, directional partition/healing, atomic persistence-failure arming, eligible
-  elections, multi-voter heartbeats, application-frontier advancement, and live-state crash/restart
-  faults after a valid setup trace, and reports replay-limit truncation without claiming completion.
-  Simulations may begin from exact per-node recovered persistent images; a combined terminal-term
-  and terminal-index schedule proves proposals and post-restart elections fail without mutation.
-  Broader exhaustive action campaigns, clock changes, physical-log faults, and the full exit evidence
-  remain deferred.
+  elections, multi-voter heartbeats, current-term read barriers, application-frontier advancement,
+  and live-state crash/restart faults after a valid setup trace, and reports replay-limit truncation
+  without claiming completion. Simulations may begin from exact per-node recovered persistent images;
+  a combined terminal-term and terminal-index schedule proves proposals and post-restart elections
+  fail without mutation. Broader exhaustive action campaigns, clock changes, physical-log faults, and
+  the full exit evidence remain deferred.
   Linearizable reads now use one bounded explicit current-term leadership
   probe, require a current-term committed entry, freeze stable or joint voter quorums at issuance,
   reject nonvoter probe sources before higher-term observation while retaining learner replication,

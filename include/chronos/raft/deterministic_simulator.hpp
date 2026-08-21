@@ -154,6 +154,7 @@ struct RaftExhaustiveFaultSchedule {
   bool include_persistence_failures{};
   bool include_elections{};
   bool include_heartbeats{};
+  bool include_read_barriers{};
   bool include_application_advancement{};
   bool include_node_lifecycle{};
 };
@@ -183,7 +184,7 @@ public:
   [[nodiscard]] common::Status replay(std::span<const RaftSimulationAction> actions);
   [[nodiscard]] common::Status run_seeded(RaftSeededSimulationSchedule schedule);
   // Exhaustively branches queued-message outcomes after a valid setup trace. Schedules may opt
-  // into bounded network, persistence, leader, application, and lifecycle branches.
+  // into bounded network, persistence, leader/read, application, and lifecycle branches.
   // `search_complete` is false when the replay bound truncates the frontier or a failure is found.
   [[nodiscard]] static common::Result<RaftExhaustiveFaultResult>
   explore_fault_schedules(const RaftSimulationConfig& config,

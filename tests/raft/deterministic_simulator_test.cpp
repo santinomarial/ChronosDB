@@ -623,6 +623,77 @@ TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresApplicationBoundaries) 
   EXPECT_EQ(inactive->replayed_prefixes, 1U);
 }
 
+TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresReadBarrierCompletionAndLoss) {
+  auto two_nodes = config();
+  two_nodes.node_ids = {1U, 2U};
+  two_nodes.initial_voters = {1U, 2U};
+  auto leader = DeterministicRaftSimulator::create(two_nodes);
+  ASSERT_TRUE(leader.has_value()) << leader.error().to_string();
+  ASSERT_TRUE(leader->step(RaftSimulationStartElection{1U}).is_ok());
+  drain(*leader);
+  ASSERT_TRUE(leader->step(RaftSimulationPropose{1U, 1U, {std::byte{0x11U}}}).is_ok());
+  drain(*leader);
+  ASSERT_NE(leader->active_node(1U), nullptr);
+  ASSERT_EQ(leader->active_node(1U)->role(), Role::kLeader);
+  ASSERT_EQ(leader->active_node(1U)->commit_index(), 1U);
+  const std::vector<RaftSimulationAction> setup(leader->trace().begin(), leader->trace().end());
+
+  auto complete = DeterministicRaftSimulator::explore_fault_schedules(
+      two_nodes, setup,
+      {.maximum_depth = 3U, .maximum_replays = 6U, .include_read_barriers = true});
+
+  ASSERT_TRUE(complete.has_value()) << complete.error().to_string();
+  EXPECT_TRUE(complete->search_complete);
+  EXPECT_EQ(complete->replayed_prefixes, 6U);
+  EXPECT_FALSE(complete->failure.has_value());
+
+  auto bounded = DeterministicRaftSimulator::explore_fault_schedules(
+      two_nodes, setup,
+      {.maximum_depth = 3U, .maximum_replays = 5U, .include_read_barriers = true});
+  ASSERT_TRUE(bounded.has_value()) << bounded.error().to_string();
+  EXPECT_FALSE(bounded->search_complete);
+  EXPECT_EQ(bounded->replayed_prefixes, 5U);
+
+  auto completed = DeterministicRaftSimulator::create(two_nodes);
+  ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
+  ASSERT_TRUE(completed->replay(setup).is_ok());
+  ASSERT_TRUE(completed->step(RaftSimulationBeginReadBarrier{1U}).is_ok());
+  auto request = completed->pending_messages();
+  ASSERT_TRUE(request.has_value()) << request.error().to_string();
+  ASSERT_EQ(request->size(), 1U);
+  ASSERT_TRUE(completed->step(RaftSimulationDeliver{request->front().message_id}).is_ok());
+  auto response = completed->pending_messages();
+  ASSERT_TRUE(response.has_value()) << response.error().to_string();
+  ASSERT_EQ(response->size(), 1U);
+  ASSERT_TRUE(completed->step(RaftSimulationDeliver{response->front().message_id}).is_ok());
+  EXPECT_EQ(completed->stats().completed_read_barriers, 1U);
+  ASSERT_NE(completed->active_node(1U), nullptr);
+  EXPECT_FALSE(completed->active_node(1U)->read_barrier_pending());
+
+  auto lost = DeterministicRaftSimulator::create(two_nodes);
+  ASSERT_TRUE(lost.has_value()) << lost.error().to_string();
+  ASSERT_TRUE(lost->replay(setup).is_ok());
+  ASSERT_TRUE(lost->step(RaftSimulationBeginReadBarrier{1U}).is_ok());
+  auto dropped = lost->pending_messages();
+  ASSERT_TRUE(dropped.has_value()) << dropped.error().to_string();
+  ASSERT_EQ(dropped->size(), 1U);
+  ASSERT_TRUE(lost->step(RaftSimulationDrop{dropped->front().message_id}).is_ok());
+  EXPECT_EQ(lost->stats().completed_read_barriers, 0U);
+  ASSERT_NE(lost->active_node(1U), nullptr);
+  EXPECT_TRUE(lost->active_node(1U)->read_barrier_pending());
+
+  auto one_node = config();
+  one_node.node_ids = {1U};
+  one_node.initial_voters = {1U};
+  const std::vector<RaftSimulationAction> no_commit{RaftSimulationStartElection{1U}};
+  auto ineligible = DeterministicRaftSimulator::explore_fault_schedules(
+      one_node, no_commit,
+      {.maximum_depth = 1U, .maximum_replays = 1U, .include_read_barriers = true});
+  ASSERT_TRUE(ineligible.has_value()) << ineligible.error().to_string();
+  EXPECT_TRUE(ineligible->search_complete);
+  EXPECT_EQ(ineligible->replayed_prefixes, 1U);
+}
+
 TEST(DeterministicRaftSimulatorTest, ExhaustiveExplorationRetainsTheFirstFailingSchedule) {
   auto simulation = DeterministicRaftSimulator::create(config());
   ASSERT_TRUE(simulation.has_value()) << simulation.error().to_string();
