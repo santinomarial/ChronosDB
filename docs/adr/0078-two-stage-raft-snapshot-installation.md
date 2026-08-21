@@ -30,6 +30,12 @@ negative response and cannot replace the original source/term/metadata identity.
 carries a higher term, the normal term/vote transition accompanies the negative response and must
 be persisted first. Once the original completion succeeds or fails, a later request may be admitted.
 
+Request admission is prepare-before-publish. Stale, already-installed, and competing requests own
+their exact response and any higher-term persistent state before changing the node. A new request
+owns two exact metadata copies before publication: the core's pending completion identity and the
+external installation task returned to the application owner. Allocation failure returns
+`RESOURCE_EXHAUSTED` without demotion, leader-identity change, or partial installation ownership.
+
 Only `complete_snapshot_install(..., installed=true)` may atomically install the Raft snapshot
 metadata, membership checkpoint, commit/applied boundary, and compatible retained suffix. Its
 persistent transition crosses `DurableMultiRaftRuntime`'s synchronization boundary before the
@@ -82,6 +88,10 @@ rejects the installation, verifies its negative response, and then permits the l
 Request-level coverage coalesces an exact duplicate, rejects a different same-term snapshot without
 losing the first completion, persists a higher-term competitor before its negative response, clears
 the stale pending work through negative completion, and then admits the higher-term retry.
+Allocation sweeps separately cover stale rejection, higher-term acknowledgement of an already
+installed boundary, and higher-term publication of a new pending installation. Each failed owned
+allocation preserves the exact leader, durable state, and pending work; retry returns the complete
+response or the same external installation task.
 An impossible higher-term request whose snapshot term is newer than its own leader term is rejected
 before term/vote/role observation or external installation publication.
 The same boundary rejects `UINT64_MAX` before publication so explicit completion can never persist a

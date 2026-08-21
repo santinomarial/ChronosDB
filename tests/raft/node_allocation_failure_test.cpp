@@ -61,6 +61,16 @@ namespace {
   return std::move(*leader);
 }
 
+[[nodiscard]] SnapshotMetadata incoming_snapshot_metadata() {
+  SnapshotMetadata snapshot{};
+  snapshot.last_included_index = 1U;
+  snapshot.last_included_term = 1U;
+  snapshot.manifest_generation = 9U;
+  snapshot.part_set_checksum.fill(std::byte{0x91U});
+  snapshot.voters = {1U, 2U, 3U};
+  return snapshot;
+}
+
 [[nodiscard]] const AppendEntriesRequest* append_request_for(const Transition& transition,
                                                              const NodeId destination) {
   const auto found =
@@ -115,6 +125,13 @@ void expect_single_append(const Transition& transition, const NodeId destination
   if (!persistent.has_value())
     return nullptr;
   return &persistent.value();
+}
+
+[[nodiscard]] const PendingSnapshotInstall* pending_snapshot_install(const Transition& transition) {
+  const std::optional<PendingSnapshotInstall>& pending = transition.snapshot_install;
+  if (!pending.has_value())
+    return nullptr;
+  return &pending.value();
 }
 
 void expect_higher_term_read_probe_transition(const RaftNode& node, const Transition& transition,
@@ -183,6 +200,15 @@ void expect_append_response(const Transition& transition, const Term term, const
   ASSERT_NE(response, nullptr);
   EXPECT_EQ(*response,
             (AppendEntriesResponse{term, success, match_index, conflict_term, conflict_index}));
+}
+
+void expect_snapshot_response(const Transition& transition, const Term term, const bool success,
+                              const LogIndex last_included_index) {
+  ASSERT_EQ(transition.outbound.size(), 1U);
+  EXPECT_EQ(transition.outbound.front().destination, 2U);
+  const auto* response = std::get_if<InstallSnapshotResponse>(&transition.outbound.front().message);
+  ASSERT_NE(response, nullptr);
+  EXPECT_EQ(*response, (InstallSnapshotResponse{term, success, last_included_index}));
 }
 
 void expect_election_transition(const RaftNode& node, const Transition& transition,
@@ -750,6 +776,177 @@ TEST(RaftNodeAllocationFailureTest,
     EXPECT_EQ(leader.commit_index(), 2U);
     EXPECT_EQ(retry->advanced_commit_index, 2U);
     expect_append_response(*retry, 2U, true, 2U, std::nullopt, 0U);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest, StaleSnapshotRequestOwnsRejectionBeforeReturning) {
+  PersistentState initial{};
+  initial.current_term = 2U;
+  const InstallSnapshotRequest request{1U, 2U, incoming_snapshot_metadata()};
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 32U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    auto created = RaftNode::create(1U, {1U, 2U, 3U}, initial);
+    ASSERT_TRUE(created.has_value()) << created.error().to_string();
+    RaftNode node = std::move(*created);
+    Message inbound = request;
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(node.receive(2U, std::move(inbound)));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      expect_snapshot_response(**result, 2U, false, 0U);
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(node.role(), Role::kFollower);
+    EXPECT_EQ(node.persistent_state(), initial);
+    auto retry = node.receive(2U, request);
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    expect_snapshot_response(*retry, 2U, false, 0U);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest,
+     HigherTermInstalledSnapshotRequestPreparesDemotionAndAcknowledgement) {
+  const InstallSnapshotRequest request{2U, 2U, incoming_snapshot_metadata()};
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 64U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    RaftNode leader = leader_with_compacted_snapshot();
+    auto barrier = leader.begin_read_barrier();
+    ASSERT_TRUE(barrier.has_value()) << barrier.error().to_string();
+    const PersistentState before = leader.persistent_state();
+    Message inbound = request;
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(leader.receive(2U, std::move(inbound)));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      PersistentState expected = before;
+      expected.current_term = 2U;
+      expected.voted_for.reset();
+      EXPECT_EQ(leader.role(), Role::kFollower);
+      EXPECT_EQ(leader.leader_id(), 2U);
+      EXPECT_EQ(leader.persistent_state(), expected);
+      const PersistentState* persistent = returned_persistent_state(**result);
+      ASSERT_NE(persistent, nullptr);
+      EXPECT_EQ(*persistent, expected);
+      expect_snapshot_response(**result, 2U, true, 2U);
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(leader.role(), Role::kLeader);
+    EXPECT_EQ(leader.current_term(), 1U);
+    EXPECT_EQ(leader.leader_id(), 1U);
+    EXPECT_EQ(leader.persistent_state(), before);
+    auto pending = leader.begin_read_barrier();
+    ASSERT_FALSE(pending.has_value());
+    EXPECT_EQ(pending.error().code(), common::StatusCode::kUnavailable);
+
+    auto retry = leader.receive(2U, request);
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    EXPECT_EQ(leader.role(), Role::kFollower);
+    EXPECT_EQ(leader.current_term(), 2U);
+    EXPECT_EQ(leader.leader_id(), 2U);
+    expect_snapshot_response(*retry, 2U, true, 2U);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest,
+     NewSnapshotRequestPreservesLeaderUntilPendingInstallPublication) {
+  const SnapshotMetadata snapshot = incoming_snapshot_metadata();
+  const InstallSnapshotRequest request{2U, 2U, snapshot};
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 96U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    RaftNode leader = leader_ready_for_read_barrier(false);
+    auto barrier = leader.begin_read_barrier();
+    ASSERT_TRUE(barrier.has_value()) << barrier.error().to_string();
+    const PersistentState before = leader.persistent_state();
+    Message inbound = request;
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(leader.receive(2U, std::move(inbound)));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      PersistentState expected = before;
+      expected.current_term = 2U;
+      expected.voted_for.reset();
+      EXPECT_EQ(leader.role(), Role::kFollower);
+      EXPECT_EQ(leader.leader_id(), 2U);
+      EXPECT_EQ(leader.persistent_state(), expected);
+      const PersistentState* persistent = returned_persistent_state(**result);
+      ASSERT_NE(persistent, nullptr);
+      EXPECT_EQ(*persistent, expected);
+      const PendingSnapshotInstall* pending_install = pending_snapshot_install(**result);
+      ASSERT_NE(pending_install, nullptr);
+      EXPECT_EQ(pending_install->source, 2U);
+      EXPECT_EQ(pending_install->snapshot, snapshot);
+      EXPECT_TRUE((**result).outbound.empty());
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(leader.role(), Role::kLeader);
+    EXPECT_EQ(leader.current_term(), 1U);
+    EXPECT_EQ(leader.leader_id(), 1U);
+    EXPECT_EQ(leader.persistent_state(), before);
+    auto pending = leader.begin_read_barrier();
+    ASSERT_FALSE(pending.has_value());
+    EXPECT_EQ(pending.error().code(), common::StatusCode::kUnavailable);
+
+    auto retry = leader.receive(2U, request);
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    EXPECT_EQ(leader.role(), Role::kFollower);
+    EXPECT_EQ(leader.current_term(), 2U);
+    EXPECT_EQ(leader.leader_id(), 2U);
+    const PendingSnapshotInstall* pending_install = pending_snapshot_install(*retry);
+    ASSERT_NE(pending_install, nullptr);
+    EXPECT_EQ(pending_install->source, 2U);
+    EXPECT_EQ(pending_install->snapshot, snapshot);
+    EXPECT_TRUE(retry->outbound.empty());
   }
   EXPECT_GT(failure_count, 0U);
   EXPECT_TRUE(reached_success);

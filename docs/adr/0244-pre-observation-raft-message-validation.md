@@ -81,6 +81,11 @@ after mutation. Stale and predecessor-conflict requests own their negative feedb
 accepted suffix owns its exact persistent state, commit notification, and success response first.
 Allocation failure cannot demote a node or partially replace or commit its log.
 
+Canonical InstallSnapshot requests also prepare their exact stale, already-installed, or competing
+feedback and any post-term persistent state before observation. A new installation additionally
+prepares both the core's pending identity and the external task. Allocation failure is retryable and
+cannot demote the node or publish partial ownership of the installation.
+
 Recovered persistent state must also be inductive: an installed snapshot's last-included term may
 not exceed the node's current term. Retained entries already obey the same relation.
 
@@ -137,6 +142,10 @@ AppendEntries-request sweeps cover stale rejection, a higher-term predecessor co
 leader with pending read work, and a higher-term two-entry suffix replacement through commit. Each
 validation and transition-preparation failure is resource exhaustion with exact state preservation;
 retry returns matching feedback and any complete persistent transition.
+InstallSnapshot-request sweeps cover stale rejection, a higher-term acknowledgement of an older
+already-installed snapshot, and a higher-term new pending installation. Every owned response,
+persistent-state, pending-identity, and returned-task allocation fails with resource exhaustion
+before state changes; retry returns the exact response or external task.
 
 ## References
 

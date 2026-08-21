@@ -461,6 +461,10 @@ AppendEntries-request sweeps cover stale feedback allocation, higher-term confli
 demotion persistence, and accepted higher-term suffix replacement through commit. Every validation,
 membership, state-copy, and response allocation must preserve the exact prior node; retry must
 publish feedback, leader identity, commit notification, and persistent state together.
+InstallSnapshot-request sweeps cover stale feedback, higher-term acknowledgement of an older
+installed snapshot, and a higher-term new pending installation. Every response, post-term state,
+pending-request, and returned-task allocation must preserve the exact prior leader and pending read
+work; retry must publish the complete response or the same external installation task.
 The paired AppendEntries authority case submits an empty higher-term heartbeat from that same
 nonvoter position and requires exact leader-state preservation because no matching membership
 suffix proves the sender active. The positive new-only-leader case continues to install and commit

@@ -60,6 +60,11 @@ Inbound AppendEntries validation produces the candidate retained log, prospectiv
 membership once. The node then owns both copies needed by the in-memory state and returned durable
 transition, plus the exact feedback response, before it publishes a higher term, suffix replacement,
 or commit. The persistence owner never has to reconstruct a partially applied follower transition.
+Inbound InstallSnapshot requests use the same boundary. Feedback paths own their response and any
+post-term persistent state first. A new installation owns one metadata copy for the core's pending
+completion identity and another for the externally returned task before it changes role or leader;
+the application owner therefore cannot receive work that the core failed to retain, nor can the core
+retain work that was never returned.
 
 The maximum physical sequence is a terminal record identity. Once recovered or emitted, the
 Multi-Raft owner rejects and fails closed before invoking another deterministic group transition;

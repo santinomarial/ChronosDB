@@ -680,6 +680,7 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
   const bool request_vote_response = std::holds_alternative<RequestVoteResponse>(message);
   const bool append_entries_request = std::holds_alternative<AppendEntriesRequest>(message);
   const bool append_entries_response = std::holds_alternative<AppendEntriesResponse>(message);
+  const bool install_snapshot_request = std::holds_alternative<InstallSnapshotRequest>(message);
   const bool install_snapshot_response = std::holds_alternative<InstallSnapshotResponse>(message);
   const bool read_barrier_request = std::holds_alternative<ReadBarrierRequest>(message);
   const bool response_message = std::holds_alternative<RequestVoteResponse>(message) ||
@@ -710,7 +711,13 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
   bool prepared_append_request_accepted = false;
   bool prepared_append_request_persistence = false;
   std::optional<PersistentState> prepared_append_request_state;
-  if (request_vote_request || append_entries_request || read_barrier_request || response_message) {
+  bool prepared_install_request = false;
+  bool prepared_install_request_new = false;
+  bool prepared_install_request_persistence = false;
+  std::optional<PersistentState> prepared_install_request_state;
+  std::optional<InstallSnapshotRequest> prepared_pending_snapshot;
+  if (request_vote_request || append_entries_request || install_snapshot_request ||
+      read_barrier_request || response_message) {
     try {
       if (request_vote_request) {
         const RequestVoteRequest& request = std::get<RequestVoteRequest>(message);
@@ -821,6 +828,41 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
           prepared_append_request_persistence = true;
         }
         prepared_append_request = true;
+      }
+      if (install_snapshot_request) {
+        const InstallSnapshotRequest& request = std::get<InstallSnapshotRequest>(message);
+        if (request.term < impl_->state.current_term) {
+          transition.outbound.reserve(1U);
+          transition.outbound.push_back(OutboundMessage{
+              source, InstallSnapshotResponse{impl_->state.current_term, false,
+                                              impl_->state.snapshot.last_included_index}});
+        } else {
+          if (request.term > impl_->state.current_term) {
+            prepared_install_request_state.emplace(impl_->state);
+            prepared_install_request_state->current_term = request.term;
+            prepared_install_request_state->voted_for.reset();
+            transition.persistent_state.emplace(prepared_install_request_state.value());
+            prepared_install_request_persistence = true;
+          }
+          if (request.snapshot.last_included_index <= impl_->state.snapshot.last_included_index) {
+            transition.outbound.reserve(1U);
+            transition.outbound.push_back(OutboundMessage{
+                source, InstallSnapshotResponse{request.term, true,
+                                                impl_->state.snapshot.last_included_index}});
+          } else if (impl_->pending_snapshot.has_value()) {
+            if (impl_->pending_snapshot.value() != request) {
+              transition.outbound.reserve(1U);
+              transition.outbound.push_back(OutboundMessage{
+                  source, InstallSnapshotResponse{request.term, false,
+                                                  impl_->state.snapshot.last_included_index}});
+            }
+          } else {
+            prepared_pending_snapshot.emplace(request);
+            transition.snapshot_install = PendingSnapshotInstall{source, request.snapshot};
+            prepared_install_request_new = true;
+          }
+        }
+        prepared_install_request = true;
       }
       if (append_entries_response) {
         const AppendEntriesResponse& response = std::get<AppendEntriesResponse>(message);
@@ -953,7 +995,7 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
       }
       if (read_barrier_request)
         transition.outbound.reserve(1U);
-      if (!append_entries_request &&
+      if (!append_entries_request && !install_snapshot_request &&
           (message_term > impl_->state.current_term || prepared_vote_granted)) {
         PersistentState& prepared = transition.persistent_state.emplace(impl_->state);
         if (message_term > impl_->state.current_term) {
@@ -1054,30 +1096,20 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
           }
           return common::Status::ok();
         } else if constexpr (std::is_same_v<T, InstallSnapshotRequest>) {
-          if (value.term < impl_->state.current_term) {
-            transition.outbound.push_back(OutboundMessage{
-                source, InstallSnapshotResponse{impl_->state.current_term, false,
-                                                impl_->state.snapshot.last_included_index}});
+          if (!prepared_install_request)
+            return corruption("prepared Raft snapshot request state is unavailable");
+          if (value.term < impl_->state.current_term)
             return common::Status::ok();
+          static_assert(std::is_nothrow_move_assignable_v<PersistentState>);
+          if (prepared_install_request_persistence) {
+            impl_->state = std::move(prepared_install_request_state.value());
+            persistence_changed = true;
           }
           impl_->become_follower(value.term, source);
-          if (value.snapshot.last_included_index <= impl_->state.snapshot.last_included_index) {
-            transition.outbound.push_back(OutboundMessage{
-                source, InstallSnapshotResponse{impl_->state.current_term, true,
-                                                impl_->state.snapshot.last_included_index}});
-            return common::Status::ok();
+          if (prepared_install_request_new) {
+            static_assert(std::is_nothrow_move_assignable_v<std::optional<InstallSnapshotRequest>>);
+            impl_->pending_snapshot = std::move(prepared_pending_snapshot);
           }
-          const std::optional<InstallSnapshotRequest>& pending = impl_->pending_snapshot;
-          if (pending.has_value()) {
-            if (*pending == value)
-              return common::Status::ok();
-            transition.outbound.push_back(OutboundMessage{
-                source, InstallSnapshotResponse{impl_->state.current_term, false,
-                                                impl_->state.snapshot.last_included_index}});
-            return common::Status::ok();
-          }
-          impl_->pending_snapshot = value;
-          transition.snapshot_install = PendingSnapshotInstall{source, value.snapshot};
           return common::Status::ok();
         } else if constexpr (std::is_same_v<T, InstallSnapshotResponse>) {
           if (value.term < impl_->state.current_term || impl_->role != Role::kLeader ||

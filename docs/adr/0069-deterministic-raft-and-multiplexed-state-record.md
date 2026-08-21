@@ -77,6 +77,12 @@ post-term/post-suffix persistent state; an accepted request also owns its succes
 notification. Validation and preparation allocation failures return `RESOURCE_EXHAUSTED` without
 changing term, role, leader identity, pending work, log, commit, or membership.
 
+InstallSnapshot requests likewise own stale, already-installed, or competing-install feedback and
+any changed post-term persistent state before publication. A newly admitted installation owns both
+the core's pending request identity and the externally returned installation task before demotion or
+pending-work publication. Allocation failure therefore preserves the exact role, leader identity,
+pending work, and persistent state for retry.
+
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
 record boundary is [`multiplexed-raft-log-v1.md`](../formats/multiplexed-raft-log-v1.md). A dedicated
@@ -131,6 +137,10 @@ retry then produces either the retained suffix or the same snapshot request.
 AppendEntries-request sweeps separately cover stale rejection, higher-term predecessor conflict,
 and higher-term replacement plus commit. Every observed validation, membership, persistent-state,
 and response allocation preserves exact node state; retry publishes the complete expected outcome.
+InstallSnapshot-request sweeps cover stale rejection, a higher-term already-installed
+acknowledgement, and a higher-term new pending installation. Every observed response, persistent-
+state, pending-identity, and returned-task allocation preserves exact leadership and pending work;
+retry publishes the complete expected response or installation task.
 
 **Retrospective note (2026-08-12):** [ADR 0252](0252-replayable-deterministic-raft-fault-simulator.md)
 now supplies bounded explicit and seeded schedules for partitions, delay/reordering, duplication,

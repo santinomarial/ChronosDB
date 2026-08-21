@@ -870,6 +870,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   snapshot follow-up before publication.
   AppendEntries requests now retain their validated candidate state and own stale/conflict feedback
   or accepted suffix persistence and commit feedback before changing term, role, log, or membership.
+  InstallSnapshot requests now own stale/already-installed/competing feedback, any post-term
+  persistence, and both the core pending identity and external task for a new installation before
+  changing role, leader identity, or pending work.
   A bounded generation-tagged monotonic timer scheduler now emits election and heartbeat actions,
   retries rejected admission without shifting deadlines, and rejects stale completion rearming;
   its bounded driver now composes those actions with ordered asynchronous durable observations and

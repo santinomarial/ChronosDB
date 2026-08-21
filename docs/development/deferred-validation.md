@@ -289,6 +289,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   Compacted-leader InstallSnapshot-response sweeps now prove successful follower advancement and
   rejected retry construction preserve the old snapshot progress until the exact follow-up is
   owned. Broader snapshot/member churn schedules remain deferred.
+  InstallSnapshot-request sweeps now prove stale rejection, higher-term acknowledgement of an
+  already-installed boundary, and higher-term new-install publication own every response,
+  persistent-state, pending-identity, and returned-task allocation before mutation. Competing-
+  pending allocation schedules remain part of broader snapshot/member churn validation.
   Stale, higher-term-conflict, and accepted replacement AppendEntries-request sweeps now cover every
   observed validation and transition allocation through exact feedback and committed suffix
   publication. Broader membership-changing request allocation schedules remain deferred.
