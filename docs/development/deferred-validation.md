@@ -272,10 +272,12 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   does not partially count the voter and that an exact retry completes only after both majorities;
   a recipient sweep proves outbound and post-term persistent-state allocations fail before an
   admitted request can change node state, then returns the response and persistence transition
-  together on retry. High-contention schedules remain deferred. An otherwise nonvoter AppendEntries
-  source must now be established by a matching valid candidate suffix before term observation,
-  while the new-only-leader catch-up case remains accepted; broader membership-transition and
-  snapshot source-authority schedules remain deferred.
+  together on retry. A symmetric higher-term response sweep preserves leadership, durable state,
+  and the pending barrier across every persistent-state-copy failure before returning the exact
+  demotion transition on retry. High-contention schedules remain deferred. An otherwise nonvoter
+  AppendEntries source must now be established by a matching valid candidate suffix before term
+  observation, while the new-only-leader catch-up case remains accepted; broader membership-
+  transition and snapshot source-authority schedules remain deferred.
 - Persistent file owner, vote/log fsync ordering, crash/restart at every transition, idempotent
   recovery, application to tablet state, snapshot creation/install, and log compaction. Extend the
   implemented read barrier through production transport and tablet snapshot acquisition.

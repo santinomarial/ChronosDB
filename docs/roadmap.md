@@ -854,7 +854,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   retryable with exact state and context preservation. Accepted-response allocation likewise
   either counts the voter once or returns resource exhaustion with the frozen quorum unchanged.
   Recipients now pre-own the response slot and exact post-term persistent state before observing an
-  admitted request term, closing the allocation edge in their persist-before-response transition.
+  admitted request term. Leaders likewise own the post-term state before a higher-term response can
+  demote them and discard the pending barrier, closing both allocation edges around term observation.
   A bounded generation-tagged monotonic timer scheduler now emits election and heartbeat actions,
   retries rejected admission without shifting deadlines, and rejects stale completion rearming;
   its bounded driver now composes those actions with ordered asynchronous durable observations and

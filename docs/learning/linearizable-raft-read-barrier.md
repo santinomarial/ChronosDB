@@ -60,7 +60,9 @@ ordinary same-term response has no durable state of its own, so the durable owne
 physical-log record. If a recipient observes a higher term, its normal persistent transition is
 still appended and synchronized before the response can leave the durable batch. The recipient
 prepares both its response capacity and an exact post-term persistent-state value before changing
-the deterministic node, so later publication on this path is allocation-free.
+the deterministic node, so later publication on this path is allocation-free. A leader observing a
+higher-term barrier response prepares the same exact persistent-state value before it demotes and
+discards the pending barrier.
 
 ## Failure behavior and complexity
 
@@ -75,7 +77,8 @@ returns `RESOURCE_EXHAUSTED` without counting the responder, and an exact retry 
 Recipient-side response or persistent-state preparation failure also returns
 `RESOURCE_EXHAUSTED` before an admitted request can change term, vote, role, leader identity, or
 durable state. Retrying then returns the exact higher-term state that must be synchronized together
-with the accepted response.
+with the accepted response. Higher-term response preparation has the same failure guarantee and
+also preserves the pending barrier until the complete demotion transition can be returned.
 Each barrier sends `O(voters)` messages and retains `O(voters)` bounded state.
 
 ## Tradeoffs and likely interview questions

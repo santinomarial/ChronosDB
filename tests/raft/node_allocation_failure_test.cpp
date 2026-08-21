@@ -65,6 +65,21 @@ void expect_higher_term_read_probe_transition(const RaftNode& node, const Transi
   EXPECT_EQ(*response, (ReadBarrierResponse{2U, 9U, true}));
 }
 
+void expect_higher_term_read_response_transition(const RaftNode& node, const Transition& transition,
+                                                 PersistentState expected) {
+  expected.current_term = 2U;
+  expected.voted_for.reset();
+  EXPECT_EQ(node.role(), Role::kFollower);
+  EXPECT_EQ(node.current_term(), 2U);
+  EXPECT_FALSE(node.leader_id().has_value());
+  EXPECT_EQ(node.persistent_state(), expected);
+  const PersistentState* persistent = returned_persistent_state(transition);
+  ASSERT_NE(persistent, nullptr);
+  EXPECT_EQ(*persistent, expected);
+  EXPECT_TRUE(transition.outbound.empty());
+  EXPECT_FALSE(transition.read_barrier_ready.has_value());
+}
+
 void expect_read_barrier_allocation_atomic(const bool joint_membership,
                                            const std::size_t expected_probe_count) {
   std::size_t failure_count = 0U;
@@ -209,6 +224,53 @@ TEST(RaftNodeAllocationFailureTest,
     auto retry = leader.receive(2U, ReadBarrierRequest{2U, 2U, 9U});
     ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
     expect_higher_term_read_probe_transition(leader, *retry, before);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest,
+     HigherTermReadBarrierResponsePreparesPersistenceBeforeDemotion) {
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 64U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    RaftNode leader = leader_ready_for_read_barrier(false);
+    auto started = leader.begin_read_barrier();
+    ASSERT_TRUE(started.has_value()) << started.error().to_string();
+    const std::uint64_t context = read_context(*started);
+    const PersistentState before = leader.persistent_state();
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(leader.receive(2U, ReadBarrierResponse{2U, context, true}));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      expect_higher_term_read_response_transition(leader, **result, before);
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(leader.role(), Role::kLeader);
+    EXPECT_EQ(leader.current_term(), 1U);
+    EXPECT_EQ(leader.leader_id(), 1U);
+    EXPECT_EQ(leader.persistent_state(), before);
+    auto pending = leader.begin_read_barrier();
+    ASSERT_FALSE(pending.has_value());
+    EXPECT_EQ(pending.error().code(), common::StatusCode::kUnavailable);
+
+    auto retry = leader.receive(2U, ReadBarrierResponse{2U, context, true});
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    expect_higher_term_read_response_transition(leader, *retry, before);
   }
   EXPECT_GT(failure_count, 0U);
   EXPECT_TRUE(reached_success);

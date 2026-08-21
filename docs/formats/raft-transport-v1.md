@@ -87,7 +87,8 @@ nonvoter AppendEntries sender is admitted only when a matching, valid candidate 
 sender into the active configuration before term observation. For an admitted read-barrier request,
 the core also reserves the outbound response and prepares any exact higher-term persistent state
 before observation, so allocation failure cannot separate a term change from the state returned to
-the durable runtime.
+the durable runtime. A higher-term read-barrier response receives the same persistent-state
+preparation before it can demote the sender and discard the pending barrier.
 
 Minor-version compatibility is exact in v1. Reserved fields must remain zero until a later accepted
 version defines them.

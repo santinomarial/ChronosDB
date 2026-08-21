@@ -430,6 +430,10 @@ A recipient-side sweep injects failure into both the outbound response reservati
 copy allocation for the post-term persistent state. Each failure must return `RESOURCE_EXHAUSTED`
 before term, vote, role, leader identity, or persistent state changes; an exact retry must return the
 accepted response and matching higher-term persistent transition together.
+A symmetric leader-side sweep injects every higher-term response persistent-state-copy failure and
+requires the exact leadership, durable state, and pending barrier to remain. The same response then
+must retry to one follower demotion and its matching persistence transition without publishing a
+completed barrier.
 The paired AppendEntries authority case submits an empty higher-term heartbeat from that same
 nonvoter position and requires exact leader-state preservation because no matching membership
 suffix proves the sender active. The positive new-only-leader case continues to install and commit
