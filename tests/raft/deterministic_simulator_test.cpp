@@ -502,6 +502,55 @@ TEST(DeterministicRaftSimulatorTest, ExhaustivelyArmsPersistenceFailureOncePerAc
   EXPECT_EQ(inactive->replayed_prefixes, 1U);
 }
 
+TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresEligibleElectionsAndRetainsExhaustion) {
+  auto learner = config();
+  learner.node_ids = {1U, 2U};
+  learner.initial_voters = {1U};
+
+  auto complete = DeterministicRaftSimulator::explore_fault_schedules(
+      learner, {}, {.maximum_depth = 2U, .maximum_replays = 2U, .include_elections = true});
+
+  ASSERT_TRUE(complete.has_value()) << complete.error().to_string();
+  EXPECT_TRUE(complete->search_complete);
+  EXPECT_EQ(complete->replayed_prefixes, 2U);
+  EXPECT_FALSE(complete->failure.has_value());
+
+  auto bounded = DeterministicRaftSimulator::explore_fault_schedules(
+      learner, {}, {.maximum_depth = 2U, .maximum_replays = 1U, .include_elections = true});
+  ASSERT_TRUE(bounded.has_value()) << bounded.error().to_string();
+  EXPECT_FALSE(bounded->search_complete);
+  EXPECT_EQ(bounded->replayed_prefixes, 1U);
+
+  PersistentState terminal;
+  terminal.current_term = std::numeric_limits<Term>::max();
+  terminal.voted_for = 1U;
+  auto exhausted_config = config();
+  exhausted_config.node_ids = {1U};
+  exhausted_config.initial_voters = {1U};
+  exhausted_config.initial_persistent_states = {terminal};
+  auto exhausted = DeterministicRaftSimulator::explore_fault_schedules(
+      exhausted_config, {},
+      {.maximum_depth = 1U, .maximum_replays = 2U, .include_elections = true});
+  ASSERT_TRUE(exhausted.has_value()) << exhausted.error().to_string();
+  EXPECT_FALSE(exhausted->search_complete);
+  EXPECT_EQ(exhausted->replayed_prefixes, 2U);
+  ASSERT_TRUE(exhausted->failure.has_value());
+  const common::Status failure = exhausted->failure.value_or(
+      common::Status{common::StatusCode::kInternal, "missing election exhaustion"});
+  EXPECT_EQ(failure.code(), common::StatusCode::kOutOfRange);
+  ASSERT_EQ(exhausted->failing_trace.size(), 1U);
+  EXPECT_EQ(std::get<RaftSimulationStartElection>(exhausted->failing_trace.front()),
+            RaftSimulationStartElection{1U});
+  auto replay = DeterministicRaftSimulator::create(exhausted_config);
+  ASSERT_TRUE(replay.has_value()) << replay.error().to_string();
+  EXPECT_EQ(replay->replay(exhausted->failing_trace).code(), failure.code());
+  ASSERT_NE(replay->active_node(1U), nullptr);
+  EXPECT_EQ(replay->active_node(1U)->role(), Role::kFollower);
+  EXPECT_EQ(replay->active_node(1U)->persistent_state(), terminal);
+  ASSERT_NE(replay->durable_state(1U), nullptr);
+  EXPECT_EQ(*replay->durable_state(1U), terminal);
+}
+
 TEST(DeterministicRaftSimulatorTest, ExhaustiveExplorationRetainsTheFirstFailingSchedule) {
   auto simulation = DeterministicRaftSimulator::create(config());
   ASSERT_TRUE(simulation.has_value()) << simulation.error().to_string();

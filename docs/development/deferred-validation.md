@@ -235,7 +235,7 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   churn, exact replay including generated completion of a prepared external snapshot install,
   safety-model comparison, bounded chunk-first deletion shrinking, and replay-bounded exhaustive
   delivery/loss/optional-duplication, directional partition/healing, atomic persistence-failure
-  arming, and live-state crash/restart enumeration after a valid setup trace.
+  arming, eligible elections, and live-state crash/restart enumeration after a valid setup trace.
 - Extend the implemented hostile higher-term/payload-identity, pre-observation term/position/
   response-state, and exact compacted-prefix predecessor regression checks into exhaustive
   persistence-before-response, broader sequence-exhaustion schedules, response-state, and broader

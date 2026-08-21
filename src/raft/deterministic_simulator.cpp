@@ -873,6 +873,15 @@ common::Result<RaftExhaustiveFaultResult> DeterministicRaftSimulator::explore_fa
             branches.emplace_back(RaftSimulationFailNextPersistence{node_id});
         }
       }
+      if (schedule.include_elections) {
+        for (const NodeId node_id : config.node_ids) {
+          const RaftNode* const node = simulation->active_node(node_id);
+          if (node != nullptr && node->role() != Role::kLeader &&
+              std::binary_search(node->voters().begin(), node->voters().end(), node_id)) {
+            branches.emplace_back(RaftSimulationStartElection{node_id});
+          }
+        }
+      }
       if (schedule.include_node_lifecycle) {
         for (const NodeId node_id : config.node_ids) {
           if (simulation->active_node(node_id) == nullptr)
