@@ -666,6 +666,7 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
   const bool request_vote_request = std::holds_alternative<RequestVoteRequest>(message);
   const bool request_vote_response = std::holds_alternative<RequestVoteResponse>(message);
   const bool append_entries_response = std::holds_alternative<AppendEntriesResponse>(message);
+  const bool install_snapshot_response = std::holds_alternative<InstallSnapshotResponse>(message);
   const bool read_barrier_request = std::holds_alternative<ReadBarrierRequest>(message);
   const bool response_message = std::holds_alternative<RequestVoteResponse>(message) ||
                                 std::holds_alternative<AppendEntriesResponse>(message) ||
@@ -687,6 +688,10 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
   std::optional<JointConfiguration> prepared_append_joint;
   std::map<NodeId, LogIndex> prepared_append_next_index;
   std::map<NodeId, LogIndex> prepared_append_match_index;
+  bool prepared_snapshot_response = false;
+  common::Status prepared_snapshot_status = common::Status::ok();
+  std::map<NodeId, LogIndex> prepared_snapshot_next_index;
+  std::map<NodeId, LogIndex> prepared_snapshot_match_index;
   if (request_vote_request || read_barrier_request || response_message) {
     try {
       if (request_vote_request) {
@@ -846,6 +851,28 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
             prepared_append_response = true;
         }
       }
+      if (install_snapshot_response) {
+        const InstallSnapshotResponse& response = std::get<InstallSnapshotResponse>(message);
+        if (response.term == impl_->state.current_term && impl_->role == Role::kLeader) {
+          if (!impl_->next_index.contains(source) || !impl_->match_index.contains(source)) {
+            prepared_snapshot_status = corruption("prepared Raft snapshot progress is unavailable");
+          } else {
+            if (response.success) {
+              prepared_snapshot_next_index = impl_->next_index;
+              prepared_snapshot_match_index = impl_->match_index;
+              auto& match = prepared_snapshot_match_index.at(source);
+              match = std::max(match, response.last_included_index);
+              prepared_snapshot_next_index.at(source) = match + 1U;
+            }
+            const std::map<NodeId, LogIndex>& next_progress =
+                response.success ? prepared_snapshot_next_index : impl_->next_index;
+            transition.outbound.reserve(1U);
+            transition.outbound.push_back(OutboundMessage{
+                source, impl_->replication_for(source, next_progress, impl_->state.commit_index)});
+            prepared_snapshot_response = true;
+          }
+        }
+      }
       if (read_barrier_request)
         transition.outbound.reserve(1U);
       if (message_term > impl_->state.current_term || prepared_vote_granted) {
@@ -867,6 +894,8 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
   }
   if (!prepared_append_status.is_ok())
     return common::make_unexpected(prepared_append_status);
+  if (!prepared_snapshot_status.is_ok())
+    return common::make_unexpected(prepared_snapshot_status);
 
   bool persistence_changed = false;
   if (message_term > impl_->state.current_term) {
@@ -1013,12 +1042,13 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
               value.term != impl_->state.current_term) {
             return common::Status::ok();
           }
+          if (!prepared_snapshot_response)
+            return corruption("prepared Raft snapshot response state is unavailable");
           if (value.success) {
-            impl_->match_index[source] =
-                std::max(impl_->match_index[source], value.last_included_index);
-            impl_->next_index[source] = impl_->match_index[source] + 1U;
+            static_assert(std::is_nothrow_move_assignable_v<std::map<NodeId, LogIndex>>);
+            impl_->next_index = std::move(prepared_snapshot_next_index);
+            impl_->match_index = std::move(prepared_snapshot_match_index);
           }
-          transition.outbound.push_back(OutboundMessage{source, impl_->replication_for(source)});
           return common::Status::ok();
         } else if constexpr (std::is_same_v<T, ReadBarrierRequest>) {
           const bool accepted = value.term == impl_->state.current_term;

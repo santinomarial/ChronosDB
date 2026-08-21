@@ -453,6 +453,10 @@ Five-voter AppendEntries-response sweeps inject every successful progress, membe
 persistent-state, and broadcast allocation through commit, plus every rejected-progress retry
 allocation. After failure, an explicit heartbeat must expose the old source next index, durable
 commit must remain exact, and retry must publish the complete commit or rewind transition.
+InstallSnapshot-response sweeps cover both success and rejection after local compaction with one
+retained suffix entry. Every failed allocation must return resource exhaustion, a heartbeat must
+still select the snapshot for that follower, and retry must return the exact suffix or snapshot
+message without changing persistent state.
 The paired AppendEntries authority case submits an empty higher-term heartbeat from that same
 nonvoter position and requires exact leader-state preservation because no matching membership
 suffix proves the sender active. The positive new-only-leader case continues to install and commit

@@ -52,6 +52,10 @@ prepares replacement match/next maps, derives any newly committed membership, co
 post-commit durable state, and constructs every resulting replication message before publication.
 A failed rejection retry similarly leaves its prior next index intact. The durable owner therefore
 never receives an error after an unreported commit mutation.
+Snapshot completion acknowledgements also prepare follower progress and the next replication
+message together. Until a successful acknowledgement's suffix message is owned, the leader keeps
+selecting the installed snapshot boundary for that follower; rejected acknowledgements likewise
+own their snapshot retry before returning.
 
 The maximum physical sequence is a terminal record identity. Once recovered or emitted, the
 Multi-Raft owner rejects and fails closed before invoking another deterministic group transition;

@@ -286,6 +286,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   commit, derived membership state, and retry rewinds remain unpublished until their persistent
   state and complete outbound batches are owned. Membership-removal allocation schedules remain
   deferred.
+  Compacted-leader InstallSnapshot-response sweeps now prove successful follower advancement and
+  rejected retry construction preserve the old snapshot progress until the exact follow-up is
+  owned. Broader snapshot/member churn schedules remain deferred.
   High-contention schedules remain deferred. An otherwise nonvoter AppendEntries source must now be
   established by a matching valid candidate suffix before term observation, while the new-only-
   leader catch-up case remains accepted; broader membership-transition and snapshot source-

@@ -42,6 +42,25 @@ namespace {
   return std::move(*leader);
 }
 
+[[nodiscard]] RaftNode leader_with_compacted_snapshot() {
+  auto leader = RaftNode::create(1U, {1U, 2U, 3U});
+  EXPECT_TRUE(leader.has_value());
+  EXPECT_TRUE(leader->start_election().has_value());
+  EXPECT_TRUE(leader->receive(3U, RequestVoteResponse{1U, true}).has_value());
+  for (std::uint8_t value = 1U; value <= 3U; ++value) {
+    EXPECT_TRUE(leader->propose(1U, {static_cast<std::byte>(value)}).has_value());
+    EXPECT_TRUE(
+        leader->receive(3U, AppendEntriesResponse{1U, true, value, std::nullopt, 0U}).has_value());
+  }
+  EXPECT_TRUE(leader->mark_applied(3U).has_value());
+  SnapshotMetadata snapshot{};
+  snapshot.last_included_index = 2U;
+  snapshot.last_included_term = 1U;
+  snapshot.manifest_generation = 7U;
+  EXPECT_TRUE(leader->compact_snapshot(snapshot).has_value());
+  return std::move(*leader);
+}
+
 [[nodiscard]] const AppendEntriesRequest* append_request_for(const Transition& transition,
                                                              const NodeId destination) {
   const auto found =
@@ -49,6 +68,15 @@ namespace {
   if (found == transition.outbound.end())
     return nullptr;
   return std::get_if<AppendEntriesRequest>(&found->message);
+}
+
+[[nodiscard]] const InstallSnapshotRequest* snapshot_request_for(const Transition& transition,
+                                                                 const NodeId destination) {
+  const auto found =
+      std::ranges::find(transition.outbound, destination, &OutboundMessage::destination);
+  if (found == transition.outbound.end())
+    return nullptr;
+  return std::get_if<InstallSnapshotRequest>(&found->message);
 }
 
 struct ExpectedAppend {
@@ -235,6 +263,69 @@ void expect_read_barrier_allocation_atomic(const bool joint_membership,
     ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
     EXPECT_EQ(retry->outbound.size(), expected_probe_count);
     EXPECT_EQ(read_context(*retry), 1U);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+void expect_snapshot_response_allocation_atomic(const bool installed) {
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 64U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    RaftNode leader = leader_with_compacted_snapshot();
+    ASSERT_EQ(leader.role(), Role::kLeader);
+    ASSERT_EQ(leader.commit_index(), 3U);
+    const PersistentState before = leader.persistent_state();
+    const InstallSnapshotResponse response{1U, installed, installed ? 2U : 0U};
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(leader.receive(2U, response));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      if (installed) {
+        expect_single_append(**result, 2U, ExpectedAppend{2U, 3U, 3U});
+      } else {
+        ASSERT_EQ((**result).outbound.size(), 1U);
+        const InstallSnapshotRequest* retry = snapshot_request_for(**result, 2U);
+        ASSERT_NE(retry, nullptr);
+        EXPECT_EQ(retry->snapshot.last_included_index, 2U);
+      }
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(leader.role(), Role::kLeader);
+    EXPECT_EQ(leader.current_term(), 1U);
+    EXPECT_EQ(leader.leader_id(), 1U);
+    EXPECT_EQ(leader.persistent_state(), before);
+
+    auto heartbeat = leader.heartbeat();
+    ASSERT_TRUE(heartbeat.has_value()) << heartbeat.error().to_string();
+    const InstallSnapshotRequest* unchanged = snapshot_request_for(*heartbeat, 2U);
+    ASSERT_NE(unchanged, nullptr);
+    EXPECT_EQ(unchanged->snapshot.last_included_index, 2U);
+
+    auto retry = leader.receive(2U, response);
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    if (installed) {
+      expect_single_append(*retry, 2U, ExpectedAppend{2U, 3U, 3U});
+    } else {
+      ASSERT_EQ(retry->outbound.size(), 1U);
+      const InstallSnapshotRequest* snapshot_retry = snapshot_request_for(*retry, 2U);
+      ASSERT_NE(snapshot_retry, nullptr);
+      EXPECT_EQ(snapshot_retry->snapshot.last_included_index, 2U);
+    }
   }
   EXPECT_GT(failure_count, 0U);
   EXPECT_TRUE(reached_success);
@@ -465,6 +556,16 @@ TEST(RaftNodeAllocationFailureTest, RejectedAppendResponsePreservesProgressUntil
   }
   EXPECT_GT(failure_count, 0U);
   EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest,
+     SuccessfulSnapshotResponsePreservesProgressUntilFollowUpPublication) {
+  expect_snapshot_response_allocation_atomic(true);
+}
+
+TEST(RaftNodeAllocationFailureTest,
+     RejectedSnapshotResponsePreservesProgressUntilRetryPublication) {
+  expect_snapshot_response_allocation_atomic(false);
 }
 
 TEST(RaftNodeAllocationFailureTest,

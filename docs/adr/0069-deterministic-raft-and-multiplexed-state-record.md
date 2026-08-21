@@ -65,6 +65,12 @@ complete broadcast batch. A rejection owns its replacement next index and retry 
 Allocation failure therefore publishes neither follower progress nor a durable commit, membership
 change, leader removal, or retry rewind without the matching complete transition.
 
+InstallSnapshot responses use the same progress boundary. A successful response prepares complete
+replacement match/next maps and the retained-log follow-up before advancing the follower beyond the
+snapshot. A rejected response owns its snapshot retry before returning. Resource exhaustion leaves
+the old follower position intact in both cases and is returned as an explicit status rather than an
+escaping allocation exception.
+
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
 record boundary is [`multiplexed-raft-log-v1.md`](../formats/multiplexed-raft-log-v1.md). A dedicated
@@ -113,6 +119,9 @@ Five-voter AppendEntries-response sweeps cover successful progress through commi
 progress through rewind. Heartbeat output proves every failed allocation preserves the prior
 per-follower position; commit state remains byte-for-byte unchanged until its persistent state and
 complete broadcast are owned.
+InstallSnapshot-response sweeps use a compacted leader with one retained suffix entry. A heartbeat
+must continue selecting the snapshot after every failed success or rejection allocation; exact
+retry then produces either the retained suffix or the same snapshot request.
 
 **Retrospective note (2026-08-12):** [ADR 0252](0252-replayable-deterministic-raft-fault-simulator.md)
 now supplies bounded explicit and seeded schedules for partitions, delay/reordering, duplication,
