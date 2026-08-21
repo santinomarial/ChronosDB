@@ -865,7 +865,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   Candidate vote responses now prepare the replacement acknowledgement set and, at quorum, every
   leader replication map and initial heartbeat before publishing the vote or leadership.
   AppendEntries responses now prepare replacement follower progress and any derived membership,
-  durable commit state, leader removal, and complete replication batch before publication.
+  durable commit state, leader removal, and complete replication batch before publication. A
+  decisive final-membership acknowledgement allocation sweep now proves the stable new-voter
+  broadcast and removed-leader demotion publish together.
   InstallSnapshot responses likewise own successful replacement progress and the exact suffix or
   snapshot follow-up before publication.
   AppendEntries requests now retain their validated candidate state and own stale/conflict feedback

@@ -485,6 +485,11 @@ Five-voter AppendEntries-response sweeps inject every successful progress, membe
 persistent-state, and broadcast allocation through commit, plus every rejected-progress retry
 allocation. After failure, an explicit heartbeat must expose the old source next index, durable
 commit must remain exact, and retry must publish the complete commit or rewind transition.
+A final-membership variant makes one new voter provide the decisive acknowledgement that commits
+the final entry and removes the current leader. Every failure must retain the joint-state leader,
+pending final flag, exact durable state, and pre-acknowledgement heartbeat. Retry must publish the
+stable new voter set, durable commit at the final index, complete new-voter broadcast, and follower
+demotion together.
 InstallSnapshot-response sweeps cover both success and rejection after local compaction with one
 retained suffix entry. Every failed allocation must return resource exhaustion, a heartbeat must
 still select the snapshot for that follower, and retry must return the exact suffix or snapshot

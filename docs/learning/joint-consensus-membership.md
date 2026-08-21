@@ -41,6 +41,9 @@ an identical retry uses the original next log index and emits the whole transiti
 A bootstrap learner can receive replication but cannot start an election or grant a vote. New peers
 receive replication as soon as the joint entry is appended. A leader excluded from the final set
 sends the final commit update to new peers, clears leader-only state, and becomes a follower.
+That removal is itself prepare-before-publish: the leader retains its exact joint state if deriving
+the stable configuration, replacing progress, copying durable state, or constructing any new-voter
+message fails. Only the complete final-commit transition permits demotion.
 Conversely, a sender outside a lagging recipient's current active set gains AppendEntries authority
 only when the request matches the local predecessor and its validated candidate suffix derives the
 sender into the active union. This supports catch-up from a new-only leader without allowing an

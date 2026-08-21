@@ -73,3 +73,6 @@ term, role, leader identity, or persistent state changes. A suffix carrying the 
 transition from a new-only leader remains accepted. Allocation sweeps for joint and final proposal
 publication require every resource-exhaustion result to preserve the exact stable or joint leader;
 the identical retry then appends once at the same index and returns the complete active-peer batch.
+A decisive final-commit sweep separately fails membership derivation, progress replacement,
+broadcast, and durable-state allocations before a removed leader can publish any part of the commit;
+the identical acknowledgement then commits once, reaches every new voter, and demotes the leader.

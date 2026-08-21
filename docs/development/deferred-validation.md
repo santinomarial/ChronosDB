@@ -286,8 +286,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   commit, derived membership state, and retry rewinds remain unpublished until their persistent
   state and complete outbound batches are owned. Joint- and final-membership proposal sweeps now
   prove encoding, prospective membership and progress derivation, complete replication, and durable
-  state ownership precede publication. Broader final-commit/leader-removal allocation schedules
-  remain deferred.
+  state ownership precede publication. A decisive final-commit sweep now proves the stable
+  configuration, new-voter broadcast, durable state, and removed-leader demotion publish together.
+  Alternative quorum topologies and broader membership-churn allocation schedules remain deferred.
   Compacted-leader InstallSnapshot-response sweeps now prove successful follower advancement and
   rejected retry construction preserve the old snapshot progress until the exact follow-up is
   owned. Broader snapshot/member churn schedules remain deferred.

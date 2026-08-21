@@ -77,6 +77,17 @@ namespace {
   return std::move(*leader);
 }
 
+[[nodiscard]] RaftNode leader_awaiting_removing_final_acknowledgement() {
+  RaftNode leader = leader_with_committed_joint_membership();
+  EXPECT_TRUE(leader.finalize_membership_change().has_value());
+  EXPECT_TRUE(
+      leader.receive(2U, AppendEntriesResponse{1U, true, 2U, std::nullopt, 0U}).has_value());
+  EXPECT_EQ(leader.commit_index(), 1U);
+  EXPECT_TRUE(leader.joint_membership_active());
+  EXPECT_TRUE(leader.final_membership_pending());
+  return leader;
+}
+
 [[nodiscard]] SnapshotMetadata incoming_snapshot_metadata() {
   SnapshotMetadata snapshot{};
   snapshot.last_included_index = 1U;
@@ -635,6 +646,83 @@ TEST(RaftNodeAllocationFailureTest,
     EXPECT_EQ(leader.commit_index(), 1U);
     EXPECT_EQ(retry->advanced_commit_index, 1U);
     EXPECT_EQ(retry->outbound.size(), 4U);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest,
+     FinalMembershipCommitPreservesJointLeaderUntilRemovalPublication) {
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    RaftNode leader = leader_awaiting_removing_final_acknowledgement();
+    ASSERT_EQ(leader.role(), Role::kLeader);
+    const PersistentState before = leader.persistent_state();
+    PersistentState expected = before;
+    expected.commit_index = 2U;
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(leader.receive(4U, AppendEntriesResponse{1U, true, 2U, std::nullopt, 0U}));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      EXPECT_EQ(leader.role(), Role::kFollower);
+      EXPECT_FALSE(leader.leader_id().has_value());
+      EXPECT_EQ(leader.persistent_state(), expected);
+      EXPECT_TRUE(std::ranges::equal(leader.voters(), std::vector<NodeId>{2U, 3U, 4U}));
+      EXPECT_TRUE(std::ranges::equal(leader.committed_voters(), std::vector<NodeId>{2U, 3U, 4U}));
+      EXPECT_FALSE(leader.joint_membership_active());
+      EXPECT_FALSE(leader.final_membership_pending());
+      EXPECT_EQ((**result).advanced_commit_index, 2U);
+      const PersistentState* persistent = returned_persistent_state(**result);
+      ASSERT_NE(persistent, nullptr);
+      EXPECT_EQ(*persistent, expected);
+      ASSERT_EQ((**result).outbound.size(), 3U);
+      std::vector<NodeId> destinations;
+      for (const OutboundMessage& outbound : (**result).outbound) {
+        destinations.push_back(outbound.destination);
+        const auto* request = std::get_if<AppendEntriesRequest>(&outbound.message);
+        ASSERT_NE(request, nullptr);
+        EXPECT_EQ(request->leader_commit, 2U);
+      }
+      EXPECT_TRUE(std::ranges::equal(destinations, std::vector<NodeId>{2U, 3U, 4U}));
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(leader.role(), Role::kLeader);
+    EXPECT_EQ(leader.leader_id(), 1U);
+    EXPECT_EQ(leader.persistent_state(), before);
+    EXPECT_TRUE(leader.joint_membership_active());
+    EXPECT_TRUE(leader.final_membership_pending());
+    EXPECT_TRUE(std::ranges::equal(leader.voters(), std::vector<NodeId>{1U, 2U, 3U, 4U}));
+
+    auto heartbeat = leader.heartbeat();
+    ASSERT_TRUE(heartbeat.has_value()) << heartbeat.error().to_string();
+    const AppendEntriesRequest* unchanged = append_request_for(*heartbeat, 4U);
+    ASSERT_NE(unchanged, nullptr);
+    EXPECT_EQ(unchanged->previous_log_index, 1U);
+    ASSERT_EQ(unchanged->entries.size(), 1U);
+    EXPECT_EQ(unchanged->entries.front().index, 2U);
+    EXPECT_EQ(unchanged->leader_commit, 1U);
+
+    auto retry = leader.receive(4U, AppendEntriesResponse{1U, true, 2U, std::nullopt, 0U});
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    EXPECT_EQ(leader.role(), Role::kFollower);
+    EXPECT_EQ(leader.persistent_state(), expected);
+    EXPECT_EQ(retry->advanced_commit_index, 2U);
+    EXPECT_EQ(retry->outbound.size(), 3U);
   }
   EXPECT_GT(failure_count, 0U);
   EXPECT_TRUE(reached_success);

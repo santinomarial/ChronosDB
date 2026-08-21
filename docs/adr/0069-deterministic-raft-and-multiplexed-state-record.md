@@ -161,6 +161,10 @@ Five-voter AppendEntries-response sweeps cover successful progress through commi
 progress through rewind. Heartbeat output proves every failed allocation preserves the prior
 per-follower position; commit state remains byte-for-byte unchanged until its persistent state and
 complete broadcast are owned.
+A final-membership response sweep makes the decisive acknowledgement remove the current leader.
+Every failed preparation preserves the exact joint configuration, pending final entry, leadership,
+and follower position; retry atomically owns the stable new configuration, durable commit, complete
+new-voter broadcast, and demotion.
 InstallSnapshot-response sweeps use a compacted leader with one retained suffix entry. A heartbeat
 must continue selecting the snapshot after every failed success or rejection allocation; exact
 retry then produces either the retained suffix or the same snapshot request.
