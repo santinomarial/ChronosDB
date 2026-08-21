@@ -123,6 +123,7 @@ TEST(RaftTransportCodecTest, RejectsNoncanonicalAppendResponseState) {
   const std::vector<Message> malformed{
       AppendEntriesResponse{4U, false, 12U, 5U, 7U},
       AppendEntriesResponse{4U, false, 12U, std::nullopt, 0U},
+      AppendEntriesResponse{4U, false, std::numeric_limits<LogIndex>::max(), std::nullopt, 7U},
   };
   for (const Message& message : malformed) {
     auto encoded = encode_raft_transport_envelope_v1(envelope(message));
@@ -134,6 +135,9 @@ TEST(RaftTransportCodecTest, RejectsNoncanonicalAppendResponseState) {
       encode_raft_transport_envelope_v1(envelope(AppendEntriesResponse{4U, false, 12U, 3U, 7U}))
           .value();
   std::vector<std::byte> candidate = canonical;
+  store_u64(candidate, 112U, std::numeric_limits<LogIndex>::max());
+  expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
+  candidate = canonical;
   store_u64(candidate, 120U, 5U);
   expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
   candidate = canonical;

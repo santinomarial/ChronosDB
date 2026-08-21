@@ -88,6 +88,8 @@ AppendEntries requests reject it as a predecessor even for an entry-free heartbe
 canonical leader can own the predecessor that such a heartbeat claims.
 They also reject it as `leader_commit` before term or role observation because no canonical leader
 can have committed the reserved index.
+AppendEntries responses reject it as `match_index` before observation because no follower can own
+an entry at the reserved position, even when reporting a failed replication attempt.
 
 Useful questions include: why can a queued message survive a sender crash; why must durable state be
 installed before outbound admission; why does replay use explicit message IDs; why is a snapshot

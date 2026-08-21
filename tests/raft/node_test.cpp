@@ -214,6 +214,7 @@ TEST(RaftNodeTest, RejectsNoncanonicalTermsAndResponseStateBeforeObservingTerm) 
       AppendEntriesResponse{9U, false, 0U, 0U, 1U},
       AppendEntriesResponse{9U, false, 0U, 10U, 1U},
       AppendEntriesResponse{9U, false, 0U, std::nullopt, 0U},
+      AppendEntriesResponse{9U, false, std::numeric_limits<LogIndex>::max(), std::nullopt, 1U},
       InstallSnapshotRequest{9U, 2U, std::move(future_term_snapshot)},
       InstallSnapshotRequest{9U, 2U, std::move(exhausted_index_snapshot)},
       InstallSnapshotResponse{9U, true, 0U},

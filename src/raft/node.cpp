@@ -553,7 +553,8 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
             return membership.error();
           validated_membership = std::move(*membership);
         } else if constexpr (std::is_same_v<T, AppendEntriesResponse>) {
-          if ((value.success && (value.match_index > impl_->last_index() ||
+          if (value.match_index == std::numeric_limits<LogIndex>::max() ||
+              (value.success && (value.match_index > impl_->last_index() ||
                                  value.conflict_term.has_value() || value.conflict_index != 0U)) ||
               (!value.success && value.conflict_index == 0U) ||
               (value.conflict_term.has_value() &&

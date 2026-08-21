@@ -48,7 +48,7 @@ Every payload starts with a nonzero 64-bit term.
    zero bytes, match index, conflict term or zero, and conflict index. Success forbids conflict
    state. Failure requires a nonzero conflict index and permits an optional nonzero conflict term no
    greater than the response term. A failed response may retain the follower's last known match
-   index for conflict repair.
+   index for conflict repair. The match index cannot equal `UINT64_MAX` in either response state.
 5. `INSTALL_SNAPSHOT_REQUEST` starts with term and source-equal leader, followed by snapshot last
    index, last term, Manifest generation, 32-byte part-set checksum, configuration index, 32-bit
    voter count, four zero bytes, and ascending unique nonzero 64-bit voters. The snapshot metadata
@@ -104,11 +104,11 @@ failure remains sticky, and the sweep continues until the exact canonical operat
 Deterministic checksum-repaired hostile matrices exercise every header reserved byte, inconsistent
 frame and payload lengths, route/version/kind fields, append counts/entry lengths/reserved and
 trailing bytes, snapshot/message term ordering, snapshot counts/voter ordering/reserved bytes, and
-vote/append-predecessor/snapshot maximum-index rejection, append-response conflict term/index state,
-maximum leader-commit rejection, and fixed-message Boolean/term domains. A structure-aware fuzzer
-combines arbitrary input with generated canonical variants, single-byte and truncated mutations,
-optional header/payload/frame checksum repair, two-fragment reader delivery, exact canonical
-re-encoding, and write-cursor validation under a 64 KiB test cap.
+vote/append-predecessor/snapshot maximum-index rejection, append-response match/conflict term/index
+state, maximum leader-commit and response-match rejection, and fixed-message Boolean/term domains.
+A structure-aware fuzzer combines arbitrary input with generated canonical variants, single-byte
+and truncated mutations, optional header/payload/frame checksum repair, two-fragment reader
+delivery, exact canonical re-encoding, and write-cursor validation under a 64 KiB test cap.
 
 ## Authenticated dispatch
 

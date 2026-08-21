@@ -21,6 +21,7 @@ cannot carry term, manifest/checksum identity, configuration index, or voters. L
 `UINT64_MAX` remains reserved for exhaustion detection and cannot be recovered or installed.
 Remote candidates cannot advertise that reserved value as an existing last-log index, and remote
 leaders cannot name it as an AppendEntries predecessor or committed index.
+AppendEntries responses cannot report it as the follower's actual last known match index.
 
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable

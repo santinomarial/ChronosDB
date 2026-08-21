@@ -21,6 +21,8 @@ vote after higher-term observation even though no canonical local state can cont
 transport codec also admitted the reserved value as the predecessor of an empty AppendEntries
 heartbeat even though the deterministic core rejected it. Both boundaries admitted the same value
 as `leader_commit`, allowing an impossible higher-term commit claim to change candidate state.
+Failed AppendEntries responses could likewise report the reserved value as their last known match
+index and change candidate state before leader-context processing.
 
 ## Decision
 
@@ -37,7 +39,8 @@ external-install state changes.
 A successful AppendEntries response cannot carry conflict state, and its match index cannot exceed
 the leader's log. A failed response requires a nonzero conflict index; an optional conflict term must
 be nonzero and no greater than the response term. Failed responses may retain the follower's last-
-known match index because the core emits that diagnostic during conflict repair.
+known match index because the core emits that diagnostic during conflict repair. In both response
+states that actual match position must remain below `UINT64_MAX`.
 A successful snapshot response must name a nonzero installed index within the leader's log.
 Existing read-context, append-entry, and snapshot-metadata checks remain in the same pre-observation
 validation pass.
@@ -93,6 +96,8 @@ Maximum-index AppendEntries predecessor coverage proves direct-core rejection wi
 state changes and rejects both an outbound empty heartbeat and its checksum-valid decoded form.
 Maximum-index leader-commit coverage uses the same three paths and proves that an impossible
 higher-term commit advertisement cannot change candidate role or persistent state.
+Maximum-index AppendEntries match coverage rejects a failed response through direct-core, outbound
+encoding, and checksum-valid decoding before a higher-term response can change candidate state.
 
 ## References
 

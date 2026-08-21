@@ -428,6 +428,8 @@ AppendEntries requests reject it as an impossible predecessor through direct-cor
 outbound encoding and checksum-repaired decoding of an entry-free heartbeat.
 The same three paths reject it as `leader_commit` before an impossible higher-term commit claim can
 change candidate role or persistent state.
+Failed AppendEntries responses reject it as the follower's actual `match_index` through direct-core,
+outbound encoding, and checksum-repaired decoding before higher-term observation.
 
 The implemented group-scoped transport envelope additionally has checksum-repaired hostile
 length/count/reserved/value matrices, exhaustive owned-allocation failure sweeps, and a bounded

@@ -190,6 +190,8 @@ void store_u32(const std::span<std::byte> bytes, const std::size_t offset,
             expected = entry.index;
           }
         } else if constexpr (std::is_same_v<T, AppendEntriesResponse>) {
+          if (value.match_index == std::numeric_limits<LogIndex>::max())
+            return invalid("Raft append response match index is exhausted");
           if (value.success && (value.conflict_term.has_value() || value.conflict_index != 0U))
             return invalid("successful Raft append response carries conflict state");
           if (!value.success && value.conflict_index == 0U)
