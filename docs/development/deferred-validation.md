@@ -226,14 +226,14 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   and fixed-message value domains. A structure-aware ASan/UBSan libFuzzer target combines raw bytes
   with every generated message kind, checksum-repaired mutation, truncation, fragmented reading,
   exact successful re-encoding, and cursor validation; sustained campaigns remain open.
-- Long seed matrices, exhaustive bounded schedules, chunk/dependency trace shrinking, timer/clock
-  changes, and physical segmented-log syscall faults. The bounded simulator now derives valid
-  joint-membership begin/finalize, local snapshot-compaction, pending snapshot-completion, and
-  current-term read-barrier candidates from current state. Focused explicit and seeded coverage
-  exercises partition, delay/reordering, duplicate/loss, crash/restart, atomic persistence failure,
-  application, automatically generated membership/compaction/read-barrier churn, exact replay
-  including generated completion of a prepared external snapshot install, safety-model comparison,
-  and deletion shrinking.
+- Long seed matrices, exhaustive bounded schedules, semantic dependency-aware trace shrinking,
+  timer/clock changes, and physical segmented-log syscall faults. The bounded simulator now
+  derives valid joint-membership begin/finalize, local snapshot-compaction, pending snapshot-
+  completion, and current-term read-barrier candidates from current state. Focused explicit and
+  seeded coverage exercises partition, delay/reordering, duplicate/loss, crash/restart, atomic
+  persistence failure, application, automatically generated membership/compaction/read-barrier
+  churn, exact replay including generated completion of a prepared external snapshot install,
+  safety-model comparison, and bounded chunk-first deletion shrinking.
 - Extend the implemented hostile higher-term/payload-identity, pre-observation term/position/
   response-state, and exact compacted-prefix predecessor regression checks into exhaustive
   persistence-before-response, sequence-exhaustion schedules, response-state, and broader snapshot-
@@ -353,9 +353,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   inbound/outbound readiness, FIFO activity/results, retry-safe routing, and application pickup.
   Result-ring saturation, mixed external completion producers, many-group/peer skew, storage stalls,
   disconnect/reconnect storms, and deterministic multi-node production-carrier faults remain.
-- Broad leader-churn and partition matrices, semantic/chunk trace shrinking, clock changes, physical
-  disk failures, ASan/UBSan/TSan, fuzzing, independent model checking, commit/catch-up/snapshot
-  benchmarks, and API review.
+- Broad leader-churn and partition matrices, semantic dependency-aware trace shrinking, clock
+  changes, physical disk failures, ASan/UBSan/TSan, fuzzing, independent model checking,
+  commit/catch-up/snapshot benchmarks, and API review.
 
 ## Phase 15 — Multi-Raft tablets and metadata
 

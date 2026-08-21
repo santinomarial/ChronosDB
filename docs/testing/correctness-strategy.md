@@ -395,6 +395,8 @@ snapshot-compaction candidates from the evolving state. It also starts eligible 
 barriers, records observed completions, and retains exact generated-action replay. Completion
 actions are generated when an external snapshot installation is already pending; broader seed
 matrices and exhaustive bounded schedule enumeration remain deferred.
+Failure minimization deletes deterministic coarse chunks before refining toward individual actions,
+preserves the original status-code oracle, and respects the configured candidate-replay limit.
 
 Applied-index allocation coverage starts with two committed, unapplied entries and fails every owned
 copy of the first post-apply persistent state. Each failure must return `RESOURCE_EXHAUSTED`, retain

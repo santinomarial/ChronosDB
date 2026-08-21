@@ -232,6 +232,23 @@ TEST(DeterministicRaftSimulatorTest, ShrinksAReplayFailureToItsEssentialAction) 
   EXPECT_EQ(std::get<RaftSimulationDeliver>(shrunk->front()), RaftSimulationDeliver{999U});
 }
 
+TEST(DeterministicRaftSimulatorTest, ChunkShrinkingUsesABoundedReplayBudgetEffectively) {
+  auto limited = config();
+  limited.limits.maximum_shrink_replays = 4U;
+  std::vector<RaftSimulationAction> failing;
+  failing.reserve(65U);
+  for (std::size_t index = 0U; index < 64U; ++index) {
+    failing.emplace_back(RaftSimulationSetLink{1U, 2U, static_cast<bool>((index & 1U) != 0U)});
+  }
+  failing.emplace_back(RaftSimulationDeliver{999U});
+
+  auto shrunk = DeterministicRaftSimulator::shrink_failing_trace(limited, failing);
+  ASSERT_TRUE(shrunk.has_value()) << shrunk.error().to_string();
+  ASSERT_LE(shrunk->size(), 4U);
+  ASSERT_FALSE(shrunk->empty());
+  EXPECT_EQ(std::get<RaftSimulationDeliver>(shrunk->back()), RaftSimulationDeliver{999U});
+}
+
 TEST(DeterministicRaftSimulatorTest, RejectsUnboundedAndUnknownScheduleInputs) {
   auto invalid = config();
   invalid.node_ids = {2U, 1U};

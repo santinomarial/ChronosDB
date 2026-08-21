@@ -44,7 +44,8 @@ an already-admitted message structurally invalid. Election and read-barrier cand
 their sources to be admitted by every target's current configuration. When the selected action
 class has no candidate, the generator prefers delivery, heartbeat, election, or restart progress
 before a link mutation. `shrink_failing_trace` performs bounded deletion-based replay and retains
-only candidates with the original failure status code.
+only candidates with the original failure status code. It starts with deterministic coarse chunks,
+reduces granularity toward individual actions, and never exceeds `maximum_shrink_replays`.
 
 ## Consequences
 
@@ -70,7 +71,8 @@ states, run eight seeds for 4,000 generated fault actions twice with exact trace
 run 32 longer seeds that automatically generate and replay joint-membership begin/finalize, local
 snapshot-compaction, and read-barrier actions with observed barrier completion, generate and replay
 completion from an already-pending external snapshot install, drive explicit joint membership plus
-local snapshot compaction, and shrink an irrelevant-prefix failure to one essential action.
+local snapshot compaction, shrink an irrelevant-prefix failure to one essential action, and reduce a
+65-action failure to at most four actions with only four candidate replays.
 
 ## References
 

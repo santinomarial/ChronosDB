@@ -801,25 +801,47 @@ common::Result<std::vector<RaftSimulationAction>> DeterministicRaftSimulator::sh
           make_status(common::StatusCode::kInvalidArgument, "Raft simulation trace does not fail"));
     std::vector<RaftSimulationAction> best(failing_trace.begin(), failing_trace.end());
     std::size_t replay_count{};
-    for (std::size_t index = 0U;
-         index < best.size() && replay_count < config.limits.maximum_shrink_replays;) {
-      std::vector<RaftSimulationAction> candidate;
-      candidate.reserve(best.size() - 1U);
-      candidate.insert(candidate.end(), best.begin(),
-                       best.begin() + static_cast<std::ptrdiff_t>(index));
-      candidate.insert(candidate.end(), best.begin() + static_cast<std::ptrdiff_t>(index + 1U),
-                       best.end());
+    auto preserves_failure =
+        [&](const std::vector<RaftSimulationAction>& candidate) -> common::Result<bool> {
       auto simulation = create(config);
       if (!simulation.has_value())
         return common::make_unexpected(simulation.error());
       ++replay_count;
       const common::Status failure = simulation->replay(candidate);
-      if (!failure.is_ok() && failure.code() == original_failure.code()) {
-        best = std::move(candidate);
-        index = 0U;
-      } else {
-        ++index;
+      return !failure.is_ok() && failure.code() == original_failure.code();
+    };
+
+    std::size_t granularity = std::min<std::size_t>(2U, best.size());
+    while (best.size() > 1U && granularity != 0U &&
+           replay_count < config.limits.maximum_shrink_replays) {
+      const std::size_t chunk_size =
+          best.size() / granularity + (best.size() % granularity == 0U ? 0U : 1U);
+      bool reduced = false;
+      for (std::size_t begin = 0U;
+           begin < best.size() && replay_count < config.limits.maximum_shrink_replays;) {
+        const std::size_t end = begin + std::min(chunk_size, best.size() - begin);
+        std::vector<RaftSimulationAction> candidate;
+        candidate.reserve(best.size() - (end - begin));
+        candidate.insert(candidate.end(), best.begin(),
+                         best.begin() + static_cast<std::ptrdiff_t>(begin));
+        candidate.insert(candidate.end(), best.begin() + static_cast<std::ptrdiff_t>(end),
+                         best.end());
+        auto preserved = preserves_failure(candidate);
+        if (!preserved.has_value())
+          return common::make_unexpected(preserved.error());
+        if (*preserved) {
+          best = std::move(candidate);
+          granularity = std::min(best.size(), std::max<std::size_t>(2U, granularity - 1U));
+          reduced = true;
+          break;
+        }
+        begin = end;
       }
+      if (reduced)
+        continue;
+      if (granularity == best.size())
+        break;
+      granularity = granularity > best.size() / 2U ? best.size() : granularity * 2U;
     }
     return best;
   } catch (const std::bad_alloc&) {

@@ -65,10 +65,11 @@ entries; pairwise log matching is intentionally quadratic in simulated nodes and
 length. Network lookup is linear in the configured message bound. These choices make ownership and
 failure reproduction obvious. Optimizing them requires measured simulation-rate evidence.
 
-Deletion shrinking is also deliberately simple: replay candidates with one action removed and keep
-the deletion when the original failure status code remains. It is bounded by
-`maximum_shrink_replays`; semantic dependency-aware and chunk-based shrinking can be added after
-corpus evidence shows a need.
+Deletion shrinking uses deterministic delta-debugging: it first removes coarse contiguous chunks,
+then increases granularity until individual actions have been tested or the configured replay budget
+is exhausted. A candidate is retained only when it reproduces the original failure status code.
+`maximum_shrink_replays` is a hard bound excluding the one initial replay used to establish that
+oracle. Semantic dependency-aware shrinking can be added after corpus evidence shows a need.
 
 ## Verification and likely interview questions
 

@@ -843,8 +843,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   deterministic simulator
   now records and replays explicit or seeded partitions, delay/reordering, duplicate/loss,
   crash/restart, atomic persistence faults, application, membership, and snapshot actions; it checks
-  election, log, commit, and leader-completeness safety after every step and deletion-shrinks failing
-  traces. Seeded schedules now derive valid joint-membership begin/finalize, local snapshot-
+  election, log, commit, and leader-completeness safety after every step and bounded chunk-shrinks
+  failing traces. Seeded schedules now derive valid joint-membership begin/finalize, local snapshot-
   compaction, and current-term read-barrier actions from current state and replay that churn exactly.
   Long/exhaustive campaigns, clock changes, physical-log faults, and the full exit evidence remain
   deferred. Linearizable reads now use one bounded explicit current-term leadership
