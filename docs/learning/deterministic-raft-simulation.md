@@ -98,7 +98,9 @@ depth two, exhausts opt-in delivery/loss/duplication at depth one, retains exact
 exhaustion replay, and retains an exact stale-message failure after membership removal.
 Recovered-state coverage preserves a terminal-term image across crash/restart, proves the next
 election fails without mutation, and rejects both malformed local images and cross-node log-
-matching violations before the first action.
+matching violations before the first action. A combined terminal-boundary schedule separately proves
+proposal failure at the reserved next log index and post-restart election failure at terminal term
+leave active and durable state exact.
 The production core additionally rejects AppendEntries predecessors below an
 installed snapshot without interpreting the compacted entry as retained log storage, and its
 higher-term regression requires persistence before the negative response. The same core serializes

@@ -92,7 +92,9 @@ rejects invalid setup, and retains a membership-removal stale-message failure fo
 Opt-in duplication exhausts all three depth-one outcomes and retains exact queue-exhaustion replay.
 Recovered-image coverage restarts a node at terminal term, rejects the next election without state
 mutation, rejects image-count mismatch and invalid local state, and rejects two individually valid
-images whose same-term log entries violate log matching.
+images whose same-term log entries violate log matching. Independent boundary schedules elect from
+the penultimate term with a penultimate-index snapshot: one rejects another proposal at the reserved
+next index, while the other restarts at terminal term and rejects another election without mutation.
 
 ## References
 

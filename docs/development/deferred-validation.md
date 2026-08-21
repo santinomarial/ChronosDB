@@ -239,9 +239,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   response-state, and exact compacted-prefix predecessor regression checks into exhaustive
   persistence-before-response, broader sequence-exhaustion schedules, response-state, and broader
   snapshot-boundary properties. Focused simulator recovery now preserves an exact terminal-term
-  image across restart and rejects another election before mutation. Focused physical-sequence
-  exhaustion coverage proves a recovered terminal identity fails closed before group term/vote/role
-  mutation. Higher-term committed-log
+  image across restart, rejects another election before mutation, and separately rejects a proposal
+  at the reserved next log index. Focused physical-sequence exhaustion coverage proves a recovered
+  terminal identity fails closed before group term/vote/role mutation. Higher-term committed-log
   overwrite coverage rejects both term replacement and matching-term divergent bytes before the
   same state changes. The exact snapshot-index-one alias now returns a negative conflict response
   without reading compacted storage, including a persistent higher-term/vote

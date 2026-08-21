@@ -405,6 +405,8 @@ first failing membership-stale-message schedule.
 Recovered simulator initialization exact-restarts a terminal-term durable image and rejects another
 election without mutation. Construction also rejects image cardinality mismatch, locally invalid
 state, and individually valid same-term logs whose bytes violate cross-node log matching.
+A combined penultimate-term and penultimate-index image reaches terminal term, then separately proves
+the next proposal and a post-restart election fail without changing active or durable state.
 
 Raft recovery payload-bound coverage supplies a nonempty legacy snapshot with no voter checkpoint.
 Backfilling three bootstrap voters must reject a budget that can encode only two and accept the

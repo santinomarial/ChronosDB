@@ -118,6 +118,54 @@ TEST(DeterministicRaftSimulatorTest, InitializesAndRestartsFromRecoveredTermExha
   EXPECT_EQ(invalid.error().code(), common::StatusCode::kInvalidArgument);
 }
 
+TEST(DeterministicRaftSimulatorTest, PreservesRecoveredStateAtTermAndIndexExhaustion) {
+  PersistentState recovered;
+  recovered.current_term = std::numeric_limits<Term>::max() - 1U;
+  recovered.snapshot.last_included_index = std::numeric_limits<LogIndex>::max() - 1U;
+  recovered.snapshot.last_included_term = recovered.current_term;
+  recovered.snapshot.manifest_generation = 1U;
+  recovered.snapshot.voters = {1U};
+  recovered.commit_index = recovered.snapshot.last_included_index;
+  recovered.applied_index = recovered.snapshot.last_included_index;
+  auto recovered_config = config();
+  recovered_config.node_ids = {1U};
+  recovered_config.initial_voters = {1U};
+  recovered_config.initial_persistent_states = {recovered};
+
+  auto proposal = DeterministicRaftSimulator::create(recovered_config);
+  ASSERT_TRUE(proposal.has_value()) << proposal.error().to_string();
+  ASSERT_TRUE(proposal->step(RaftSimulationStartElection{1U}).is_ok());
+  ASSERT_NE(proposal->active_node(1U), nullptr);
+  ASSERT_EQ(proposal->active_node(1U)->role(), Role::kLeader);
+  ASSERT_NE(proposal->durable_state(1U), nullptr);
+  const PersistentState terminal = *proposal->durable_state(1U);
+  ASSERT_EQ(terminal.current_term, std::numeric_limits<Term>::max());
+
+  const common::Status proposal_exhausted =
+      proposal->step(RaftSimulationPropose{1U, 1U, {std::byte{0x11U}}});
+
+  EXPECT_EQ(proposal_exhausted.code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(proposal->active_node(1U)->persistent_state(), terminal);
+  EXPECT_EQ(*proposal->durable_state(1U), terminal);
+
+  auto election = DeterministicRaftSimulator::create(std::move(recovered_config));
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  ASSERT_TRUE(election->step(RaftSimulationStartElection{1U}).is_ok());
+  ASSERT_TRUE(election->step(RaftSimulationCrash{1U}).is_ok());
+  ASSERT_TRUE(election->step(RaftSimulationRestart{1U}).is_ok());
+  ASSERT_NE(election->active_node(1U), nullptr);
+  ASSERT_EQ(election->active_node(1U)->role(), Role::kFollower);
+  ASSERT_NE(election->durable_state(1U), nullptr);
+  const PersistentState restarted = *election->durable_state(1U);
+
+  const common::Status election_exhausted = election->step(RaftSimulationStartElection{1U});
+
+  EXPECT_EQ(election_exhausted.code(), common::StatusCode::kOutOfRange);
+  EXPECT_EQ(election->active_node(1U)->role(), Role::kFollower);
+  EXPECT_EQ(election->active_node(1U)->persistent_state(), restarted);
+  EXPECT_EQ(*election->durable_state(1U), restarted);
+}
+
 TEST(DeterministicRaftSimulatorTest, RejectsUnsafeRecoveredClusterImages) {
   PersistentState first;
   first.current_term = 1U;
