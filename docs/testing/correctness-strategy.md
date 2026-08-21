@@ -431,6 +431,12 @@ The local-compaction allocation sweep uses an applied three-entry state and comp
 second entry while retaining the third. Every voter-checkpoint, replacement-state, and returned-
 state allocation must fail with `RESOURCE_EXHAUSTED` before the live prefix or snapshot base changes;
 the identical compaction must then succeed on retry.
+A mixed-membership extension rejects compaction at a joint entry, compacts a stable prefix before a
+retained joint/final pair using the older boundary-time voters, and reopens the later configuration
+from that suffix. A final-boundary allocation sweep must own the new voter/configuration checkpoint,
+retained application suffix, replacement base, and returned durable state before publication.
+Metadata and tablet filesystem owners must install the same boundary-time checkpoint before their
+Raft compaction request while retaining the newer live configuration.
 
 Snapshot request retransmission preserves the same single-owner rule: an exact duplicate publishes
 no second application task, a different request returns a negative response without replacing the

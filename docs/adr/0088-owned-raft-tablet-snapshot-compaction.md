@@ -25,7 +25,10 @@ The owner exact-loads the current application snapshot when one exists, appends 
 application command through the requested retained-log boundary, and omits only validated Raft
 membership entries. It derives the included term from the exact retained entry and derives the
 canonical voter/configuration checkpoint using the same stable committed state and final-membership
-entries as the Raft core.
+entries as the Raft core. The owner obtains that metadata from the core's read-only prefix
+preparation before installing application bytes. A prefix ending between joint and final entries is
+rejected; a stable prefix before a later completed change retains the membership commands and
+checkpoints the older boundary-time voters.
 
 The complete application snapshot is immutably installed and directory-synchronized first. Only
 then does the owner submit the matching `CompactSnapshotOperation` to the durable Raft runtime. It
@@ -58,4 +61,6 @@ owned snapshot, applies an exact retry, extends the snapshot to a second boundar
 committed suffix unapplied, restarts, and reconstructs both the compacted prefix and suffix with
 their exact row/retry counts and final group/index frontier. Fault injection at every installation
 and runtime-persistence boundary, obsolete-file reclamation, follower transfer, and physical shared-
-log/application-file reclamation fault injection remains deferred.
+log/application-file reclamation fault injection remains deferred. A membership-boundary integration
+test compacts an application entry before retained joint/final commands and requires the installed
+application snapshot to carry the older voter set while the live group retains the newer set.

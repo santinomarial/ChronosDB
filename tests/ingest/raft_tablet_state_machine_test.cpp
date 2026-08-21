@@ -405,5 +405,91 @@ TEST(RaftTabletStateMachineTest, AdvancesAcrossCommittedInternalEntries) {
             head::HeadCommitPosition::raft(group_id(), 4U));
 }
 
+TEST(RaftTabletStateMachineTest, CompactsBoundaryMembershipBeforeRetainedReconfiguration) {
+  TemporaryDirectory directory;
+  const std::filesystem::path log_directory = directory.path() / "raft";
+  const std::filesystem::path snapshot_directory = directory.path() / "snapshots";
+  ASSERT_TRUE(std::filesystem::create_directories(log_directory));
+  ASSERT_TRUE(std::filesystem::create_directories(snapshot_directory));
+  const raft::RaftPersistentLogConfig log_config{.directory_path = log_directory.string()};
+  raft::DurableMultiRaftRuntime durable = runtime(log_config, {1U, 2U});
+  auto snapshot_storage =
+      RaftTabletSnapshotStorage::create({.directory_path = snapshot_directory.string(),
+                                         .group_id = group_id(),
+                                         .codec_limits = {},
+                                         .file_permissions = 0600U});
+  ASSERT_TRUE(snapshot_storage.has_value()) << snapshot_storage.error().to_string();
+  auto machine = RaftTabletStateMachine::recover(group_id(), durable, std::move(*snapshot_storage),
+                                                 retry_directory(), tablet(), schemas());
+  ASSERT_TRUE(machine.has_value()) << machine.error().to_string();
+  ASSERT_TRUE(durable.execute_batch({{group_id(), raft::StartElectionOperation{}}}).has_value());
+  ASSERT_TRUE(
+      durable
+          .execute_batch(
+              {{group_id(), raft::ReceiveOperation{2U, raft::RequestVoteResponse{1U, true}}}})
+          .has_value());
+  ASSERT_TRUE(durable
+                  .execute_batch({{group_id(), raft::ProposeOperation{kRaftColumnarAppendEntryType,
+                                                                      command()}}})
+                  .has_value());
+  ASSERT_TRUE(
+      durable
+          .execute_batch({{group_id(),
+                           raft::ReceiveOperation{
+                               2U, raft::AppendEntriesResponse{.term = 1U,
+                                                               .success = true,
+                                                               .match_index = 1U,
+                                                               .conflict_term = std::nullopt,
+                                                               .conflict_index = 0U}}}})
+          .has_value());
+  ASSERT_TRUE(machine->apply_committed().has_value());
+  ASSERT_EQ(durable.find_group(group_id())->applied_index(), 1U);
+
+  ASSERT_TRUE(durable.execute_batch({{group_id(), raft::BeginMembershipChangeOperation{{1U}}}})
+                  .has_value());
+  ASSERT_TRUE(
+      durable
+          .execute_batch({{group_id(),
+                           raft::ReceiveOperation{
+                               2U, raft::AppendEntriesResponse{.term = 1U,
+                                                               .success = true,
+                                                               .match_index = 2U,
+                                                               .conflict_term = std::nullopt,
+                                                               .conflict_index = 0U}}}})
+          .has_value());
+  ASSERT_TRUE(
+      durable.execute_batch({{group_id(), raft::FinalizeMembershipChangeOperation{}}}).has_value());
+  ASSERT_TRUE(
+      durable
+          .execute_batch({{group_id(),
+                           raft::ReceiveOperation{
+                               2U, raft::AppendEntriesResponse{.term = 1U,
+                                                               .success = true,
+                                                               .match_index = 3U,
+                                                               .conflict_term = std::nullopt,
+                                                               .conflict_index = 0U}}}})
+          .has_value());
+  auto membership = machine->apply_committed();
+  ASSERT_TRUE(membership.has_value()) << membership.error().to_string();
+  EXPECT_EQ(membership->first_applied_index, 2U);
+  EXPECT_EQ(membership->last_applied_index, 3U);
+  EXPECT_EQ(membership->applied_entries, 0U);
+
+  auto compacted = machine->compact_applied_prefix(1U, 1U, {});
+
+  ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
+  EXPECT_EQ(compacted->snapshot.last_included_index, 1U);
+  EXPECT_EQ(compacted->snapshot.configuration_index, 0U);
+  EXPECT_EQ(compacted->snapshot.voters, std::vector<raft::NodeId>({1U, 2U}));
+  EXPECT_EQ(compacted->application_entries, 1U);
+  const raft::RaftNode* node = durable.find_group(group_id());
+  ASSERT_NE(node, nullptr);
+  EXPECT_EQ(node->persistent_state().snapshot, compacted->snapshot);
+  ASSERT_EQ(node->persistent_state().log.size(), 2U);
+  EXPECT_EQ(node->persistent_state().log.front().index, 2U);
+  EXPECT_EQ(std::vector<raft::NodeId>(node->voters().begin(), node->voters().end()),
+            std::vector<raft::NodeId>{1U});
+}
+
 } // namespace
 } // namespace chronos::ingest

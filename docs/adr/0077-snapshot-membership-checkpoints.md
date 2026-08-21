@@ -27,6 +27,13 @@ checksum, and configuration index are zero, and its voter set is empty. This dec
 the durable prerequisite for snapshot compaction; snapshot transfer, application installation, and
 log-prefix reclamation require separate state transitions and tests.
 
+Local compaction derives the checkpoint by replaying membership from the existing snapshot base
+through exactly the requested prefix. It does not copy the node's potentially later live voter set.
+The prefix must end in stable state: a boundary after a joint entry but before its final entry is
+invalid because this format cannot encode a joint checkpoint. A final entry at or before the
+boundary advances the checkpoint voter set and configuration index. Application snapshot owners use
+the core's read-only preparation result before installing bytes.
+
 ## Consequences and alternatives
 
 Recovery can validate membership after compacting old joint/final entries without querying mutable
@@ -43,5 +50,9 @@ reclamation.
 Invariants 1, 4, 8, 10, 14, and 18 apply. Focused tests cover v1.1 checkpoint round trip, legacy
 minor-0 decode, snapshot checkpoint precedence over bootstrap configuration, and rejection of a
 noncanonical checkpoint. Recovery coverage also rejects nonzero identity on an index-zero snapshot.
+Compaction coverage rejects a joint-state boundary, accepts a stable boundary before later retained
+joint/final entries, reopens that suffix from the older checkpoint, and allocation-sweeps compaction
+through the final entry with a retained application suffix. Metadata and tablet owners both preserve
+the boundary-time voters when later reconfiguration entries remain live.
 Golden fixtures, corruption campaigns, mixed-version process tests,
 snapshot installation crash points, and reclamation remain deferred.

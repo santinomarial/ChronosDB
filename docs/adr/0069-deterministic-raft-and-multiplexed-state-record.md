@@ -92,7 +92,9 @@ state so the same external completion remains retryable.
 Local snapshot compaction prepares the canonical voter checkpoint, retained suffix, replacement
 snapshot base, and both copies of the compacted persistent state before erasing any live log entry.
 Allocation failure leaves the installed snapshot, retained log, membership base, and durable state
-unchanged for exact retry.
+unchanged for exact retry. The checkpoint is derived by replaying membership only through the
+requested boundary, not by copying later live membership. A boundary whose prefix ends in joint
+state is rejected because the stable-only snapshot format cannot represent it.
 
 Applied-index advancement also owns both the node's replacement persistent state and the returned
 durable transition before changing application progress. Allocation failure cannot consume an
@@ -185,6 +187,10 @@ negative response or installed-state transition.
 The local-compaction sweep retains a nonempty suffix and fails every voter, state, and returned-
 transition allocation. Each failure preserves the exact uncompacted state, and retry publishes the
 complete compacted checkpoint and suffix together.
+A membership-boundary sweep compacts through a committed final entry while retaining an application
+suffix. Prefix tests separately reject a boundary at the joint entry and prove a stable prefix
+before a later reconfiguration checkpoints its older voters and reopens through the retained
+joint/final commands.
 An applied-index sweep fails both post-apply state copies while two committed entries remain
 available. Each failure preserves the original applied boundary and complete unapplied range; retry
 returns the exact advanced state.

@@ -1507,7 +1507,8 @@ common::Result<Transition> RaftNode::complete_snapshot_install(const NodeId sour
   }
 }
 
-common::Result<Transition> RaftNode::compact_snapshot(SnapshotMetadata snapshot) {
+common::Result<SnapshotMetadata>
+RaftNode::prepare_snapshot_metadata(SnapshotMetadata snapshot) const {
   if (impl_->pending_snapshot.has_value()) {
     return common::make_unexpected(
         common::Status{common::StatusCode::kUnavailable,
@@ -1522,29 +1523,52 @@ common::Result<Transition> RaftNode::compact_snapshot(SnapshotMetadata snapshot)
         invalid("Raft snapshot must cover an applied stable-configuration prefix"));
   }
   try {
-    snapshot.voters = impl_->committed_voters;
+    const std::size_t retained_offset = impl_->offset_for(snapshot.last_included_index) + 1U;
+    auto checkpoint_membership = derive_membership(
+        impl_->base_voters, std::span<const LogEntry>{impl_->state.log}.first(retained_offset),
+        snapshot.last_included_index, impl_->limits);
+    if (!checkpoint_membership.has_value())
+      return common::make_unexpected(checkpoint_membership.error());
+    if (checkpoint_membership->joint.has_value()) {
+      return common::make_unexpected(
+          invalid("Raft snapshot must cover an applied stable-configuration prefix"));
+    }
+    snapshot.voters = std::move(checkpoint_membership->committed_voters);
     snapshot.configuration_index = impl_->state.snapshot.configuration_index;
-    for (const LogEntry& entry : impl_->state.log) {
-      if (entry.index > snapshot.last_included_index)
-        break;
+    for (const LogEntry& entry :
+         std::span<const LogEntry>{impl_->state.log}.first(retained_offset)) {
       if (entry.type == kFinalMembershipEntryType)
         snapshot.configuration_index = entry.index;
     }
     if (!valid_snapshot(snapshot, impl_->limits.maximum_voters))
       return common::make_unexpected(invalid("Raft snapshot metadata is invalid"));
-    const std::size_t retained_offset = impl_->offset_for(snapshot.last_included_index) + 1U;
     if (const common::Status fits = persistent_state_fits(
             snapshot.voters.size(),
             std::span<const LogEntry>{impl_->state.log}.subspan(retained_offset), impl_->limits);
         !fits.is_ok()) {
       return common::make_unexpected(fits);
     }
+    return snapshot;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("Raft snapshot metadata allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("Raft snapshot metadata exceeds container limits"));
+  }
+}
+
+common::Result<Transition> RaftNode::compact_snapshot(SnapshotMetadata snapshot) {
+  auto prepared_snapshot = prepare_snapshot_metadata(std::move(snapshot));
+  if (!prepared_snapshot.has_value())
+    return common::make_unexpected(prepared_snapshot.error());
+  try {
+    const std::size_t retained_offset =
+        impl_->offset_for(prepared_snapshot->last_included_index) + 1U;
 
     PersistentState prepared_state = impl_->state;
     prepared_state.log.erase(prepared_state.log.begin(),
                              prepared_state.log.begin() +
                                  static_cast<std::ptrdiff_t>(retained_offset));
-    prepared_state.snapshot = std::move(snapshot);
+    prepared_state.snapshot = std::move(*prepared_snapshot);
     std::vector<NodeId> prepared_base_voters = prepared_state.snapshot.voters;
     Transition transition;
     transition.persistent_state.emplace(prepared_state);

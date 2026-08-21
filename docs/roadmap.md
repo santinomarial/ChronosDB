@@ -881,7 +881,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   durable-state, commit-notification, and acknowledgement transition before releasing its pending
   identity or installing snapshot state.
   Local compaction now owns the canonical voter checkpoint, retained suffix, replacement snapshot
-  base, and complete durable transition before erasing the live log prefix.
+  base, and complete durable transition before erasing the live log prefix. Membership checkpoints
+  now replay the exact compacted prefix, reject joint-state boundaries, and are precomputed by both
+  application snapshot owners before file installation.
   Applied-index advancement now owns both post-apply persistent-state copies before changing the
   committed-unapplied boundary, preserving exact retry under resource exhaustion.
   Ordinary proposals now prepare the full prospective node, self progress, any immediate commit,

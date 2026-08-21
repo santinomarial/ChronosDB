@@ -1540,6 +1540,88 @@ TEST(RaftNodeAllocationFailureTest,
 }
 
 TEST(RaftNodeAllocationFailureTest,
+     FinalMembershipBoundaryCompactionPreservesLogUntilCheckpointPublication) {
+  auto joint = encode_membership_command_v1(
+      JointMembershipCommand{.old_voters = {1U, 2U, 3U}, .new_voters = {2U, 3U, 4U}});
+  auto final = encode_membership_command_v1(
+      FinalMembershipCommand{.joint_index = 1U, .new_voters = {2U, 3U, 4U}});
+  ASSERT_TRUE(joint.has_value()) << joint.error().to_string();
+  ASSERT_TRUE(final.has_value()) << final.error().to_string();
+  PersistentState initial{};
+  initial.current_term = 1U;
+  initial.log = {
+      LogEntry{1U, 1U, kJointMembershipEntryType, *joint},
+      LogEntry{2U, 1U, kFinalMembershipEntryType, *final},
+      LogEntry{3U, 1U, 1U, {std::byte{0x33U}}},
+  };
+  initial.commit_index = 3U;
+  initial.applied_index = 3U;
+  SnapshotMetadata snapshot{};
+  snapshot.last_included_index = 2U;
+  snapshot.last_included_term = 1U;
+  snapshot.manifest_generation = 19U;
+  snapshot.part_set_checksum.fill(std::byte{0xB6U});
+  PersistentState expected = initial;
+  expected.snapshot = snapshot;
+  expected.snapshot.configuration_index = 2U;
+  expected.snapshot.voters = {2U, 3U, 4U};
+  expected.log = {initial.log.back()};
+
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 192U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    auto created = RaftNode::create(2U, {1U, 2U, 3U}, initial);
+    ASSERT_TRUE(created.has_value()) << created.error().to_string();
+    RaftNode follower = std::move(*created);
+    ASSERT_FALSE(follower.joint_membership_active());
+    ASSERT_TRUE(std::ranges::equal(follower.voters(), std::vector<NodeId>{2U, 3U, 4U}));
+    SnapshotMetadata candidate = snapshot;
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(follower.compact_snapshot(std::move(candidate)));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      EXPECT_EQ(follower.persistent_state(), expected);
+      EXPECT_FALSE(follower.joint_membership_active());
+      EXPECT_TRUE(std::ranges::equal(follower.voters(), std::vector<NodeId>{2U, 3U, 4U}));
+      const PersistentState* persistent = returned_persistent_state(**result);
+      ASSERT_NE(persistent, nullptr);
+      EXPECT_EQ(*persistent, expected);
+      EXPECT_TRUE((**result).outbound.empty());
+      auto reopened = RaftNode::create(2U, {1U, 2U, 3U}, expected);
+      ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+      EXPECT_TRUE(std::ranges::equal(reopened->voters(), std::vector<NodeId>{2U, 3U, 4U}));
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(follower.persistent_state(), initial);
+    EXPECT_FALSE(follower.joint_membership_active());
+    EXPECT_TRUE(std::ranges::equal(follower.voters(), std::vector<NodeId>{2U, 3U, 4U}));
+
+    auto retry = follower.compact_snapshot(snapshot);
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    EXPECT_EQ(follower.persistent_state(), expected);
+    const PersistentState* persistent = returned_persistent_state(*retry);
+    ASSERT_NE(persistent, nullptr);
+    EXPECT_EQ(*persistent, expected);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest,
      AppliedIndexAdvancementPreservesProgressUntilDurableTransitionPublication) {
   PersistentState initial{};
   initial.current_term = 1U;

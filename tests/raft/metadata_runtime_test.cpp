@@ -308,6 +308,88 @@ TEST(DurableMetadataStateMachineTest, ProjectsAnOwningDeterministicRecoveryCatal
   EXPECT_TRUE(retained->schema_definitions.front() == definition);
 }
 
+TEST(DurableMetadataStateMachineTest, CompactsBoundaryMembershipBeforeRetainedReconfiguration) {
+  TemporaryDirectory directory;
+  const std::filesystem::path log_directory = directory.path() / "raft";
+  const std::filesystem::path snapshot_directory = directory.path() / "metadata-snapshots";
+  ASSERT_TRUE(std::filesystem::create_directories(log_directory));
+  ASSERT_TRUE(std::filesystem::create_directories(snapshot_directory));
+  const RaftPersistentLogConfig log_config{.directory_path = log_directory.string()};
+  const std::vector<RaftGroupConfiguration> groups{{group_id(), {1U, 2U}}};
+  auto runtime = DurableMultiRaftRuntime::create_new(1U, log_config, groups);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  ASSERT_TRUE(runtime->execute_batch({{group_id(), StartElectionOperation{}}}).has_value());
+  ASSERT_TRUE(
+      runtime->execute_batch({{group_id(), ReceiveOperation{2U, RequestVoteResponse{1U, true}}}})
+          .has_value());
+  auto snapshot_storage =
+      MetadataSnapshotStorage::create({.directory_path = snapshot_directory.string(),
+                                       .group_id = group_id(),
+                                       .codec_limits = {},
+                                       .file_permissions = 0600U});
+  ASSERT_TRUE(snapshot_storage.has_value()) << snapshot_storage.error().to_string();
+  auto metadata =
+      DurableMetadataStateMachine::recover(group_id(), *runtime, std::move(*snapshot_storage));
+  ASSERT_TRUE(metadata.has_value()) << metadata.error().to_string();
+
+  ASSERT_TRUE(runtime->execute_batch({{group_id(), proposal(ClusterNodeMetadata{1U, "node-1"})}})
+                  .has_value());
+  ASSERT_TRUE(runtime
+                  ->execute_batch(
+                      {{group_id(),
+                        ReceiveOperation{2U, AppendEntriesResponse{.term = 1U,
+                                                                   .success = true,
+                                                                   .match_index = 1U,
+                                                                   .conflict_term = std::nullopt,
+                                                                   .conflict_index = 0U}}}})
+                  .has_value());
+  ASSERT_TRUE(metadata->apply_committed().has_value());
+  ASSERT_EQ(runtime->find_group(group_id())->applied_index(), 1U);
+
+  ASSERT_TRUE(
+      runtime->execute_batch({{group_id(), BeginMembershipChangeOperation{{1U}}}}).has_value());
+  ASSERT_TRUE(runtime
+                  ->execute_batch(
+                      {{group_id(),
+                        ReceiveOperation{2U, AppendEntriesResponse{.term = 1U,
+                                                                   .success = true,
+                                                                   .match_index = 2U,
+                                                                   .conflict_term = std::nullopt,
+                                                                   .conflict_index = 0U}}}})
+                  .has_value());
+  ASSERT_TRUE(
+      runtime->execute_batch({{group_id(), FinalizeMembershipChangeOperation{}}}).has_value());
+  ASSERT_TRUE(runtime
+                  ->execute_batch(
+                      {{group_id(),
+                        ReceiveOperation{2U, AppendEntriesResponse{.term = 1U,
+                                                                   .success = true,
+                                                                   .match_index = 3U,
+                                                                   .conflict_term = std::nullopt,
+                                                                   .conflict_index = 0U}}}})
+                  .has_value());
+  auto membership = metadata->apply_committed();
+  ASSERT_TRUE(membership.has_value()) << membership.error().to_string();
+  EXPECT_EQ(membership->first_applied_index, 2U);
+  EXPECT_EQ(membership->last_applied_index, 3U);
+  EXPECT_EQ(membership->applied_commands, 0U);
+
+  auto compacted = metadata->compact_applied_prefix(1U);
+
+  ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
+  EXPECT_EQ(compacted->snapshot.last_included_index, 1U);
+  EXPECT_EQ(compacted->snapshot.configuration_index, 0U);
+  EXPECT_EQ(compacted->snapshot.voters, (std::vector<NodeId>{1U, 2U}));
+  EXPECT_EQ(compacted->application_entries, 1U);
+  const RaftNode* node = runtime->find_group(group_id());
+  ASSERT_NE(node, nullptr);
+  EXPECT_EQ(node->persistent_state().snapshot, compacted->snapshot);
+  ASSERT_EQ(node->persistent_state().log.size(), 2U);
+  EXPECT_EQ(node->persistent_state().log.front().index, 2U);
+  EXPECT_EQ(std::vector<NodeId>(node->voters().begin(), node->voters().end()),
+            std::vector<NodeId>{1U});
+}
+
 TEST(DurableMetadataStateMachineTest, InstallsCompactsAndReopensSnapshotPlusCommittedSuffix) {
   TemporaryDirectory directory;
   const std::filesystem::path log_directory = directory.path() / "raft";

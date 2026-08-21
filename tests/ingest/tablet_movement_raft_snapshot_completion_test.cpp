@@ -98,15 +98,19 @@ recovered_movement(const std::vector<std::byte>& bytes,
 [[nodiscard]] common::Result<raft::GroupSnapshotInstall>
 request_snapshot(raft::DurableMultiRaftRuntime& runtime, raft::SnapshotMetadata metadata,
                  const raft::NodeId source = 1U) {
+  const raft::Term request_term = metadata.last_included_term;
   auto requested = runtime.execute_batch(
-      {{group_id(), raft::ReceiveOperation{
-                        source, raft::InstallSnapshotRequest{2U, source, std::move(metadata)}}}});
+      {{group_id(),
+        raft::ReceiveOperation{
+            source, raft::InstallSnapshotRequest{request_term, source, std::move(metadata)}}}});
   if (!requested.has_value())
     return common::make_unexpected(requested.error());
-  if (requested->size() != 1U || !requested->front().status.is_ok()) {
+  if (requested->size() != 1U) {
     return common::make_unexpected(common::Status{common::StatusCode::kInternal,
                                                   "test snapshot request did not become pending"});
   }
+  if (!requested->front().status.is_ok())
+    return common::make_unexpected(requested->front().status);
   std::optional<raft::MultiRaftTransition> transition = std::move(requested->front().transition);
   if (!transition.has_value()) {
     return common::make_unexpected(

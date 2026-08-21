@@ -254,8 +254,12 @@ public:
                                                        .tablet_id = tablet_publication->tablet_id(),
                                                        .raft_snapshot = {},
                                                        .entries = {}};
+    auto prepared_snapshot = node->prepare_snapshot_metadata(next_snapshot);
+    if (!prepared_snapshot.has_value()) {
+      return common::make_unexpected(prepared_snapshot.error());
+    }
+    next_snapshot = std::move(*prepared_snapshot);
     try {
-      next_snapshot.voters.assign(node->voters().begin(), node->voters().end());
       if (current_snapshot.last_included_index != 0U) {
         auto loaded = snapshot_storage->load(current_snapshot.last_included_index);
         if (!loaded.has_value()) {
@@ -281,9 +285,6 @@ public:
       for (const raft::LogEntry& entry : persistent.log) {
         if (entry.index > last_included_index) {
           break;
-        }
-        if (entry.type == raft::kFinalMembershipEntryType) {
-          next_snapshot.configuration_index = entry.index;
         }
         if (raft::is_internal_raft_entry_type(entry.type)) {
           continue;

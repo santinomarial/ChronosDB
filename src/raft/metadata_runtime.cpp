@@ -297,8 +297,11 @@ public:
                                    .part_set_checksum = {},
                                    .configuration_index = current_snapshot.configuration_index,
                                    .voters = {}};
+    auto prepared_snapshot = node->prepare_snapshot_metadata(next_snapshot);
+    if (!prepared_snapshot.has_value())
+      return common::make_unexpected(prepared_snapshot.error());
+    next_snapshot = std::move(*prepared_snapshot);
     try {
-      next_snapshot.voters.assign(node->voters().begin(), node->voters().end());
       if (current_snapshot.last_included_index != 0U) {
         auto loaded = storage.load(current_snapshot.last_included_index);
         if (!loaded.has_value())
@@ -328,8 +331,6 @@ public:
       for (const LogEntry& entry : persistent.log) {
         if (entry.index > last_included_index)
           break;
-        if (entry.type == kFinalMembershipEntryType)
-          next_snapshot.configuration_index = entry.index;
         if (is_internal_raft_entry_type(entry.type))
           continue;
         if (entry.type != kRaftMetadataCommandEntryType &&

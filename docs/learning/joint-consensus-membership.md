@@ -23,7 +23,9 @@ Only the final entry switches the committed configuration to `new`.
 
 `RaftNode` owns the derived membership and its leader replication indexes. A nonempty snapshot
 persists the stable voter set and its configuration index; that checkpoint becomes the base for
-retained-suffix replay. The caller owns clocks,
+retained-suffix replay. Local compaction derives that stable set at the exact requested boundary and
+rejects a boundary whose prefix ends in joint state; it never substitutes a later live voter set.
+The caller owns clocks,
 transport, and persistence. A returned persistent transition must be synchronized before outbound
 messages are released. Followers preflight the complete candidate log and prospective commit before
 mutating persistent state, so damaged or impossible membership histories fail without a partial

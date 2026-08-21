@@ -302,8 +302,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   schedules remain part of broader snapshot/member churn validation.
   A retained-suffix local-compaction sweep now proves the canonical voter checkpoint, replacement
   snapshot base, in-memory state, and returned durable state are owned before the live log prefix is
-  erased. Mixed membership-entry compaction boundaries remain part of broader snapshot/member churn
-  validation.
+  erased. Mixed membership coverage now rejects a joint-state boundary, reopens a stable prefix
+  before retained joint/final entries, allocation-sweeps a final boundary with retained suffix, and
+  checks both application snapshot owners use boundary-time voters. Repeated reconfiguration and
+  snapshot-install interleavings remain part of broader snapshot/member churn validation.
   Applied-index advancement now has an allocation sweep proving both post-apply state copies are
   owned before the committed-unapplied boundary moves. Broader application-publication/crash
   schedules remain covered by the tablet-state-machine validation ledger.

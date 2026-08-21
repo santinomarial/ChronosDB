@@ -56,9 +56,11 @@ membership changes. A failed request leaves the prior configuration exactly retr
 
 The configured voter array supplied at group creation is the bootstrap configuration. Recovery
 replays membership commands from the retained Raft log to reconstruct the active configuration.
-Until Raft snapshots preserve a membership checkpoint, compacting away those commands is not
-supported. Tablet and metadata state machines treat committed membership entries as ordered
-Raft-internal no-ops while durably advancing their applied indexes.
+Raft snapshots preserve the stable configuration at their exact last-included index. Local
+compaction replays only that prefix: it may retain a later joint/final pair or compact through the
+final entry, but it rejects a boundary after joint and before final because the snapshot checkpoint
+cannot encode joint state. Tablet and metadata state machines treat committed membership entries as
+ordered Raft-internal no-ops while durably advancing their applied indexes.
 
 Entry type `253` is a distinct empty-payload leader progress no-op, not a membership command.
 Application state machines apply it with the same ordered internal no-op behavior, but it does not

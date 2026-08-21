@@ -23,6 +23,11 @@ snapshot generation equals the included index in v1. The identity is SHA-256 ove
 `CHRMASN\x01` followed by each entry's little-endian index, term, one-byte type, little-endian
 64-bit payload length, and exact payload.
 
+Membership checkpoint derivation is delegated to the Raft core's read-only prefix preparation
+before application bytes are installed. It replays only through the requested boundary, rejects a
+prefix ending in joint state, and can therefore checkpoint older stable voters while retaining a
+later joint/final change. Copying the node's later live voters is not a valid substitute.
+
 The owner durably installs the complete application snapshot first and only then submits Raft's
 `CompactSnapshotOperation`. It verifies the synchronized Raft state equals the installed snapshot
 metadata before adopting the new live boundary. A crash between the two leaves an unreferenced
@@ -48,7 +53,9 @@ the snapshot is rejected, and reconstructs the exact complete catalog from snaps
 ADR 0269 now provides node-wide shared-log reclamation after every resident group has a fresh full
 state record, and ADR 0270 removes every application snapshot except the exact Raft authority. Crash
 injection, snapshot transfer, reclamation fault injection, fuzzing, and large catalogs remain
-deferred.
+deferred. A membership-boundary filesystem test compacts an application entry before retained
+joint/final commands, requires the installed metadata snapshot to carry the older voter set, and
+keeps the live group on the newer stable set.
 
 Invariants 1–6, 8, 10, 11, 14, and 18 apply.
 

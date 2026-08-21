@@ -92,15 +92,18 @@ catching_movement(const std::vector<std::byte>& bytes) {
 
 [[nodiscard]] common::Result<raft::GroupSnapshotInstall>
 request_snapshot(raft::DurableMultiRaftRuntime& runtime, raft::SnapshotMetadata metadata) {
+  const raft::Term request_term = metadata.last_included_term;
   auto requested = runtime.execute_batch(
-      {{group_id(),
-        raft::ReceiveOperation{1U, raft::InstallSnapshotRequest{2U, 1U, std::move(metadata)}}}});
+      {{group_id(), raft::ReceiveOperation{
+                        1U, raft::InstallSnapshotRequest{request_term, 1U, std::move(metadata)}}}});
   if (!requested.has_value())
     return common::make_unexpected(requested.error());
-  if (requested->size() != 1U || !requested->front().status.is_ok()) {
+  if (requested->size() != 1U) {
     return common::make_unexpected(common::Status{common::StatusCode::kInternal,
                                                   "test snapshot request did not become pending"});
   }
+  if (!requested->front().status.is_ok())
+    return common::make_unexpected(requested->front().status);
   const auto& pending_transition = requested->front().transition;
   if (!pending_transition.has_value()) {
     return common::make_unexpected(common::Status{common::StatusCode::kInternal,

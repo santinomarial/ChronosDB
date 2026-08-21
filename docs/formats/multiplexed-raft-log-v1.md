@@ -37,7 +37,10 @@ required-zero bytes, and ascending unique nonzero voter IDs (8 each), followed b
 and four required-zero bytes. Its fixed portion is 112 bytes before voter IDs. An empty snapshot has
 zero last term, Manifest generation, checksum bytes, and configuration index, with no voters. A
 term-zero persistent state has no recorded vote. A nonempty snapshot checkpoint supplies the stable
-membership base for suffix validation.
+membership base for suffix validation. Local compaction derives that base at the exact
+last-included index. A prefix ending in joint state is not representable and must be rejected; later
+membership entries may remain in the retained suffix only when replay from the stable checkpoint is
+valid.
 
 Each log entry contains logical index (8), term (8), type (1), seven required-zero bytes, payload
 length (4), four required-zero bytes, and payload.

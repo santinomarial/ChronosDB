@@ -54,6 +54,10 @@ public:
   complete_snapshot_install(NodeId source, SnapshotMetadata snapshot, bool installed);
   // Local compaction is unavailable while an externally owned snapshot installation is pending.
   // The caller must complete or reject that installation before creating another snapshot identity.
+  // Application snapshot owners use this read-only preparation before installing bytes so their
+  // membership checkpoint exactly matches the requested log boundary.
+  [[nodiscard]] common::Result<SnapshotMetadata>
+  prepare_snapshot_metadata(SnapshotMetadata snapshot) const;
   [[nodiscard]] common::Result<Transition> compact_snapshot(SnapshotMetadata snapshot);
   [[nodiscard]] common::Result<Transition> heartbeat();
   // Starts one bounded current-term quorum probe. The leader must first have committed an entry in

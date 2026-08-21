@@ -672,6 +672,92 @@ TEST(RaftNodeTest, CompactsAppliedPrefixAndInstallsSnapshotBeforeAcknowledgingLe
   EXPECT_EQ(follower->commit_index(), 3U);
 }
 
+TEST(RaftNodeTest, RejectsSnapshotBoundaryWithJointMembershipState) {
+  auto joint = encode_membership_command_v1(
+      JointMembershipCommand{.old_voters = {1U, 2U, 3U}, .new_voters = {2U, 3U, 4U}});
+  auto final = encode_membership_command_v1(
+      FinalMembershipCommand{.joint_index = 1U, .new_voters = {2U, 3U, 4U}});
+  ASSERT_TRUE(joint.has_value()) << joint.error().to_string();
+  ASSERT_TRUE(final.has_value()) << final.error().to_string();
+  PersistentState initial{};
+  initial.current_term = 1U;
+  initial.log = {
+      LogEntry{1U, 1U, kJointMembershipEntryType, std::move(*joint)},
+      LogEntry{2U, 1U, kFinalMembershipEntryType, std::move(*final)},
+      LogEntry{3U, 1U, 1U, {std::byte{0x33U}}},
+  };
+  initial.commit_index = 3U;
+  initial.applied_index = 3U;
+  auto node = RaftNode::create(2U, {1U, 2U, 3U}, initial);
+  ASSERT_TRUE(node.has_value()) << node.error().to_string();
+  ASSERT_FALSE(node->joint_membership_active());
+  ASSERT_TRUE(std::ranges::equal(node->voters(), std::vector<NodeId>{2U, 3U, 4U}));
+  const PersistentState before = node->persistent_state();
+  SnapshotMetadata snapshot{};
+  snapshot.last_included_index = 1U;
+  snapshot.last_included_term = 1U;
+  snapshot.manifest_generation = 17U;
+
+  auto rejected_metadata = node->prepare_snapshot_metadata(snapshot);
+  auto rejected = node->compact_snapshot(snapshot);
+
+  ASSERT_FALSE(rejected_metadata.has_value());
+  EXPECT_EQ(rejected_metadata.error().code(), common::StatusCode::kInvalidArgument);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(node->persistent_state(), before);
+  EXPECT_FALSE(node->joint_membership_active());
+  EXPECT_TRUE(std::ranges::equal(node->voters(), std::vector<NodeId>{2U, 3U, 4U}));
+}
+
+TEST(RaftNodeTest, CompactsStablePrefixBeforeLaterMembershipChange) {
+  auto joint = encode_membership_command_v1(
+      JointMembershipCommand{.old_voters = {1U, 2U, 3U}, .new_voters = {2U, 3U, 4U}});
+  auto final = encode_membership_command_v1(
+      FinalMembershipCommand{.joint_index = 2U, .new_voters = {2U, 3U, 4U}});
+  ASSERT_TRUE(joint.has_value()) << joint.error().to_string();
+  ASSERT_TRUE(final.has_value()) << final.error().to_string();
+  PersistentState initial{};
+  initial.current_term = 1U;
+  initial.log = {
+      LogEntry{1U, 1U, 1U, {std::byte{0x11U}}},
+      LogEntry{2U, 1U, kJointMembershipEntryType, std::move(*joint)},
+      LogEntry{3U, 1U, kFinalMembershipEntryType, std::move(*final)},
+      LogEntry{4U, 1U, 1U, {std::byte{0x44U}}},
+  };
+  initial.commit_index = 4U;
+  initial.applied_index = 4U;
+  auto node = RaftNode::create(2U, {1U, 2U, 3U}, initial);
+  ASSERT_TRUE(node.has_value()) << node.error().to_string();
+  SnapshotMetadata snapshot{};
+  snapshot.last_included_index = 1U;
+  snapshot.last_included_term = 1U;
+  snapshot.manifest_generation = 18U;
+
+  auto prepared = node->prepare_snapshot_metadata(snapshot);
+  ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
+  EXPECT_EQ(prepared->configuration_index, 0U);
+  EXPECT_TRUE(std::ranges::equal(prepared->voters, std::vector<NodeId>{1U, 2U, 3U}));
+  EXPECT_EQ(node->persistent_state(), initial);
+  auto compacted = node->compact_snapshot(snapshot);
+
+  ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
+  ASSERT_TRUE(compacted->persistent_state.has_value());
+  const PersistentState& state = node->persistent_state();
+  EXPECT_EQ(state.snapshot.last_included_index, 1U);
+  EXPECT_EQ(state.snapshot.configuration_index, 0U);
+  EXPECT_TRUE(std::ranges::equal(state.snapshot.voters, std::vector<NodeId>{1U, 2U, 3U}));
+  EXPECT_TRUE(std::ranges::equal(node->voters(), std::vector<NodeId>{2U, 3U, 4U}));
+  ASSERT_EQ(state.log.size(), 3U);
+  EXPECT_EQ(state.log.front().index, 2U);
+  EXPECT_EQ(compacted->persistent_state, std::optional<PersistentState>{state});
+
+  auto reopened = RaftNode::create(2U, {1U, 2U, 3U}, state);
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  EXPECT_FALSE(reopened->joint_membership_active());
+  EXPECT_TRUE(std::ranges::equal(reopened->voters(), std::vector<NodeId>{2U, 3U, 4U}));
+}
+
 TEST(RaftNodeTest, SerializesPendingSnapshotInstallAgainstLocalCompaction) {
   PersistentState state{};
   state.current_term = 2U;

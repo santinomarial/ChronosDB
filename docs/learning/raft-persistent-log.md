@@ -101,7 +101,9 @@ authority available for retry without exposing a partially installed Raft snapsh
 Local compaction similarly requires an already applied exact term/index and stable configuration.
 It prepares the canonical voter checkpoint, retained suffix, replacement base voters, and returned
 durable state before erasing the live prefix, so resource exhaustion leaves the uncompacted state
-available for exact retry.
+available for exact retry. Checkpoint voters come from replay through the compaction boundary rather
+than the node's later live state. A boundary inside a joint transition is rejected; a stable earlier
+boundary can retain the complete joint/final pair and recover the later configuration.
 
 For a committed or joint configuration, a leader may issue a `QuorumSyncReceipt` after its
 synchronized commit index covers an entry. Raft commit embodies either the committed majority or
