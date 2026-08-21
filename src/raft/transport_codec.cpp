@@ -174,6 +174,7 @@ void store_u32(const std::span<std::byte> bytes, const std::size_t offset,
         } else if constexpr (std::is_same_v<T, AppendEntriesRequest>) {
           if (value.leader_id != envelope.source ||
               ((value.previous_log_index == 0U) != (value.previous_log_term == 0U)) ||
+              value.previous_log_index == std::numeric_limits<LogIndex>::max() ||
               value.previous_log_term > value.term ||
               value.entries.size() > limits.maximum_append_entries)
             return invalid("Raft append request identity, previous position, or count is invalid");

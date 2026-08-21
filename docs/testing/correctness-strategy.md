@@ -424,6 +424,8 @@ observation or external installation publication. Outbound encoding and checksum
 exercise the same bound, preventing a completed install that recovery would reject as exhausted.
 Vote requests reject the same value as an advertised last-log index through all three paths before
 higher-term or vote state changes, because canonical persistent state cannot contain that entry.
+AppendEntries requests reject it as an impossible predecessor through direct-core admission plus
+outbound encoding and checksum-repaired decoding of an entry-free heartbeat.
 
 The implemented group-scoped transport envelope additionally has checksum-repaired hostile
 length/count/reserved/value matrices, exhaustive owned-allocation failure sweeps, and a bounded

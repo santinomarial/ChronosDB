@@ -84,6 +84,8 @@ remain in the hardening ledger. Snapshot index `UINT64_MAX` is rejected before e
 because installing it would create a durable state the exhaustion-aware recovery path cannot reopen.
 Vote requests reject the same reserved last-log index before term or vote observation because no
 canonical candidate can own an entry at that position.
+AppendEntries requests reject it as a predecessor even for an entry-free heartbeat because no
+canonical leader can own the predecessor that such a heartbeat claims.
 
 Useful questions include: why can a queued message survive a sender crash; why must durable state be
 installed before outbound admission; why does replay use explicit message IDs; why is a snapshot

@@ -237,6 +237,13 @@ TEST(RaftTransportCodecTest, RejectsChecksumRepairedHostilePayloadFields) {
   store_u32(candidate, 164U, std::numeric_limits<std::uint32_t>::max());
   expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kResourceExhausted);
 
+  const std::vector<std::byte> heartbeat =
+      encode_raft_transport_envelope_v1(envelope(AppendEntriesRequest{4U, 1U, 7U, 3U, {}, 7U}))
+          .value();
+  candidate = heartbeat;
+  store_u64(candidate, 112U, std::numeric_limits<LogIndex>::max());
+  expect_repaired_payload_rejection(std::move(candidate), common::StatusCode::kCorruption);
+
   for (const std::size_t offset : {140U, 141U, 142U, 143U, 161U, 162U, 163U}) {
     SCOPED_TRACE(offset);
     candidate = append;
@@ -428,6 +435,11 @@ TEST(RaftTransportCodecTest, EnforcesFrameEntrySnapshotAndPositionBoundsBeforeAl
       envelope(RequestVoteRequest{4U, 1U, std::numeric_limits<LogIndex>::max(), 4U}));
   ASSERT_FALSE(exhausted_vote.has_value());
   EXPECT_EQ(exhausted_vote.error().code(), common::StatusCode::kInvalidArgument);
+
+  auto exhausted_predecessor = encode_raft_transport_envelope_v1(
+      envelope(AppendEntriesRequest{4U, 1U, std::numeric_limits<LogIndex>::max(), 4U, {}, 0U}));
+  ASSERT_FALSE(exhausted_predecessor.has_value());
+  EXPECT_EQ(exhausted_predecessor.error().code(), common::StatusCode::kInvalidArgument);
 }
 
 } // namespace

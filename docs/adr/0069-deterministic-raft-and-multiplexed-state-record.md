@@ -19,7 +19,8 @@ uses the current-term restriction, and committed entries remain unavailable to a
 newer than the checkpoint's current term. Term zero cannot carry a vote, and an index-zero snapshot
 cannot carry term, manifest/checksum identity, configuration index, or voters. Logical index
 `UINT64_MAX` remains reserved for exhaustion detection and cannot be recovered or installed.
-Remote candidates cannot advertise that reserved value as an existing last-log index.
+Remote candidates cannot advertise that reserved value as an existing last-log index, and remote
+leaders cannot name it as an AppendEntries predecessor.
 
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
