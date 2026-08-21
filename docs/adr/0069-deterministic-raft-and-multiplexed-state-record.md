@@ -213,5 +213,6 @@ retry publishes the command once at the original index with the complete active 
 **Retrospective note (2026-08-12):** [ADR 0252](0252-replayable-deterministic-raft-fault-simulator.md)
 now supplies bounded explicit and seeded schedules for partitions, delay/reordering, duplication,
 loss, crash/restart, atomic full-state persistence faults, membership, snapshots, safety checking,
-replay, and deletion shrinking. Long/exhaustive campaigns, clock changes, and physical log syscall
-faults remain deferred.
+replay, and deletion shrinking. Seeded schedules derive valid joint-membership begin/finalize and
+local snapshot-compaction candidates from current state and replay the generated churn exactly.
+Long/exhaustive campaigns, clock changes, and physical log syscall faults remain deferred.

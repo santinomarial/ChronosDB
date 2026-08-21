@@ -15,7 +15,8 @@ namespace {
           .initial_voters = {1U, 2U, 3U},
           .limits = {.maximum_pending_messages = 4096U,
                      .maximum_trace_actions = 20'000U,
-                     .maximum_shrink_replays = 1000U}};
+                     .maximum_shrink_replays = 1000U,
+                     .raft = {}}};
 }
 
 void drain(DeterministicRaftSimulator& simulation) {
@@ -106,6 +107,40 @@ TEST(DeterministicRaftSimulatorTest, RunsReproducibleSeededFaultSchedules) {
   }
 }
 
+TEST(DeterministicRaftSimulatorTest, GeneratesReplayableMembershipAndSnapshotChurn) {
+  auto churn_config = config();
+  churn_config.node_ids.push_back(4U);
+  std::size_t membership_starts = 0U;
+  std::size_t membership_finalizations = 0U;
+  std::size_t snapshot_compactions = 0U;
+  for (std::uint64_t seed = 1U; seed <= 8U; ++seed) {
+    auto simulation = DeterministicRaftSimulator::create(churn_config);
+    ASSERT_TRUE(simulation.has_value()) << simulation.error().to_string();
+    ASSERT_TRUE(simulation->run_seeded({.seed = seed, .actions = 2'000U}).is_ok())
+        << "seed=" << seed << " " << simulation->status().to_string();
+    for (const RaftSimulationAction& action : simulation->trace()) {
+      membership_starts +=
+          std::holds_alternative<RaftSimulationBeginMembershipChange>(action) ? 1U : 0U;
+      membership_finalizations +=
+          std::holds_alternative<RaftSimulationFinalizeMembershipChange>(action) ? 1U : 0U;
+      snapshot_compactions +=
+          std::holds_alternative<RaftSimulationCompactSnapshot>(action) ? 1U : 0U;
+    }
+
+    std::vector<RaftSimulationAction> trace(simulation->trace().begin(), simulation->trace().end());
+    auto replay = DeterministicRaftSimulator::create(churn_config);
+    ASSERT_TRUE(replay.has_value()) << replay.error().to_string();
+    ASSERT_TRUE(replay->replay(trace).is_ok())
+        << "seed=" << seed << " " << replay->status().to_string();
+    EXPECT_EQ(replay->stats(), simulation->stats());
+    for (const NodeId node : churn_config.node_ids)
+      EXPECT_EQ(*replay->durable_state(node), *simulation->durable_state(node));
+  }
+  EXPECT_GT(membership_starts, 0U);
+  EXPECT_GT(membership_finalizations, 0U);
+  EXPECT_GT(snapshot_compactions, 0U);
+}
+
 TEST(DeterministicRaftSimulatorTest, DrivesJointMembershipAndLocalSnapshotCompaction) {
   auto membership_config = config();
   membership_config.node_ids.push_back(4U);
@@ -127,12 +162,55 @@ TEST(DeterministicRaftSimulatorTest, DrivesJointMembershipAndLocalSnapshotCompac
 
   ASSERT_TRUE(simulation->step(RaftSimulationMarkApplied{1U, 2U}).is_ok());
   SnapshotMetadata snapshot{
-      .last_included_index = 2U, .last_included_term = 1U, .manifest_generation = 7U};
+      .last_included_index = 2U, .last_included_term = 1U, .manifest_generation = 7U, .voters = {}};
   snapshot.part_set_checksum.fill(std::byte{0x5aU});
   ASSERT_TRUE(simulation->step(RaftSimulationCompactSnapshot{1U, snapshot}).is_ok())
       << simulation->status().to_string();
   EXPECT_EQ(simulation->durable_state(1U)->snapshot.last_included_index, 2U);
   EXPECT_TRUE(simulation->durable_state(1U)->log.empty());
+}
+
+TEST(DeterministicRaftSimulatorTest, GeneratesAndReplaysPendingSnapshotCompletion) {
+  auto simulation = DeterministicRaftSimulator::create(config());
+  ASSERT_TRUE(simulation.has_value()) << simulation.error().to_string();
+  ASSERT_TRUE(simulation->step(RaftSimulationStartElection{1U}).is_ok());
+  drain(*simulation);
+  ASSERT_EQ(simulation->active_node(1U)->role(), Role::kLeader);
+
+  ASSERT_TRUE(simulation->step(RaftSimulationSetLink{1U, 3U, false}).is_ok());
+  ASSERT_TRUE(simulation->step(RaftSimulationPropose{1U, 1U, {std::byte{0x33U}}}).is_ok());
+  drain(*simulation);
+  ASSERT_EQ(simulation->active_node(1U)->commit_index(), 1U);
+  ASSERT_TRUE(simulation->durable_state(3U)->log.empty());
+  ASSERT_TRUE(simulation->step(RaftSimulationMarkApplied{1U, 1U}).is_ok());
+  SnapshotMetadata snapshot{
+      .last_included_index = 1U, .last_included_term = 1U, .manifest_generation = 1U, .voters = {}};
+  snapshot.part_set_checksum.fill(std::byte{0x44U});
+  ASSERT_TRUE(simulation->step(RaftSimulationCompactSnapshot{1U, snapshot}).is_ok());
+
+  ASSERT_TRUE(simulation->step(RaftSimulationSetLink{1U, 3U, true}).is_ok());
+  ASSERT_TRUE(simulation->step(RaftSimulationHeartbeat{1U}).is_ok());
+  auto messages = simulation->pending_messages();
+  ASSERT_TRUE(messages.has_value()) << messages.error().to_string();
+  const auto snapshot_request = std::ranges::find_if(
+      *messages, [](const auto& route) { return route.source == 1U && route.destination == 3U; });
+  ASSERT_NE(snapshot_request, messages->end());
+  ASSERT_TRUE(simulation->step(RaftSimulationDeliver{snapshot_request->message_id}).is_ok());
+
+  const std::size_t generated = simulation->trace().size();
+  ASSERT_TRUE(simulation->run_seeded({.seed = 15U, .actions = 1U}).is_ok())
+      << simulation->status().to_string();
+  ASSERT_EQ(simulation->trace().size(), generated + 1U);
+  EXPECT_TRUE(std::holds_alternative<RaftSimulationCompleteSnapshotInstall>(
+      simulation->trace()[generated]));
+
+  std::vector<RaftSimulationAction> trace(simulation->trace().begin(), simulation->trace().end());
+  auto replay = DeterministicRaftSimulator::create(config());
+  ASSERT_TRUE(replay.has_value()) << replay.error().to_string();
+  ASSERT_TRUE(replay->replay(trace).is_ok()) << replay->status().to_string();
+  EXPECT_EQ(replay->stats(), simulation->stats());
+  for (const NodeId node : config().node_ids)
+    EXPECT_EQ(*replay->durable_state(node), *simulation->durable_state(node));
 }
 
 TEST(DeterministicRaftSimulatorTest, ShrinksAReplayFailureToItsEssentialAction) {

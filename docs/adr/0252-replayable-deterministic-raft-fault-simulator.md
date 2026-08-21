@@ -36,8 +36,12 @@ positions do not require byte-identical physical snapshot descriptors.
 
 `run_seeded` uses a repository-defined xorshift64* sequence rather than implementation-defined
 standard-library distributions. It records every generated action, so a seed run and direct replay
-reach identical durable states and counters. `shrink_failing_trace` performs bounded deletion-based
-replay and retains only candidates with the original failure status code.
+reach identical durable states and counters. Each step derives bounded valid candidates from the
+current state for elections, joint-membership begin/finalize actions, local snapshot compaction,
+and completion of already-pending snapshot installations. When the selected action class has no
+candidate, the generator prefers delivery, heartbeat, election, or restart progress before a link
+mutation. `shrink_failing_trace` performs bounded deletion-based replay and retains only candidates
+with the original failure status code.
 
 ## Consequences
 
@@ -53,15 +57,17 @@ cluster. Simulation-rate measurement must precede optimization.
 
 This foundation does not close the full Phase 14 campaign. Exhaustive bounded enumeration, long
 seed matrices, injected timer/clock changes, physical segmented-log syscall faults, automated
-membership/snapshot random generation, and stored minimized corpora remain Phase 18 work.
+read-barrier generation, and stored minimized corpora remain Phase 18 work.
 
 ## Validation
 
 Focused tests reproduce a partitioned and duplicated election/commit schedule, fail a persistent
 election transition and restart from the prior term, replay the complete trace to identical durable
 states, run eight seeds for 4,000 generated fault actions twice with exact trace/state equality,
-drive joint membership plus local snapshot compaction, and shrink an irrelevant-prefix failure to
-one essential action.
+run eight longer seeds that automatically generate and replay joint-membership begin/finalize and
+local snapshot-compaction actions, generate and replay completion from an already-pending external
+snapshot install, drive explicit joint membership plus local snapshot compaction, and shrink an
+irrelevant-prefix failure to one essential action.
 
 ## References
 
@@ -69,4 +75,3 @@ one essential action.
 - [ADR 0012](0012-correctness-testing-and-performance-evidence.md)
 - [ADR 0069](0069-deterministic-raft-and-multiplexed-state-record.md)
 - [ADR 0076](0076-joint-consensus-raft-membership.md)
-

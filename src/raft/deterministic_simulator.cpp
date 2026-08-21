@@ -37,6 +37,14 @@ namespace {
   return &state.log[static_cast<std::size_t>(relative)];
 }
 
+[[nodiscard]] std::optional<Term> state_term_at(const PersistentState& state,
+                                                const LogIndex index) noexcept {
+  if (index == state.snapshot.last_included_index)
+    return state.snapshot.last_included_term;
+  const LogEntry* entry = retained_entry(state, index);
+  return entry == nullptr ? std::nullopt : std::optional<Term>{entry->term};
+}
+
 class FixedPrng {
 public:
   explicit FixedPrng(const std::uint64_t seed) noexcept
@@ -535,17 +543,97 @@ common::Status DeterministicRaftSimulator::run_seeded(const RaftSeededSimulation
       std::vector<NodeId> inactive;
       std::vector<NodeId> leaders;
       std::vector<NodeId> applicable;
+      std::vector<NodeId> leader_applicable;
+      std::vector<NodeId> campaigners;
+      std::vector<NodeId> membership_starters;
+      std::vector<NodeId> membership_finalizers;
+      struct SnapshotCandidate {
+        NodeId node_id{};
+        SnapshotMetadata snapshot;
+        bool leader_with_lagging_peer{};
+      };
+      struct SnapshotCompletionCandidate {
+        NodeId node_id{};
+        bool can_install{};
+      };
+      std::vector<SnapshotCandidate> snapshot_candidates;
+      std::vector<SnapshotCompletionCandidate> snapshot_completions;
       active.reserve(impl.nodes_.size());
       inactive.reserve(impl.nodes_.size());
       leaders.reserve(impl.nodes_.size());
       applicable.reserve(impl.nodes_.size());
+      leader_applicable.reserve(impl.nodes_.size());
+      campaigners.reserve(impl.nodes_.size());
+      membership_starters.reserve(impl.nodes_.size());
+      membership_finalizers.reserve(impl.nodes_.size());
+      snapshot_candidates.reserve(impl.nodes_.size());
+      snapshot_completions.reserve(impl.nodes_.size());
       for (const Impl::NodeSlot& node : impl.nodes_) {
         if (node.active.has_value()) {
+          const RaftNode& active_node = *node.active;
           active.push_back(node.id);
-          if (node.active->role() == Role::kLeader)
+          if (active_node.role() == Role::kLeader) {
             leaders.push_back(node.id);
-          if (node.active->applied_index() < node.active->commit_index())
+            const bool can_append_membership =
+                node.durable.log.size() < impl.config_.limits.raft.maximum_log_entries &&
+                active_node.last_log_index() < std::numeric_limits<LogIndex>::max() - 1U;
+            if (!active_node.joint_membership_active() && can_append_membership)
+              membership_starters.push_back(node.id);
+            if (active_node.joint_membership_can_finalize() && can_append_membership)
+              membership_finalizers.push_back(node.id);
+          } else if (std::binary_search(active_node.voters().begin(), active_node.voters().end(),
+                                        node.id)) {
+            campaigners.push_back(node.id);
+          }
+          if (active_node.applied_index() < active_node.commit_index()) {
             applicable.push_back(node.id);
+            if (active_node.role() == Role::kLeader)
+              leader_applicable.push_back(node.id);
+          }
+          if (node.pending_snapshot.has_value()) {
+            const SnapshotMetadata& pending = node.pending_snapshot->snapshot;
+            const std::optional<Term> local_term =
+                state_term_at(node.durable, pending.last_included_index);
+            const bool conflicts =
+                pending.last_included_index < node.durable.commit_index &&
+                (!local_term.has_value() || *local_term != pending.last_included_term);
+            snapshot_completions.push_back({node.id, !conflicts});
+          } else if (!active_node.joint_membership_active() &&
+                     active_node.applied_index() > node.durable.snapshot.last_included_index) {
+            const LogIndex boundary = active_node.applied_index();
+            const std::optional<Term> boundary_term = state_term_at(node.durable, boundary);
+            if (boundary_term.has_value()) {
+              SnapshotMetadata snapshot{.last_included_index = boundary,
+                                        .last_included_term = *boundary_term,
+                                        .manifest_generation = boundary,
+                                        .voters = {}};
+              snapshot.part_set_checksum.fill(
+                  std::byte{static_cast<std::uint8_t>((node.id ^ boundary) & 0xffU)});
+              auto prepared = active_node.prepare_snapshot_metadata(std::move(snapshot));
+              if (prepared.has_value()) {
+                bool lagging_peer = false;
+                if (active_node.role() == Role::kLeader) {
+                  for (const Impl::NodeSlot& peer : impl.nodes_) {
+                    const LogIndex peer_last = peer.durable.log.empty()
+                                                   ? peer.durable.snapshot.last_included_index
+                                                   : peer.durable.log.back().index;
+                    if (peer.id != node.id &&
+                        std::binary_search(active_node.voters().begin(), active_node.voters().end(),
+                                           peer.id) &&
+                        peer_last < boundary) {
+                      lagging_peer = true;
+                      break;
+                    }
+                  }
+                }
+                snapshot_candidates.push_back({node.id, std::move(*prepared), lagging_peer});
+              } else if (prepared.error().code() != common::StatusCode::kInvalidArgument &&
+                         prepared.error().code() != common::StatusCode::kUnavailable &&
+                         prepared.error().code() != common::StatusCode::kResourceExhausted) {
+                return prepared.error();
+              }
+            }
+          }
         } else {
           inactive.push_back(node.id);
         }
@@ -555,40 +643,92 @@ common::Status DeterministicRaftSimulator::run_seeded(const RaftSeededSimulation
       for (const std::optional<Impl::NetworkSlot>& message : impl.network_)
         if (message.has_value())
           messages.push_back(message->id);
-      const std::uint64_t choice = random.next() % 11U;
-      RaftSimulationAction next = RaftSimulationSetLink{
-          impl.nodes_[random.next() % impl.nodes_.size()].id,
-          impl.nodes_[random.next() % impl.nodes_.size()].id, (random.next() & 1U) != 0U};
-      if (choice == 0U && !messages.empty())
+      const std::uint64_t choice = random.next() % 20U;
+      RaftSimulationAction next = [&]() -> RaftSimulationAction {
+        if (!messages.empty())
+          return RaftSimulationDeliver{messages[random.next() % messages.size()]};
+        if (!leaders.empty())
+          return RaftSimulationHeartbeat{leaders[random.next() % leaders.size()]};
+        if (!campaigners.empty())
+          return RaftSimulationStartElection{campaigners[random.next() % campaigners.size()]};
+        if (!inactive.empty())
+          return RaftSimulationRestart{inactive[random.next() % inactive.size()]};
+        return RaftSimulationSetLink{impl.nodes_[random.next() % impl.nodes_.size()].id,
+                                     impl.nodes_[random.next() % impl.nodes_.size()].id,
+                                     (random.next() & 1U) != 0U};
+      }();
+      if (choice <= 3U && !messages.empty())
         next = RaftSimulationDeliver{messages[random.next() % messages.size()]};
-      else if (choice == 1U && !messages.empty())
+      else if (choice == 4U && !messages.empty())
         next = RaftSimulationDrop{messages[random.next() % messages.size()]};
-      else if (choice == 2U && !messages.empty() && impl.free_messages() != 0U)
+      else if (choice == 5U && !messages.empty() && impl.free_messages() != 0U)
         next = RaftSimulationDuplicate{messages[random.next() % messages.size()]};
-      else if (choice == 4U && !leaders.empty())
+      else if (choice == 6U)
+        next = RaftSimulationSetLink{impl.nodes_[random.next() % impl.nodes_.size()].id,
+                                     impl.nodes_[random.next() % impl.nodes_.size()].id,
+                                     (random.next() & 1U) != 0U};
+      else if (choice == 7U && !leaders.empty())
         next = RaftSimulationHeartbeat{leaders[random.next() % leaders.size()]};
-      else if (choice == 5U && !leaders.empty()) {
+      else if (choice == 8U && !leaders.empty()) {
         std::vector<std::byte> payload(8U);
         const std::uint64_t value = random.next();
         for (std::size_t index = 0U; index < payload.size(); ++index)
           payload[index] = std::byte((value >> (index * 8U)) & 0xffU);
         next =
             RaftSimulationPropose{leaders[random.next() % leaders.size()], 1U, std::move(payload)};
-      } else if (choice == 6U && active.size() > 1U)
+      } else if (choice == 9U && active.size() > 1U)
         next = RaftSimulationCrash{active[random.next() % active.size()]};
-      else if (choice == 7U && !inactive.empty())
+      else if (choice == 10U && !inactive.empty())
         next = RaftSimulationRestart{inactive[random.next() % inactive.size()]};
-      else if (choice == 8U && !applicable.empty()) {
-        const NodeId node = applicable[random.next() % applicable.size()];
+      else if (choice == 11U && !applicable.empty()) {
+        const std::span<const NodeId> candidates = leader_applicable.empty()
+                                                       ? std::span<const NodeId>{applicable}
+                                                       : std::span<const NodeId>{leader_applicable};
+        const NodeId node = candidates[random.next() % candidates.size()];
         next = RaftSimulationMarkApplied{node, impl.find_node(node)->active->commit_index()};
-      } else if (choice == 9U && !active.empty()) {
+      } else if (choice == 12U && !active.empty()) {
         const NodeId node = active[random.next() % active.size()];
         if (!impl.find_node(node)->fail_next_persistence)
           next = RaftSimulationFailNextPersistence{node};
-        else
-          next = RaftSimulationStartElection{node};
-      } else if (!active.empty()) {
-        next = RaftSimulationStartElection{active[random.next() % active.size()]};
+      } else if (choice == 13U && !membership_starters.empty()) {
+        const NodeId leader = membership_starters[random.next() % membership_starters.size()];
+        Impl::NodeSlot* leader_slot = impl.find_node(leader);
+        if (leader_slot == nullptr || !leader_slot->active.has_value())
+          return make_status(common::StatusCode::kCorruption,
+                             "Raft simulation membership candidate disappeared");
+        const RaftNode& leader_node = leader_slot->active.value();
+        std::vector<NodeId> voters(leader_node.committed_voters().begin(),
+                                   leader_node.committed_voters().end());
+        const NodeId toggled = impl.config_.node_ids[random.next() % impl.config_.node_ids.size()];
+        const auto position = std::lower_bound(voters.begin(), voters.end(), toggled);
+        if (position != voters.end() && *position == toggled) {
+          if (voters.size() > 1U)
+            voters.erase(position);
+        } else if (voters.size() < impl.config_.limits.raft.maximum_voters) {
+          voters.insert(position, toggled);
+        }
+        if (!std::ranges::equal(voters, leader_node.committed_voters()))
+          next = RaftSimulationBeginMembershipChange{leader, std::move(voters)};
+      } else if (choice == 14U && !membership_finalizers.empty()) {
+        next = RaftSimulationFinalizeMembershipChange{
+            membership_finalizers[random.next() % membership_finalizers.size()]};
+      } else if (choice == 15U && !snapshot_candidates.empty()) {
+        std::size_t candidate_index = random.next() % snapshot_candidates.size();
+        for (std::size_t index = 0U; index < snapshot_candidates.size(); ++index) {
+          if (snapshot_candidates[index].leader_with_lagging_peer) {
+            candidate_index = index;
+            break;
+          }
+        }
+        SnapshotCandidate candidate = std::move(snapshot_candidates[candidate_index]);
+        next = RaftSimulationCompactSnapshot{candidate.node_id, std::move(candidate.snapshot)};
+      } else if (choice == 16U && !snapshot_completions.empty()) {
+        const SnapshotCompletionCandidate candidate =
+            snapshot_completions[random.next() % snapshot_completions.size()];
+        next = RaftSimulationCompleteSnapshotInstall{
+            candidate.node_id, candidate.can_install && ((random.next() & 1U) != 0U)};
+      } else if (choice >= 17U && !campaigners.empty()) {
+        next = RaftSimulationStartElection{campaigners[random.next() % campaigners.size()]};
       }
       common::Status result = step(std::move(next));
       if (!result.is_ok())
