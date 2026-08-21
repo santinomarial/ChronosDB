@@ -2,6 +2,7 @@
 
 #include "chronos/raft/multiplexed_log.hpp"
 #include "durable_batch_admission.hpp"
+#include "io/posix_syscalls.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -115,6 +116,14 @@ DurableMultiRaftRuntime::operator=(DurableMultiRaftRuntime&&) noexcept = default
 common::Result<DurableMultiRaftRuntime> DurableMultiRaftRuntime::create_new(
     const NodeId local_node_id, const RaftPersistentLogConfig& log_config,
     std::vector<RaftGroupConfiguration> groups, DurableMultiRaftLimits limits) {
+  return create_new_with(local_node_id, log_config, std::move(groups), limits,
+                         io::detail::system_posix_syscalls());
+}
+
+common::Result<DurableMultiRaftRuntime> DurableMultiRaftRuntime::create_new_with(
+    const NodeId local_node_id, const RaftPersistentLogConfig& log_config,
+    std::vector<RaftGroupConfiguration> groups, DurableMultiRaftLimits limits,
+    io::detail::PosixSyscalls& syscalls) {
   if (limits.maximum_batch_operations == 0U || limits.maximum_batch_outbound == 0U) {
     return common::make_unexpected(invalid("durable Multi-Raft batch limits are invalid"));
   }
@@ -125,7 +134,7 @@ common::Result<DurableMultiRaftRuntime> DurableMultiRaftRuntime::create_new(
   auto runtime = restore_runtime(local_node_id, limits, std::move(groups), {});
   if (!runtime.has_value())
     return common::make_unexpected(runtime.error());
-  auto log = RaftPersistentLog::create_new(log_config);
+  auto log = RaftPersistentLog::create_new_with(log_config, syscalls);
   if (!log.has_value())
     return common::make_unexpected(log.error());
   return DurableMultiRaftRuntime{

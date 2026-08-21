@@ -109,6 +109,7 @@ private:
   create_new_with(const RaftPersistentLogConfig& config, io::detail::PosixSyscalls& syscalls);
   std::unique_ptr<Impl> impl_;
 
+  friend class DurableMultiRaftRuntime;
   friend class detail::RaftPersistentLogTestAccess;
 };
 

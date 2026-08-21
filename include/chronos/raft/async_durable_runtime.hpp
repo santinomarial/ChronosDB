@@ -75,6 +75,7 @@ struct AsyncDurableMultiRaftMetrics {
 };
 
 namespace detail {
+class AsyncDurableMultiRaftRuntimeTestAccess;
 class AsyncDurableRaftCompletionState;
 class AsyncRaftLogReclamationCompletionState;
 } // namespace detail
@@ -182,7 +183,14 @@ public:
 private:
   class Impl;
   explicit AsyncDurableMultiRaftRuntime(std::unique_ptr<Impl> impl) noexcept;
+  [[nodiscard]] static common::Result<AsyncDurableMultiRaftRuntime>
+  create_new_with(NodeId local_node_id, const RaftPersistentLogConfig& log_config,
+                  std::vector<RaftGroupConfiguration> groups, AsyncDurableMultiRaftLimits limits,
+                  std::shared_ptr<AsyncDurableRaftWorkerExtension> extension,
+                  io::detail::PosixSyscalls& syscalls);
   std::unique_ptr<Impl> impl_;
+
+  friend class detail::AsyncDurableMultiRaftRuntimeTestAccess;
 };
 
 } // namespace chronos::raft

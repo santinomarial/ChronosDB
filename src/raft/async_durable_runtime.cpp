@@ -1,6 +1,7 @@
 #include "chronos/raft/async_durable_runtime.hpp"
 
 #include "durable_batch_admission.hpp"
+#include "io/posix_syscalls.hpp"
 
 #include <algorithm>
 #include <array>
@@ -702,11 +703,20 @@ common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::creat
     const NodeId local_node_id, const RaftPersistentLogConfig& log_config,
     std::vector<RaftGroupConfiguration> groups, const AsyncDurableMultiRaftLimits limits,
     std::shared_ptr<AsyncDurableRaftWorkerExtension> extension) {
+  return create_new_with(local_node_id, log_config, std::move(groups), limits, std::move(extension),
+                         io::detail::system_posix_syscalls());
+}
+
+common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::create_new_with(
+    const NodeId local_node_id, const RaftPersistentLogConfig& log_config,
+    std::vector<RaftGroupConfiguration> groups, const AsyncDurableMultiRaftLimits limits,
+    std::shared_ptr<AsyncDurableRaftWorkerExtension> extension,
+    io::detail::PosixSyscalls& syscalls) {
   if (limits.maximum_pending_batches == 0U || limits.maximum_pending_operations == 0U) {
     return common::make_unexpected(invalid("asynchronous durable Multi-Raft limits are invalid"));
   }
-  auto runtime = DurableMultiRaftRuntime::create_new(local_node_id, log_config, std::move(groups),
-                                                     limits.durable);
+  auto runtime = DurableMultiRaftRuntime::create_new_with(
+      local_node_id, log_config, std::move(groups), limits.durable, syscalls);
   if (!runtime.has_value())
     return common::make_unexpected(runtime.error());
   auto completion_pipe = create_completion_pipe();

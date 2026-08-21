@@ -1,4 +1,6 @@
 #include "chronos/raft/async_durable_runtime.hpp"
+#include "raft/async_durable_runtime_internal.hpp"
+#include "raft/raft_test_posix.hpp"
 
 #include <algorithm>
 #include <array>
@@ -153,6 +155,66 @@ private:
   std::optional<QuorumSyncReceipt> receipt_;
 };
 
+class ShutdownStatusWorkerExtension final : public AsyncDurableRaftWorkerExtension {
+public:
+  explicit ShutdownStatusWorkerExtension(common::Status shutdown_status)
+      : shutdown_status_(std::move(shutdown_status)) {}
+
+  common::Status initialize(DurableMultiRaftRuntime&) override {
+    const std::lock_guard lock{mutex_};
+    worker_thread_ = std::this_thread::get_id();
+    return common::Status::ok();
+  }
+
+  common::Result<std::unique_ptr<AsyncDurableRaftWorkerBatchContext>>
+  prepare_batch(DurableMultiRaftRuntime&,
+                const std::span<const DurableRaftRequest> requests) override {
+    const std::lock_guard lock{mutex_};
+    if (std::this_thread::get_id() != worker_thread_) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInternal, "worker extension thread changed"});
+    }
+    return std::unique_ptr<AsyncDurableRaftWorkerBatchContext>{
+        std::make_unique<RecordingBatchContext>(requests.size())};
+  }
+
+  common::Status complete_batch(DurableMultiRaftRuntime&,
+                                std::unique_ptr<AsyncDurableRaftWorkerBatchContext> context,
+                                const std::span<const DurableRaftResult> results) override {
+    const std::lock_guard lock{mutex_};
+    if (std::this_thread::get_id() != worker_thread_)
+      return {common::StatusCode::kInternal, "worker extension thread changed"};
+    const auto* const recorded = dynamic_cast<const RecordingBatchContext*>(context.get());
+    if (recorded == nullptr || recorded->request_count != results.size())
+      return {common::StatusCode::kCorruption, "worker extension batch context changed"};
+    return common::Status::ok();
+  }
+
+  common::Status shutdown(DurableMultiRaftRuntime&) override {
+    const std::lock_guard lock{mutex_};
+    shutdown_on_worker_ = std::this_thread::get_id() == worker_thread_;
+    ++shutdown_calls_;
+    return shutdown_status_;
+  }
+
+  [[nodiscard]] bool shutdown_on_worker() const {
+    const std::lock_guard lock{mutex_};
+    return shutdown_on_worker_;
+  }
+
+  [[nodiscard]] std::size_t shutdown_calls() const {
+    const std::lock_guard lock{mutex_};
+    return shutdown_calls_;
+  }
+
+private:
+  common::Status shutdown_status_;
+  mutable std::mutex mutex_;
+  std::thread::id worker_thread_;
+  bool shutdown_on_worker_{};
+  std::size_t shutdown_calls_{};
+};
+
 class BlockingWorkerExtension final : public AsyncDurableRaftWorkerExtension {
 public:
   explicit BlockingWorkerExtension(const std::size_t block_on_prepare = 1U) noexcept
@@ -271,6 +333,78 @@ TEST(AsyncDurableMultiRaftRuntimeTest, FailsCreationClosedWhenExtensionCannotIni
   EXPECT_EQ(runtime.error().code(), common::StatusCode::kUnavailable);
   EXPECT_FALSE(extension->initialized());
   EXPECT_TRUE(extension->shutdown_on_worker());
+}
+
+TEST(AsyncDurableMultiRaftRuntimeTest,
+     DrainsWorkAndArbitratesExtensionBeforePhysicalCloseFailures) {
+  constexpr std::array<const char*, 3U> close_operations{{
+      "close regular file",
+      "close advisory lock",
+      "close directory",
+  }};
+  const common::Status extension_failure{common::StatusCode::kUnavailable,
+                                         "injected worker extension shutdown failure"};
+
+  for (std::uint8_t extension_fails = 0U; extension_fails < 2U; ++extension_fails) {
+    for (std::uint8_t failure_mask = 1U; failure_mask < 8U; ++failure_mask) {
+      SCOPED_TRACE(static_cast<std::uint32_t>(extension_fails));
+      SCOPED_TRACE(static_cast<std::uint32_t>(failure_mask));
+      TemporaryDirectory directory;
+      const GroupId group = group_id(static_cast<std::byte>(0x40U + failure_mask));
+      const RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+      const std::vector<RaftGroupConfiguration> groups{{group, {1U}}};
+      test::CloseFaultPosixSyscalls syscalls{failure_mask};
+      auto extension = std::make_shared<ShutdownStatusWorkerExtension>(
+          extension_fails != 0U ? extension_failure : common::Status::ok());
+      auto runtime = detail::AsyncDurableMultiRaftRuntimeTestAccess::create_new(
+          1U, log_config, groups, {}, extension, syscalls);
+      ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+      auto election = runtime->try_submit({{group, StartElectionOperation{}}});
+      ASSERT_TRUE(election.has_value()) << election.error().to_string();
+
+      const common::Status shutdown = runtime->shutdown();
+
+      if (extension_fails != 0U) {
+        EXPECT_EQ(shutdown, extension_failure);
+      } else {
+        std::size_t first_failure{};
+        while ((failure_mask & (std::uint8_t{1U} << first_failure)) == 0U)
+          ++first_failure;
+        EXPECT_EQ(shutdown.code(), common::StatusCode::kIoError);
+        EXPECT_NE(shutdown.to_string().find(close_operations[first_failure]), std::string::npos);
+      }
+      EXPECT_EQ(runtime->terminal_status(), shutdown);
+      EXPECT_FALSE(runtime->is_accepting());
+      EXPECT_TRUE(election->is_ready());
+      auto completed = election->wait();
+      ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
+      ASSERT_EQ(completed->size(), 1U);
+      EXPECT_TRUE(completed->front().status.is_ok());
+      EXPECT_TRUE(completed->front().transition.has_value());
+      const AsyncDurableMultiRaftMetrics metrics = runtime->metrics();
+      EXPECT_TRUE(metrics.terminal_failure);
+      EXPECT_EQ(metrics.admitted_batches, 1U);
+      EXPECT_EQ(metrics.completed_batches, 1U);
+      EXPECT_EQ(metrics.failed_batches, 0U);
+      EXPECT_EQ(metrics.pending_batches, 0U);
+      EXPECT_EQ(metrics.pending_operations, 0U);
+      EXPECT_EQ(metrics.written_completion_notifications, 1U);
+      EXPECT_EQ(metrics.coalesced_completion_notifications, 0U);
+      EXPECT_TRUE(extension->shutdown_on_worker());
+      EXPECT_EQ(extension->shutdown_calls(), 1U);
+      EXPECT_EQ(syscalls.close_calls(), 3U);
+      EXPECT_EQ(runtime->shutdown(), shutdown);
+      EXPECT_EQ(extension->shutdown_calls(), 1U);
+      EXPECT_EQ(syscalls.close_calls(), 3U);
+
+      auto reopened = DurableMultiRaftRuntime::open_existing(1U, log_config, {}, groups);
+      ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+      ASSERT_NE(reopened->find_group(group), nullptr);
+      EXPECT_EQ(reopened->find_group(group)->current_term(), 1U);
+      EXPECT_EQ(reopened->find_group(group)->persistent_state().voted_for, 1U);
+      EXPECT_TRUE(reopened->close().is_ok());
+    }
+  }
 }
 
 TEST(AsyncDurableMultiRaftRuntimeTest, DrainsAcceptedFifoBatchesObservesAndRecoversAppliedState) {

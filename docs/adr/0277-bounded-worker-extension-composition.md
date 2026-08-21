@@ -58,12 +58,13 @@ proves its completion remains successful with exact metrics, continues reverse c
 retains the shutdown failure idempotently, and reopens the exact persisted term and vote. A
 three-child returned-error case proves reverse shutdown invokes every child, retains the first
 failure in reverse invocation order, and does not repeat callbacks during idempotent runtime
-shutdown.
+shutdown. An asynchronous-owner matrix combines extension success/failure with every nonempty
+physical close-failure combination. Extension failure wins because its cleanup runs first, physical
+cleanup always continues, an already accepted durable election remains successful, and repeated
+shutdown invokes neither layer again.
 
-Allocation fault injection, asynchronous physical-close/extension-failure arbitration, shutdown
-under active production application, and long-running hook watchdog measurements remain Phase 18
-work. The underlying persistent-log owner separately covers failure of each physical close while
-continuing complete handle invalidation.
+Allocation fault injection, shutdown under active production application, and long-running hook
+watchdog measurements remain Phase 18 work.
 
 ## References
 

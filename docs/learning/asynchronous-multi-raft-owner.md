@@ -116,6 +116,13 @@ then reopens the exact term and vote.
 When multiple children return shutdown failures, all children still run and the first failure in
 reverse invocation order wins. The runtime retains that exact status for later shutdown callers
 without invoking child cleanup again.
+Extension shutdown precedes physical-log close because extension cleanup may still use the durable
+owner. If both layers fail, the extension status therefore remains the root cause, while the active
+file, advisory lock, and directory are still all closed exactly once. If the extension succeeds,
+the first physical close error becomes terminal. An exhaustive real-filesystem matrix proves both
+branches for every nonempty combination of those three physical failures after one accepted durable
+election; the completion stays successful, metrics converge, repeated shutdown is inert, and the
+exact term and vote reopen.
 
 ## Complexity, tradeoffs, and interview questions
 

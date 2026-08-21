@@ -167,7 +167,13 @@ public:
 private:
   class Impl;
   explicit DurableMultiRaftRuntime(std::unique_ptr<Impl> impl) noexcept;
+  [[nodiscard]] static common::Result<DurableMultiRaftRuntime>
+  create_new_with(NodeId local_node_id, const RaftPersistentLogConfig& log_config,
+                  std::vector<RaftGroupConfiguration> groups, DurableMultiRaftLimits limits,
+                  io::detail::PosixSyscalls& syscalls);
   std::unique_ptr<Impl> impl_;
+
+  friend class AsyncDurableMultiRaftRuntime;
 };
 
 } // namespace chronos::raft

@@ -32,10 +32,13 @@ not relaxed atomics, establish ownership and visibility. The worker executes adm
 FIFO order through the existing durable batch API, so persistence and synchronization still finish
 before outbound messages become observable.
 
-Shutdown closes admission, drains accepted FIFO work, closes the physical log, and joins the
-worker. It is idempotent. An unexpected worker exception or top-level durable batch failure fails
-the owner closed, completes the current and all queued requests with one terminal error, and rejects
-new admission. Destruction performs the same shutdown and never detaches the owner thread.
+Shutdown closes admission, drains accepted FIFO work, shuts down the worker extension, closes the
+physical log, and joins the worker. Extension cleanup precedes physical close because it may still
+borrow the synchronous owner. The first failure in that order is retained, but a failed extension
+shutdown never skips any physical close. Shutdown is idempotent. An unexpected worker exception or
+top-level durable batch failure fails the owner closed, completes the current and all queued requests
+with one terminal error, and rejects new admission. Destruction performs the same shutdown and never
+detaches the owner thread.
 
 ## Detailed rationale
 
@@ -80,9 +83,13 @@ concurrent shutdown callers against final admission attempts, and proves every a
 drains once with convergent shutdown status and exact terminal metrics. A controlled record-limit
 failure blocks the worker with eight accepted observations queued behind it, begins shutdown, and
 proves the current and every queued completion receive one retained terminal status with exact
-failure, rejection, notification, and zero-pending metrics. Broader queue-interleaving stress,
-allocation injection, worker-start injection, syscall-level I/O failure injection,
-thousands-of-groups fairness, and latency/throughput measurements remain in Phase 18.
+failure, rejection, notification, and zero-pending metrics. An exhaustive physical-close matrix
+drains one accepted election under every nonempty active-file/lock/directory close-failure
+combination, both with and without an extension shutdown failure. It proves exact first-failure
+arbitration, complete physical cleanup, idempotence, terminal metrics, successful completion
+preservation, and exact reopen. Broader queue-interleaving stress, allocation injection,
+worker-start injection, other syscall-level I/O failure injection, thousands-of-groups fairness,
+and latency/throughput measurements remain in Phase 18.
 
 ## Migration or rollback considerations
 

@@ -367,9 +367,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   remain deferred. The physical persistent-log close matrix now injects every nonempty failure
   combination after the real active-file, advisory-lock, and directory closes; every schedule
   invalidates all three handles, retains the first error, stays idempotent, releases ownership, and
-  exactly reopens the synchronized term/state. Asynchronous physical-close/extension-failure
-  arbitration remains deferred. A
-  composed-extension test now
+  exactly reopens the synchronized term/state. The asynchronous owner now combines all seven of
+  those physical schedules with extension shutdown success and failure after draining an accepted
+  election. Extension failure wins in lifecycle order, physical cleanup always completes, the
+  successful completion and exact terminal metrics remain intact, repeated shutdown is inert, and
+  the synchronized term/vote reopens. A composed-extension test now
   drains a durable election before a later child throws during reverse shutdown, retains the
   successful completion, continues earlier-child cleanup, returns the hook failure idempotently,
   and reopens the exact term/vote. A separate three-child test proves returned failures preserve
