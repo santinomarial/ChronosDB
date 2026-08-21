@@ -83,6 +83,12 @@ the core's pending request identity and the externally returned installation tas
 pending-work publication. Allocation failure therefore preserves the exact role, leader identity,
 pending work, and persistent state for retry.
 
+Snapshot completion is prepare-before-publish on the follower side as well. Rejection owns its
+negative response before releasing the pending identity. Success owns the retained suffix, derived
+membership, exact in-memory and returned persistent states, commit notification, and acknowledgement
+before installing any of them. Resource exhaustion preserves the pending identity and exact node
+state so the same external completion remains retryable.
+
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
 record boundary is [`multiplexed-raft-log-v1.md`](../formats/multiplexed-raft-log-v1.md). A dedicated
@@ -141,6 +147,10 @@ InstallSnapshot-request sweeps cover stale rejection, a higher-term already-inst
 acknowledgement, and a higher-term new pending installation. Every observed response, persistent-
 state, pending-identity, and returned-task allocation preserves exact leadership and pending work;
 retry publishes the complete expected response or installation task.
+Snapshot-completion sweeps separately cover explicit rejection and successful installation with a
+retained suffix. Every observed response, suffix, membership, and persistent-state allocation
+preserves the pending completion identity and exact node state; retry publishes the complete
+negative response or installed-state transition.
 
 **Retrospective note (2026-08-12):** [ADR 0252](0252-replayable-deterministic-raft-fault-simulator.md)
 now supplies bounded explicit and seeded schedules for partitions, delay/reordering, duplication,

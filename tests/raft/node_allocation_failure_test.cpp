@@ -953,6 +953,126 @@ TEST(RaftNodeAllocationFailureTest,
 }
 
 TEST(RaftNodeAllocationFailureTest,
+     RejectedSnapshotCompletionPreservesPendingIdentityUntilResponsePublication) {
+  const SnapshotMetadata snapshot = incoming_snapshot_metadata();
+  PersistentState initial{};
+  initial.current_term = 2U;
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 32U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    auto created = RaftNode::create(1U, {1U, 2U, 3U}, initial);
+    ASSERT_TRUE(created.has_value()) << created.error().to_string();
+    RaftNode follower = std::move(*created);
+    auto pending = follower.receive(2U, InstallSnapshotRequest{2U, 2U, snapshot});
+    ASSERT_TRUE(pending.has_value()) << pending.error().to_string();
+    ASSERT_TRUE(pending->snapshot_install.has_value());
+    SnapshotMetadata completion = snapshot;
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(follower.complete_snapshot_install(2U, std::move(completion), false));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      EXPECT_EQ(follower.persistent_state(), initial);
+      EXPECT_FALSE((**result).persistent_state.has_value());
+      expect_snapshot_response(**result, 2U, false, 0U);
+      auto duplicate = follower.complete_snapshot_install(2U, snapshot, false);
+      ASSERT_FALSE(duplicate.has_value());
+      EXPECT_EQ(duplicate.error().code(), common::StatusCode::kInvalidArgument);
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(follower.persistent_state(), initial);
+    auto retry = follower.complete_snapshot_install(2U, snapshot, false);
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    EXPECT_FALSE(retry->persistent_state.has_value());
+    expect_snapshot_response(*retry, 2U, false, 0U);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest,
+     SuccessfulSnapshotCompletionPreservesPendingIdentityUntilDurableTransitionPublication) {
+  SnapshotMetadata snapshot = incoming_snapshot_metadata();
+  snapshot.voters = {1U, 2U, 4U};
+  PersistentState initial{};
+  initial.current_term = 2U;
+  initial.log = {LogEntry{1U, 1U, 1U, {std::byte{0x11U}}},
+                 LogEntry{2U, 2U, 1U, {std::byte{0x22U}}}};
+  initial.commit_index = 2U;
+  initial.applied_index = 2U;
+  PersistentState expected = initial;
+  expected.snapshot = snapshot;
+  expected.log = {initial.log.back()};
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    auto created = RaftNode::create(1U, {1U, 2U, 3U}, initial);
+    ASSERT_TRUE(created.has_value()) << created.error().to_string();
+    RaftNode follower = std::move(*created);
+    auto pending = follower.receive(2U, InstallSnapshotRequest{2U, 2U, snapshot});
+    ASSERT_TRUE(pending.has_value()) << pending.error().to_string();
+    ASSERT_TRUE(pending->snapshot_install.has_value());
+    SnapshotMetadata completion = snapshot;
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(follower.complete_snapshot_install(2U, std::move(completion), true));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      EXPECT_EQ(follower.persistent_state(), expected);
+      EXPECT_TRUE(std::ranges::equal(follower.voters(), snapshot.voters));
+      EXPECT_TRUE(std::ranges::equal(follower.committed_voters(), snapshot.voters));
+      const PersistentState* persistent = returned_persistent_state(**result);
+      ASSERT_NE(persistent, nullptr);
+      EXPECT_EQ(*persistent, expected);
+      EXPECT_EQ((**result).advanced_commit_index, 2U);
+      expect_snapshot_response(**result, 2U, true, 1U);
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(follower.persistent_state(), initial);
+    EXPECT_TRUE(std::ranges::equal(follower.voters(), std::vector<NodeId>{1U, 2U, 3U}));
+    EXPECT_TRUE(std::ranges::equal(follower.committed_voters(), std::vector<NodeId>{1U, 2U, 3U}));
+    auto retry = follower.complete_snapshot_install(2U, snapshot, true);
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    EXPECT_EQ(follower.persistent_state(), expected);
+    EXPECT_TRUE(std::ranges::equal(follower.voters(), snapshot.voters));
+    EXPECT_TRUE(std::ranges::equal(follower.committed_voters(), snapshot.voters));
+    const PersistentState* persistent = returned_persistent_state(*retry);
+    ASSERT_NE(persistent, nullptr);
+    EXPECT_EQ(*persistent, expected);
+    EXPECT_EQ(retry->advanced_commit_index, 2U);
+    expect_snapshot_response(*retry, 2U, true, 1U);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest,
      HigherTermReadBarrierRequestPreparesResponseBeforeTermObservation) {
   std::size_t failure_count = 0U;
   bool reached_success = false;

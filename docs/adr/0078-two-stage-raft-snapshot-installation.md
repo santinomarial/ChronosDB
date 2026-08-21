@@ -43,6 +43,12 @@ success response is released. Rejection returns a negative response without chan
 Conflicts with an already committed local prefix fail as corruption without consuming the pending
 completion identity; the owner can still explicitly reject that exact installation.
 
+Completion also prepares before publication. A rejection owns its response before clearing the
+pending identity. A success owns the retained suffix, derived membership, exact new persistent state
+for both the node and returned transition, commit notification, and success response before changing
+the node. Allocation failure is `RESOURCE_EXHAUSTED` and retains the original completion authority
+for exact retry.
+
 Local `compact_snapshot` is allowed only for a strictly newer applied prefix under a stable
 configuration, with an exact local term and nonzero application manifest generation. It is
 unavailable while an externally owned snapshot installation is pending; that installation must be
@@ -92,6 +98,10 @@ Allocation sweeps separately cover stale rejection, higher-term acknowledgement 
 installed boundary, and higher-term publication of a new pending installation. Each failed owned
 allocation preserves the exact leader, durable state, and pending work; retry returns the complete
 response or the same external installation task.
+Completion sweeps cover explicit rejection and successful installation with a compatible retained
+suffix. Every failed response, suffix, membership, and state-copy allocation preserves both the
+pending authority and byte-for-value node state; retry returns the exact negative response or full
+durable installation transition.
 An impossible higher-term request whose snapshot term is newer than its own leader term is rejected
 before term/vote/role observation or external installation publication.
 The same boundary rejects `UINT64_MAX` before publication so explicit completion can never persist a

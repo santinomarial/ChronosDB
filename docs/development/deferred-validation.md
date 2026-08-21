@@ -293,6 +293,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   already-installed boundary, and higher-term new-install publication own every response,
   persistent-state, pending-identity, and returned-task allocation before mutation. Competing-
   pending allocation schedules remain part of broader snapshot/member churn validation.
+  Snapshot-completion sweeps now prove explicit rejection owns its feedback before releasing the
+  pending identity and successful installation owns its retained suffix, membership, durable state,
+  commit notification, and acknowledgement before publication. Stale-term completion allocation
+  schedules remain part of broader snapshot/member churn validation.
   Stale, higher-term-conflict, and accepted replacement AppendEntries-request sweeps now cover every
   observed validation and transition allocation through exact feedback and committed suffix
   publication. Broader membership-changing request allocation schedules remain deferred.

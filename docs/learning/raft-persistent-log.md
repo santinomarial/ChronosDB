@@ -84,6 +84,10 @@ nonterminal because no group transition or log append has started.
 Snapshot installation is deliberately two-stage. A received request exposes pending metadata but
 sends no success response. After the application owner durably installs the named manifest/part
 state, a completion operation persists the compacted Raft state and only then releases success.
+The completion operation first owns its retained suffix, membership projection, two exact copies of
+the new persistent state, commit notification, and response. Rejection likewise owns its response
+before releasing the pending identity. Allocation failure therefore leaves the same completion
+authority available for retry without exposing a partially installed Raft snapshot.
 Local compaction similarly requires an already applied exact term/index and stable configuration.
 
 For a committed or joint configuration, a leader may issue a `QuorumSyncReceipt` after its

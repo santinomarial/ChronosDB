@@ -1385,52 +1385,69 @@ common::Result<Transition> RaftNode::complete_snapshot_install(const NodeId sour
     return common::make_unexpected(invalid("snapshot completion does not match pending install"));
   }
   const Term request_term = pending.term;
-  Transition transition;
-  if (!installed || request_term != impl_->state.current_term) {
-    impl_->pending_snapshot.reset();
+  try {
+    Transition transition;
+    transition.outbound.reserve(1U);
+    if (!installed || request_term != impl_->state.current_term) {
+      transition.outbound.push_back(OutboundMessage{
+          source, InstallSnapshotResponse{impl_->state.current_term, false,
+                                          impl_->state.snapshot.last_included_index}});
+      impl_->pending_snapshot.reset();
+      return transition;
+    }
+
+    std::vector<LogEntry> retained;
+    const auto local_term = impl_->term_at(snapshot.last_included_index);
+    if (snapshot.last_included_index < impl_->state.commit_index &&
+        (!local_term.has_value() || *local_term != snapshot.last_included_term)) {
+      return common::make_unexpected(
+          corruption("installed snapshot conflicts with the local committed prefix"));
+    }
+    if (local_term.has_value() && *local_term == snapshot.last_included_term &&
+        snapshot.last_included_index < impl_->last_index()) {
+      const std::size_t first = impl_->offset_for(snapshot.last_included_index) + 1U;
+      retained.assign(impl_->state.log.begin() + static_cast<std::ptrdiff_t>(first),
+                      impl_->state.log.end());
+    }
+    const LogIndex new_commit = std::max(impl_->state.commit_index, snapshot.last_included_index);
+    auto membership = derive_membership(snapshot.voters, retained, new_commit, impl_->limits);
+    if (!membership.has_value())
+      return common::make_unexpected(membership.error());
+    if (const common::Status fits =
+            persistent_state_fits(snapshot.voters.size(), retained, impl_->limits);
+        !fits.is_ok()) {
+      return common::make_unexpected(fits);
+    }
+
+    std::vector<NodeId> prepared_base_voters = snapshot.voters;
+    PersistentState prepared_state = impl_->state;
+    prepared_state.snapshot = std::move(snapshot);
+    prepared_state.log = std::move(retained);
+    prepared_state.commit_index = new_commit;
+    prepared_state.applied_index =
+        std::max(prepared_state.applied_index, prepared_state.snapshot.last_included_index);
+    transition.persistent_state.emplace(prepared_state);
+    transition.advanced_commit_index = prepared_state.commit_index;
     transition.outbound.push_back(OutboundMessage{
-        source, InstallSnapshotResponse{impl_->state.current_term, false,
-                                        impl_->state.snapshot.last_included_index}});
+        source, InstallSnapshotResponse{prepared_state.current_term, true,
+                                        prepared_state.snapshot.last_included_index}});
+
+    static_assert(std::is_nothrow_move_assignable_v<PersistentState>);
+    static_assert(std::is_nothrow_move_assignable_v<std::vector<NodeId>>);
+    static_assert(std::is_nothrow_move_assignable_v<std::optional<JointConfiguration>>);
+    static_assert(std::is_nothrow_move_constructible_v<Transition>);
+    impl_->pending_snapshot.reset();
+    impl_->state = std::move(prepared_state);
+    impl_->base_voters = std::move(prepared_base_voters);
+    impl_->committed_voters = std::move(membership->committed_voters);
+    impl_->voters = std::move(membership->active_voters);
+    impl_->joint = std::move(membership->joint);
     return transition;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("Raft snapshot completion allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("Raft snapshot completion exceeds container limits"));
   }
-
-  std::vector<LogEntry> retained;
-  const auto local_term = impl_->term_at(snapshot.last_included_index);
-  if (snapshot.last_included_index < impl_->state.commit_index &&
-      (!local_term.has_value() || *local_term != snapshot.last_included_term)) {
-    return common::make_unexpected(
-        corruption("installed snapshot conflicts with the local committed prefix"));
-  }
-  if (local_term.has_value() && *local_term == snapshot.last_included_term &&
-      snapshot.last_included_index < impl_->last_index()) {
-    const std::size_t first = impl_->offset_for(snapshot.last_included_index) + 1U;
-    retained.assign(impl_->state.log.begin() + static_cast<std::ptrdiff_t>(first),
-                    impl_->state.log.end());
-  }
-  const LogIndex new_commit = std::max(impl_->state.commit_index, snapshot.last_included_index);
-  auto membership = derive_membership(snapshot.voters, retained, new_commit, impl_->limits);
-  if (!membership.has_value())
-    return common::make_unexpected(membership.error());
-  if (const common::Status fits =
-          persistent_state_fits(snapshot.voters.size(), retained, impl_->limits);
-      !fits.is_ok()) {
-    return common::make_unexpected(fits);
-  }
-
-  impl_->pending_snapshot.reset();
-  impl_->state.snapshot = std::move(snapshot);
-  impl_->state.log = std::move(retained);
-  impl_->state.commit_index = new_commit;
-  impl_->state.applied_index =
-      std::max(impl_->state.applied_index, impl_->state.snapshot.last_included_index);
-  impl_->base_voters = impl_->state.snapshot.voters;
-  impl_->install_membership(std::move(*membership));
-  transition.persistent_state = impl_->state;
-  transition.advanced_commit_index = impl_->state.commit_index;
-  transition.outbound.push_back(
-      OutboundMessage{source, InstallSnapshotResponse{impl_->state.current_term, true,
-                                                      impl_->state.snapshot.last_included_index}});
-  return transition;
 }
 
 common::Result<Transition> RaftNode::compact_snapshot(SnapshotMetadata snapshot) {
