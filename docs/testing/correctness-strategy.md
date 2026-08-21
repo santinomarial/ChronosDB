@@ -434,6 +434,9 @@ A symmetric leader-side sweep injects every higher-term response persistent-stat
 requires the exact leadership, durable state, and pending barrier to remain. The same response then
 must retry to one follower demotion and its matching persistence transition without publishing a
 completed barrier.
+The core-wide extension applies the same sweep to vote, append, and snapshot responses. Every
+canonical response must fail with `RESOURCE_EXHAUSTED` before demotion at each observed allocation,
+then return the exact higher-term persistent state on retry with no outbound or unrelated completion.
 The paired AppendEntries authority case submits an empty higher-term heartbeat from that same
 nonvoter position and requires exact leader-state preservation because no matching membership
 suffix proves the sender active. The positive new-only-leader case continues to install and commit

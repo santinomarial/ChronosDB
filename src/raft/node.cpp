@@ -635,8 +635,11 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
   const auto message_term = std::visit([](const auto& value) { return value.term; }, message);
   Transition transition;
   const bool read_barrier_request = std::holds_alternative<ReadBarrierRequest>(message);
-  const bool read_barrier_response = std::holds_alternative<ReadBarrierResponse>(message);
-  if (read_barrier_request || read_barrier_response) {
+  const bool response_message = std::holds_alternative<RequestVoteResponse>(message) ||
+                                std::holds_alternative<AppendEntriesResponse>(message) ||
+                                std::holds_alternative<InstallSnapshotResponse>(message) ||
+                                std::holds_alternative<ReadBarrierResponse>(message);
+  if (read_barrier_request || response_message) {
     try {
       if (read_barrier_request)
         transition.outbound.reserve(1U);
@@ -647,10 +650,10 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
       }
     } catch (const std::bad_alloc&) {
       return common::make_unexpected(
-          exhausted("Raft read-barrier transition preparation allocation failed"));
+          exhausted("Raft receive transition preparation allocation failed"));
     } catch (const std::length_error&) {
       return common::make_unexpected(
-          exhausted("Raft read-barrier transition preparation exceeds container limits"));
+          exhausted("Raft receive transition preparation exceeds container limits"));
     }
   }
 

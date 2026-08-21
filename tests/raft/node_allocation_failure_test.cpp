@@ -2,6 +2,7 @@
 #include "chronos/raft/node.hpp"
 #include "support/failing_allocator.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
@@ -65,8 +66,8 @@ void expect_higher_term_read_probe_transition(const RaftNode& node, const Transi
   EXPECT_EQ(*response, (ReadBarrierResponse{2U, 9U, true}));
 }
 
-void expect_higher_term_read_response_transition(const RaftNode& node, const Transition& transition,
-                                                 PersistentState expected) {
+void expect_higher_term_response_transition(const RaftNode& node, const Transition& transition,
+                                            PersistentState expected) {
   expected.current_term = 2U;
   expected.voted_for.reset();
   EXPECT_EQ(node.role(), Role::kFollower);
@@ -77,6 +78,8 @@ void expect_higher_term_read_response_transition(const RaftNode& node, const Tra
   ASSERT_NE(persistent, nullptr);
   EXPECT_EQ(*persistent, expected);
   EXPECT_TRUE(transition.outbound.empty());
+  EXPECT_FALSE(transition.advanced_commit_index.has_value());
+  EXPECT_FALSE(transition.snapshot_install.has_value());
   EXPECT_FALSE(transition.read_barrier_ready.has_value());
 }
 
@@ -252,7 +255,7 @@ TEST(RaftNodeAllocationFailureTest,
 
     ASSERT_TRUE(result.has_value());
     if (result->has_value()) {
-      expect_higher_term_read_response_transition(leader, **result, before);
+      expect_higher_term_response_transition(leader, **result, before);
       reached_success = true;
       break;
     }
@@ -270,10 +273,58 @@ TEST(RaftNodeAllocationFailureTest,
 
     auto retry = leader.receive(2U, ReadBarrierResponse{2U, context, true});
     ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
-    expect_higher_term_read_response_transition(leader, *retry, before);
+    expect_higher_term_response_transition(leader, *retry, before);
   }
   EXPECT_GT(failure_count, 0U);
   EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest, HigherTermResponsesPreparePersistenceBeforeDemotion) {
+  const std::array<Message, 3U> responses{
+      RequestVoteResponse{2U, true},
+      AppendEntriesResponse{2U, true, 1U, std::nullopt, 0U},
+      InstallSnapshotResponse{2U, false, 0U},
+  };
+  for (const Message& response : responses) {
+    SCOPED_TRACE(response.index());
+    std::size_t failure_count = 0U;
+    bool reached_success = false;
+    for (std::size_t fail_after = 0U; fail_after < 64U; ++fail_after) {
+      SCOPED_TRACE(fail_after);
+      RaftNode leader = leader_ready_for_read_barrier(false);
+      const PersistentState before = leader.persistent_state();
+
+      std::optional<common::Result<Transition>> result;
+      std::size_t observed = 0U;
+      {
+        test::ScopedAllocationFailure failure{fail_after};
+        result.emplace(leader.receive(2U, response));
+        observed = failure.observed_allocations();
+        failure.disable();
+      }
+
+      ASSERT_TRUE(result.has_value());
+      if (result->has_value()) {
+        expect_higher_term_response_transition(leader, **result, before);
+        reached_success = true;
+        break;
+      }
+
+      ++failure_count;
+      EXPECT_GT(observed, 0U);
+      EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+      EXPECT_EQ(leader.role(), Role::kLeader);
+      EXPECT_EQ(leader.current_term(), 1U);
+      EXPECT_EQ(leader.leader_id(), 1U);
+      EXPECT_EQ(leader.persistent_state(), before);
+
+      auto retry = leader.receive(2U, response);
+      ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+      expect_higher_term_response_transition(leader, *retry, before);
+    }
+    EXPECT_GT(failure_count, 0U);
+    EXPECT_TRUE(reached_success);
+  }
 }
 
 } // namespace

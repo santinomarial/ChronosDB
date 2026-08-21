@@ -34,6 +34,12 @@ snapshot-changing transition must fit that budget before any persistent or volat
 changes. A capacity rejection is therefore retryable after compaction and cannot create state that
 the full-state codec will reject only after mutation.
 
+Every canonical higher-term response prepares an exact copy of its post-term persistent state
+before changing term, vote, role, leader identity, replication state, or pending work. Allocation
+or container-limit failure returns `RESOURCE_EXHAUSTED` with the complete node unchanged. Success
+then demotes the node and returns that already owned state, so the durable runtime cannot lose the
+persistence transition to a later allocation failure.
+
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
 record boundary is [`multiplexed-raft-log-v1.md`](../formats/multiplexed-raft-log-v1.md). A dedicated
@@ -66,6 +72,10 @@ coverage rejects term-zero votes and every
 nonzero external identity tested on an empty snapshot. Randomized simulation, partitions,
 application snapshot codecs, coordinated fsync batching/crash testing, and production transport
 remain deferred.
+
+Dedicated allocation sweeps cover vote, append, snapshot, and read-barrier higher-term responses.
+Every observed persistent-state-copy failure preserves exact leadership and durable state, while an
+exact retry returns one follower demotion with the matching persistence transition.
 
 **Retrospective note (2026-08-12):** [ADR 0252](0252-replayable-deterministic-raft-fault-simulator.md)
 now supplies bounded explicit and seeded schedules for partitions, delay/reordering, duplication,

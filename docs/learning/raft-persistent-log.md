@@ -35,6 +35,9 @@ durably installs the successor header before using it, so records never enter an
 segment. `DurableMultiRaftRuntime` appends several groups from a bounded caller-provided batch, calls
 one synchronization, and withholds every associated transition and outbound message until that
 boundary completes. The same rule now covers persisted `applied_index` advancement.
+The deterministic core pre-owns the exact post-term persistent state before any canonical
+higher-term response can demote a node. Allocation failure therefore leaves the group unchanged;
+success always gives this owner the complete state it must append and synchronize.
 
 The maximum physical sequence is a terminal record identity. Once recovered or emitted, the
 Multi-Raft owner rejects and fails closed before invoking another deterministic group transition;

@@ -64,6 +64,11 @@ snapshot state and without emitting a response. The authenticated transport enve
 several structural checks as defense in depth, but direct deterministic callers receive the same
 core safety boundary.
 
+After validation, a canonical higher-term response must also prepare the exact post-term persistent
+state before observation. Allocation or container-limit failure returns `RESOURCE_EXHAUSTED` with
+no term, vote, role, leader, replication, or pending-work change. This preparation applies to vote,
+append, snapshot, and read-barrier responses.
+
 Recovered persistent state must also be inductive: an installed snapshot's last-included term may
 not exceed the node's current term. Retained entries already obey the same relation.
 
@@ -110,6 +115,9 @@ canonical failed response for a follower without an installed snapshot.
 Committed-prefix overwrite coverage presents higher-term requests with both a different entry term
 and matching-term divergent bytes, requires `CORRUPTION`, and proves exact term, vote, role, and
 persistent-state preservation.
+Canonical higher-term response allocation sweeps fail every owned persistent-state copy for all
+four response variants, require exact node-state preservation, and then require the same response
+to return its matching follower persistence transition on retry.
 
 ## References
 

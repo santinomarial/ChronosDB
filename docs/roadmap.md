@@ -856,6 +856,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   Recipients now pre-own the response slot and exact post-term persistent state before observing an
   admitted request term. Leaders likewise own the post-term state before a higher-term response can
   demote them and discard the pending barrier, closing both allocation edges around term observation.
+  Vote, append, and snapshot responses now use that same pre-observation persistence preparation,
+  so no canonical higher-term response can demote a node before its durable transition is owned.
   A bounded generation-tagged monotonic timer scheduler now emits election and heartbeat actions,
   retries rejected admission without shifting deadlines, and rejects stale completion rearming;
   its bounded driver now composes those actions with ordered asynchronous durable observations and
