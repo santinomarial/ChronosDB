@@ -1408,6 +1408,77 @@ TEST(RaftNodeAllocationFailureTest,
 }
 
 TEST(RaftNodeAllocationFailureTest,
+     StaleTermSnapshotCompletionPreservesPendingIdentityUntilResponsePublication) {
+  const SnapshotMetadata snapshot = incoming_snapshot_metadata();
+  SnapshotMetadata competitor = snapshot;
+  competitor.last_included_index = 2U;
+  competitor.last_included_term = 2U;
+  competitor.manifest_generation = 10U;
+  competitor.part_set_checksum.fill(std::byte{0xA2U});
+  PersistentState initial{};
+  initial.current_term = 2U;
+  PersistentState advanced = initial;
+  advanced.current_term = 3U;
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 32U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    auto created = RaftNode::create(1U, {1U, 2U, 3U}, initial);
+    ASSERT_TRUE(created.has_value()) << created.error().to_string();
+    RaftNode follower = std::move(*created);
+    auto pending = follower.receive(2U, InstallSnapshotRequest{2U, 2U, snapshot});
+    ASSERT_TRUE(pending.has_value()) << pending.error().to_string();
+    ASSERT_TRUE(pending->snapshot_install.has_value());
+    auto higher = follower.receive(3U, InstallSnapshotRequest{3U, 3U, competitor});
+    ASSERT_TRUE(higher.has_value()) << higher.error().to_string();
+    ASSERT_TRUE(higher->persistent_state.has_value());
+    EXPECT_EQ(higher->persistent_state, std::optional<PersistentState>{advanced});
+    EXPECT_FALSE(higher->snapshot_install.has_value());
+    ASSERT_EQ(higher->outbound.size(), 1U);
+    EXPECT_EQ(higher->outbound.front().destination, 3U);
+    EXPECT_EQ(std::get<InstallSnapshotResponse>(higher->outbound.front().message),
+              (InstallSnapshotResponse{3U, false, 0U}));
+    ASSERT_EQ(follower.persistent_state(), advanced);
+    ASSERT_EQ(follower.leader_id(), 3U);
+    SnapshotMetadata completion = snapshot;
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(follower.complete_snapshot_install(2U, std::move(completion), true));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      EXPECT_EQ(follower.persistent_state(), advanced);
+      EXPECT_EQ(follower.leader_id(), 3U);
+      EXPECT_FALSE((**result).persistent_state.has_value());
+      expect_snapshot_response(**result, 3U, false, 0U);
+      auto duplicate = follower.complete_snapshot_install(2U, snapshot, true);
+      ASSERT_FALSE(duplicate.has_value());
+      EXPECT_EQ(duplicate.error().code(), common::StatusCode::kInvalidArgument);
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(follower.persistent_state(), advanced);
+    EXPECT_EQ(follower.leader_id(), 3U);
+    auto retry = follower.complete_snapshot_install(2U, snapshot, true);
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    EXPECT_FALSE(retry->persistent_state.has_value());
+    expect_snapshot_response(*retry, 3U, false, 0U);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest,
      SuccessfulSnapshotCompletionPreservesPendingIdentityUntilDurableTransitionPublication) {
   SnapshotMetadata snapshot = incoming_snapshot_metadata();
   snapshot.voters = {1U, 2U, 4U};

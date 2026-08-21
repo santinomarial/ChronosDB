@@ -297,9 +297,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   persistent-state, pending-identity, and returned-task allocation before mutation. Competing-
   pending allocation schedules remain part of broader snapshot/member churn validation.
   Snapshot-completion sweeps now prove explicit rejection owns its feedback before releasing the
-  pending identity and successful installation owns its retained suffix, membership, durable state,
-  commit notification, and acknowledgement before publication. Stale-term completion allocation
-  schedules remain part of broader snapshot/member churn validation.
+  pending identity, stale-term completion retains that identity until its current-term negative
+  response is owned after a higher-term competing request, and successful installation owns its
+  retained suffix, membership, durable state, commit notification, and acknowledgement before
+  publication. Other snapshot/member churn schedules remain deferred.
   A retained-suffix local-compaction sweep now proves the canonical voter checkpoint, replacement
   snapshot base, in-memory state, and returned durable state are owned before the live log prefix is
   erased. Mixed membership coverage now rejects a joint-state boundary, reopens a stable prefix

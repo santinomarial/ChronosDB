@@ -101,10 +101,11 @@ Allocation sweeps separately cover stale rejection, higher-term acknowledgement 
 installed boundary, and higher-term publication of a new pending installation. Each failed owned
 allocation preserves the exact leader, durable state, and pending work; retry returns the complete
 response or the same external installation task.
-Completion sweeps cover explicit rejection and successful installation with a compatible retained
-suffix. Every failed response, suffix, membership, and state-copy allocation preserves both the
-pending authority and byte-for-value node state; retry returns the exact negative response or full
-durable installation transition.
+Completion sweeps cover explicit rejection, stale-term rejection after a higher-term competing
+request, and successful installation with a compatible retained suffix. Every failed response,
+suffix, membership, and state-copy allocation preserves both the pending authority and byte-for-
+value node state; retry returns the exact negative response or full durable installation
+transition.
 Local-compaction allocation coverage retains a suffix beyond the snapshot boundary and requires
 every voter/state-copy failure to preserve the exact original checkpoint, log, and membership base.
 Retry must return the complete compacted persistent state.

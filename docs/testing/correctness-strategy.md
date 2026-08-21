@@ -445,12 +445,13 @@ response. Resolution of the old request permits a later retry.
 An installed completion that conflicts with the committed local prefix returns `CORRUPTION` with
 complete persistent-state preservation and retains the pending identity for an exact explicit
 negative completion.
-Snapshot-completion allocation sweeps cover both explicit rejection and successful installation
-with a compatible retained suffix. Rejection must retain its pending identity until the negative
-response is owned. Success must retain the exact old snapshot, log, commit/apply boundary,
-membership, and pending identity until the suffix, derived membership, returned persistent state,
-commit notification, and acknowledgement are all owned. Every failure is `RESOURCE_EXHAUSTED`, and
-the exact completion must succeed on retry.
+Snapshot-completion allocation sweeps cover explicit rejection, stale-term rejection after a
+higher-term competing request, and successful installation with a compatible retained suffix.
+Either rejection must retain its pending identity until the current-term negative response is
+owned. Success must retain the exact old snapshot, log, commit/apply boundary, membership, and
+pending identity until the suffix, derived membership, returned persistent state, commit
+notification, and acknowledgement are all owned. Every failure is `RESOURCE_EXHAUSTED`, and the
+exact completion must succeed on retry.
 
 Snapshot metadata cannot claim an entry term newer than its enclosing leader request. Direct-core
 coverage submits that impossible relation to a candidate and requires `INVALID_ARGUMENT` with exact

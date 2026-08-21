@@ -180,10 +180,11 @@ InstallSnapshot-request sweeps cover stale rejection, a higher-term already-inst
 acknowledgement, and a higher-term new pending installation. Every observed response, persistent-
 state, pending-identity, and returned-task allocation preserves exact leadership and pending work;
 retry publishes the complete expected response or installation task.
-Snapshot-completion sweeps separately cover explicit rejection and successful installation with a
-retained suffix. Every observed response, suffix, membership, and persistent-state allocation
-preserves the pending completion identity and exact node state; retry publishes the complete
-negative response or installed-state transition.
+Snapshot-completion sweeps separately cover explicit rejection, stale-term rejection after a
+higher-term competing request, and successful installation with a retained suffix. Every observed
+response, suffix, membership, and persistent-state allocation preserves the pending completion
+identity and exact node state; retry publishes the complete negative response or installed-state
+transition.
 The local-compaction sweep retains a nonempty suffix and fails every voter, state, and returned-
 transition allocation. Each failure preserves the exact uncompacted state, and retry publishes the
 complete compacted checkpoint and suffix together.

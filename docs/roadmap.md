@@ -879,7 +879,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   changing role, leader identity, or pending work.
   Snapshot completion now owns rejection feedback or the complete retained-suffix, membership,
   durable-state, commit-notification, and acknowledgement transition before releasing its pending
-  identity or installing snapshot state.
+  identity or installing snapshot state. The same ownership boundary covers a stale completion
+  after a higher-term competing request, retaining the old authority until its current-term negative
+  response exists.
   Local compaction now owns the canonical voter checkpoint, retained suffix, replacement snapshot
   base, and complete durable transition before erasing the live log prefix. Membership checkpoints
   now replay the exact compacted prefix, reject joint-state boundaries, and are precomputed by both
