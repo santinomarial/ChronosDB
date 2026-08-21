@@ -1176,17 +1176,35 @@ common::Result<Transition> RaftNode::propose(const std::uint8_t type,
       !fits.is_ok()) {
     return common::make_unexpected(fits);
   }
-  const LogIndex index = impl_->last_index() + 1U;
-  impl_->state.log.push_back(LogEntry{index, impl_->state.current_term, type, std::move(payload)});
-  impl_->match_index[impl_->id] = index;
-  impl_->next_index[impl_->id] = index + 1U;
-  Transition transition;
-  auto advanced = impl_->advance_commit(transition);
-  if (!advanced.has_value())
-    return common::make_unexpected(advanced.error());
-  impl_->append_to_all(transition);
-  transition.persistent_state = impl_->state;
-  return transition;
+  try {
+    Impl prepared = *impl_;
+    const LogIndex index = prepared.last_index() + 1U;
+    prepared.state.log.push_back(
+        LogEntry{index, prepared.state.current_term, type, std::move(payload)});
+    const auto self_match = prepared.match_index.find(prepared.id);
+    const auto self_next = prepared.next_index.find(prepared.id);
+    if (self_match == prepared.match_index.end() || self_next == prepared.next_index.end()) {
+      return common::make_unexpected(corruption("Raft leader self progress is unavailable"));
+    }
+    self_match->second = index;
+    self_next->second = index + 1U;
+
+    Transition transition;
+    auto advanced = prepared.advance_commit(transition);
+    if (!advanced.has_value())
+      return common::make_unexpected(advanced.error());
+    prepared.append_to_all(transition);
+    transition.persistent_state.emplace(prepared.state);
+
+    static_assert(std::is_nothrow_move_assignable_v<Impl>);
+    static_assert(std::is_nothrow_move_constructible_v<Transition>);
+    *impl_ = std::move(prepared);
+    return transition;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("Raft proposal allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("Raft proposal exceeds container limits"));
+  }
 }
 
 common::Result<Transition> RaftNode::propose_exact_retained(const std::uint8_t type,

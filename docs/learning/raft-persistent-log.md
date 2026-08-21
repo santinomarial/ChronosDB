@@ -38,6 +38,10 @@ boundary completes. The same rule now covers persisted `applied_index` advanceme
 The core owns both the in-memory replacement and returned post-apply state before it advances that
 index. Resource exhaustion therefore leaves the committed-unapplied range unchanged and cannot make
 the runtime lose a required persistence transition.
+Ordinary proposals use the same boundary around the entire prospective node. The appended entry,
+self progress, possible immediate commit and membership derivation, full replication batch, and
+returned state all exist before the live leader changes, so the durable owner never observes a
+failed call after hidden proposal progress.
 The deterministic core pre-owns the exact post-term persistent state before any canonical
 higher-term response can demote a node. Allocation failure therefore leaves the group unchanged;
 success always gives this owner the complete state it must append and synchronize.

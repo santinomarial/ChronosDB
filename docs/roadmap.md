@@ -880,6 +880,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   base, and complete durable transition before erasing the live log prefix.
   Applied-index advancement now owns both post-apply persistent-state copies before changing the
   committed-unapplied boundary, preserving exact retry under resource exhaustion.
+  Ordinary proposals now prepare the full prospective node, self progress, any immediate commit,
+  complete replication batch, and returned durable state before publishing the appended entry.
   A bounded generation-tagged monotonic timer scheduler now emits election and heartbeat actions,
   retries rejected admission without shifting deadlines, and rejects stale completion rearming;
   its bounded driver now composes those actions with ordered asynchronous durable observations and

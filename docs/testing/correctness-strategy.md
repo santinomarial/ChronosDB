@@ -395,6 +395,12 @@ copy of the first post-apply persistent state. Each failure must return `RESOURC
 both entries in `committed_unapplied()`, and preserve the exact persistent state; the same index must
 then advance with its complete durable transition on retry.
 
+Ordinary proposal allocation sweeps cover a three-voter leader that must return two complete
+replication messages without committing and a single-voter leader that commits immediately without
+outbound messages. Every failed prospective-node, log, progress, membership, message, and state-copy
+allocation must preserve the exact leader and empty log. Retry must publish index one once, with the
+matching persistent state and commit notification only in the single-voter case.
+
 The deterministic core separately checks the installed-snapshot predecessor boundary. A request
 whose predecessor is already compacted receives a negative conflict response without indexing
 retained log storage; if it carries a higher term, the returned transition contains the exact

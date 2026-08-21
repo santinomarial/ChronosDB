@@ -98,6 +98,11 @@ Applied-index advancement also owns both the node's replacement persistent state
 durable transition before changing application progress. Allocation failure cannot consume an
 applied entry without the state required to persist that fact and remains exactly retryable.
 
+Ordinary leader proposals execute against a prospective copy of the complete deterministic node.
+The core owns the appended entry, self replication progress, any immediate commit and derived
+membership, complete replication batch, and returned persistent state before replacing the live
+node. Resource exhaustion therefore cannot leak an unreported proposal or commit.
+
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
 record boundary is [`multiplexed-raft-log-v1.md`](../formats/multiplexed-raft-log-v1.md). A dedicated
@@ -166,6 +171,9 @@ complete compacted checkpoint and suffix together.
 An applied-index sweep fails both post-apply state copies while two committed entries remain
 available. Each failure preserves the original applied boundary and complete unapplied range; retry
 returns the exact advanced state.
+Proposal sweeps cover a three-voter uncommitted replication batch and a single-voter immediate
+commit. Every prospective-node, log, progress, commit, outbound, and returned-state allocation
+preserves exact leadership and durable state; retry publishes the proposal at the original index.
 
 **Retrospective note (2026-08-12):** [ADR 0252](0252-replayable-deterministic-raft-fault-simulator.md)
 now supplies bounded explicit and seeded schedules for partitions, delay/reordering, duplication,

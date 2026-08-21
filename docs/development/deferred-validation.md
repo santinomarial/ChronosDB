@@ -304,6 +304,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   Applied-index advancement now has an allocation sweep proving both post-apply state copies are
   owned before the committed-unapplied boundary moves. Broader application-publication/crash
   schedules remain covered by the tablet-state-machine validation ledger.
+  Ordinary proposal sweeps now prove multi-voter replication and single-voter immediate commit own
+  the complete prospective node, outbound batch, commit notification, and durable transition before
+  publication. Large-payload and membership-adjacent proposal schedules remain deferred.
   Stale, higher-term-conflict, and accepted replacement AppendEntries-request sweeps now cover every
   observed validation and transition allocation through exact feedback and committed suffix
   publication. Broader membership-changing request allocation schedules remain deferred.
