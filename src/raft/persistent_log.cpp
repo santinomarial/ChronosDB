@@ -5,6 +5,7 @@
 #include "chronos/common/crc32c.hpp"
 #include "chronos/io/posix_io.hpp"
 #include "chronos/raft/multiplexed_log.hpp"
+#include "io/posix_syscalls.hpp"
 
 #include <algorithm>
 #include <array>
@@ -403,10 +404,16 @@ RaftPersistentLog& RaftPersistentLog::operator=(RaftPersistentLog&&) noexcept = 
 
 common::Result<RaftPersistentLog>
 RaftPersistentLog::create_new(const RaftPersistentLogConfig& config) {
+  return create_new_with(config, io::detail::system_posix_syscalls());
+}
+
+common::Result<RaftPersistentLog>
+RaftPersistentLog::create_new_with(const RaftPersistentLogConfig& config,
+                                   io::detail::PosixSyscalls& syscalls) {
   const common::Status valid = validate_config(config);
   if (!valid.is_ok())
     return common::make_unexpected(valid);
-  auto directory = io::PosixDirectory::open(config.directory_path);
+  auto directory = io::detail::PosixHandleFactory::open_directory(config.directory_path, syscalls);
   if (!directory.has_value())
     return common::make_unexpected(directory.error());
   auto initial_entries = directory->list_entries();

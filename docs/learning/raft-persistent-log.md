@@ -32,6 +32,14 @@ observation, and close. Borrowed state is encoded during `append` and need not o
 `LOCK` excludes another process or in-process owner. A write, sync, rotation, or installation error
 poisons the owner; later I/O is rejected with the retained root cause.
 
+Explicit close adds no synchronization boundary. It invalidates the active segment, advisory lock,
+and directory in that order, continues after an error, and returns the first physical close error.
+Because POSIX close can release a descriptor even when it reports failure, none of those descriptor
+numbers is retried; a repeated log close is instead a no-op. Deterministic real-filesystem tests
+inject every nonempty combination of ambiguous errors after the underlying closes and prove that
+the first error is retained, the lock is released, and the already-synchronized state reopens
+exactly.
+
 `append` completes all bytes but makes no power-loss claim. `synchronize` data-synchronizes the
 active file and advances the durable physical sequence. Rotation synchronizes the predecessor and
 durably installs the successor header before using it, so records never enter an ambiguously named

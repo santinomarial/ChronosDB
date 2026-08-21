@@ -60,8 +60,10 @@ three-child returned-error case proves reverse shutdown invokes every child, ret
 failure in reverse invocation order, and does not repeat callbacks during idempotent runtime
 shutdown.
 
-Allocation fault injection, physical-close failure schedules, shutdown under active production
-application, and long-running hook watchdog measurements remain Phase 18 work.
+Allocation fault injection, asynchronous physical-close/extension-failure arbitration, shutdown
+under active production application, and long-running hook watchdog measurements remain Phase 18
+work. The underlying persistent-log owner separately covers failure of each physical close while
+continuing complete handle invalidation.
 
 ## References
 

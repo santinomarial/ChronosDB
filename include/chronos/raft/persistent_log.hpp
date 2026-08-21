@@ -10,7 +10,15 @@
 #include <string>
 #include <vector>
 
+namespace chronos::io::detail {
+class PosixSyscalls;
+}
+
 namespace chronos::raft {
+
+namespace detail {
+class RaftPersistentLogTestAccess;
+}
 
 inline constexpr std::size_t kRaftSegmentHeaderSize = 64U;
 inline constexpr std::uint64_t kDefaultRaftSegmentTargetSize = std::uint64_t{64U} * 1024U * 1024U;
@@ -97,7 +105,11 @@ public:
 private:
   class Impl;
   explicit RaftPersistentLog(std::unique_ptr<Impl> impl) noexcept;
+  [[nodiscard]] static common::Result<RaftPersistentLog>
+  create_new_with(const RaftPersistentLogConfig& config, io::detail::PosixSyscalls& syscalls);
   std::unique_ptr<Impl> impl_;
+
+  friend class detail::RaftPersistentLogTestAccess;
 };
 
 } // namespace chronos::raft

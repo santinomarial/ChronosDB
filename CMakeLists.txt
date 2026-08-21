@@ -625,6 +625,7 @@ target_include_directories(
   PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 target_link_libraries(
   chronos_raft PUBLIC chronos::common chronos::schema PRIVATE OpenSSL::Crypto chronos::io)
@@ -1198,6 +1199,7 @@ if(CHRONOS_BUILD_TESTS)
     chronos_raft_tests
     PRIVATE CHRONOS_RAFT_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/raft"
   )
+  target_include_directories(chronos_raft_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
   target_link_libraries(chronos_raft_tests PRIVATE chronos::raft GTest::gtest_main)
   chronos_set_project_warnings(chronos_raft_tests)
   chronos_enable_sanitizers(chronos_raft_tests)

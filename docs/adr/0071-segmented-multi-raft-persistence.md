@@ -74,9 +74,11 @@ latest-state reconstruction, sequence continuation, exclusive ownership, explici
 repair, fail-closed complete-record corruption, batched persist-before-send release, durable
 applied-index recovery, terminal-sequence pre-admission, one-transition outbound-bound validation,
 aggregate durable-batch outbound pre-admission, exact segment-target state-budget admission, and
-anchored all-group prefix reclamation. Injected
-syscall failures,
-process crash points, asynchronous reclamation scheduling, sustained corruption campaigns, and
-Linux power-loss qualification remain required. A focused CLI smoke test covers both benchmark
-modes and exact artifact/recovery status; a clean controlled-host measurement campaign remains
-required before making performance claims.
+anchored all-group prefix reclamation. Injected close failures now cover every nonempty failure
+combination across the owned physical handles: the active segment, advisory lock, and directory are
+all invalidated, the first error is retained, repeated close is idempotent, and the durable state
+reopens exactly. Other injected
+syscall failures, process crash points, asynchronous reclamation scheduling, sustained corruption
+campaigns, and Linux power-loss qualification remain required. A focused CLI smoke test covers both
+benchmark modes and exact artifact/recovery status; a clean controlled-host measurement campaign
+remains required before making performance claims.

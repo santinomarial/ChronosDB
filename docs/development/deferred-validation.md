@@ -364,7 +364,12 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   later completions resume physical wakeups. A controlled record-limit failure during shutdown now
   fans one retained terminal status out to the current batch and eight queued observations with
   exact terminal accounting and notification counts. Syscall-level storage/notification failures
-  and physical-close-failure schedules remain deferred. A composed-extension test now
+  remain deferred. The physical persistent-log close matrix now injects every nonempty failure
+  combination after the real active-file, advisory-lock, and directory closes; every schedule
+  invalidates all three handles, retains the first error, stays idempotent, releases ownership, and
+  exactly reopens the synchronized term/state. Asynchronous physical-close/extension-failure
+  arbitration remains deferred. A
+  composed-extension test now
   drains a durable election before a later child throws during reverse shutdown, retains the
   successful completion, continues earlier-child cleanup, returns the hook failure idempotently,
   and reopens the exact term/vote. A separate three-child test proves returned failures preserve
