@@ -239,7 +239,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   arming, eligible elections, multi-voter heartbeats, canonical bounded application proposals,
   current-term read barriers, application frontier advancement, state-derived membership
   begin/finalize, applied-frontier snapshot compaction, pending snapshot rejection/safe completion,
-  and live-state crash/restart enumeration after a valid setup trace.
+  and live-state crash/restart enumeration after a valid setup trace. Per-action attempt counters
+  now exact-match retained seeded and replay traces, including the terminal failing action, while
+  separate effect counters preserve outcome measurement. Simulation-rate benchmarking and the
+  remaining long/mixed campaigns are still open.
 - Extend the implemented hostile higher-term/payload-identity, pre-observation term/position/
   response-state, and exact compacted-prefix predecessor regression checks into exhaustive
   persistence-before-response, broader sequence-exhaustion schedules, response-state, and broader

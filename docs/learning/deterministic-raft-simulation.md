@@ -5,8 +5,9 @@
 `DeterministicRaftSimulator` turns distributed nondeterminism into a sequence of owned
 `RaftSimulationAction` values. Callers can execute one action, replay a retained trace, generate a
 seeded schedule, exhaustively branch bounded virtual-network outcomes after a setup trace, inspect
-active and durable node state, list queued message routes, or shrink a failing trace. The simulator
-uses the production deterministic `RaftNode`; it does not contain a second consensus implementation.
+active and durable node state, list queued message routes, inspect exact per-action coverage and
+outcome counters, or shrink a failing trace. The simulator uses the production deterministic
+`RaftNode`; it does not contain a second consensus implementation.
 Named schedule values keep width-compatible depth, replay, seed, and action limits from being
 transposed at a call site.
 
@@ -37,6 +38,12 @@ virtual network to drain, and election/read-barrier sources must be admitted by 
 current configuration. If a chosen action class is unavailable, progress prefers message delivery,
 a leader heartbeat, an election, or restart before another link mutation. One caller thread
 exclusively owns nodes, links, queues, durable images, the trace, and safety-model state.
+
+`RaftSimulationStats::action_attempts` is indexed by `RaftSimulationAction::index()`. Exactly one
+bucket advances when an action is retained in the trace, including the terminal action that returns
+an error. Calls made after sticky failure retain no new trace action and increment no bucket. The
+separate delivery, drop, duplication, crash, persistence-failure, and read-completion fields report
+effects rather than action classes, so callers can distinguish scheduled coverage from outcomes.
 
 ## Persistence and failure behavior
 
@@ -110,6 +117,8 @@ Focused coverage includes partition, duplicate, commit propagation, crash/restar
 persistence failure, exact replay, seeded schedules that automatically produce joint-membership and
 local-compaction churn plus completed read barriers, generated completion of a pending external
 snapshot install, explicit joint membership and compaction, trace shrinking, and bound validation.
+Seed and replay coverage counters exact-match a direct scan of every retained action variant;
+terminal failure coverage stops with the retained reproducer.
 Focused exhaustive coverage enumerates all two-node election message delivery/loss prefixes through
 depth two, exhausts opt-in delivery/loss/duplication at depth one, retains exact duplicate queue-
 exhaustion replay, completely enumerates directional partition/healing and one-node crash/restart

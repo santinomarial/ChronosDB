@@ -397,6 +397,9 @@ actions are generated when an external snapshot installation is already pending;
 matrices, deeper mixed-action schedules, and broader application payload domains remain deferred.
 Failure minimization deletes deterministic coarse chunks before refining toward individual actions,
 preserves the original status-code oracle, and respects the configured candidate-replay limit.
+Per-variant action-attempt counters exact-match the retained trace under seeded generation and exact
+replay. The terminal failing action is counted once; later calls stopped by sticky status are not
+misreported as trace coverage. Outcome counters remain separate.
 Bounded exhaustive exploration branches every queued message into delivery or loss after a valid
 setup trace and optionally adds duplication, state-changing directional partition/healing, one-shot
 persistence arming, eligible elections, multi-voter leader heartbeats, canonical bounded leader

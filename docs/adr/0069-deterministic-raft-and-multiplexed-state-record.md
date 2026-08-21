@@ -225,7 +225,8 @@ directional partition/healing, atomic persistence-failure arming, eligible elect
 heartbeats, canonical bounded application proposals, current-term read barriers, state-derived
 membership begin/finalize, application-frontier advancement, state-derived local snapshot
 compaction, pending snapshot-install rejection or safe completion, and live-state node crash/restart
-after valid setup traces. Exact recovered per-node
-images now permit direct restart schedules at the terminal term and rejection at the reserved next
-proposal index without generating impractically long prefixes. Broader exhaustive campaigns, clock
-changes, and physical log syscall faults remain deferred.
+after valid setup traces. Per-variant attempt counters exact-match each retained seeded or replayed
+trace, including its terminal failure, without conflating scheduled actions with outcome counters.
+Exact recovered per-node images now permit direct restart schedules at the terminal term and
+rejection at the reserved next proposal index without generating impractically long prefixes.
+Broader exhaustive campaigns, clock changes, and physical log syscall faults remain deferred.

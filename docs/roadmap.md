@@ -854,7 +854,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   barriers, application-frontier advancement, state-derived membership begin/finalize, applied-
   frontier snapshot compaction, pending snapshot-install rejection/safe completion, and live-state
   crash/restart faults after a valid setup trace, and reports replay-limit truncation without
-  claiming completion. Simulations may begin from
+  claiming completion. Variant-indexed attempt counters now exact-match retained seeded and replay
+  traces, including the terminal failing action, while effect counters remain distinct. Simulations
+  may begin from
   exact per-node recovered persistent images; a combined terminal-term and terminal-index schedule
   proves proposals and post-restart elections fail without mutation. Deeper mixed-action campaigns,
   broader application payload domains, clock changes, physical-log faults, and the full exit evidence

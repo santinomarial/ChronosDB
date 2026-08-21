@@ -43,8 +43,11 @@ positions do not require byte-identical physical snapshot descriptors.
 
 `run_seeded` uses a repository-defined xorshift64* sequence rather than implementation-defined
 standard-library distributions. It records every generated action, so a seed run and direct replay
-reach identical durable states and counters. Each step derives bounded valid candidates from the
-current state for elections, joint-membership begin/finalize actions, local snapshot compaction,
+reach identical durable states and counters. Statistics retain one attempt counter for every action
+variant, indexed exactly like `RaftSimulationAction`; a terminal failing action remains in the trace
+and in that coverage bucket, while delivery, loss, crash, persistence, and read-completion counters
+continue to describe observed outcomes. Each step derives bounded valid candidates from the current
+state for elections, joint-membership begin/finalize actions, local snapshot compaction,
 completion of already-pending snapshot installations, and current-term linearizable read barriers.
 Membership transitions wait for the virtual network to drain so an old configuration cannot make
 an already-admitted message structurally invalid. Election and read-barrier candidates also require
@@ -106,8 +109,10 @@ states, run eight seeds for 4,000 generated fault actions twice with exact trace
 run 32 longer seeds that automatically generate and replay joint-membership begin/finalize, local
 snapshot-compaction, and read-barrier actions with observed barrier completion, generate and replay
 completion from an already-pending external snapshot install, drive explicit joint membership plus
-local snapshot compaction, shrink an irrelevant-prefix failure to one essential action, and reduce a
-65-action failure to at most four actions with only four candidate replays. A two-node election
+local snapshot compaction, exact-compare every per-variant attempt bucket with the retained traces,
+count the terminal failing action without inventing later sticky-status attempts, shrink an
+irrelevant-prefix failure to one essential action, and reduce a 65-action failure to at most four
+actions with only four candidate replays. A two-node election
 exhaustively covers all delivery/loss prefixes through depth two, reports replay-bound truncation,
 rejects invalid setup, and retains a membership-removal stale-message failure for exact replay.
 Opt-in duplication exhausts all three depth-one outcomes and retains exact queue-exhaustion replay.

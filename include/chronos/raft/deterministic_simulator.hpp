@@ -4,6 +4,7 @@
 #include "chronos/common/result.hpp"
 #include "chronos/raft/node.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -130,6 +131,9 @@ struct RaftSimulationMessageRoute {
 
 struct RaftSimulationStats {
   std::uint64_t actions{};
+  // Attempted trace actions indexed exactly like RaftSimulationAction. A terminal failing action is
+  // retained in the trace and counted here; outcome counters below count their named effects.
+  std::array<std::uint64_t, std::variant_size_v<RaftSimulationAction>> action_attempts{};
   std::uint64_t delivered{};
   std::uint64_t dropped{};
   std::uint64_t duplicated{};

@@ -61,6 +61,20 @@ void drain_except(DeterministicRaftSimulator& simulation, const std::uint64_t re
   FAIL() << "simulation network did not drain around retained message";
 }
 
+using ActionAttempts = decltype(RaftSimulationStats{}.action_attempts);
+
+[[nodiscard]] ActionAttempts
+trace_action_attempts(const std::span<const RaftSimulationAction> trace) noexcept {
+  ActionAttempts attempts{};
+  for (const RaftSimulationAction& action : trace)
+    ++attempts[action.index()];
+  return attempts;
+}
+
+template <typename Action> [[nodiscard]] std::size_t simulation_action_index() {
+  return RaftSimulationAction{Action{}}.index();
+}
+
 TEST(DeterministicRaftSimulatorTest, InitializesAndRestartsFromAnExactEmptyDurableImage) {
   auto simulation = DeterministicRaftSimulator::create(config());
   ASSERT_TRUE(simulation.has_value()) << simulation.error().to_string();
@@ -254,6 +268,7 @@ TEST(DeterministicRaftSimulatorTest, RunsReproducibleSeededFaultSchedules) {
         << "seed=" << seed << " " << second->status().to_string();
     EXPECT_TRUE(std::ranges::equal(first->trace(), second->trace()));
     EXPECT_EQ(first->stats().actions, 500U);
+    EXPECT_EQ(first->stats().action_attempts, trace_action_attempts(first->trace()));
     EXPECT_EQ(first->stats(), second->stats());
     for (NodeId node = 1U; node <= 3U; ++node)
       EXPECT_EQ(*first->durable_state(node), *second->durable_state(node));
@@ -263,10 +278,10 @@ TEST(DeterministicRaftSimulatorTest, RunsReproducibleSeededFaultSchedules) {
 TEST(DeterministicRaftSimulatorTest, GeneratesReplayableMembershipAndSnapshotChurn) {
   auto churn_config = config();
   churn_config.node_ids.push_back(4U);
-  std::size_t membership_starts = 0U;
-  std::size_t membership_finalizations = 0U;
-  std::size_t snapshot_compactions = 0U;
-  std::size_t read_barrier_starts = 0U;
+  std::uint64_t membership_starts = 0U;
+  std::uint64_t membership_finalizations = 0U;
+  std::uint64_t snapshot_compactions = 0U;
+  std::uint64_t read_barrier_starts = 0U;
   std::uint64_t completed_read_barriers = 0U;
   for (std::uint64_t seed = 1U; seed <= 32U; ++seed) {
     auto simulation = DeterministicRaftSimulator::create(churn_config);
@@ -275,16 +290,19 @@ TEST(DeterministicRaftSimulatorTest, GeneratesReplayableMembershipAndSnapshotChu
         << "seed=" << seed << " " << simulation->status().to_string()
         << " trace=" << simulation->trace().size()
         << " action=" << simulation->trace().back().index();
-    for (const RaftSimulationAction& action : simulation->trace()) {
-      membership_starts +=
-          std::holds_alternative<RaftSimulationBeginMembershipChange>(action) ? 1U : 0U;
-      membership_finalizations +=
-          std::holds_alternative<RaftSimulationFinalizeMembershipChange>(action) ? 1U : 0U;
-      snapshot_compactions +=
-          std::holds_alternative<RaftSimulationCompactSnapshot>(action) ? 1U : 0U;
-      read_barrier_starts +=
-          std::holds_alternative<RaftSimulationBeginReadBarrier>(action) ? 1U : 0U;
-    }
+    EXPECT_EQ(simulation->stats().action_attempts, trace_action_attempts(simulation->trace()));
+    membership_starts +=
+        simulation->stats()
+            .action_attempts[simulation_action_index<RaftSimulationBeginMembershipChange>()];
+    membership_finalizations +=
+        simulation->stats()
+            .action_attempts[simulation_action_index<RaftSimulationFinalizeMembershipChange>()];
+    snapshot_compactions +=
+        simulation->stats()
+            .action_attempts[simulation_action_index<RaftSimulationCompactSnapshot>()];
+    read_barrier_starts +=
+        simulation->stats()
+            .action_attempts[simulation_action_index<RaftSimulationBeginReadBarrier>()];
     completed_read_barriers += simulation->stats().completed_read_barriers;
 
     std::vector<RaftSimulationAction> trace(simulation->trace().begin(), simulation->trace().end());
@@ -365,6 +383,9 @@ TEST(DeterministicRaftSimulatorTest, GeneratesAndReplaysPendingSnapshotCompletio
   ASSERT_EQ(simulation->trace().size(), generated + 1U);
   EXPECT_TRUE(std::holds_alternative<RaftSimulationCompleteSnapshotInstall>(
       simulation->trace()[generated]));
+  EXPECT_GT(simulation->stats()
+                .action_attempts[simulation_action_index<RaftSimulationCompleteSnapshotInstall>()],
+            0U);
 
   std::vector<RaftSimulationAction> trace(simulation->trace().begin(), simulation->trace().end());
   auto replay = DeterministicRaftSimulator::create(config());
@@ -990,6 +1011,13 @@ TEST(DeterministicRaftSimulatorTest, RejectsUnboundedAndUnknownScheduleInputs) {
   EXPECT_EQ(simulation->step(RaftSimulationCrash{9U}).code(), common::StatusCode::kNotFound);
   EXPECT_EQ(simulation->step(RaftSimulationStartElection{1U}).code(),
             common::StatusCode::kNotFound);
+  EXPECT_EQ(simulation->stats().actions, 1U);
+  EXPECT_EQ(simulation->stats().action_attempts[simulation_action_index<RaftSimulationCrash>()],
+            1U);
+  EXPECT_EQ(
+      simulation->stats().action_attempts[simulation_action_index<RaftSimulationStartElection>()],
+      0U);
+  EXPECT_EQ(simulation->stats().action_attempts, trace_action_attempts(simulation->trace()));
 }
 
 } // namespace

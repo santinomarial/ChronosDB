@@ -559,6 +559,7 @@ common::Status DeterministicRaftSimulator::step(RaftSimulationAction action) {
   }
   try {
     impl.trace_.push_back(std::move(action));
+    ++impl.stats_.action_attempts[impl.trace_.back().index()];
     ++impl.stats_.actions;
     common::Status result = impl.execute(impl.trace_.back());
     if (!result.is_ok())
