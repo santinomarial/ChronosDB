@@ -294,8 +294,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   owned. Broader snapshot/member churn schedules remain deferred.
   InstallSnapshot-request sweeps now prove stale rejection, higher-term acknowledgement of an
   already-installed boundary, and higher-term new-install publication own every response,
-  persistent-state, pending-identity, and returned-task allocation before mutation. Competing-
-  pending allocation schedules remain part of broader snapshot/member churn validation.
+  persistent-state, pending-identity, and returned-task allocation before mutation. Same- and
+  higher-term competing-pending sweeps now prove rejection cannot replace the original authority;
+  the higher-term case also owns demotion persistence and feedback before term observation.
   Snapshot-completion sweeps now prove explicit rejection owns its feedback before releasing the
   pending identity, stale-term completion retains that identity until its current-term negative
   response is owned after a higher-term competing request, and successful installation owns its

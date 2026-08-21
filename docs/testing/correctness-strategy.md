@@ -441,7 +441,10 @@ Raft compaction request while retaining the newer live configuration.
 Snapshot request retransmission preserves the same single-owner rule: an exact duplicate publishes
 no second application task, a different request returns a negative response without replacing the
 first completion, and a higher-term competitor returns its term/vote persistence state before that
-response. Resolution of the old request permits a later retry.
+response. Same- and higher-term allocation sweeps require every failed rejection preparation to
+preserve the original pending identity, exact durable state, and leader identity; retry must return
+the complete rejection without publishing another application task. Resolution of the old request
+permits a later retry.
 An installed completion that conflicts with the committed local prefix returns `CORRUPTION` with
 complete persistent-state preservation and retains the pending identity for an exact explicit
 negative completion.

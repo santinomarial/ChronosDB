@@ -876,7 +876,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   membership changes, including authority established by the incoming joint suffix.
   InstallSnapshot requests now own stale/already-installed/competing feedback, any post-term
   persistence, and both the core pending identity and external task for a new installation before
-  changing role, leader identity, or pending work.
+  changing role, leader identity, or pending work. Same- and higher-term competing-request sweeps
+  now prove failed allocation preserves the exact original completion authority, including the
+  pre-demotion term/vote state in the higher-term case.
   Snapshot completion now owns rejection feedback or the complete retained-suffix, membership,
   durable-state, commit-notification, and acknowledgement transition before releasing its pending
   identity or installing snapshot state. The same ownership boundary covers a stale completion

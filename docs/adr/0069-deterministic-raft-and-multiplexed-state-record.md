@@ -177,9 +177,10 @@ Membership-changing request variants cover joint-suffix admission from a newly a
 final-suffix commit from joint state. Failures preserve the exact stable or joint follower; retry
 publishes the new active configuration, durable state, commit notification, and response together.
 InstallSnapshot-request sweeps cover stale rejection, a higher-term already-installed
-acknowledgement, and a higher-term new pending installation. Every observed response, persistent-
-state, pending-identity, and returned-task allocation preserves exact leadership and pending work;
-retry publishes the complete expected response or installation task.
+acknowledgement, a higher-term new pending installation, and same- or higher-term rejection of a
+competing pending request. Every observed response, persistent-state, pending-identity, and returned-
+task allocation preserves exact leadership and pending work; retry publishes the complete expected
+response or installation task without replacing the original completion authority.
 Snapshot-completion sweeps separately cover explicit rejection, stale-term rejection after a
 higher-term competing request, and successful installation with a retained suffix. Every observed
 response, suffix, membership, and persistent-state allocation preserves the pending completion

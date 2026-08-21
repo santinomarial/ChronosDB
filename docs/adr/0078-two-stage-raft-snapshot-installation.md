@@ -98,9 +98,10 @@ Request-level coverage coalesces an exact duplicate, rejects a different same-te
 losing the first completion, persists a higher-term competitor before its negative response, clears
 the stale pending work through negative completion, and then admits the higher-term retry.
 Allocation sweeps separately cover stale rejection, higher-term acknowledgement of an already
-installed boundary, and higher-term publication of a new pending installation. Each failed owned
-allocation preserves the exact leader, durable state, and pending work; retry returns the complete
-response or the same external installation task.
+installed boundary, higher-term publication of a new pending installation, and same- or higher-term
+rejection of a competing pending request. Each failed owned allocation preserves the exact leader,
+durable state, and pending work; retry returns the complete response or the same external
+installation task. The competing cases also prove the original completion authority remains exact.
 Completion sweeps cover explicit rejection, stale-term rejection after a higher-term competing
 request, and successful installation with a compatible retained suffix. Every failed response,
 suffix, membership, and state-copy allocation preserves both the pending authority and byte-for-
