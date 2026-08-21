@@ -236,7 +236,8 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   safety-model comparison, bounded chunk-first deletion shrinking, and replay-bounded exhaustive
   delivery/loss/optional-duplication, directional partition/healing, atomic persistence-failure
   arming, eligible elections, multi-voter heartbeats, current-term read barriers, application
-  frontier advancement, and live-state crash/restart enumeration after a valid setup trace.
+  frontier advancement, state-derived membership begin/finalize, and live-state crash/restart
+  enumeration after a valid setup trace.
 - Extend the implemented hostile higher-term/payload-identity, pre-observation term/position/
   response-state, and exact compacted-prefix predecessor regression checks into exhaustive
   persistence-before-response, broader sequence-exhaustion schedules, response-state, and broader

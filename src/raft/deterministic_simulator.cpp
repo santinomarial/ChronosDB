@@ -484,6 +484,13 @@ DeterministicRaftSimulator::create(RaftSimulationConfig config) {
       auto node = RaftNode::create(id, config.initial_voters, durable, config.limits.raft);
       if (!node.has_value())
         return common::make_unexpected(node.error());
+      for (const NodeId voter : node->voters()) {
+        if (!std::binary_search(config.node_ids.begin(), config.node_ids.end(), voter)) {
+          return common::make_unexpected(
+              make_status(common::StatusCode::kInvalidArgument,
+                          "Raft simulation recovered voter is not a configured node"));
+        }
+      }
       nodes.push_back({.id = id,
                        .durable = std::move(durable),
                        .active = std::move(*node),
@@ -900,6 +907,37 @@ common::Result<RaftExhaustiveFaultResult> DeterministicRaftSimulator::explore_fa
           const std::optional<Term> committed_term = state_term_at(*durable, node->commit_index());
           if (committed_term.has_value() && *committed_term == node->current_term())
             branches.emplace_back(RaftSimulationBeginReadBarrier{node_id});
+        }
+      }
+      if (schedule.include_membership_changes) {
+        for (const NodeId node_id : config.node_ids) {
+          const RaftNode* const node = simulation->active_node(node_id);
+          const PersistentState* const durable = simulation->durable_state(node_id);
+          if (node == nullptr || durable == nullptr || node->role() != Role::kLeader ||
+              durable->log.size() >= config.limits.raft.maximum_log_entries ||
+              node->last_log_index() >= std::numeric_limits<LogIndex>::max() - 1U) {
+            continue;
+          }
+          if (node->joint_membership_active()) {
+            if (node->joint_membership_can_finalize())
+              branches.emplace_back(RaftSimulationFinalizeMembershipChange{node_id});
+            continue;
+          }
+          for (const NodeId toggled : config.node_ids) {
+            std::vector<NodeId> voters(node->committed_voters().begin(),
+                                       node->committed_voters().end());
+            const auto position = std::lower_bound(voters.begin(), voters.end(), toggled);
+            if (position != voters.end() && *position == toggled) {
+              if (voters.size() == 1U)
+                continue;
+              voters.erase(position);
+            } else {
+              if (voters.size() >= config.limits.raft.maximum_voters)
+                continue;
+              voters.insert(position, toggled);
+            }
+            branches.emplace_back(RaftSimulationBeginMembershipChange{node_id, std::move(voters)});
+          }
         }
       }
       if (schedule.include_application_advancement) {

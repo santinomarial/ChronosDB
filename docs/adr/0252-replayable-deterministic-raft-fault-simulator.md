@@ -22,9 +22,10 @@ leaving a message queued delays it without consulting a wall clock.
 
 Configuration may start every node from canonical term-zero state or supply exactly one complete
 recovered persistent image per node in sorted node-ID order. Construction validates each image
-through the production core and then runs the cross-node safety checker before releasing the
-simulator. Crash/restart therefore uses the exact supplied durable image, including boundary states
-that cannot be reached economically by generating a trace from term zero.
+through the production core, requires every derived active voter to belong to the fixed configured
+node set, and then runs the cross-node safety checker before releasing the simulator. Crash/restart
+therefore uses the exact supplied durable image, including boundary states that cannot be reached
+economically by generating a trace from term zero.
 
 For each core transition, the simulator first checks virtual-network capacity and routes. If the
 transition contains persistent state, that complete state becomes the node's durable image before
@@ -65,12 +66,14 @@ membership includes itself; learners and current leaders are excluded. Optional 
 then include each ascending leader with more than one active-configuration voter, excluding the
 single-voter no-op. Optional read branches include each leader with no pending barrier and a committed
 entry in its current term; ordinary delivery/loss branches cover probe and response outcomes.
-Optional application branches then include every target from `applied + 1` through `commit`, ordered
-by node and index, covering incremental and batched advancement. Finally, ascending node IDs
-contribute exactly crash for an active node or restart for an inactive node. `maximum_replays` bounds
-retained frontier work and replayed prefixes; the result distinguishes a completed search from a
-truncated search and retains the exact first failing trace and status. The one setup-validation
-replay is outside that exploration count.
+Optional membership branches toggle each configured node in a stable leader's committed voters while
+preserving a nonempty bounded configuration, or finalize a committed joint configuration. Log/index
+capacity is checked first. Optional application branches then include every target from `applied + 1`
+through `commit`, ordered by node and index, covering incremental and batched advancement. Finally,
+ascending node IDs contribute exactly crash for an active node or restart for an inactive node.
+`maximum_replays` bounds retained frontier work and replayed prefixes; the result distinguishes a
+completed search from a truncated search and retains the exact first failing trace and status. The
+one setup-validation replay is outside that exploration count.
 
 ## Consequences
 
@@ -115,11 +118,15 @@ Application coverage exhausts direct and incremental advancement across two comm
 reports replay truncation, and excludes crashed nodes.
 Read-barrier coverage exhausts request loss, response loss, and quorum-response delivery through
 depth three, reports truncation, and excludes a leader without a current-term committed entry.
+Membership coverage emits the only valid stable-leader addition, emits committed-joint finalization,
+reports truncation, and excludes followers.
 Recovered-image coverage restarts a node at terminal term, rejects the next election without state
 mutation, rejects image-count mismatch and invalid local state, and rejects two individually valid
-images whose same-term log entries violate log matching. Independent boundary schedules elect from
-the penultimate term with a penultimate-index snapshot: one rejects another proposal at the reserved
-next index, while the other restarts at terminal term and rejects another election without mutation.
+images whose same-term log entries violate log matching. Recovered membership naming an unconfigured
+node also fails construction before it can create an unroutable transition. Independent boundary
+schedules elect from the penultimate term with a penultimate-index snapshot: one rejects another
+proposal at the reserved next index, while the other restarts at terminal term and rejects another
+election without mutation.
 
 ## References
 

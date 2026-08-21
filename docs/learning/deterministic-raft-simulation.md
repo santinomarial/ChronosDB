@@ -13,8 +13,9 @@ transposed at a call site.
 `RaftSimulationConfig::initial_persistent_states` is either empty or owns one complete image for
 each sorted configured node. This permits direct recovery and exhaustion schedules without billions
 of setup actions. Construction still validates every image with `RaftNode::create` and checks the
-whole recovered cluster before returning, so violations recognized by the existing safety oracle
-fail before the first action.
+derived active voters against the fixed node set before checking the whole recovered cluster, so
+unroutable membership and violations recognized by the existing safety oracle fail before the first
+action.
 
 ## Data structures and ownership
 
@@ -88,13 +89,15 @@ nonleader that remains a voter in its own replayed configuration; learners and l
 Opt-in heartbeats then include each leader with more than one active-configuration voter, avoiding
 repeated no-op single-voter actions. Opt-in read barriers include leaders with current-term committed
 state and no pending barrier; the same message branches explore request/response delivery and loss.
-Opt-in application advancement follows for every index between each active node's applied and
-committed frontiers, covering partial and batched publication. Opt-in node lifecycle finally appends
-one crash or restart per ascending configured node according to its replayed live state. Each suffix
-is bounded by `maximum_depth` plus the configured trace limit. A complete result proves the selected
-action domain was exhausted through that depth; a false completion flag reports frontier truncation
-rather than silently claiming coverage. The first action returning a non-success status is retained
-with its exact replayable trace and status.
+Opt-in membership changes toggle each configured node in every stable leader's committed membership,
+excluding empty or over-capacity outcomes, and finalize eligible joint leaders. Opt-in application
+advancement follows for every index between each active node's applied and committed frontiers,
+covering partial and batched publication. Opt-in node lifecycle finally appends one crash or restart
+per ascending configured node according to its replayed live state. Each suffix is bounded by
+`maximum_depth` plus the configured trace limit. A complete result proves the selected action domain
+was exhausted through that depth; a false completion flag reports frontier truncation rather than
+silently claiming coverage. The first action returning a non-success status is retained with its
+exact replayable trace and status.
 
 ## Verification and likely interview questions
 
@@ -108,13 +111,13 @@ exhaustion replay, completely enumerates directional partition/healing and one-n
 through depth two, exhausts persistence arming without invalid repeat branches, explores eligible
 elections while excluding learners/leaders, explores multi-voter leader heartbeats while excluding
 single-voter no-ops, exhausts read-barrier request/response loss and completion, explores incremental
-and batched application frontiers, and retains exact membership-stale-message and terminal-term
-failures.
+and batched application frontiers, emits stable membership begin and committed-joint finalization,
+and retains exact membership-stale-message and terminal-term failures.
 Recovered-state coverage preserves a terminal-term image across crash/restart, proves the next
 election fails without mutation, and rejects both malformed local images and cross-node log-
-matching violations before the first action. A combined terminal-boundary schedule separately proves
-proposal failure at the reserved next log index and post-restart election failure at terminal term
-leave active and durable state exact.
+matching violations before the first action. Recovered membership cannot name an unconfigured node.
+A combined terminal-boundary schedule separately proves proposal failure at the reserved next log
+index and post-restart election failure at terminal term leave active and durable state exact.
 The production core additionally rejects AppendEntries predecessors below an
 installed snapshot without interpreting the compacted entry as retained log storage, and its
 higher-term regression requires persistence before the negative response. The same core serializes

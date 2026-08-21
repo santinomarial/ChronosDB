@@ -181,6 +181,24 @@ TEST(DeterministicRaftSimulatorTest, RejectsUnsafeRecoveredClusterImages) {
 
   ASSERT_FALSE(simulation.has_value());
   EXPECT_EQ(simulation.error().code(), common::StatusCode::kCorruption);
+
+  PersistentState foreign_voter;
+  foreign_voter.current_term = 1U;
+  foreign_voter.snapshot.last_included_index = 1U;
+  foreign_voter.snapshot.last_included_term = 1U;
+  foreign_voter.snapshot.manifest_generation = 1U;
+  foreign_voter.snapshot.voters = {1U, 3U};
+  foreign_voter.commit_index = 1U;
+  foreign_voter.applied_index = 1U;
+  auto foreign_config = config();
+  foreign_config.node_ids = {1U, 2U};
+  foreign_config.initial_voters = {1U, 2U};
+  foreign_config.initial_persistent_states = {std::move(foreign_voter), PersistentState{}};
+
+  auto foreign = DeterministicRaftSimulator::create(std::move(foreign_config));
+
+  ASSERT_FALSE(foreign.has_value());
+  EXPECT_EQ(foreign.error().code(), common::StatusCode::kInvalidArgument);
 }
 
 TEST(DeterministicRaftSimulatorTest, ReplaysPartitionDuplicateCommitCrashAndPersistenceFailure) {
@@ -692,6 +710,53 @@ TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresReadBarrierCompletionAn
   ASSERT_TRUE(ineligible.has_value()) << ineligible.error().to_string();
   EXPECT_TRUE(ineligible->search_complete);
   EXPECT_EQ(ineligible->replayed_prefixes, 1U);
+}
+
+TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresMembershipBeginAndFinalize) {
+  auto two_nodes = config();
+  two_nodes.node_ids = {1U, 2U};
+  two_nodes.initial_voters = {1U};
+  const std::vector<RaftSimulationAction> stable_setup{RaftSimulationStartElection{1U}};
+
+  auto stable = DeterministicRaftSimulator::explore_fault_schedules(
+      two_nodes, stable_setup,
+      {.maximum_depth = 1U, .maximum_replays = 2U, .include_membership_changes = true});
+
+  ASSERT_TRUE(stable.has_value()) << stable.error().to_string();
+  EXPECT_TRUE(stable->search_complete);
+  EXPECT_EQ(stable->replayed_prefixes, 2U);
+  EXPECT_FALSE(stable->failure.has_value());
+
+  auto bounded = DeterministicRaftSimulator::explore_fault_schedules(
+      two_nodes, stable_setup,
+      {.maximum_depth = 1U, .maximum_replays = 1U, .include_membership_changes = true});
+  ASSERT_TRUE(bounded.has_value()) << bounded.error().to_string();
+  EXPECT_FALSE(bounded->search_complete);
+  EXPECT_EQ(bounded->replayed_prefixes, 1U);
+
+  auto joint_leader = DeterministicRaftSimulator::create(two_nodes);
+  ASSERT_TRUE(joint_leader.has_value()) << joint_leader.error().to_string();
+  ASSERT_TRUE(joint_leader->step(RaftSimulationStartElection{1U}).is_ok());
+  ASSERT_TRUE(joint_leader->step(RaftSimulationBeginMembershipChange{1U, {1U, 2U}}).is_ok());
+  drain(*joint_leader);
+  ASSERT_NE(joint_leader->active_node(1U), nullptr);
+  ASSERT_TRUE(joint_leader->active_node(1U)->joint_membership_can_finalize());
+  const std::vector<RaftSimulationAction> joint_setup(joint_leader->trace().begin(),
+                                                      joint_leader->trace().end());
+  auto finalization = DeterministicRaftSimulator::explore_fault_schedules(
+      two_nodes, joint_setup,
+      {.maximum_depth = 1U, .maximum_replays = 2U, .include_membership_changes = true});
+  ASSERT_TRUE(finalization.has_value()) << finalization.error().to_string();
+  EXPECT_TRUE(finalization->search_complete);
+  EXPECT_EQ(finalization->replayed_prefixes, 2U);
+  EXPECT_FALSE(finalization->failure.has_value());
+
+  auto follower = DeterministicRaftSimulator::explore_fault_schedules(
+      two_nodes, {},
+      {.maximum_depth = 1U, .maximum_replays = 1U, .include_membership_changes = true});
+  ASSERT_TRUE(follower.has_value()) << follower.error().to_string();
+  EXPECT_TRUE(follower->search_complete);
+  EXPECT_EQ(follower->replayed_prefixes, 1U);
 }
 
 TEST(DeterministicRaftSimulatorTest, ExhaustiveExplorationRetainsTheFirstFailingSchedule) {
