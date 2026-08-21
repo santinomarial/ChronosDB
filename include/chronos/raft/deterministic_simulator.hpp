@@ -154,6 +154,7 @@ struct RaftExhaustiveFaultSchedule {
   bool include_persistence_failures{};
   bool include_elections{};
   bool include_heartbeats{};
+  bool include_proposals{};
   bool include_read_barriers{};
   bool include_membership_changes{};
   bool include_snapshot_actions{};

@@ -394,22 +394,24 @@ The current bounded simulator automatically derives valid joint-membership begin
 snapshot-compaction candidates from the evolving state. It also starts eligible current-term read
 barriers, records observed completions, and retains exact generated-action replay. Completion
 actions are generated when an external snapshot installation is already pending; broader seed
-matrices and broader exhaustive action-schedule enumeration remain deferred.
+matrices, deeper mixed-action schedules, and broader application payload domains remain deferred.
 Failure minimization deletes deterministic coarse chunks before refining toward individual actions,
 preserves the original status-code oracle, and respects the configured candidate-replay limit.
 Bounded exhaustive exploration branches every queued message into delivery or loss after a valid
 setup trace and optionally adds duplication, state-changing directional partition/healing, one-shot
-persistence arming, eligible elections, multi-voter leader heartbeats, current-term read barriers,
-state-derived membership begin/finalize, applied-frontier snapshot compaction, pending snapshot
-rejection/safe completion, every valid application frontier, and node lifecycle. Tests
+persistence arming, eligible elections, multi-voter leader heartbeats, canonical bounded leader
+proposals, current-term read barriers, state-derived membership begin/finalize, applied-frontier
+snapshot compaction, pending snapshot rejection/safe completion, every valid application frontier,
+and node lifecycle. Tests
 prove complete depth-two delivery/loss enumeration, complete depth-one delivery/loss/duplication
 enumeration, complete two-node link and one-node lifecycle enumeration through depth two, active
 persistence arming, eligible election enumeration excluding learners and leaders, heartbeat
-enumeration with single-voter no-op exclusion, read-barrier request/response delivery and loss,
-stable membership addition and committed-joint finalization, incremental/batched apply, replay-bound
-truncation, local compaction, both nonconflicting pending-install outcomes, invalid-setup rejection,
-and exact retention of duplicate queue exhaustion, terminal-term election exhaustion, and the first
-failing membership-stale-message schedule.
+enumeration with single-voter no-op exclusion, successive canonical proposals with follower and
+capacity exclusion, read-barrier request/response delivery and loss, stable membership addition and
+committed-joint finalization, incremental/batched apply, replay-bound truncation, local compaction,
+both nonconflicting pending-install outcomes, invalid-setup rejection, and exact retention of
+duplicate queue exhaustion, terminal-term election exhaustion, and the first failing membership-
+stale-message schedule.
 Recovered simulator initialization exact-restarts a terminal-term durable image and rejects another
 election without mutation. Construction also rejects image cardinality mismatch, locally invalid
 state, active membership naming an unconfigured node, and individually valid same-term logs whose

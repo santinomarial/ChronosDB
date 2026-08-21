@@ -64,8 +64,11 @@ than a no-op. Optional persistence branches next arm each ascending active node 
 already armed. Optional election branches then start each ascending active nonleader whose replayed
 membership includes itself; learners and current leaders are excluded. Optional heartbeat branches
 then include each ascending leader with more than one active-configuration voter, excluding the
-single-voter no-op. Optional read branches include each leader with no pending barrier and a committed
-entry in its current term; ordinary delivery/loss branches cover probe and response outcomes.
+single-voter no-op. Optional proposal branches append one canonical one-byte application payload per
+ascending leader, derived from its node ID and next log index. Exact log-count, index, and durable-byte
+capacity checks exclude proposals that cannot be admitted. Optional read branches include each leader
+with no pending barrier and a committed entry in its current term; ordinary delivery/loss branches
+cover probe and response outcomes.
 Optional membership branches toggle each configured node in a stable leader's committed voters while
 preserving a nonempty bounded configuration, or finalize a committed joint configuration. Log/index
 capacity is checked first. Optional snapshot branches then compact each eligible stable node at its
@@ -91,9 +94,9 @@ action payloads remain bounded by Raft and trace limits. Safety checking intenti
 clear oracle over speed and compares retained prefixes quadratically across the small simulated
 cluster. Simulation-rate measurement must precede optimization.
 
-This foundation does not close the full Phase 14 campaign. Broader exhaustive action enumeration,
-long seed matrices, injected timer/clock changes, physical segmented-log syscall faults, and stored
-minimized corpora remain Phase 18 work.
+This foundation does not close the full Phase 14 campaign. Deeper mixed-action campaigns, broader
+application-input domains, long seed matrices, injected timer/clock changes, physical segmented-log
+syscall faults, and stored minimized corpora remain Phase 18 work.
 
 ## Validation
 
@@ -118,6 +121,8 @@ Election coverage admits a single-voter follower, excludes its leader successor 
 reports replay truncation, and retains exact terminal-term failure with unchanged recovered state.
 Heartbeat coverage admits a drained two-voter leader, reports replay truncation, and excludes a
 single-voter leader whose heartbeat would change neither durable nor network state.
+Proposal coverage exhausts two successive canonical single-node proposals, reports replay
+truncation, exact-replays their committed indexes, and excludes followers and a full log.
 Application coverage exhausts direct and incremental advancement across two committed entries,
 reports replay truncation, and excludes crashed nodes.
 Read-barrier coverage exhausts request loss, response loss, and quorum-response delivery through

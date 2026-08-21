@@ -911,6 +911,32 @@ common::Result<RaftExhaustiveFaultResult> DeterministicRaftSimulator::explore_fa
             branches.emplace_back(RaftSimulationHeartbeat{node_id});
         }
       }
+      if (schedule.include_proposals) {
+        constexpr std::size_t kProposalPayloadSize = 1U;
+        constexpr std::size_t kProposalPersistentBytes =
+            kRaftPersistentLogEntryFixedSizeV1 + kProposalPayloadSize;
+        for (const NodeId node_id : config.node_ids) {
+          const RaftNode* const node = simulation->active_node(node_id);
+          const PersistentState* const durable = simulation->durable_state(node_id);
+          if (node == nullptr || durable == nullptr || node->role() != Role::kLeader ||
+              durable->log.size() >= config.limits.raft.maximum_log_entries ||
+              node->last_log_index() >= std::numeric_limits<LogIndex>::max() - 1U) {
+            continue;
+          }
+          const common::Result<std::size_t> durable_size =
+              raft_persistent_state_payload_size(durable->snapshot.voters.size(), durable->log);
+          if (!durable_size.has_value() ||
+              *durable_size > config.limits.raft.maximum_persistent_state_bytes ||
+              config.limits.raft.maximum_persistent_state_bytes - *durable_size <
+                  kProposalPersistentBytes) {
+            continue;
+          }
+          const LogIndex next_index = node->last_log_index() + 1U;
+          std::vector<std::byte> payload{
+              std::byte{static_cast<std::uint8_t>((node_id ^ next_index) & 0xffU)}};
+          branches.emplace_back(RaftSimulationPropose{node_id, 1U, std::move(payload)});
+        }
+      }
       if (schedule.include_read_barriers) {
         for (const NodeId node_id : config.node_ids) {
           const RaftNode* const node = simulation->active_node(node_id);

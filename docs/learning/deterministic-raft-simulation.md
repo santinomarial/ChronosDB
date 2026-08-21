@@ -87,8 +87,10 @@ lexicographic node order and always toggle the replayed state, excluding self-li
 persistence failures then arm each active, unarmed node once. Opt-in elections follow for each active
 nonleader that remains a voter in its own replayed configuration; learners and leaders are skipped.
 Opt-in heartbeats then include each leader with more than one active-configuration voter, avoiding
-repeated no-op single-voter actions. Opt-in read barriers include leaders with current-term committed
-state and no pending barrier; the same message branches explore request/response delivery and loss.
+repeated no-op single-voter actions. Opt-in proposals then append one canonical one-byte application
+payload per leader, derived from node ID and next log index, after exact log, index, and durable-byte
+capacity admission. Opt-in read barriers include leaders with current-term committed state and no
+pending barrier; the same message branches explore request/response delivery and loss.
 Opt-in membership changes toggle each configured node in every stable leader's committed membership,
 excluding empty or over-capacity outcomes, and finalize eligible joint leaders. Opt-in snapshot
 actions next compact each eligible stable node at its applied frontier with deterministic metadata,
@@ -113,10 +115,11 @@ depth two, exhausts opt-in delivery/loss/duplication at depth one, retains exact
 exhaustion replay, completely enumerates directional partition/healing and one-node crash/restart
 through depth two, exhausts persistence arming without invalid repeat branches, explores eligible
 elections while excluding learners/leaders, explores multi-voter leader heartbeats while excluding
-single-voter no-ops, exhausts read-barrier request/response loss and completion, explores incremental
-and batched application frontiers, emits stable membership begin and committed-joint finalization,
-exhausts applied-frontier compaction and pending snapshot rejection/safe installation, and retains
-exact membership-stale-message and terminal-term failures.
+single-voter no-ops, exhausts canonical leader proposals while excluding followers and full logs,
+exhausts read-barrier request/response loss and completion, explores incremental and batched
+application frontiers, emits stable membership begin and committed-joint finalization, exhausts
+applied-frontier compaction and pending snapshot rejection/safe installation, and retains exact
+membership-stale-message and terminal-term failures.
 Recovered-state coverage preserves a terminal-term image across crash/restart, proves the next
 election fails without mutation, and rejects both malformed local images and cross-node log-
 matching violations before the first action. Recovered membership cannot name an unconfigured node.
@@ -135,11 +138,11 @@ installation work. Recovery
 also rejects such impossible snapshot history relative to current term. Failed append responses
 must name a nonzero conflict index, and their optional conflict term cannot exceed the response term,
 so malformed higher-term feedback cannot step down a candidate. Recovered term-zero state has no
-vote, and an index-zero snapshot has no external or membership identity. Long seed campaigns,
-broader exhaustive action schedules, timer clock changes, physical disk faults, and minimized corpus
-retention remain in the hardening ledger. Snapshot index `UINT64_MAX` is rejected before external
-installation
-because installing it would create a durable state the exhaustion-aware recovery path cannot reopen.
+vote, and an index-zero snapshot has no external or membership identity. Long seed campaigns, deeper
+mixed-action schedules, broader application payload domains, timer clock changes, physical disk
+faults, and minimized corpus retention remain in the hardening ledger. Snapshot index `UINT64_MAX`
+is rejected before external installation because installing it would create a durable state the
+exhaustion-aware recovery path cannot reopen.
 Higher-term AppendEntries requests cannot replace a committed entry by changing its term or by
 retaining its term while changing type or payload bytes; both failures preserve the complete local
 persistent state and role because validation precedes term observation.
