@@ -18,7 +18,7 @@ public:
              io::detail::PosixSyscalls& syscalls) {
     return AsyncDurableMultiRaftRuntime::create_new_with(
         local_node_id, log_config, std::move(groups), limits, std::move(extension), syscalls,
-        common::system_time_source());
+        common::system_time_source(), nullptr, nullptr);
   }
 
   [[nodiscard]] static common::Result<AsyncDurableMultiRaftRuntime> create_new_with_time_source(
@@ -28,7 +28,33 @@ public:
       io::detail::PosixSyscalls& syscalls, const common::TimeSource& time_source) {
     return AsyncDurableMultiRaftRuntime::create_new_with(
         local_node_id, log_config, std::move(groups), limits, std::move(extension), syscalls,
-        time_source);
+        time_source, nullptr, nullptr);
+  }
+
+  [[nodiscard]] static common::Result<AsyncDurableMultiRaftRuntime>
+  create_new_with_worker_start_hook(NodeId local_node_id, const RaftPersistentLogConfig& log_config,
+                                    std::vector<RaftGroupConfiguration> groups,
+                                    AsyncDurableMultiRaftLimits limits,
+                                    std::shared_ptr<AsyncDurableRaftWorkerExtension> extension,
+                                    void (*worker_start_hook)(void*), void* worker_start_context) {
+    return AsyncDurableMultiRaftRuntime::create_new_with(
+        local_node_id, log_config, std::move(groups), limits, std::move(extension),
+        io::detail::system_posix_syscalls(), common::system_time_source(), worker_start_hook,
+        worker_start_context);
+  }
+
+  [[nodiscard]] static common::Result<AsyncDurableMultiRaftRuntime>
+  open_existing_with_worker_start_hook(NodeId local_node_id,
+                                       const RaftPersistentLogConfig& log_config,
+                                       const RaftPersistentLogOpenOptions& open_options,
+                                       std::vector<RaftGroupConfiguration> groups,
+                                       AsyncDurableMultiRaftLimits limits,
+                                       std::shared_ptr<AsyncDurableRaftWorkerExtension> extension,
+                                       void (*worker_start_hook)(void*),
+                                       void* worker_start_context) {
+    return AsyncDurableMultiRaftRuntime::open_existing_with(
+        local_node_id, log_config, open_options, std::move(groups), limits, std::move(extension),
+        common::system_time_source(), worker_start_hook, worker_start_context);
   }
 };
 

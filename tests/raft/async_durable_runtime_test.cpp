@@ -147,6 +147,50 @@ private:
   WatchdogWorkerExtension& extension_;
 };
 
+class CountingWorkerExtension final : public AsyncDurableRaftWorkerExtension {
+public:
+  common::Status initialize(DurableMultiRaftRuntime&) override {
+    initialize_calls.fetch_add(1U);
+    return common::Status::ok();
+  }
+
+  common::Result<std::unique_ptr<AsyncDurableRaftWorkerBatchContext>>
+  prepare_batch(DurableMultiRaftRuntime&,
+                const std::span<const DurableRaftRequest> requests) override {
+    prepare_calls.fetch_add(1U);
+    return std::unique_ptr<AsyncDurableRaftWorkerBatchContext>{
+        std::make_unique<RecordingBatchContext>(requests.size())};
+  }
+
+  common::Status complete_batch(DurableMultiRaftRuntime&,
+                                std::unique_ptr<AsyncDurableRaftWorkerBatchContext>,
+                                std::span<const DurableRaftResult>) override {
+    complete_calls.fetch_add(1U);
+    return common::Status::ok();
+  }
+
+  common::Status shutdown(DurableMultiRaftRuntime&) override {
+    shutdown_calls.fetch_add(1U);
+    return common::Status::ok();
+  }
+
+  std::atomic<std::size_t> initialize_calls;
+  std::atomic<std::size_t> prepare_calls;
+  std::atomic<std::size_t> complete_calls;
+  std::atomic<std::size_t> shutdown_calls;
+};
+
+struct WorkerStartFault {
+  std::atomic<std::size_t> calls;
+};
+
+void fail_worker_start(void* const context) {
+  auto& fault = *static_cast<WorkerStartFault*>(context);
+  fault.calls.fetch_add(1U);
+  throw std::system_error{std::make_error_code(std::errc::resource_unavailable_try_again),
+                          "injected durable worker start failure"};
+}
+
 class ApplyingWorkerExtension final : public AsyncDurableRaftWorkerExtension {
 public:
   explicit ApplyingWorkerExtension(GroupId group, const bool fail_initialization = false) noexcept
@@ -494,6 +538,65 @@ TEST(AsyncDurableMultiRaftRuntimeTest, RejectsNonpositiveWorkerExtensionWatchdog
       1U, {.directory_path = directory.path().string()}, {{group, {1U}}}, limits);
   ASSERT_FALSE(negative.has_value());
   EXPECT_EQ(negative.error().code(), common::StatusCode::kInvalidArgument);
+}
+
+TEST(AsyncDurableMultiRaftRuntimeTest,
+     WorkerStartFailureClosesCreateAndReopenOwnersWithoutInvokingExtensions) {
+  for (std::uint8_t reopen = 0U; reopen < 2U; ++reopen) {
+    SCOPED_TRACE(static_cast<std::uint32_t>(reopen));
+    TemporaryDirectory directory;
+    const GroupId group = group_id(static_cast<std::byte>(0x0cU + reopen));
+    const RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+    const std::vector<RaftGroupConfiguration> groups{{group, {1U}}};
+    if (reopen != 0U) {
+      auto durable = DurableMultiRaftRuntime::create_new(1U, log_config, groups);
+      ASSERT_TRUE(durable.has_value()) << durable.error().to_string();
+      auto election = durable->execute_batch({{group, StartElectionOperation{}}});
+      ASSERT_TRUE(election.has_value()) << election.error().to_string();
+      ASSERT_EQ(election->size(), 1U);
+      ASSERT_TRUE(election->front().status.is_ok());
+      ASSERT_TRUE(durable->close().is_ok());
+    }
+
+    auto extension = std::make_shared<CountingWorkerExtension>();
+    WorkerStartFault fault;
+    auto failed =
+        reopen == 0U
+            ? detail::AsyncDurableMultiRaftRuntimeTestAccess::create_new_with_worker_start_hook(
+                  1U, log_config, groups, {}, extension, fail_worker_start, &fault)
+            : detail::AsyncDurableMultiRaftRuntimeTestAccess::open_existing_with_worker_start_hook(
+                  1U, log_config, {}, groups, {}, extension, fail_worker_start, &fault);
+
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_NE(failed.error().to_string().find("injected durable worker start failure"),
+              std::string::npos);
+    EXPECT_EQ(fault.calls.load(), 1U);
+    EXPECT_EQ(extension->initialize_calls.load(), 0U);
+    EXPECT_EQ(extension->prepare_calls.load(), 0U);
+    EXPECT_EQ(extension->complete_calls.load(), 0U);
+    EXPECT_EQ(extension->shutdown_calls.load(), 0U);
+
+    auto retry =
+        AsyncDurableMultiRaftRuntime::open_existing(1U, log_config, {}, groups, {}, extension);
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    auto observation = retry->try_observe_group(group);
+    ASSERT_TRUE(observation.has_value()) << observation.error().to_string();
+    auto observed = observation->wait();
+    ASSERT_TRUE(observed.has_value()) << observed.error().to_string();
+    ASSERT_EQ(observed->size(), 1U);
+    const auto& recovered = observed->front().observation;
+    if (!recovered.has_value()) {
+      ADD_FAILURE() << "expected recovered observation after worker-start retry";
+      return;
+    }
+    EXPECT_EQ(recovered->current_term, reopen == 0U ? 0U : 1U);
+    EXPECT_TRUE(retry->shutdown().is_ok());
+    EXPECT_EQ(extension->initialize_calls.load(), 1U);
+    EXPECT_EQ(extension->prepare_calls.load(), 1U);
+    EXPECT_EQ(extension->complete_calls.load(), 1U);
+    EXPECT_EQ(extension->shutdown_calls.load(), 1U);
+  }
 }
 
 TEST(AsyncDurableMultiRaftRuntimeTest, FailsCreationClosedWhenExtensionCannotInitialize) {

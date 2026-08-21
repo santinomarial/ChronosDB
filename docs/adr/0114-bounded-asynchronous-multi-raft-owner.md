@@ -39,6 +39,9 @@ shutdown never skips any physical close. Shutdown is idempotent. An unexpected w
 top-level durable batch failure fails the owner closed, completes the current and all queued requests
 with one terminal error, and rejects new admission. Destruction performs the same shutdown and never
 detaches the owner thread.
+If worker launch fails, no extension hook has acquired worker affinity. The caller thread retains
+ownership, records the startup failure as the root cause, closes the just-created or reopened
+durable runtime immediately, and returns without invoking extension initialization or shutdown.
 
 ## Detailed rationale
 
@@ -92,9 +95,12 @@ combination, both with and without an extension shutdown failure. It proves exac
 arbitration, complete physical cleanup, idempotence, terminal metrics, successful completion
 preservation, and exact reopen. Deterministic manual-clock validation holds an extension preparation
 active across its configured watchdog threshold and proves both live detection and exact completed
-metrics for every lifecycle hook. Broader queue-interleaving stress, asynchronous-owner allocation
-injection, worker-start injection, other syscall-level I/O failure injection, thousands-of-groups
-fairness, and whole-owner latency/throughput measurements remain in Phase 18.
+metrics for every lifecycle hook. A deterministic worker-launch `system_error` is injected into
+both fresh-create and reopen paths; each preserves that resource-exhaustion root cause, invokes no
+extension callback, releases the physical-log lock, and permits an exact successful reopen. Broader
+queue-interleaving stress, asynchronous-owner allocation injection, other syscall-level I/O failure
+injection, thousands-of-groups fairness, and whole-owner latency/throughput measurements remain in
+Phase 18.
 
 ## Migration or rollback considerations
 

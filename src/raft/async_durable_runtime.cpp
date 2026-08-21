@@ -166,8 +166,10 @@ public:
   Impl(DurableMultiRaftRuntime runtime, const AsyncDurableMultiRaftLimits configured,
        const std::array<int, 2> completion_pipe,
        std::shared_ptr<AsyncDurableRaftWorkerExtension> extension,
-       const common::TimeSource& time_source) noexcept
+       const common::TimeSource& time_source, void (*worker_start_hook)(void*),
+       void* const worker_start_context) noexcept
       : runtime_(std::move(runtime)), limits_(configured), time_source_(time_source),
+        worker_start_hook_(worker_start_hook), worker_start_context_(worker_start_context),
         completion_pipe_(completion_pipe) {
     extension_ = std::move(extension);
     metrics_.worker_extension.watchdog_threshold = limits_.worker_extension_hook_watchdog_threshold;
@@ -186,11 +188,24 @@ public:
 
   [[nodiscard]] common::Status start() {
     try {
+      if (worker_start_hook_ != nullptr)
+        worker_start_hook_(worker_start_context_);
       worker_ = std::thread{[this] { run(); }};
     } catch (const std::system_error& error) {
-      metrics_.accepting = false;
-      return common::Status{common::StatusCode::kResourceExhausted,
-                            std::string{"cannot start durable Multi-Raft worker: "} + error.what()};
+      const common::Status failure{common::StatusCode::kResourceExhausted,
+                                   std::string{"cannot start durable Multi-Raft worker: "} +
+                                       error.what()};
+      {
+        const std::lock_guard lock{mutex_};
+        terminal_status_ = failure;
+        metrics_.accepting = false;
+        metrics_.terminal_failure = true;
+        shutdown_requested_ = true;
+      }
+      // The worker never acquired ownership, so close the just-created/opened durable owner on the
+      // caller thread. Its close status cannot replace the earlier startup root cause.
+      static_cast<void>(runtime_.close());
+      return failure;
     }
     std::unique_lock lock{initialization_mutex_};
     initialization_condition_.wait(lock, [this] { return initialization_complete_; });
@@ -699,6 +714,8 @@ private:
   DurableMultiRaftRuntime runtime_;
   AsyncDurableMultiRaftLimits limits_;
   const common::TimeSource& time_source_;
+  void (*worker_start_hook_)(void*);
+  void* worker_start_context_;
   std::shared_ptr<AsyncDurableRaftWorkerExtension> extension_;
   mutable std::mutex mutex_;
   std::condition_variable condition_;
@@ -794,14 +811,16 @@ common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::creat
     std::vector<RaftGroupConfiguration> groups, const AsyncDurableMultiRaftLimits limits,
     std::shared_ptr<AsyncDurableRaftWorkerExtension> extension) {
   return create_new_with(local_node_id, log_config, std::move(groups), limits, std::move(extension),
-                         io::detail::system_posix_syscalls(), common::system_time_source());
+                         io::detail::system_posix_syscalls(), common::system_time_source(), nullptr,
+                         nullptr);
 }
 
 common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::create_new_with(
     const NodeId local_node_id, const RaftPersistentLogConfig& log_config,
     std::vector<RaftGroupConfiguration> groups, const AsyncDurableMultiRaftLimits limits,
     std::shared_ptr<AsyncDurableRaftWorkerExtension> extension, io::detail::PosixSyscalls& syscalls,
-    const common::TimeSource& time_source) {
+    const common::TimeSource& time_source, void (*worker_start_hook)(void*),
+    void* const worker_start_context) {
   if (limits.maximum_pending_batches == 0U || limits.maximum_pending_operations == 0U ||
       limits.worker_extension_hook_watchdog_threshold <= std::chrono::nanoseconds::zero()) {
     return common::make_unexpected(invalid("asynchronous durable Multi-Raft limits are invalid"));
@@ -815,8 +834,9 @@ common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::creat
     return common::make_unexpected(completion_pipe.error());
   std::unique_ptr<Impl> impl;
   try {
-    impl = std::make_unique<Impl>(std::move(*runtime), limits, *completion_pipe,
-                                  std::move(extension), time_source);
+    impl =
+        std::make_unique<Impl>(std::move(*runtime), limits, *completion_pipe, std::move(extension),
+                               time_source, worker_start_hook, worker_start_context);
   } catch (const std::bad_alloc&) {
     ::close((*completion_pipe)[0]);
     ::close((*completion_pipe)[1]);
@@ -837,6 +857,17 @@ common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::open_
     const RaftPersistentLogOpenOptions& open_options, std::vector<RaftGroupConfiguration> groups,
     const AsyncDurableMultiRaftLimits limits,
     std::shared_ptr<AsyncDurableRaftWorkerExtension> extension) {
+  return open_existing_with(local_node_id, log_config, open_options, std::move(groups), limits,
+                            std::move(extension), common::system_time_source(), nullptr, nullptr);
+}
+
+common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::open_existing_with(
+    const NodeId local_node_id, const RaftPersistentLogConfig& log_config,
+    const RaftPersistentLogOpenOptions& open_options, std::vector<RaftGroupConfiguration> groups,
+    const AsyncDurableMultiRaftLimits limits,
+    std::shared_ptr<AsyncDurableRaftWorkerExtension> extension,
+    const common::TimeSource& time_source, void (*worker_start_hook)(void*),
+    void* const worker_start_context) {
   if (limits.maximum_pending_batches == 0U || limits.maximum_pending_operations == 0U ||
       limits.worker_extension_hook_watchdog_threshold <= std::chrono::nanoseconds::zero()) {
     return common::make_unexpected(invalid("asynchronous durable Multi-Raft limits are invalid"));
@@ -850,8 +881,9 @@ common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::open_
     return common::make_unexpected(completion_pipe.error());
   std::unique_ptr<Impl> impl;
   try {
-    impl = std::make_unique<Impl>(std::move(*runtime), limits, *completion_pipe,
-                                  std::move(extension), common::system_time_source());
+    impl =
+        std::make_unique<Impl>(std::move(*runtime), limits, *completion_pipe, std::move(extension),
+                               time_source, worker_start_hook, worker_start_context);
   } catch (const std::bad_alloc&) {
     ::close((*completion_pipe)[0]);
     ::close((*completion_pipe)[1]);

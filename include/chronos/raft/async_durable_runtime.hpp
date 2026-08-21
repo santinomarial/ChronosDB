@@ -224,7 +224,15 @@ private:
   create_new_with(NodeId local_node_id, const RaftPersistentLogConfig& log_config,
                   std::vector<RaftGroupConfiguration> groups, AsyncDurableMultiRaftLimits limits,
                   std::shared_ptr<AsyncDurableRaftWorkerExtension> extension,
-                  io::detail::PosixSyscalls& syscalls, const common::TimeSource& time_source);
+                  io::detail::PosixSyscalls& syscalls, const common::TimeSource& time_source,
+                  void (*worker_start_hook)(void*), void* worker_start_context);
+  [[nodiscard]] static common::Result<AsyncDurableMultiRaftRuntime>
+  open_existing_with(NodeId local_node_id, const RaftPersistentLogConfig& log_config,
+                     const RaftPersistentLogOpenOptions& open_options,
+                     std::vector<RaftGroupConfiguration> groups, AsyncDurableMultiRaftLimits limits,
+                     std::shared_ptr<AsyncDurableRaftWorkerExtension> extension,
+                     const common::TimeSource& time_source, void (*worker_start_hook)(void*),
+                     void* worker_start_context);
   std::unique_ptr<Impl> impl_;
 
   friend class detail::AsyncDurableMultiRaftRuntimeTestAccess;

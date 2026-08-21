@@ -105,6 +105,12 @@ wait on a completion submitted to this same runtime; the sole worker would be wa
 
 ## Failure behavior
 
+Worker launch occurs before extension initialization and before admission opens. If thread creation
+fails, the caller still owns the synchronous runtime, so it retains the startup error, closes the
+newly created or reopened log on that thread, and invokes no extension callback. Deterministic
+create/reopen fault injection proves the physical lock is released and a retry recovers the exact
+term while the extension still begins with a pristine lifecycle.
+
 Capacity rejection changes no Raft or disk state. Per-operation statuses remain ordinary successful
 batch results. A top-level durable batch or checkpoint/reclamation failure is ambiguous with respect
 to partial in-memory or filesystem progress, so the worker fails closed, gives all remaining
