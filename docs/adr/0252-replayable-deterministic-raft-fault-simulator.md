@@ -61,11 +61,12 @@ then optional duplication. Optional link branches follow in ascending source/des
 exclude self-links, and toggle the replayed state so each action is a partition or healing rather
 than a no-op. Optional persistence branches next arm each ascending active node only when it is not
 already armed. Optional election branches then start each ascending active nonleader whose replayed
-membership includes itself; learners and current leaders are excluded. Finally, ascending node IDs
-contribute exactly crash for an active node or restart for an inactive node. `maximum_replays` bounds
-retained frontier work and replayed prefixes; the result distinguishes a completed search from a
-truncated search and retains the exact first failing trace and status. The one setup-validation
-replay is outside that exploration count.
+membership includes itself; learners and current leaders are excluded. Optional heartbeat branches
+then include each ascending leader with more than one active-configuration voter, excluding the
+single-voter no-op. Finally, ascending node IDs contribute exactly crash for an active node or restart
+for an inactive node. `maximum_replays` bounds retained frontier work and replayed prefixes; the
+result distinguishes a completed search from a truncated search and retains the exact first failing
+trace and status. The one setup-validation replay is outside that exploration count.
 
 ## Consequences
 
@@ -104,6 +105,8 @@ One-node persistence coverage exhausts one arm action, reports truncation when t
 retained, and proves armed or crashed nodes do not contribute invalid repeat branches.
 Election coverage admits a single-voter follower, excludes its leader successor and a learner,
 reports replay truncation, and retains exact terminal-term failure with unchanged recovered state.
+Heartbeat coverage admits a drained two-voter leader, reports replay truncation, and excludes a
+single-voter leader whose heartbeat would change neither durable nor network state.
 Recovered-image coverage restarts a node at terminal term, rejects the next election without state
 mutation, rejects image-count mismatch and invalid local state, and rejects two individually valid
 images whose same-term log entries violate log matching. Independent boundary schedules elect from

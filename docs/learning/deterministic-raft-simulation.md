@@ -85,12 +85,13 @@ and replay work are bounded by `maximum_replays`. Opt-in directional link change
 lexicographic node order and always toggle the replayed state, excluding self-links. Opt-in node
 persistence failures then arm each active, unarmed node once. Opt-in elections follow for each active
 nonleader that remains a voter in its own replayed configuration; learners and leaders are skipped.
-Opt-in node lifecycle finally appends exactly one crash or restart branch per ascending configured
-node according to its replayed live state. Each suffix is bounded by `maximum_depth` plus the
-configured trace limit. A complete result proves the selected action domain was exhausted through
-that depth; a false completion flag reports frontier truncation rather than silently claiming
-coverage. The first action returning a non-success status is retained with its exact replayable trace
-and status.
+Opt-in heartbeats then include each leader with more than one active-configuration voter, avoiding
+repeated no-op single-voter actions. Opt-in node lifecycle finally appends one crash or restart per
+ascending configured node according to its replayed live state. Each suffix is bounded by
+`maximum_depth` plus the configured trace limit. A complete result proves the selected action domain
+was exhausted through that depth; a false completion flag reports frontier truncation rather than
+silently claiming coverage. The first action returning a non-success status is retained with its
+exact replayable trace and status.
 
 ## Verification and likely interview questions
 
@@ -102,8 +103,8 @@ Focused exhaustive coverage enumerates all two-node election message delivery/lo
 depth two, exhausts opt-in delivery/loss/duplication at depth one, retains exact duplicate queue-
 exhaustion replay, completely enumerates directional partition/healing and one-node crash/restart
 through depth two, exhausts persistence arming without invalid repeat branches, explores eligible
-elections while excluding learners/leaders, and retains exact stale-message and terminal-term
-failures.
+elections while excluding learners/leaders, explores multi-voter leader heartbeats while excluding
+single-voter no-ops, and retains exact stale-message and terminal-term failures.
 Recovered-state coverage preserves a terminal-term image across crash/restart, proves the next
 election fails without mutation, and rejects both malformed local images and cross-node log-
 matching violations before the first action. A combined terminal-boundary schedule separately proves
