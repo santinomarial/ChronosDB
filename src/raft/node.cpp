@@ -351,6 +351,32 @@ public:
     return transition;
   }
 
+  [[nodiscard]] common::Result<Transition> append_membership_entry(const std::uint8_t type,
+                                                                   std::vector<std::byte> payload) {
+    const LogIndex index = last_index() + 1U;
+    state.log.push_back(LogEntry{index, state.current_term, type, std::move(payload)});
+    auto membership = derive_membership(base_voters, state.log, state.commit_index, limits);
+    if (!membership.has_value())
+      return common::make_unexpected(membership.error());
+    install_membership(std::move(*membership));
+    const auto self_match = match_index.find(id);
+    const auto self_next = next_index.find(id);
+    if (self_match == match_index.end() || self_next == next_index.end()) {
+      return common::make_unexpected(corruption("Raft leader self progress is unavailable"));
+    }
+    self_match->second = index;
+    self_next->second = index + 1U;
+
+    Transition transition;
+    auto advanced = advance_commit(transition);
+    if (!advanced.has_value())
+      return common::make_unexpected(advanced.error());
+    append_to_all(transition);
+    step_down_if_removed();
+    transition.persistent_state.emplace(state);
+    return transition;
+  }
+
   NodeId id{};
   std::vector<NodeId> base_voters;
   std::vector<NodeId> committed_voters;
@@ -1285,60 +1311,59 @@ common::Result<Transition> RaftNode::begin_membership_change(std::vector<NodeId>
         common::Status{common::StatusCode::kUnavailable,
                        "membership change cannot start while a Raft read barrier is pending"});
   }
-  std::ranges::sort(new_voters);
-  const std::optional<JointConfiguration>& joint_state = impl_->joint;
-  if (joint_state.has_value()) {
-    const JointConfiguration& joint = *joint_state;
-    if (joint.old_voters == impl_->committed_voters && joint.new_voters == new_voters) {
-      const auto term = impl_->term_at(joint.joint_index);
-      if (joint.joint_index <= impl_->state.commit_index ||
-          (term.has_value() && *term == impl_->state.current_term)) {
-        return Transition{};
+  try {
+    std::ranges::sort(new_voters);
+    const std::optional<JointConfiguration>& joint_state = impl_->joint;
+    if (joint_state.has_value()) {
+      const JointConfiguration& joint = *joint_state;
+      if (joint.old_voters == impl_->committed_voters && joint.new_voters == new_voters) {
+        const auto term = impl_->term_at(joint.joint_index);
+        if (joint.joint_index <= impl_->state.commit_index ||
+            (term.has_value() && *term == impl_->state.current_term)) {
+          return Transition{};
+        }
+        return commit_current_term();
       }
-      return commit_current_term();
+      return common::make_unexpected(
+          invalid("Raft membership change is invalid or another change is active"));
     }
-    return common::make_unexpected(
-        invalid("Raft membership change is invalid or another change is active"));
-  }
-  if (!valid_voters(new_voters, impl_->limits.maximum_voters) ||
-      new_voters == impl_->committed_voters ||
-      voter_union(impl_->committed_voters, new_voters).size() > impl_->limits.maximum_voters ||
-      impl_->state.log.size() >= impl_->limits.maximum_log_entries ||
-      impl_->last_index() >= std::numeric_limits<LogIndex>::max() - 1U) {
-    return common::make_unexpected(
-        invalid("Raft membership change is invalid or another change is active"));
-  }
-  auto payload = encode_membership_command_v1(
-      JointMembershipCommand{impl_->committed_voters, std::move(new_voters)},
-      impl_->limits.maximum_voters);
-  if (!payload.has_value())
-    return common::make_unexpected(payload.error());
-  if (payload->size() > impl_->limits.maximum_entry_bytes)
-    return common::make_unexpected(invalid("Raft membership command exceeds entry size limit"));
-  if (const common::Status fits = appended_entry_fits(impl_->state, payload->size(), impl_->limits);
-      !fits.is_ok()) {
-    return common::make_unexpected(fits);
-  }
+    if (!valid_voters(new_voters, impl_->limits.maximum_voters) ||
+        new_voters == impl_->committed_voters ||
+        voter_union(impl_->committed_voters, new_voters).size() > impl_->limits.maximum_voters ||
+        impl_->state.log.size() >= impl_->limits.maximum_log_entries ||
+        impl_->last_index() >= std::numeric_limits<LogIndex>::max() - 1U) {
+      return common::make_unexpected(
+          invalid("Raft membership change is invalid or another change is active"));
+    }
+    auto payload = encode_membership_command_v1(
+        JointMembershipCommand{impl_->committed_voters, std::move(new_voters)},
+        impl_->limits.maximum_voters);
+    if (!payload.has_value())
+      return common::make_unexpected(payload.error());
+    if (payload->size() > impl_->limits.maximum_entry_bytes)
+      return common::make_unexpected(invalid("Raft membership command exceeds entry size limit"));
+    if (const common::Status fits =
+            appended_entry_fits(impl_->state, payload->size(), impl_->limits);
+        !fits.is_ok()) {
+      return common::make_unexpected(fits);
+    }
 
-  const LogIndex index = impl_->last_index() + 1U;
-  impl_->state.log.push_back(
-      LogEntry{index, impl_->state.current_term, kJointMembershipEntryType, std::move(*payload)});
-  auto membership = derive_membership(impl_->base_voters, impl_->state.log,
-                                      impl_->state.commit_index, impl_->limits);
-  if (!membership.has_value())
-    return common::make_unexpected(membership.error());
-  impl_->install_membership(std::move(*membership));
-  impl_->match_index[impl_->id] = index;
-  impl_->next_index[impl_->id] = index + 1U;
+    Impl prepared = *impl_;
+    auto appended =
+        prepared.append_membership_entry(kJointMembershipEntryType, std::move(*payload));
+    if (!appended.has_value())
+      return common::make_unexpected(appended.error());
+    Transition transition = std::move(*appended);
 
-  Transition transition;
-  auto advanced = impl_->advance_commit(transition);
-  if (!advanced.has_value())
-    return common::make_unexpected(advanced.error());
-  impl_->append_to_all(transition);
-  impl_->step_down_if_removed();
-  transition.persistent_state = impl_->state;
-  return transition;
+    static_assert(std::is_nothrow_move_assignable_v<Impl>);
+    static_assert(std::is_nothrow_move_constructible_v<Transition>);
+    *impl_ = std::move(prepared);
+    return transition;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("Raft membership change allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("Raft membership change exceeds container limits"));
+  }
 }
 
 common::Result<Transition> RaftNode::finalize_membership_change() {
@@ -1351,58 +1376,58 @@ common::Result<Transition> RaftNode::finalize_membership_change() {
         common::Status{common::StatusCode::kUnavailable,
                        "membership change cannot finalize while a Raft read barrier is pending"});
   }
-  const std::optional<JointConfiguration>& joint_state = impl_->joint;
-  if (!joint_state.has_value()) {
-    return common::make_unexpected(
-        invalid("joint membership must commit before it can be finalized"));
-  }
-  const JointConfiguration& joint = *joint_state;
-  if (joint.final_pending) {
-    const auto final = std::ranges::find_if(
-        impl_->state.log.rbegin(), impl_->state.log.rend(),
-        [](const LogEntry& entry) { return entry.type == kFinalMembershipEntryType; });
-    if (final != impl_->state.log.rend() &&
-        (final->index <= impl_->state.commit_index || final->term == impl_->state.current_term)) {
-      return Transition{};
+  try {
+    const std::optional<JointConfiguration>& joint_state = impl_->joint;
+    if (!joint_state.has_value()) {
+      return common::make_unexpected(
+          invalid("joint membership must commit before it can be finalized"));
     }
-    return commit_current_term();
-  }
-  if (joint.joint_index > impl_->state.commit_index ||
-      impl_->state.log.size() >= impl_->limits.maximum_log_entries ||
-      impl_->last_index() >= std::numeric_limits<LogIndex>::max() - 1U) {
+    const JointConfiguration& joint = *joint_state;
+    if (joint.final_pending) {
+      const auto final = std::ranges::find_if(
+          impl_->state.log.rbegin(), impl_->state.log.rend(),
+          [](const LogEntry& entry) { return entry.type == kFinalMembershipEntryType; });
+      if (final != impl_->state.log.rend() &&
+          (final->index <= impl_->state.commit_index || final->term == impl_->state.current_term)) {
+        return Transition{};
+      }
+      return commit_current_term();
+    }
+    if (joint.joint_index > impl_->state.commit_index ||
+        impl_->state.log.size() >= impl_->limits.maximum_log_entries ||
+        impl_->last_index() >= std::numeric_limits<LogIndex>::max() - 1U) {
+      return common::make_unexpected(
+          invalid("joint membership must commit before it can be finalized"));
+    }
+    auto payload = encode_membership_command_v1(
+        FinalMembershipCommand{joint.joint_index, joint.new_voters}, impl_->limits.maximum_voters);
+    if (!payload.has_value())
+      return common::make_unexpected(payload.error());
+    if (payload->size() > impl_->limits.maximum_entry_bytes)
+      return common::make_unexpected(invalid("Raft membership command exceeds entry size limit"));
+    if (const common::Status fits =
+            appended_entry_fits(impl_->state, payload->size(), impl_->limits);
+        !fits.is_ok()) {
+      return common::make_unexpected(fits);
+    }
+
+    Impl prepared = *impl_;
+    auto appended =
+        prepared.append_membership_entry(kFinalMembershipEntryType, std::move(*payload));
+    if (!appended.has_value())
+      return common::make_unexpected(appended.error());
+    Transition transition = std::move(*appended);
+
+    static_assert(std::is_nothrow_move_assignable_v<Impl>);
+    static_assert(std::is_nothrow_move_constructible_v<Transition>);
+    *impl_ = std::move(prepared);
+    return transition;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("Raft membership finalization allocation failed"));
+  } catch (const std::length_error&) {
     return common::make_unexpected(
-        invalid("joint membership must commit before it can be finalized"));
+        exhausted("Raft membership finalization exceeds container limits"));
   }
-  auto payload = encode_membership_command_v1(
-      FinalMembershipCommand{joint.joint_index, joint.new_voters}, impl_->limits.maximum_voters);
-  if (!payload.has_value())
-    return common::make_unexpected(payload.error());
-  if (payload->size() > impl_->limits.maximum_entry_bytes)
-    return common::make_unexpected(invalid("Raft membership command exceeds entry size limit"));
-  if (const common::Status fits = appended_entry_fits(impl_->state, payload->size(), impl_->limits);
-      !fits.is_ok()) {
-    return common::make_unexpected(fits);
-  }
-
-  const LogIndex index = impl_->last_index() + 1U;
-  impl_->state.log.push_back(
-      LogEntry{index, impl_->state.current_term, kFinalMembershipEntryType, std::move(*payload)});
-  auto membership = derive_membership(impl_->base_voters, impl_->state.log,
-                                      impl_->state.commit_index, impl_->limits);
-  if (!membership.has_value())
-    return common::make_unexpected(membership.error());
-  impl_->install_membership(std::move(*membership));
-  impl_->match_index[impl_->id] = index;
-  impl_->next_index[impl_->id] = index + 1U;
-
-  Transition transition;
-  auto advanced = impl_->advance_commit(transition);
-  if (!advanced.has_value())
-    return common::make_unexpected(advanced.error());
-  impl_->append_to_all(transition);
-  impl_->step_down_if_removed();
-  transition.persistent_state = impl_->state;
-  return transition;
 }
 
 common::Result<Transition> RaftNode::complete_snapshot_install(const NodeId source,

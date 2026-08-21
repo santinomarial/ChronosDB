@@ -884,6 +884,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   complete replication batch, and returned durable state before publishing the appended entry.
   Current-term progress no-ops now share that transactional append boundary, so exact-retained
   prior-term retries cannot leak a proof entry or commit under resource exhaustion.
+  Joint and final membership proposals now prepare the complete prospective node, derived active
+  configuration and progress maps, outbound replication, and durable transition before publishing
+  either configuration entry.
   A bounded generation-tagged monotonic timer scheduler now emits election and heartbeat actions,
   retries rejected admission without shifting deadlines, and rejects stale completion rearming;
   its bounded driver now composes those actions with ordered asynchronous durable observations and

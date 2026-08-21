@@ -107,6 +107,12 @@ Explicit current-term progress no-ops use the same prospective-node append bound
 entry, self progress, possible immediate commit, replication batch, and returned state are all owned
 before publication, including when an exact-retained prior-term retry delegates to this operation.
 
+Joint and final membership proposals also execute against a prospective copy of the complete node.
+Before the live leader changes, the core owns the encoded command, appended entry, derived active
+configuration and replication maps, any commit or leader removal, complete replication batch, and
+returned persistent state. Allocation failure therefore leaves the stable or joint configuration
+unchanged and permits the same membership operation to retry at the same log index.
+
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
 record boundary is [`multiplexed-raft-log-v1.md`](../formats/multiplexed-raft-log-v1.md). A dedicated
@@ -181,6 +187,10 @@ preserves exact leadership and durable state; retry publishes the proposal at th
 Current-term progress sweeps cover the equivalent multi-voter replication and single-voter commit
 outcomes. Every failure preserves the log and progress maps before retry publishes exactly one
 empty internal no-op at the original index.
+Membership-proposal sweeps separately cover appending the joint command and appending its final
+command after joint commit. Every prospective-node, encoding, configuration derivation,
+replication-map, outbound, and returned-state allocation preserves the exact stable or joint leader;
+retry publishes the command once at the original index with the complete active peer batch.
 
 **Retrospective note (2026-08-12):** [ADR 0252](0252-replayable-deterministic-raft-fault-simulator.md)
 now supplies bounded explicit and seeded schedules for partitions, delay/reordering, duplication,

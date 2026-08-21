@@ -32,6 +32,12 @@ Node construction also rejects a configured voter limit above 65,535, the exact 
 representable by Membership Command v1's two count fields, so every admitted reconfiguration
 remains encodable.
 
+Starting and finalizing a change use a prospective copy of the complete node. The operation owns
+the encoded entry, replay-derived active configuration, leader replication maps, any immediate
+commit and removal, every replication message, and the returned durable state before publishing
+the copy. If any allocation fails, the live leader retains its exact stable or joint configuration;
+an identical retry uses the original next log index and emits the whole transition once.
+
 A bootstrap learner can receive replication but cannot start an election or grant a vote. New peers
 receive replication as soon as the joint entry is appended. A leader excluded from the final set
 sends the final commit update to new peers, clears leader-only state, and becomes a follower.
@@ -64,5 +70,6 @@ ChronosDB accepts that cost in preference to unsafe direct replacement.
 - Why is a majority of the union not equivalent to majorities of both configurations?
 - Why does the joint configuration become active when appended rather than only when committed?
 - Why must the final entry itself commit under joint rules?
+- Why must membership derivation and replication-map expansion finish before publishing the entry?
 - How can a new learner receive entries without being allowed to campaign?
 - What membership state must a future Raft snapshot preserve?

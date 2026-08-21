@@ -284,8 +284,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   heartbeat allocations publish neither the vote nor partial leadership before exact retry.
   Five-voter successful and rejected AppendEntries-response sweeps now prove follower progress,
   commit, derived membership state, and retry rewinds remain unpublished until their persistent
-  state and complete outbound batches are owned. Membership-removal allocation schedules remain
-  deferred.
+  state and complete outbound batches are owned. Joint- and final-membership proposal sweeps now
+  prove encoding, prospective membership and progress derivation, complete replication, and durable
+  state ownership precede publication. Broader final-commit/leader-removal allocation schedules
+  remain deferred.
   Compacted-leader InstallSnapshot-response sweeps now prove successful follower advancement and
   rejected retry construction preserve the old snapshot progress until the exact follow-up is
   owned. Broader snapshot/member churn schedules remain deferred.

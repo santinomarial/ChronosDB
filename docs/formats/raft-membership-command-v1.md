@@ -43,6 +43,12 @@ must repeat exactly the joint command's new voter set and joint index. It also c
 majorities. Once committed, the new voter set becomes the sole configuration; a removed leader
 sends the commit update to the new voters and steps down before returning control.
 
+Leader-side joint and final appends are atomic with respect to resource exhaustion. Encoding,
+prospective log ownership, membership derivation, replication-map changes, complete outbound
+construction, and returned persistent-state ownership finish before the live node publishes the
+entry or active configuration. A failed append therefore leaves no partial membership transition
+and may be retried at the same log index.
+
 The configured voter array supplied at group creation is the bootstrap configuration. Recovery
 replays membership commands from the retained Raft log to reconstruct the active configuration.
 Until Raft snapshots preserve a membership checkpoint, compacting away those commands is not

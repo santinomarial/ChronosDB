@@ -62,6 +62,21 @@ namespace {
   return std::move(*leader);
 }
 
+[[nodiscard]] RaftNode leader_with_committed_joint_membership() {
+  auto leader = RaftNode::create(1U, {1U, 2U, 3U});
+  EXPECT_TRUE(leader.has_value());
+  EXPECT_TRUE(leader->start_election().has_value());
+  EXPECT_TRUE(leader->receive(2U, RequestVoteResponse{1U, true}).has_value());
+  EXPECT_TRUE(leader->begin_membership_change({2U, 3U, 4U}).has_value());
+  EXPECT_TRUE(
+      leader->receive(2U, AppendEntriesResponse{1U, true, 1U, std::nullopt, 0U}).has_value());
+  EXPECT_TRUE(
+      leader->receive(4U, AppendEntriesResponse{1U, true, 1U, std::nullopt, 0U}).has_value());
+  EXPECT_EQ(leader->commit_index(), 1U);
+  EXPECT_TRUE(leader->joint_membership_can_finalize());
+  return std::move(*leader);
+}
+
 [[nodiscard]] SnapshotMetadata incoming_snapshot_metadata() {
   SnapshotMetadata snapshot{};
   snapshot.last_included_index = 1U;
@@ -1408,6 +1423,154 @@ TEST(RaftNodeAllocationFailureTest,
 TEST(RaftNodeAllocationFailureTest,
      SingleVoterCurrentTermProgressPreservesStateUntilImmediateCommitPublication) {
   expect_current_term_progress_allocation_atomic({1U}, true);
+}
+
+TEST(RaftNodeAllocationFailureTest,
+     JointMembershipProposalPreservesStableConfigurationUntilPublication) {
+  auto encoded = encode_membership_command_v1(
+      JointMembershipCommand{.old_voters = {1U, 2U, 3U}, .new_voters = {2U, 3U, 4U}});
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  const std::vector<std::byte> expected_payload = *encoded;
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    auto created = RaftNode::create(1U, {1U, 2U, 3U});
+    ASSERT_TRUE(created.has_value()) << created.error().to_string();
+    RaftNode leader = std::move(*created);
+    ASSERT_TRUE(leader.start_election().has_value());
+    ASSERT_TRUE(leader.receive(2U, RequestVoteResponse{1U, true}).has_value());
+    ASSERT_EQ(leader.role(), Role::kLeader);
+    const PersistentState before = leader.persistent_state();
+    PersistentState expected = before;
+    expected.log = {
+        LogEntry{1U, 1U, kJointMembershipEntryType, expected_payload},
+    };
+    std::vector<NodeId> new_voters{2U, 3U, 4U};
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(leader.begin_membership_change(std::move(new_voters)));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      EXPECT_EQ(leader.persistent_state(), expected);
+      EXPECT_TRUE(leader.joint_membership_active());
+      EXPECT_FALSE(leader.final_membership_pending());
+      EXPECT_TRUE(std::ranges::equal(leader.voters(), std::vector<NodeId>{1U, 2U, 3U, 4U}));
+      EXPECT_TRUE(std::ranges::equal(leader.committed_voters(), std::vector<NodeId>{1U, 2U, 3U}));
+      const PersistentState* persistent = returned_persistent_state(**result);
+      ASSERT_NE(persistent, nullptr);
+      EXPECT_EQ(*persistent, expected);
+      EXPECT_FALSE((**result).advanced_commit_index.has_value());
+      ASSERT_EQ((**result).outbound.size(), 3U);
+      for (const OutboundMessage& outbound : (**result).outbound) {
+        const auto* request = std::get_if<AppendEntriesRequest>(&outbound.message);
+        ASSERT_NE(request, nullptr);
+        ASSERT_EQ(request->entries.size(), 1U);
+        EXPECT_EQ(request->entries.front(), expected.log.front());
+        EXPECT_EQ(request->leader_commit, 0U);
+      }
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(leader.role(), Role::kLeader);
+    EXPECT_EQ(leader.persistent_state(), before);
+    EXPECT_FALSE(leader.joint_membership_active());
+    EXPECT_TRUE(std::ranges::equal(leader.voters(), std::vector<NodeId>{1U, 2U, 3U}));
+    auto heartbeat = leader.heartbeat();
+    ASSERT_TRUE(heartbeat.has_value()) << heartbeat.error().to_string();
+    ASSERT_EQ(heartbeat->outbound.size(), 2U);
+    for (const OutboundMessage& outbound : heartbeat->outbound) {
+      const auto* request = std::get_if<AppendEntriesRequest>(&outbound.message);
+      ASSERT_NE(request, nullptr);
+      EXPECT_TRUE(request->entries.empty());
+    }
+
+    auto retry = leader.begin_membership_change({2U, 3U, 4U});
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    EXPECT_EQ(leader.persistent_state(), expected);
+    EXPECT_TRUE(leader.joint_membership_active());
+    EXPECT_EQ(retry->outbound.size(), 3U);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest,
+     FinalMembershipProposalPreservesJointConfigurationUntilPublication) {
+  auto encoded = encode_membership_command_v1(
+      FinalMembershipCommand{.joint_index = 1U, .new_voters = {2U, 3U, 4U}});
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  const std::vector<std::byte> expected_payload = *encoded;
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    RaftNode leader = leader_with_committed_joint_membership();
+    ASSERT_EQ(leader.role(), Role::kLeader);
+    const PersistentState before = leader.persistent_state();
+    PersistentState expected = before;
+    expected.log.push_back(LogEntry{2U, 1U, kFinalMembershipEntryType, expected_payload});
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(leader.finalize_membership_change());
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      EXPECT_EQ(leader.persistent_state(), expected);
+      EXPECT_TRUE(leader.joint_membership_active());
+      EXPECT_TRUE(leader.final_membership_pending());
+      EXPECT_TRUE(std::ranges::equal(leader.voters(), std::vector<NodeId>{1U, 2U, 3U, 4U}));
+      const PersistentState* persistent = returned_persistent_state(**result);
+      ASSERT_NE(persistent, nullptr);
+      EXPECT_EQ(*persistent, expected);
+      EXPECT_FALSE((**result).advanced_commit_index.has_value());
+      ASSERT_EQ((**result).outbound.size(), 3U);
+      for (const OutboundMessage& outbound : (**result).outbound) {
+        const auto* request = std::get_if<AppendEntriesRequest>(&outbound.message);
+        ASSERT_NE(request, nullptr);
+        ASSERT_FALSE(request->entries.empty());
+        EXPECT_EQ(request->entries.back(), expected.log.back());
+        EXPECT_EQ(request->leader_commit, 1U);
+      }
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(leader.role(), Role::kLeader);
+    EXPECT_EQ(leader.persistent_state(), before);
+    EXPECT_TRUE(leader.joint_membership_active());
+    EXPECT_TRUE(leader.joint_membership_can_finalize());
+    EXPECT_FALSE(leader.final_membership_pending());
+    EXPECT_TRUE(std::ranges::equal(leader.voters(), std::vector<NodeId>{1U, 2U, 3U, 4U}));
+
+    auto retry = leader.finalize_membership_change();
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    EXPECT_EQ(leader.persistent_state(), expected);
+    EXPECT_TRUE(leader.final_membership_pending());
+    EXPECT_EQ(retry->outbound.size(), 3U);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
 }
 
 TEST(RaftNodeAllocationFailureTest,

@@ -37,6 +37,12 @@ The configured voter bound must fit Membership Command v1's unsigned 16-bit coun
 above 65,535 fail node construction rather than creating a runtime whose membership operations can
 never be encoded.
 
+Both membership append operations are prepare-before-publish transitions. The leader constructs a
+prospective complete node and owns the encoded command, derived active configuration, expanded
+replication maps, complete outbound batch, and returned persistent state before replacing its live
+state. Resource exhaustion therefore cannot expose a joint configuration without its replication
+messages or expose a pending final entry without its complete durable transition.
+
 ## Consequences and alternatives
 
 No old-only or new-only quorum can finish the transition, including elections during joint state.
@@ -64,4 +70,6 @@ metadata application across internal entries. Limit coverage rejects an unencoda
 voter bound at node construction and accepts the exact format maximum. A higher-term read-barrier
 request and an unproven higher-term AppendEntries heartbeat from a nonvoter are rejected before
 term, role, leader identity, or persistent state changes. A suffix carrying the valid joint/final
-transition from a new-only leader remains accepted.
+transition from a new-only leader remains accepted. Allocation sweeps for joint and final proposal
+publication require every resource-exhaustion result to preserve the exact stable or joint leader;
+the identical retry then appends once at the same index and returns the complete active-peer batch.

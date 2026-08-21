@@ -406,6 +406,12 @@ prospective-node, entry, progress, commit, replication, and returned-state alloc
 leader's log empty and heartbeat position at zero; retry must publish exactly one type-253 entry at
 index one, committing it immediately only for the single voter.
 
+Membership-proposal sweeps fail every observed allocation while a three-voter leader appends a
+joint command and while a joint leader appends the final command. Each failure must preserve the
+exact durable log, role, stable or joint configuration, final-pending flag, and heartbeat position.
+Retry must append once at the original index and return one complete replication message for every
+other voter in the prospective active union.
+
 The deterministic core separately checks the installed-snapshot predecessor boundary. A request
 whose predecessor is already compacted receives a negative conflict response without indexing
 retained log storage; if it carries a higher term, the returned transition contains the exact
