@@ -133,6 +133,13 @@ but may amplify writes. The node-wide reclamation operation proves that every re
 fresh durable checkpoint before deleting a shared prefix; deleting records merely because one group
 advanced remains unsafe.
 
+`chronos-raftbench` provides evidence about this tradeoff without changing the production path. It
+times closed-loop batches of deterministic full-state records in APPEND_ONLY and LOCAL_SYNC modes,
+then closes and exactly reopens each retained image. Its batch-size, payload-size, group-count, and
+segment-size controls expose physical write and synchronization cost, but they do not model Raft
+quorum commit, transport, catch-up, application, or power loss. See the
+[Raft persistent-log benchmark contract](../benchmarks/raft-persistence.md).
+
 ## Likely interview questions
 
 - Why are append completion and data synchronization different frontiers?

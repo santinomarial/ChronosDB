@@ -245,8 +245,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   seeded generation and fixed-trace replay with the safety oracle enabled in declared three- and
   five-voter topologies. The same target measures canonical Raft transport encode and checked owned
   decode for fixed, heartbeat, small/batched AppendEntries, and three-/five-voter snapshot-metadata
-  shapes. Complete clean-host result artifacts, physical fsync/carrier measurements, and the
-  remaining long/mixed campaigns are still open.
+  shapes. A dedicated production-path artifact harness now measures physical full-state
+  APPEND_ONLY and LOCAL_SYNC batches, retains raw samples and exact log images, and requires exact
+  immediate reopen for every repetition. Complete clean-host result artifacts, carrier and quorum
+  commit measurements, qualified power-loss evidence, and the remaining long/mixed campaigns are
+  still open.
 - Extend the implemented hostile higher-term/payload-identity, pre-observation term/position/
   response-state, and exact compacted-prefix predecessor regression checks into exhaustive
   persistence-before-response, broader sequence-exhaustion schedules, response-state, and broader

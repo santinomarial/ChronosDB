@@ -841,6 +841,14 @@ chronos_set_project_warnings(chronos-flushbench)
 chronos_enable_sanitizers(chronos-flushbench)
 chronos_enable_static_analysis(chronos-flushbench)
 
+add_executable(chronos-raftbench tools/chronos-raftbench/main.cpp)
+set_target_properties(chronos-raftbench PROPERTIES CXX_EXTENSIONS OFF)
+target_compile_features(chronos-raftbench PRIVATE cxx_std_23)
+target_link_libraries(chronos-raftbench PRIVATE chronos::raft)
+chronos_set_project_warnings(chronos-raftbench)
+chronos_enable_sanitizers(chronos-raftbench)
+chronos_enable_static_analysis(chronos-raftbench)
+
 if(CHRONOS_BUILD_TESTS)
   enable_testing()
   chronos_fetch_googletest()
@@ -1995,6 +2003,15 @@ if(CHRONOS_BUILD_TESTS)
       "-DCHRONOS_FLUSHBENCH=$<TARGET_FILE:chronos-flushbench>"
       "-DCHRONOS_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/flushbench_smoke_test.cmake"
+  )
+
+  add_test(
+    NAME RaftBenchmarkSmokeTest.ModesAndArtifacts
+    COMMAND
+      "${CMAKE_COMMAND}"
+      "-DCHRONOS_RAFTBENCH=$<TARGET_FILE:chronos-raftbench>"
+      "-DCHRONOS_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/raftbench_smoke_test.cmake"
   )
 
   add_test(

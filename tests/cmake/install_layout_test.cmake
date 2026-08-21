@@ -21,7 +21,7 @@ if(NOT DEFINED CHRONOS_TEST_INSTALL_LIBDIR)
 endif()
 
 foreach(tool IN ITEMS chronosctl chronosd chronos-csegdump chronos-flushbench chronos-waldump
-                      chronos-walbench)
+                      chronos-walbench chronos-raftbench)
   set(installed_tool
       "${install_prefix}/${CHRONOS_TEST_INSTALL_BINDIR}/${tool}${CHRONOS_TEST_EXECUTABLE_SUFFIX}")
   if(NOT EXISTS "${installed_tool}")
@@ -335,4 +335,17 @@ execute_process(
 )
 if(NOT walbench_help_result EQUAL 0)
   message(FATAL_ERROR "installed chronos-walbench --help failed with status ${walbench_help_result}")
+endif()
+
+set(installed_raftbench
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_BINDIR}/chronos-raftbench${CHRONOS_TEST_EXECUTABLE_SUFFIX}")
+execute_process(
+  COMMAND "${installed_raftbench}" --help
+  RESULT_VARIABLE raftbench_help_result
+  OUTPUT_QUIET
+  ERROR_QUIET
+)
+if(NOT raftbench_help_result EQUAL 0)
+  message(FATAL_ERROR
+          "installed chronos-raftbench --help failed with status ${raftbench_help_result}")
 endif()

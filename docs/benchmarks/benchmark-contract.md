@@ -1,8 +1,8 @@
 # Benchmark Publication Contract
 
 > **Status: contract implemented by focused foundation, WAL, Manifest-flush, native-network,
-> logical-subscription, Raft-simulator, and Raft-transport-codec harnesses; no result is published
-> here.** The [Phase 1 foundation
+> logical-subscription, Raft-simulator, Raft-transport-codec, and Raft-persistent-log harnesses; no
+> result is published here.** The [Phase 1 foundation
 > baseline](phase-1-foundation-baseline.md), [WAL](wal-benchmarks.md), and
 > [flush](flush-benchmarks.md) harnesses
 > emit reviewable local measurement artifacts. The
@@ -13,6 +13,8 @@
 > and replay workloads without publishing a baseline.
 > The [Raft transport codec harness](raft-transport.md) defines canonical encode/decode message
 > shapes and exact frame-byte accounting without publishing a baseline.
+> The [Raft persistent-log harness](raft-persistence.md) measures full-state APPEND_ONLY and
+> LOCAL_SYNC batches with exact reopen validation without publishing a baseline.
 > The broader ChronosBench suite remains unimplemented. This
 > contract governs every measurement under
 > [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md).

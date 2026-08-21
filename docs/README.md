@@ -203,6 +203,8 @@ existence of a design document alone is not implementation evidence.
   generation and replay workloads with the safety oracle enabled.
 - [Raft transport codec harness](benchmarks/raft-transport.md): canonical fixed, AppendEntries, and
   snapshot-metadata encode/decode workloads with exact frame-byte accounting.
+- [Raft persistent-log harness](benchmarks/raft-persistence.md): production segmented full-state
+  append versus node-local synchronized batches with exact reopen validation.
 - [ChronosBench](benchmarks/chronosbench.md): planned correctness-checked workload scenarios.
 
 ## Reviews

@@ -26,6 +26,7 @@ function(chronos_configure_installation)
       chronosd
       chronos-csegdump
       chronos-flushbench
+      chronos-raftbench
       chronos-waldump
       chronos-walbench)
   if(CHRONOS_ENABLE_ARROW_INTEROP)

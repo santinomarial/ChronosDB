@@ -62,6 +62,11 @@ embedding Raft state into WAL v1 was rejected because it would reinterpret a fro
 format and create ambiguous durability semantics. Automatic corruption truncation was rejected
 because it could hide loss of a previously durable record.
 
+The production-path `chronos-raftbench` harness measures declared batches of these full-state
+records in separate APPEND_ONLY and LOCAL_SYNC modes. It retains raw batch latencies, exact log
+images, and complete immediate-reopen validation artifacts. It publishes no baseline, does not
+equate APPEND_ONLY reopen success with durability, and does not measure quorum commit latency.
+
 ## Affected invariants and validation
 
 Invariants 1, 4, 5, 8, 10, 14, and 18 apply. Focused tests cover rotation, shared-group recovery,
@@ -72,4 +77,6 @@ aggregate durable-batch outbound pre-admission, exact segment-target state-budge
 anchored all-group prefix reclamation. Injected
 syscall failures,
 process crash points, asynchronous reclamation scheduling, sustained corruption campaigns, and
-Linux power-loss qualification remain required.
+Linux power-loss qualification remain required. A focused CLI smoke test covers both benchmark
+modes and exact artifact/recovery status; a clean controlled-host measurement campaign remains
+required before making performance claims.
