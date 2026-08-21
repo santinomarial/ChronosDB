@@ -855,6 +855,17 @@ common::Result<RaftExhaustiveFaultResult> DeterministicRaftSimulator::explore_fa
         if (schedule.include_duplication)
           branches.emplace_back(RaftSimulationDuplicate{message.message_id});
       }
+      if (schedule.include_link_changes) {
+        for (const NodeId source : config.node_ids) {
+          for (const NodeId destination : config.node_ids) {
+            if (source == destination)
+              continue;
+            branches.emplace_back(RaftSimulationSetLink{
+                source, destination,
+                !simulation->implementation_->link_enabled(source, destination)});
+          }
+        }
+      }
       if (schedule.include_node_lifecycle) {
         for (const NodeId node_id : config.node_ids) {
           if (simulation->active_node(node_id) == nullptr)

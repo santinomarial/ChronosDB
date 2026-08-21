@@ -450,6 +450,27 @@ TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresNodeCrashAndRestart) {
   EXPECT_FALSE(bounded->failure.has_value());
 }
 
+TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresDirectionalLinkChanges) {
+  auto two_nodes = config();
+  two_nodes.node_ids = {1U, 2U};
+  two_nodes.initial_voters = {1U, 2U};
+
+  auto complete = DeterministicRaftSimulator::explore_fault_schedules(
+      two_nodes, {}, {.maximum_depth = 2U, .maximum_replays = 7U, .include_link_changes = true});
+
+  ASSERT_TRUE(complete.has_value()) << complete.error().to_string();
+  EXPECT_TRUE(complete->search_complete);
+  EXPECT_EQ(complete->replayed_prefixes, 7U);
+  EXPECT_FALSE(complete->failure.has_value());
+
+  auto bounded = DeterministicRaftSimulator::explore_fault_schedules(
+      two_nodes, {}, {.maximum_depth = 2U, .maximum_replays = 6U, .include_link_changes = true});
+  ASSERT_TRUE(bounded.has_value()) << bounded.error().to_string();
+  EXPECT_FALSE(bounded->search_complete);
+  EXPECT_EQ(bounded->replayed_prefixes, 6U);
+  EXPECT_FALSE(bounded->failure.has_value());
+}
+
 TEST(DeterministicRaftSimulatorTest, ExhaustiveExplorationRetainsTheFirstFailingSchedule) {
   auto simulation = DeterministicRaftSimulator::create(config());
   ASSERT_TRUE(simulation.has_value()) << simulation.error().to_string();
