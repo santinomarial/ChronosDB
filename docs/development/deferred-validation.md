@@ -289,6 +289,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   Compacted-leader InstallSnapshot-response sweeps now prove successful follower advancement and
   rejected retry construction preserve the old snapshot progress until the exact follow-up is
   owned. Broader snapshot/member churn schedules remain deferred.
+  Stale, higher-term-conflict, and accepted replacement AppendEntries-request sweeps now cover every
+  observed validation and transition allocation through exact feedback and committed suffix
+  publication. Broader membership-changing request allocation schedules remain deferred.
   High-contention schedules remain deferred. An otherwise nonvoter AppendEntries source must now be
   established by a matching valid candidate suffix before term observation, while the new-only-
   leader catch-up case remains accepted; broader membership-transition and snapshot source-

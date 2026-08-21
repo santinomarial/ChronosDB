@@ -521,142 +521,155 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
   // hostile higher-term message could change current_term and then return an error without giving
   // the runtime the persistence state required by the persist-before-send contract.
   std::optional<DerivedMembership> validated_membership;
-  const common::Status validation = std::visit(
-      [&](const auto& value) -> common::Status {
-        using T = std::remove_cvref_t<decltype(value)>;
-        if (value.term == 0U)
-          return invalid("Raft message term must be nonzero");
-        if constexpr (std::is_same_v<T, RequestVoteRequest>) {
-          if (value.candidate_id != source ||
-              ((value.last_log_index == 0U) != (value.last_log_term == 0U)) ||
-              value.last_log_index == std::numeric_limits<LogIndex>::max() ||
-              value.last_log_term > value.term) {
-            return invalid("RequestVote identity or last-log position is invalid");
-          }
-        } else if constexpr (std::is_same_v<T, AppendEntriesRequest>) {
-          if (value.leader_id != source ||
-              ((value.previous_log_index == 0U) != (value.previous_log_term == 0U)) ||
-              value.previous_log_term > value.term ||
-              value.leader_commit == std::numeric_limits<LogIndex>::max() ||
-              value.entries.size() > impl_->limits.maximum_append_entries) {
-            return invalid("AppendEntries identity, previous position, or batch bound is invalid");
-          }
-          if (value.previous_log_index == std::numeric_limits<LogIndex>::max()) {
-            return invalid("AppendEntries log index overflows");
-          }
-          LogIndex expected = value.previous_log_index;
-          for (const LogEntry& entry : value.entries) {
-            if (expected == std::numeric_limits<LogIndex>::max()) {
+  std::optional<std::vector<LogEntry>> validated_append_log;
+  std::optional<LogIndex> validated_append_commit;
+  common::Status validation;
+  try {
+    validation = std::visit(
+        [&](const auto& value) -> common::Status {
+          using T = std::remove_cvref_t<decltype(value)>;
+          if (value.term == 0U)
+            return invalid("Raft message term must be nonzero");
+          if constexpr (std::is_same_v<T, RequestVoteRequest>) {
+            if (value.candidate_id != source ||
+                ((value.last_log_index == 0U) != (value.last_log_term == 0U)) ||
+                value.last_log_index == std::numeric_limits<LogIndex>::max() ||
+                value.last_log_term > value.term) {
+              return invalid("RequestVote identity or last-log position is invalid");
+            }
+          } else if constexpr (std::is_same_v<T, AppendEntriesRequest>) {
+            if (value.leader_id != source ||
+                ((value.previous_log_index == 0U) != (value.previous_log_term == 0U)) ||
+                value.previous_log_term > value.term ||
+                value.leader_commit == std::numeric_limits<LogIndex>::max() ||
+                value.entries.size() > impl_->limits.maximum_append_entries) {
+              return invalid(
+                  "AppendEntries identity, previous position, or batch bound is invalid");
+            }
+            if (value.previous_log_index == std::numeric_limits<LogIndex>::max()) {
               return invalid("AppendEntries log index overflows");
             }
-            ++expected;
-            if (entry.index != expected || entry.index == std::numeric_limits<LogIndex>::max() ||
-                entry.term == 0U || entry.term > value.term || entry.type == 0U ||
-                entry.payload.size() > impl_->limits.maximum_entry_bytes) {
-              return invalid("AppendEntries contains an invalid log entry");
-            }
-            if (entry.type == kLeaderNoopEntryType && !entry.payload.empty())
-              return invalid("AppendEntries leader no-op entry has a payload");
-          }
-          if (value.term < impl_->state.current_term) {
-            if (!active_source)
-              return invalid("stale AppendEntries source is not an active voter");
-            return common::Status::ok();
-          }
-          const auto previous_term = impl_->append_predecessor_term(value.previous_log_index);
-          if (!previous_term.has_value() || *previous_term != value.previous_log_term) {
-            if (!active_source)
-              return invalid("AppendEntries suffix cannot establish nonvoter leader authority");
-            return common::Status::ok();
-          }
-          std::optional<std::size_t> first_conflict;
-          for (std::size_t index = 0U; index < value.entries.size(); ++index) {
-            const LogEntry& entry = value.entries[index];
-            const auto local_term = impl_->term_at(entry.index);
-            if (local_term.has_value() && *local_term == entry.term) {
-              const LogEntry& local = impl_->state.log[impl_->offset_for(entry.index)];
-              if (local != entry) {
-                return common::Status{common::StatusCode::kCorruption,
-                                      "matching Raft term and index have different entry bytes"};
+            LogIndex expected = value.previous_log_index;
+            for (const LogEntry& entry : value.entries) {
+              if (expected == std::numeric_limits<LogIndex>::max()) {
+                return invalid("AppendEntries log index overflows");
               }
-              continue;
+              ++expected;
+              if (entry.index != expected || entry.index == std::numeric_limits<LogIndex>::max() ||
+                  entry.term == 0U || entry.term > value.term || entry.type == 0U ||
+                  entry.payload.size() > impl_->limits.maximum_entry_bytes) {
+                return invalid("AppendEntries contains an invalid log entry");
+              }
+              if (entry.type == kLeaderNoopEntryType && !entry.payload.empty())
+                return invalid("AppendEntries leader no-op entry has a payload");
             }
-            if (local_term.has_value() && entry.index <= impl_->state.commit_index) {
-              return common::Status{common::StatusCode::kCorruption,
-                                    "leader attempted to overwrite a committed Raft entry"};
+            if (value.term < impl_->state.current_term) {
+              if (!active_source)
+                return invalid("stale AppendEntries source is not an active voter");
+              return common::Status::ok();
             }
-            first_conflict = index;
-            break;
-          }
-          if (first_conflict.has_value()) {
-            const LogIndex conflict_index = value.entries[*first_conflict].index;
-            const std::size_t retained = conflict_index <= impl_->last_index()
-                                             ? impl_->offset_for(conflict_index)
-                                             : impl_->state.log.size();
-            if (retained + (value.entries.size() - *first_conflict) >
-                impl_->limits.maximum_log_entries) {
-              return common::Status{common::StatusCode::kResourceExhausted,
-                                    "Raft log capacity is exhausted"};
+            const auto previous_term = impl_->append_predecessor_term(value.previous_log_index);
+            if (!previous_term.has_value() || *previous_term != value.previous_log_term) {
+              if (!active_source)
+                return invalid("AppendEntries suffix cannot establish nonvoter leader authority");
+              return common::Status::ok();
             }
-          }
-          std::vector<LogEntry> candidate_log = impl_->state.log;
-          for (const LogEntry& entry : value.entries) {
-            const auto local = std::ranges::find(candidate_log, entry.index, &LogEntry::index);
-            if (local != candidate_log.end() && local->term != entry.term) {
-              candidate_log.erase(local, candidate_log.end());
+            std::optional<std::size_t> first_conflict;
+            for (std::size_t index = 0U; index < value.entries.size(); ++index) {
+              const LogEntry& entry = value.entries[index];
+              const auto local_term = impl_->term_at(entry.index);
+              if (local_term.has_value() && *local_term == entry.term) {
+                const LogEntry& local = impl_->state.log[impl_->offset_for(entry.index)];
+                if (local != entry) {
+                  return common::Status{common::StatusCode::kCorruption,
+                                        "matching Raft term and index have different entry bytes"};
+                }
+                continue;
+              }
+              if (local_term.has_value() && entry.index <= impl_->state.commit_index) {
+                return common::Status{common::StatusCode::kCorruption,
+                                      "leader attempted to overwrite a committed Raft entry"};
+              }
+              first_conflict = index;
+              break;
             }
-            if (std::ranges::find(candidate_log, entry.index, &LogEntry::index) ==
-                candidate_log.end()) {
-              candidate_log.push_back(entry);
+            if (first_conflict.has_value()) {
+              const LogIndex conflict_index = value.entries[*first_conflict].index;
+              const std::size_t retained = conflict_index <= impl_->last_index()
+                                               ? impl_->offset_for(conflict_index)
+                                               : impl_->state.log.size();
+              if (retained + (value.entries.size() - *first_conflict) >
+                  impl_->limits.maximum_log_entries) {
+                return common::Status{common::StatusCode::kResourceExhausted,
+                                      "Raft log capacity is exhausted"};
+              }
             }
+            std::vector<LogEntry> candidate_log = impl_->state.log;
+            for (const LogEntry& entry : value.entries) {
+              const auto local = std::ranges::find(candidate_log, entry.index, &LogEntry::index);
+              if (local != candidate_log.end() && local->term != entry.term) {
+                candidate_log.erase(local, candidate_log.end());
+              }
+              if (std::ranges::find(candidate_log, entry.index, &LogEntry::index) ==
+                  candidate_log.end()) {
+                candidate_log.push_back(entry);
+              }
+            }
+            const LogIndex candidate_last = candidate_log.empty()
+                                                ? impl_->state.snapshot.last_included_index
+                                                : candidate_log.back().index;
+            const LogIndex prospective_commit =
+                std::max(impl_->state.commit_index, std::min(value.leader_commit, candidate_last));
+            auto membership = derive_membership(impl_->base_voters, candidate_log,
+                                                prospective_commit, impl_->limits);
+            if (!membership.has_value())
+              return membership.error();
+            if (!active_source && !std::ranges::binary_search(membership->active_voters, source)) {
+              return invalid("AppendEntries suffix does not establish active leader membership");
+            }
+            if (const common::Status fits = persistent_state_fits(
+                    impl_->state.snapshot.voters.size(), candidate_log, impl_->limits);
+                !fits.is_ok()) {
+              return fits;
+            }
+            validated_append_log.emplace(std::move(candidate_log));
+            validated_append_commit = prospective_commit;
+            validated_membership = std::move(*membership);
+          } else if constexpr (std::is_same_v<T, AppendEntriesResponse>) {
+            if (value.match_index == std::numeric_limits<LogIndex>::max() ||
+                (value.success &&
+                 (value.match_index > impl_->last_index() || value.conflict_term.has_value() ||
+                  value.conflict_index != 0U)) ||
+                (!value.success && value.conflict_index == 0U) ||
+                (value.conflict_term.has_value() &&
+                 (*value.conflict_term == 0U || *value.conflict_term > value.term))) {
+              return invalid("AppendEntries response state is invalid");
+            }
+          } else if constexpr (std::is_same_v<T, InstallSnapshotRequest>) {
+            if (value.leader_id != source || value.snapshot.last_included_term > value.term ||
+                !valid_snapshot(value.snapshot, impl_->limits.maximum_voters)) {
+              return invalid("InstallSnapshot identity or metadata is invalid");
+            }
+          } else if constexpr (std::is_same_v<T, InstallSnapshotResponse>) {
+            if (value.last_included_index == std::numeric_limits<LogIndex>::max() ||
+                (value.success && (value.last_included_index == 0U ||
+                                   value.last_included_index > impl_->last_index())))
+              return invalid("InstallSnapshot response state is invalid");
+          } else if constexpr (std::is_same_v<T, ReadBarrierRequest>) {
+            if (value.leader_id != source || value.context == 0U)
+              return invalid("read-barrier request identity or context is invalid");
+          } else if constexpr (std::is_same_v<T, ReadBarrierResponse>) {
+            if (value.context == 0U)
+              return invalid("read-barrier response context is invalid");
           }
-          const LogIndex candidate_last = candidate_log.empty()
-                                              ? impl_->state.snapshot.last_included_index
-                                              : candidate_log.back().index;
-          const LogIndex prospective_commit =
-              std::max(impl_->state.commit_index, std::min(value.leader_commit, candidate_last));
-          auto membership = derive_membership(impl_->base_voters, candidate_log, prospective_commit,
-                                              impl_->limits);
-          if (!membership.has_value())
-            return membership.error();
-          if (!active_source && !std::ranges::binary_search(membership->active_voters, source)) {
-            return invalid("AppendEntries suffix does not establish active leader membership");
-          }
-          if (const common::Status fits = persistent_state_fits(impl_->state.snapshot.voters.size(),
-                                                                candidate_log, impl_->limits);
-              !fits.is_ok()) {
-            return fits;
-          }
-          validated_membership = std::move(*membership);
-        } else if constexpr (std::is_same_v<T, AppendEntriesResponse>) {
-          if (value.match_index == std::numeric_limits<LogIndex>::max() ||
-              (value.success && (value.match_index > impl_->last_index() ||
-                                 value.conflict_term.has_value() || value.conflict_index != 0U)) ||
-              (!value.success && value.conflict_index == 0U) ||
-              (value.conflict_term.has_value() &&
-               (*value.conflict_term == 0U || *value.conflict_term > value.term))) {
-            return invalid("AppendEntries response state is invalid");
-          }
-        } else if constexpr (std::is_same_v<T, InstallSnapshotRequest>) {
-          if (value.leader_id != source || value.snapshot.last_included_term > value.term ||
-              !valid_snapshot(value.snapshot, impl_->limits.maximum_voters)) {
-            return invalid("InstallSnapshot identity or metadata is invalid");
-          }
-        } else if constexpr (std::is_same_v<T, InstallSnapshotResponse>) {
-          if (value.last_included_index == std::numeric_limits<LogIndex>::max() ||
-              (value.success && (value.last_included_index == 0U ||
-                                 value.last_included_index > impl_->last_index())))
-            return invalid("InstallSnapshot response state is invalid");
-        } else if constexpr (std::is_same_v<T, ReadBarrierRequest>) {
-          if (value.leader_id != source || value.context == 0U)
-            return invalid("read-barrier request identity or context is invalid");
-        } else if constexpr (std::is_same_v<T, ReadBarrierResponse>) {
-          if (value.context == 0U)
-            return invalid("read-barrier response context is invalid");
-        }
-        return common::Status::ok();
-      },
-      message);
+          return common::Status::ok();
+        },
+        message);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("Raft message validation allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("Raft message validation exceeds container limits"));
+  }
   if (!validation.is_ok()) {
     return common::make_unexpected(validation);
   }
@@ -665,6 +678,7 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
   Transition transition;
   const bool request_vote_request = std::holds_alternative<RequestVoteRequest>(message);
   const bool request_vote_response = std::holds_alternative<RequestVoteResponse>(message);
+  const bool append_entries_request = std::holds_alternative<AppendEntriesRequest>(message);
   const bool append_entries_response = std::holds_alternative<AppendEntriesResponse>(message);
   const bool install_snapshot_response = std::holds_alternative<InstallSnapshotResponse>(message);
   const bool read_barrier_request = std::holds_alternative<ReadBarrierRequest>(message);
@@ -692,7 +706,11 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
   common::Status prepared_snapshot_status = common::Status::ok();
   std::map<NodeId, LogIndex> prepared_snapshot_next_index;
   std::map<NodeId, LogIndex> prepared_snapshot_match_index;
-  if (request_vote_request || read_barrier_request || response_message) {
+  bool prepared_append_request = false;
+  bool prepared_append_request_accepted = false;
+  bool prepared_append_request_persistence = false;
+  std::optional<PersistentState> prepared_append_request_state;
+  if (request_vote_request || append_entries_request || read_barrier_request || response_message) {
     try {
       if (request_vote_request) {
         const RequestVoteRequest& request = std::get<RequestVoteRequest>(message);
@@ -743,6 +761,66 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
             }
           }
         }
+      }
+      if (append_entries_request) {
+        const AppendEntriesRequest& request = std::get<AppendEntriesRequest>(message);
+        transition.outbound.reserve(1U);
+        if (request.term < impl_->state.current_term) {
+          transition.outbound.push_back(OutboundMessage{
+              source, AppendEntriesResponse{impl_->state.current_term, false, impl_->last_index(),
+                                            std::nullopt, impl_->last_index() + 1U}});
+        } else {
+          const auto previous_term = impl_->append_predecessor_term(request.previous_log_index);
+          if (!previous_term.has_value() || *previous_term != request.previous_log_term) {
+            std::optional<Term> conflict_term;
+            LogIndex conflict_index = impl_->last_index() + 1U;
+            if (previous_term.has_value()) {
+              conflict_term = previous_term;
+              conflict_index = request.previous_log_index;
+              while (conflict_index > impl_->state.snapshot.last_included_index + 1U &&
+                     impl_->term_at(conflict_index - 1U) == conflict_term) {
+                --conflict_index;
+              }
+            }
+            transition.outbound.push_back(OutboundMessage{
+                source, AppendEntriesResponse{request.term, false, impl_->last_index(),
+                                              conflict_term, conflict_index}});
+          } else {
+            if (!validated_append_log.has_value() || !validated_append_commit.has_value() ||
+                !validated_membership.has_value()) {
+              return common::make_unexpected(
+                  corruption("validated Raft append request state is unavailable"));
+            }
+            const bool term_changed = request.term > impl_->state.current_term;
+            const bool log_changed = validated_append_log.value() != impl_->state.log;
+            const bool commit_changed = validated_append_commit.value() > impl_->state.commit_index;
+            prepared_append_request_persistence = term_changed || log_changed || commit_changed;
+            if (prepared_append_request_persistence) {
+              prepared_append_request_state.emplace(impl_->state);
+              prepared_append_request_state->current_term = request.term;
+              if (term_changed)
+                prepared_append_request_state->voted_for.reset();
+              prepared_append_request_state->log = std::move(validated_append_log.value());
+              prepared_append_request_state->commit_index = validated_append_commit.value();
+              transition.persistent_state.emplace(prepared_append_request_state.value());
+            }
+            if (commit_changed)
+              transition.advanced_commit_index = validated_append_commit;
+            const LogIndex accepted =
+                request.entries.empty() ? request.previous_log_index : request.entries.back().index;
+            transition.outbound.push_back(OutboundMessage{
+                source, AppendEntriesResponse{request.term, true, accepted, std::nullopt, 0U}});
+            prepared_append_request_accepted = true;
+          }
+        }
+        if (request.term > impl_->state.current_term && !transition.persistent_state.has_value()) {
+          prepared_append_request_state.emplace(impl_->state);
+          prepared_append_request_state->current_term = request.term;
+          prepared_append_request_state->voted_for.reset();
+          transition.persistent_state.emplace(prepared_append_request_state.value());
+          prepared_append_request_persistence = true;
+        }
+        prepared_append_request = true;
       }
       if (append_entries_response) {
         const AppendEntriesResponse& response = std::get<AppendEntriesResponse>(message);
@@ -875,7 +953,8 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
       }
       if (read_barrier_request)
         transition.outbound.reserve(1U);
-      if (message_term > impl_->state.current_term || prepared_vote_granted) {
+      if (!append_entries_request &&
+          (message_term > impl_->state.current_term || prepared_vote_granted)) {
         PersistentState& prepared = transition.persistent_state.emplace(impl_->state);
         if (message_term > impl_->state.current_term) {
           prepared.current_term = message_term;
@@ -935,58 +1014,21 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
           }
           return common::Status::ok();
         } else if constexpr (std::is_same_v<T, AppendEntriesRequest>) {
-          if (value.term < impl_->state.current_term) {
-            transition.outbound.push_back(OutboundMessage{
-                source, AppendEntriesResponse{impl_->state.current_term, false, impl_->last_index(),
-                                              std::nullopt, impl_->last_index() + 1U}});
+          if (!prepared_append_request)
+            return corruption("prepared Raft append request state is unavailable");
+          if (value.term < impl_->state.current_term)
             return common::Status::ok();
-          }
-          impl_->become_follower(value.term, source);
-          const auto previous_term = impl_->append_predecessor_term(value.previous_log_index);
-          if (!previous_term.has_value() || *previous_term != value.previous_log_term) {
-            std::optional<Term> conflict_term;
-            LogIndex conflict_index = impl_->last_index() + 1U;
-            if (previous_term.has_value()) {
-              conflict_term = previous_term;
-              conflict_index = value.previous_log_index;
-              while (conflict_index > impl_->state.snapshot.last_included_index + 1U &&
-                     impl_->term_at(conflict_index - 1U) == conflict_term) {
-                --conflict_index;
-              }
-            }
-            transition.outbound.push_back(OutboundMessage{
-                source, AppendEntriesResponse{impl_->state.current_term, false, impl_->last_index(),
-                                              conflict_term, conflict_index}});
-            return common::Status::ok();
-          }
-
-          for (const LogEntry& entry : value.entries) {
-            const auto local_term = impl_->term_at(entry.index);
-            if (local_term.has_value() && *local_term != entry.term) {
-              impl_->state.log.erase(impl_->state.log.begin() + static_cast<std::ptrdiff_t>(
-                                                                    impl_->offset_for(entry.index)),
-                                     impl_->state.log.end());
-              persistence_changed = true;
-            }
-            if (!impl_->term_at(entry.index).has_value()) {
-              impl_->state.log.push_back(entry);
-              persistence_changed = true;
-            }
-          }
-          const LogIndex accepted =
-              value.entries.empty() ? value.previous_log_index : value.entries.back().index;
-          const LogIndex new_commit = std::min(value.leader_commit, impl_->last_index());
-          if (new_commit > impl_->state.commit_index) {
-            impl_->state.commit_index = new_commit;
-            transition.advanced_commit_index = new_commit;
+          static_assert(std::is_nothrow_move_assignable_v<PersistentState>);
+          if (prepared_append_request_persistence) {
+            impl_->state = std::move(prepared_append_request_state.value());
             persistence_changed = true;
           }
-          if (!validated_membership.has_value())
-            return corruption("validated Raft membership state is unavailable");
-          impl_->install_membership(std::move(*validated_membership));
-          transition.outbound.push_back(
-              OutboundMessage{source, AppendEntriesResponse{impl_->state.current_term, true,
-                                                            accepted, std::nullopt, 0U}});
+          impl_->become_follower(value.term, source);
+          if (prepared_append_request_accepted) {
+            static_assert(std::is_nothrow_move_assignable_v<std::vector<NodeId>>);
+            static_assert(std::is_nothrow_move_assignable_v<std::optional<JointConfiguration>>);
+            impl_->install_membership(std::move(validated_membership.value()));
+          }
           return common::Status::ok();
         } else if constexpr (std::is_same_v<T, AppendEntriesResponse>) {
           if (value.term < impl_->state.current_term || impl_->role != Role::kLeader ||

@@ -174,6 +174,17 @@ void expect_vote_request_transition(const RaftNode& node, const Transition& tran
   EXPECT_FALSE(transition.read_barrier_ready.has_value());
 }
 
+void expect_append_response(const Transition& transition, const Term term, const bool success,
+                            const LogIndex match_index, const std::optional<Term> conflict_term,
+                            const LogIndex conflict_index) {
+  ASSERT_EQ(transition.outbound.size(), 1U);
+  EXPECT_EQ(transition.outbound.front().destination, 2U);
+  const auto* response = std::get_if<AppendEntriesResponse>(&transition.outbound.front().message);
+  ASSERT_NE(response, nullptr);
+  EXPECT_EQ(*response,
+            (AppendEntriesResponse{term, success, match_index, conflict_term, conflict_index}));
+}
+
 void expect_election_transition(const RaftNode& node, const Transition& transition,
                                 PersistentState expected, const Role role,
                                 const std::size_t expected_outbound) {
@@ -566,6 +577,182 @@ TEST(RaftNodeAllocationFailureTest,
 TEST(RaftNodeAllocationFailureTest,
      RejectedSnapshotResponsePreservesProgressUntilRetryPublication) {
   expect_snapshot_response_allocation_atomic(false);
+}
+
+TEST(RaftNodeAllocationFailureTest, StaleAppendRequestOwnsRejectionBeforeReturning) {
+  PersistentState initial{};
+  initial.current_term = 2U;
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 16U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    auto created = RaftNode::create(1U, {1U, 2U, 3U}, initial);
+    ASSERT_TRUE(created.has_value()) << created.error().to_string();
+    RaftNode node = std::move(*created);
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(node.receive(2U, AppendEntriesRequest{1U, 2U, 0U, 0U, {}, 0U}));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      expect_append_response(**result, 2U, false, 0U, std::nullopt, 1U);
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(node.role(), Role::kFollower);
+    EXPECT_EQ(node.persistent_state(), initial);
+    auto retry = node.receive(2U, AppendEntriesRequest{1U, 2U, 0U, 0U, {}, 0U});
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    expect_append_response(*retry, 2U, false, 0U, std::nullopt, 1U);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest,
+     HigherTermConflictingAppendRequestPreparesDemotionAndFeedbackTogether) {
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 64U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    RaftNode leader = leader_ready_for_read_barrier(false);
+    auto barrier = leader.begin_read_barrier();
+    ASSERT_TRUE(barrier.has_value()) << barrier.error().to_string();
+    const PersistentState before = leader.persistent_state();
+    const AppendEntriesRequest request{2U, 2U, 1U, 2U, {}, 0U};
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(leader.receive(2U, request));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      PersistentState expected = before;
+      expected.current_term = 2U;
+      expected.voted_for.reset();
+      EXPECT_EQ(leader.role(), Role::kFollower);
+      EXPECT_EQ(leader.leader_id(), 2U);
+      EXPECT_EQ(leader.persistent_state(), expected);
+      const PersistentState* persistent = returned_persistent_state(**result);
+      ASSERT_NE(persistent, nullptr);
+      EXPECT_EQ(*persistent, expected);
+      expect_append_response(**result, 2U, false, 1U, 1U, 1U);
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(leader.role(), Role::kLeader);
+    EXPECT_EQ(leader.current_term(), 1U);
+    EXPECT_EQ(leader.leader_id(), 1U);
+    EXPECT_EQ(leader.persistent_state(), before);
+    auto pending = leader.begin_read_barrier();
+    ASSERT_FALSE(pending.has_value());
+    EXPECT_EQ(pending.error().code(), common::StatusCode::kUnavailable);
+
+    auto retry = leader.receive(2U, request);
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    PersistentState expected = before;
+    expected.current_term = 2U;
+    expected.voted_for.reset();
+    EXPECT_EQ(leader.role(), Role::kFollower);
+    EXPECT_EQ(leader.leader_id(), 2U);
+    EXPECT_EQ(leader.persistent_state(), expected);
+    expect_append_response(*retry, 2U, false, 1U, 1U, 1U);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(RaftNodeAllocationFailureTest,
+     AcceptedAppendRequestPreservesLeaderUntilSuffixCommitPublication) {
+  const AppendEntriesRequest request{
+      2U,
+      2U,
+      0U,
+      0U,
+      {LogEntry{1U, 2U, 1U, {std::byte{0x51U}}}, LogEntry{2U, 2U, 1U, {std::byte{0x52U}}}},
+      2U,
+  };
+  std::size_t failure_count = 0U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    auto created = RaftNode::create(1U, {1U, 2U, 3U});
+    ASSERT_TRUE(created.has_value()) << created.error().to_string();
+    RaftNode leader = std::move(*created);
+    ASSERT_TRUE(leader.start_election().has_value());
+    ASSERT_TRUE(leader.receive(3U, RequestVoteResponse{1U, true}).has_value());
+    ASSERT_TRUE(leader.propose(1U, {std::byte{0x41U}}).has_value());
+    ASSERT_TRUE(leader.propose(1U, {std::byte{0x42U}}).has_value());
+    ASSERT_EQ(leader.role(), Role::kLeader);
+    const PersistentState before = leader.persistent_state();
+    Message inbound = request;
+
+    std::optional<common::Result<Transition>> result;
+    std::size_t observed = 0U;
+    {
+      test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(leader.receive(2U, std::move(inbound)));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+
+    ASSERT_TRUE(result.has_value());
+    if (result->has_value()) {
+      PersistentState expected = before;
+      expected.current_term = 2U;
+      expected.voted_for.reset();
+      expected.log = request.entries;
+      expected.commit_index = 2U;
+      EXPECT_EQ(leader.role(), Role::kFollower);
+      EXPECT_EQ(leader.leader_id(), 2U);
+      EXPECT_EQ(leader.persistent_state(), expected);
+      const PersistentState* persistent = returned_persistent_state(**result);
+      ASSERT_NE(persistent, nullptr);
+      EXPECT_EQ(*persistent, expected);
+      EXPECT_EQ((**result).advanced_commit_index, 2U);
+      expect_append_response(**result, 2U, true, 2U, std::nullopt, 0U);
+      reached_success = true;
+      break;
+    }
+
+    ++failure_count;
+    EXPECT_GT(observed, 0U);
+    EXPECT_EQ(result->error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(leader.role(), Role::kLeader);
+    EXPECT_EQ(leader.current_term(), 1U);
+    EXPECT_EQ(leader.leader_id(), 1U);
+    EXPECT_EQ(leader.persistent_state(), before);
+
+    auto retry = leader.receive(2U, request);
+    ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+    EXPECT_EQ(leader.role(), Role::kFollower);
+    EXPECT_EQ(leader.current_term(), 2U);
+    EXPECT_EQ(leader.leader_id(), 2U);
+    EXPECT_EQ(leader.commit_index(), 2U);
+    EXPECT_EQ(retry->advanced_commit_index, 2U);
+    expect_append_response(*retry, 2U, true, 2U, std::nullopt, 0U);
+  }
+  EXPECT_GT(failure_count, 0U);
+  EXPECT_TRUE(reached_success);
 }
 
 TEST(RaftNodeAllocationFailureTest,

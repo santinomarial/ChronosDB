@@ -868,6 +868,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   durable commit state, leader removal, and complete replication batch before publication.
   InstallSnapshot responses likewise own successful replacement progress and the exact suffix or
   snapshot follow-up before publication.
+  AppendEntries requests now retain their validated candidate state and own stale/conflict feedback
+  or accepted suffix persistence and commit feedback before changing term, role, log, or membership.
   A bounded generation-tagged monotonic timer scheduler now emits election and heartbeat actions,
   retries rejected admission without shifting deadlines, and rejects stale completion rearming;
   its bounded driver now composes those actions with ordered asynchronous durable observations and

@@ -56,6 +56,10 @@ Snapshot completion acknowledgements also prepare follower progress and the next
 message together. Until a successful acknowledgement's suffix message is owned, the leader keeps
 selecting the installed snapshot boundary for that follower; rejected acknowledgements likewise
 own their snapshot retry before returning.
+Inbound AppendEntries validation produces the candidate retained log, prospective commit, and
+membership once. The node then owns both copies needed by the in-memory state and returned durable
+transition, plus the exact feedback response, before it publishes a higher term, suffix replacement,
+or commit. The persistence owner never has to reconstruct a partially applied follower transition.
 
 The maximum physical sequence is a terminal record identity. Once recovered or emitted, the
 Multi-Raft owner rejects and fails closed before invoking another deterministic group transition;

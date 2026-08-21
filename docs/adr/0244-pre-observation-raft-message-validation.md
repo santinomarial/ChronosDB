@@ -75,6 +75,12 @@ candidate-log freshness. The core prepares its one response and exact changed pe
 before publishing a grant or rejection. Allocation failure is `RESOURCE_EXHAUSTED` and leaves the
 request fully retryable.
 
+AppendEntries validation allocations are classified at the same boundary. The validated candidate
+log, prospective commit, and derived membership are retained for publication rather than rebuilt
+after mutation. Stale and predecessor-conflict requests own their negative feedback first; an
+accepted suffix owns its exact persistent state, commit notification, and success response first.
+Allocation failure cannot demote a node or partially replace or commit its log.
+
 Recovered persistent state must also be inductive: an installed snapshot's last-included term may
 not exceed the node's current term. Retained entries already obey the same relation.
 
@@ -127,6 +133,10 @@ to return its matching follower persistence transition on retry.
 Vote-request allocation sweeps cover higher-term current-log grant, higher-term stale-log rejection,
 and same-term first vote. Each failure preserves exact state, while retry returns the expected grant
 bit and identical term/vote state in both the node and persistence transition.
+AppendEntries-request sweeps cover stale rejection, a higher-term predecessor conflict against a
+leader with pending read work, and a higher-term two-entry suffix replacement through commit. Each
+validation and transition-preparation failure is resource exhaustion with exact state preservation;
+retry returns matching feedback and any complete persistent transition.
 
 ## References
 

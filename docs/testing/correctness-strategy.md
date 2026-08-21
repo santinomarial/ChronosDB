@@ -457,6 +457,10 @@ InstallSnapshot-response sweeps cover both success and rejection after local com
 retained suffix entry. Every failed allocation must return resource exhaustion, a heartbeat must
 still select the snapshot for that follower, and retry must return the exact suffix or snapshot
 message without changing persistent state.
+AppendEntries-request sweeps cover stale feedback allocation, higher-term conflict feedback plus
+demotion persistence, and accepted higher-term suffix replacement through commit. Every validation,
+membership, state-copy, and response allocation must preserve the exact prior node; retry must
+publish feedback, leader identity, commit notification, and persistent state together.
 The paired AppendEntries authority case submits an empty higher-term heartbeat from that same
 nonvoter position and requires exact leader-state preservation because no matching membership
 suffix proves the sender active. The positive new-only-leader case continues to install and commit

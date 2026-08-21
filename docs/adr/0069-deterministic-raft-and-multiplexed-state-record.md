@@ -71,6 +71,12 @@ snapshot. A rejected response owns its snapshot retry before returning. Resource
 the old follower position intact in both cases and is returned as an explicit status rather than an
 escaping allocation exception.
 
+AppendEntries requests retain their validated candidate log, prospective commit, and derived
+membership. Before publication, the core owns the exact stale or conflict feedback and any changed
+post-term/post-suffix persistent state; an accepted request also owns its success response and commit
+notification. Validation and preparation allocation failures return `RESOURCE_EXHAUSTED` without
+changing term, role, leader identity, pending work, log, commit, or membership.
+
 `MultiRaftRuntime` multiplexes bounded groups on one owner and assigns node-global physical
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
 record boundary is [`multiplexed-raft-log-v1.md`](../formats/multiplexed-raft-log-v1.md). A dedicated
@@ -122,6 +128,9 @@ complete broadcast are owned.
 InstallSnapshot-response sweeps use a compacted leader with one retained suffix entry. A heartbeat
 must continue selecting the snapshot after every failed success or rejection allocation; exact
 retry then produces either the retained suffix or the same snapshot request.
+AppendEntries-request sweeps separately cover stale rejection, higher-term predecessor conflict,
+and higher-term replacement plus commit. Every observed validation, membership, persistent-state,
+and response allocation preserves exact node state; retry publishes the complete expected outcome.
 
 **Retrospective note (2026-08-12):** [ADR 0252](0252-replayable-deterministic-raft-fault-simulator.md)
 now supplies bounded explicit and seeded schedules for partitions, delay/reordering, duplication,
