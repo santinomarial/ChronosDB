@@ -246,6 +246,37 @@ TEST(AsyncDurableRaftWorkerExtensionSetTest, ContinuesReverseShutdownAfterAChild
   EXPECT_EQ(reopened->find_group(group)->persistent_state().voted_for, 1U);
 }
 
+TEST(AsyncDurableRaftWorkerExtensionSetTest, RetainsFirstReturnedFailureInReverseShutdownOrder) {
+  TemporaryDirectory directory;
+  auto trace = std::make_shared<Trace>();
+  const common::Status later_reverse_failure{common::StatusCode::kUnavailable,
+                                             "injected A shutdown failure"};
+  const common::Status first_reverse_failure{common::StatusCode::kCorruption,
+                                             "injected B shutdown failure"};
+  auto first = std::make_shared<RecordingExtension>("A", trace, common::Status::ok(),
+                                                    common::Status::ok(), later_reverse_failure);
+  auto second = std::make_shared<RecordingExtension>("B", trace, common::Status::ok(),
+                                                     common::Status::ok(), first_reverse_failure);
+  auto third = std::make_shared<RecordingExtension>("C", trace);
+  auto set = AsyncDurableRaftWorkerExtensionSet::create({first, second, third});
+  ASSERT_TRUE(set.has_value()) << set.error().to_string();
+
+  const GroupId group = group_id(std::byte{5U});
+  auto runtime = AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group, {1U}}}, {}, *set);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+
+  const common::Status shutdown = runtime->shutdown();
+  EXPECT_EQ(shutdown, first_reverse_failure);
+  EXPECT_EQ(runtime->terminal_status(), first_reverse_failure);
+  EXPECT_TRUE(runtime->metrics().terminal_failure);
+  EXPECT_EQ(trace->copy(), (std::vector<std::string>{"A:initialize", "B:initialize", "C:initialize",
+                                                     "C:shutdown", "B:shutdown", "A:shutdown"}));
+  EXPECT_EQ(runtime->shutdown(), first_reverse_failure);
+  EXPECT_EQ(trace->copy(), (std::vector<std::string>{"A:initialize", "B:initialize", "C:initialize",
+                                                     "C:shutdown", "B:shutdown", "A:shutdown"}));
+}
+
 TEST(AsyncDurableRaftWorkerExtensionSetTest, StopsBatchCompletionAtTheFirstChildFailure) {
   TemporaryDirectory directory;
   auto trace = std::make_shared<Trace>();

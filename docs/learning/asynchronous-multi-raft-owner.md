@@ -113,6 +113,9 @@ A shutdown-hook failure happens only after accepted work drains: it marks the ow
 returned by repeated shutdown, but does not retroactively replace an already published successful
 completion. Focused coverage persists an election before a child throws during reverse shutdown and
 then reopens the exact term and vote.
+When multiple children return shutdown failures, all children still run and the first failure in
+reverse invocation order wins. The runtime retains that exact status for later shutdown callers
+without invoking child cleanup again.
 
 ## Complexity, tradeoffs, and interview questions
 

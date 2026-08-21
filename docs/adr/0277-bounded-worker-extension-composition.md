@@ -55,10 +55,13 @@ ordered initialization/preparation/completion, reverse shutdown, partial-initial
 continuation after a throwing shutdown, completion fail-stop behavior, and unchanged direct
 extension behavior. The throwing-shutdown case now first drains one accepted durable election,
 proves its completion remains successful with exact metrics, continues reverse child cleanup,
-retains the shutdown failure idempotently, and reopens the exact persisted term and vote.
+retains the shutdown failure idempotently, and reopens the exact persisted term and vote. A
+three-child returned-error case proves reverse shutdown invokes every child, retains the first
+failure in reverse invocation order, and does not repeat callbacks during idempotent runtime
+shutdown.
 
-Allocation fault injection, returned-error and physical-close failure schedules, shutdown under
-active production application, and long-running hook watchdog measurements remain Phase 18 work.
+Allocation fault injection, physical-close failure schedules, shutdown under active production
+application, and long-running hook watchdog measurements remain Phase 18 work.
 
 ## References
 

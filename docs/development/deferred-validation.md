@@ -364,13 +364,14 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   later completions resume physical wakeups. A controlled record-limit failure during shutdown now
   fans one retained terminal status out to the current batch and eight queued observations with
   exact terminal accounting and notification counts. Syscall-level storage/notification failures
-  and returned-hook/physical-close-failure schedules remain deferred. A composed-extension test now
+  and physical-close-failure schedules remain deferred. A composed-extension test now
   drains a durable election before a later child throws during reverse shutdown, retains the
   successful completion, continues earlier-child cleanup, returns the hook failure idempotently,
-  and reopens the exact term/vote. A bounded generation-tagged timer scheduler now emits exact
-  election/heartbeat actions and rejects stale completion rearming; its bounded driver submits
-  two-operation action/observation batches through the asynchronous durable owner and retains
-  complete post-sync results for routing.
+  and reopens the exact term/vote. A separate three-child test proves returned failures preserve
+  complete reverse cleanup and exact first-failure arbitration across repeated runtime shutdown. A
+  bounded generation-tagged timer scheduler now emits exact election/heartbeat actions and rejects
+  stale completion rearming; its bounded driver submits two-operation action/observation batches
+  through the asynchronous durable owner and retains complete post-sync results for routing.
   Timer and transport owners now expose their exact earliest monotonic deadlines; clock-change and
   high-cardinality deadline-scan validation remain deferred.
   Runtime-lifetime FIFO submission identities now order timer and multi-connection inbound results.
