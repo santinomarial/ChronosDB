@@ -223,7 +223,8 @@ begin/finalize and local snapshot-compaction candidates from current state and r
 churn exactly. It also exhaustively branches bounded delivery/loss suffixes plus opt-in duplication,
 directional partition/healing, atomic persistence-failure arming, eligible elections, multi-voter
 heartbeats, current-term read barriers, state-derived membership begin/finalize, application-frontier
-advancement, and live-state node crash/restart after valid setup traces. Exact recovered per-node
+advancement, state-derived local snapshot compaction, pending snapshot-install rejection or safe
+completion, and live-state node crash/restart after valid setup traces. Exact recovered per-node
 images now permit direct restart schedules at the terminal term and rejection at the reserved next
 proposal index without generating impractically long prefixes. Broader exhaustive campaigns, clock
 changes, and physical log syscall faults remain deferred.

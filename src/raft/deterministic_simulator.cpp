@@ -47,6 +47,33 @@ namespace {
   return entry == nullptr ? std::nullopt : std::optional<Term>{entry->term};
 }
 
+[[nodiscard]] common::Result<std::optional<SnapshotMetadata>>
+prepare_simulation_snapshot(const NodeId node_id, const PersistentState& durable,
+                            const RaftNode& node) {
+  if (node.joint_membership_active() ||
+      node.applied_index() <= durable.snapshot.last_included_index)
+    return std::optional<SnapshotMetadata>{};
+  const LogIndex boundary = node.applied_index();
+  const std::optional<Term> boundary_term = state_term_at(durable, boundary);
+  if (!boundary_term.has_value())
+    return std::optional<SnapshotMetadata>{};
+  SnapshotMetadata snapshot{.last_included_index = boundary,
+                            .last_included_term = *boundary_term,
+                            .manifest_generation = boundary,
+                            .voters = {}};
+  snapshot.part_set_checksum.fill(
+      std::byte{static_cast<std::uint8_t>((node_id ^ boundary) & 0xffU)});
+  auto prepared = node.prepare_snapshot_metadata(std::move(snapshot));
+  if (prepared.has_value())
+    return std::optional<SnapshotMetadata>{std::move(*prepared)};
+  if (prepared.error().code() == common::StatusCode::kInvalidArgument ||
+      prepared.error().code() == common::StatusCode::kUnavailable ||
+      prepared.error().code() == common::StatusCode::kResourceExhausted) {
+    return std::optional<SnapshotMetadata>{};
+  }
+  return common::make_unexpected(prepared.error());
+}
+
 class FixedPrng {
 public:
   explicit FixedPrng(const std::uint64_t seed) noexcept
@@ -652,40 +679,28 @@ common::Status DeterministicRaftSimulator::run_seeded(const RaftSeededSimulation
                 pending.last_included_index < node.durable.commit_index &&
                 (!local_term.has_value() || *local_term != pending.last_included_term);
             snapshot_completions.push_back({node.id, !conflicts});
-          } else if (!active_node.joint_membership_active() &&
-                     active_node.applied_index() > node.durable.snapshot.last_included_index) {
-            const LogIndex boundary = active_node.applied_index();
-            const std::optional<Term> boundary_term = state_term_at(node.durable, boundary);
-            if (boundary_term.has_value()) {
-              SnapshotMetadata snapshot{.last_included_index = boundary,
-                                        .last_included_term = *boundary_term,
-                                        .manifest_generation = boundary,
-                                        .voters = {}};
-              snapshot.part_set_checksum.fill(
-                  std::byte{static_cast<std::uint8_t>((node.id ^ boundary) & 0xffU)});
-              auto prepared = active_node.prepare_snapshot_metadata(std::move(snapshot));
-              if (prepared.has_value()) {
-                bool lagging_peer = false;
-                if (active_node.role() == Role::kLeader) {
-                  for (const Impl::NodeSlot& peer : impl.nodes_) {
-                    const LogIndex peer_last = peer.durable.log.empty()
-                                                   ? peer.durable.snapshot.last_included_index
-                                                   : peer.durable.log.back().index;
-                    if (peer.id != node.id &&
-                        std::binary_search(active_node.voters().begin(), active_node.voters().end(),
-                                           peer.id) &&
-                        peer_last < boundary) {
-                      lagging_peer = true;
-                      break;
-                    }
+          } else {
+            auto prepared = prepare_simulation_snapshot(node.id, node.durable, active_node);
+            if (!prepared.has_value())
+              return prepared.error();
+            if (prepared->has_value()) {
+              const LogIndex boundary = prepared->value().last_included_index;
+              bool lagging_peer = false;
+              if (active_node.role() == Role::kLeader) {
+                for (const Impl::NodeSlot& peer : impl.nodes_) {
+                  const LogIndex peer_last = peer.durable.log.empty()
+                                                 ? peer.durable.snapshot.last_included_index
+                                                 : peer.durable.log.back().index;
+                  if (peer.id != node.id &&
+                      std::binary_search(active_node.voters().begin(), active_node.voters().end(),
+                                         peer.id) &&
+                      peer_last < boundary) {
+                    lagging_peer = true;
+                    break;
                   }
                 }
-                snapshot_candidates.push_back({node.id, std::move(*prepared), lagging_peer});
-              } else if (prepared.error().code() != common::StatusCode::kInvalidArgument &&
-                         prepared.error().code() != common::StatusCode::kUnavailable &&
-                         prepared.error().code() != common::StatusCode::kResourceExhausted) {
-                return prepared.error();
               }
+              snapshot_candidates.push_back({node.id, std::move(prepared->value()), lagging_peer});
             }
           }
         } else {
@@ -937,6 +952,32 @@ common::Result<RaftExhaustiveFaultResult> DeterministicRaftSimulator::explore_fa
               voters.insert(position, toggled);
             }
             branches.emplace_back(RaftSimulationBeginMembershipChange{node_id, std::move(voters)});
+          }
+        }
+      }
+      if (schedule.include_snapshot_actions) {
+        for (const NodeId node_id : config.node_ids) {
+          const Impl::NodeSlot* const node = simulation->implementation_->find_node(node_id);
+          if (node == nullptr || !node->active.has_value())
+            continue;
+          if (node->pending_snapshot.has_value()) {
+            const SnapshotMetadata& pending = node->pending_snapshot->snapshot;
+            const std::optional<Term> local_term =
+                state_term_at(node->durable, pending.last_included_index);
+            const bool conflicts =
+                pending.last_included_index < node->durable.commit_index &&
+                (!local_term.has_value() || *local_term != pending.last_included_term);
+            branches.emplace_back(RaftSimulationCompleteSnapshotInstall{node_id, false});
+            if (!conflicts)
+              branches.emplace_back(RaftSimulationCompleteSnapshotInstall{node_id, true});
+            continue;
+          }
+          auto prepared = prepare_simulation_snapshot(node_id, node->durable, *node->active);
+          if (!prepared.has_value())
+            return common::make_unexpected(prepared.error());
+          if (prepared->has_value()) {
+            branches.emplace_back(
+                RaftSimulationCompactSnapshot{node_id, std::move(prepared->value())});
           }
         }
       }

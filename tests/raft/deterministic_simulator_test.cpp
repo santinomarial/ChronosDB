@@ -759,6 +759,98 @@ TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresMembershipBeginAndFinal
   EXPECT_EQ(follower->replayed_prefixes, 1U);
 }
 
+TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresLocalSnapshotCompaction) {
+  auto one_node = config();
+  one_node.node_ids = {1U};
+  one_node.initial_voters = {1U};
+  const std::vector<RaftSimulationAction> setup{
+      RaftSimulationStartElection{1U}, RaftSimulationPropose{1U, 1U, {std::byte{0x11U}}},
+      RaftSimulationPropose{1U, 1U, {std::byte{0x22U}}}, RaftSimulationMarkApplied{1U, 2U}};
+
+  auto complete = DeterministicRaftSimulator::explore_fault_schedules(
+      one_node, setup,
+      {.maximum_depth = 2U, .maximum_replays = 2U, .include_snapshot_actions = true});
+
+  ASSERT_TRUE(complete.has_value()) << complete.error().to_string();
+  EXPECT_TRUE(complete->search_complete);
+  EXPECT_EQ(complete->replayed_prefixes, 2U);
+  EXPECT_FALSE(complete->failure.has_value());
+
+  auto bounded = DeterministicRaftSimulator::explore_fault_schedules(
+      one_node, setup,
+      {.maximum_depth = 2U, .maximum_replays = 1U, .include_snapshot_actions = true});
+  ASSERT_TRUE(bounded.has_value()) << bounded.error().to_string();
+  EXPECT_FALSE(bounded->search_complete);
+  EXPECT_EQ(bounded->replayed_prefixes, 1U);
+
+  SnapshotMetadata snapshot{
+      .last_included_index = 2U, .last_included_term = 1U, .manifest_generation = 2U, .voters = {}};
+  snapshot.part_set_checksum.fill(std::byte{0x03U});
+  std::vector<RaftSimulationAction> compacted = setup;
+  compacted.emplace_back(RaftSimulationCompactSnapshot{1U, snapshot});
+  auto replay = DeterministicRaftSimulator::create(one_node);
+  ASSERT_TRUE(replay.has_value()) << replay.error().to_string();
+  ASSERT_TRUE(replay->replay(compacted).is_ok()) << replay->status().to_string();
+  EXPECT_EQ(replay->durable_state(1U)->snapshot.last_included_index, 2U);
+  EXPECT_TRUE(replay->durable_state(1U)->log.empty());
+
+  auto ineligible = DeterministicRaftSimulator::explore_fault_schedules(
+      one_node, {}, {.maximum_depth = 1U, .maximum_replays = 1U, .include_snapshot_actions = true});
+  ASSERT_TRUE(ineligible.has_value()) << ineligible.error().to_string();
+  EXPECT_TRUE(ineligible->search_complete);
+  EXPECT_EQ(ineligible->replayed_prefixes, 1U);
+}
+
+TEST(DeterministicRaftSimulatorTest, ExhaustivelyExploresPendingSnapshotCompletion) {
+  auto source = DeterministicRaftSimulator::create(config());
+  ASSERT_TRUE(source.has_value()) << source.error().to_string();
+  ASSERT_TRUE(source->step(RaftSimulationStartElection{1U}).is_ok());
+  drain(*source);
+  ASSERT_TRUE(source->step(RaftSimulationSetLink{1U, 3U, false}).is_ok());
+  ASSERT_TRUE(source->step(RaftSimulationPropose{1U, 1U, {std::byte{0x33U}}}).is_ok());
+  drain(*source);
+  ASSERT_TRUE(source->step(RaftSimulationMarkApplied{1U, 1U}).is_ok());
+  SnapshotMetadata snapshot{
+      .last_included_index = 1U, .last_included_term = 1U, .manifest_generation = 1U, .voters = {}};
+  snapshot.part_set_checksum.fill(std::byte{0x44U});
+  ASSERT_TRUE(source->step(RaftSimulationCompactSnapshot{1U, snapshot}).is_ok());
+  ASSERT_TRUE(source->step(RaftSimulationSetLink{1U, 3U, true}).is_ok());
+  ASSERT_TRUE(source->step(RaftSimulationHeartbeat{1U}).is_ok());
+  const std::uint64_t request = message_id(*source, 1U, 3U);
+  ASSERT_NE(request, 0U);
+  ASSERT_TRUE(source->step(RaftSimulationDeliver{request}).is_ok());
+  drain(*source);
+  const std::vector<RaftSimulationAction> setup(source->trace().begin(), source->trace().end());
+
+  auto complete = DeterministicRaftSimulator::explore_fault_schedules(
+      config(), setup,
+      {.maximum_depth = 1U, .maximum_replays = 3U, .include_snapshot_actions = true});
+
+  ASSERT_TRUE(complete.has_value()) << complete.error().to_string();
+  EXPECT_TRUE(complete->search_complete);
+  EXPECT_EQ(complete->replayed_prefixes, 3U);
+  EXPECT_FALSE(complete->failure.has_value());
+
+  auto bounded = DeterministicRaftSimulator::explore_fault_schedules(
+      config(), setup,
+      {.maximum_depth = 1U, .maximum_replays = 2U, .include_snapshot_actions = true});
+  ASSERT_TRUE(bounded.has_value()) << bounded.error().to_string();
+  EXPECT_FALSE(bounded->search_complete);
+  EXPECT_EQ(bounded->replayed_prefixes, 2U);
+
+  auto rejected = DeterministicRaftSimulator::create(config());
+  ASSERT_TRUE(rejected.has_value()) << rejected.error().to_string();
+  ASSERT_TRUE(rejected->replay(setup).is_ok()) << rejected->status().to_string();
+  ASSERT_TRUE(rejected->step(RaftSimulationCompleteSnapshotInstall{3U, false}).is_ok());
+  EXPECT_EQ(rejected->durable_state(3U)->snapshot.last_included_index, 0U);
+
+  auto installed = DeterministicRaftSimulator::create(config());
+  ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+  ASSERT_TRUE(installed->replay(setup).is_ok()) << installed->status().to_string();
+  ASSERT_TRUE(installed->step(RaftSimulationCompleteSnapshotInstall{3U, true}).is_ok());
+  EXPECT_EQ(installed->durable_state(3U)->snapshot.last_included_index, 1U);
+}
+
 TEST(DeterministicRaftSimulatorTest, ExhaustiveExplorationRetainsTheFirstFailingSchedule) {
   auto simulation = DeterministicRaftSimulator::create(config());
   ASSERT_TRUE(simulation.has_value()) << simulation.error().to_string();

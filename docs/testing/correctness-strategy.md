@@ -400,14 +400,16 @@ preserves the original status-code oracle, and respects the configured candidate
 Bounded exhaustive exploration branches every queued message into delivery or loss after a valid
 setup trace and optionally adds duplication, state-changing directional partition/healing, one-shot
 persistence arming, eligible elections, multi-voter leader heartbeats, current-term read barriers,
-state-derived membership begin/finalize, every valid application frontier, and node lifecycle. Tests
+state-derived membership begin/finalize, applied-frontier snapshot compaction, pending snapshot
+rejection/safe completion, every valid application frontier, and node lifecycle. Tests
 prove complete depth-two delivery/loss enumeration, complete depth-one delivery/loss/duplication
 enumeration, complete two-node link and one-node lifecycle enumeration through depth two, active
 persistence arming, eligible election enumeration excluding learners and leaders, heartbeat
 enumeration with single-voter no-op exclusion, read-barrier request/response delivery and loss,
 stable membership addition and committed-joint finalization, incremental/batched apply, replay-bound
-truncation, invalid-setup rejection, and exact retention of duplicate queue exhaustion, terminal-term
-election exhaustion, and the first failing membership-stale-message schedule.
+truncation, local compaction, both nonconflicting pending-install outcomes, invalid-setup rejection,
+and exact retention of duplicate queue exhaustion, terminal-term election exhaustion, and the first
+failing membership-stale-message schedule.
 Recovered simulator initialization exact-restarts a terminal-term durable image and rejects another
 election without mutation. Construction also rejects image cardinality mismatch, locally invalid
 state, active membership naming an unconfigured node, and individually valid same-term logs whose

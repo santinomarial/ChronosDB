@@ -851,8 +851,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   A bounded exhaustive mode now enumerates every virtual-network delivery/loss suffix plus opt-in
   duplicate-message, directional partition/healing, atomic persistence-failure arming, eligible
   elections, multi-voter heartbeats, current-term read barriers, application-frontier advancement,
-  state-derived membership begin/finalize, and live-state crash/restart faults after a valid setup
-  trace, and reports replay-limit truncation without claiming completion. Simulations may begin from
+  state-derived membership begin/finalize, applied-frontier snapshot compaction, pending snapshot-
+  install rejection/safe completion, and live-state crash/restart faults after a valid setup trace,
+  and reports replay-limit truncation without claiming completion. Simulations may begin from
   exact per-node recovered persistent images; a combined terminal-term and terminal-index schedule
   proves proposals and post-restart elections fail without mutation. Broader exhaustive action
   campaigns, clock changes, physical-log faults, and the full exit evidence remain deferred.

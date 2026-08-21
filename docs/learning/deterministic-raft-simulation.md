@@ -90,10 +90,13 @@ Opt-in heartbeats then include each leader with more than one active-configurati
 repeated no-op single-voter actions. Opt-in read barriers include leaders with current-term committed
 state and no pending barrier; the same message branches explore request/response delivery and loss.
 Opt-in membership changes toggle each configured node in every stable leader's committed membership,
-excluding empty or over-capacity outcomes, and finalize eligible joint leaders. Opt-in application
-advancement follows for every index between each active node's applied and committed frontiers,
-covering partial and batched publication. Opt-in node lifecycle finally appends one crash or restart
-per ascending configured node according to its replayed live state. Each suffix is bounded by
+excluding empty or over-capacity outcomes, and finalize eligible joint leaders. Opt-in snapshot
+actions next compact each eligible stable node at its applied frontier with deterministic metadata,
+or explicitly reject a pending external installation and also install it when committed local history
+does not conflict. Pending installation suppresses local compaction. Opt-in application advancement
+follows for every index between each active node's applied and committed frontiers, covering partial
+and batched publication. Opt-in node lifecycle finally appends one crash or restart per ascending
+configured node according to its replayed live state. Each suffix is bounded by
 `maximum_depth` plus the configured trace limit. A complete result proves the selected action domain
 was exhausted through that depth; a false completion flag reports frontier truncation rather than
 silently claiming coverage. The first action returning a non-success status is retained with its
@@ -112,7 +115,8 @@ through depth two, exhausts persistence arming without invalid repeat branches, 
 elections while excluding learners/leaders, explores multi-voter leader heartbeats while excluding
 single-voter no-ops, exhausts read-barrier request/response loss and completion, explores incremental
 and batched application frontiers, emits stable membership begin and committed-joint finalization,
-and retains exact membership-stale-message and terminal-term failures.
+exhausts applied-frontier compaction and pending snapshot rejection/safe installation, and retains
+exact membership-stale-message and terminal-term failures.
 Recovered-state coverage preserves a terminal-term image across crash/restart, proves the next
 election fails without mutation, and rejects both malformed local images and cross-node log-
 matching violations before the first action. Recovered membership cannot name an unconfigured node.

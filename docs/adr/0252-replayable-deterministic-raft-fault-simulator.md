@@ -68,9 +68,13 @@ single-voter no-op. Optional read branches include each leader with no pending b
 entry in its current term; ordinary delivery/loss branches cover probe and response outcomes.
 Optional membership branches toggle each configured node in a stable leader's committed voters while
 preserving a nonempty bounded configuration, or finalize a committed joint configuration. Log/index
-capacity is checked first. Optional application branches then include every target from `applied + 1`
-through `commit`, ordered by node and index, covering incremental and batched advancement. Finally,
-ascending node IDs contribute exactly crash for an active node or restart for an inactive node.
+capacity is checked first. Optional snapshot branches then compact each eligible stable node at its
+applied frontier using the seeded generator's deterministic physical identity. A pending external
+installation contributes explicit rejection and, only when it does not conflict with committed local
+history, successful installation instead of local compaction. Optional application branches then
+include every target from `applied + 1` through `commit`, ordered by node and index, covering
+incremental and batched advancement. Finally, ascending node IDs contribute exactly crash for an
+active node or restart for an inactive node.
 `maximum_replays` bounds retained frontier work and replayed prefixes; the result distinguishes a
 completed search from a truncated search and retains the exact first failing trace and status. The
 one setup-validation replay is outside that exploration count.
@@ -120,6 +124,9 @@ Read-barrier coverage exhausts request loss, response loss, and quorum-response 
 depth three, reports truncation, and excludes a leader without a current-term committed entry.
 Membership coverage emits the only valid stable-leader addition, emits committed-joint finalization,
 reports truncation, and excludes followers.
+Snapshot coverage exhausts one eligible applied-frontier compaction and both outcomes of a pending
+nonconflicting external installation, reports replay truncation, exact-replays both completion
+outcomes, and excludes an unapplied empty node.
 Recovered-image coverage restarts a node at terminal term, rejects the next election without state
 mutation, rejects image-count mismatch and invalid local state, and rejects two individually valid
 images whose same-term log entries violate log matching. Recovered membership naming an unconfigured
