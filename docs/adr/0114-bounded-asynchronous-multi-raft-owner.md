@@ -22,6 +22,9 @@ Admission counts both queued and actively executing batches/operations; full cap
 `RESOURCE_EXHAUSTED` without a side queue. A successful submission transfers the complete operation
 vector and returns an owning single-consumer completion handle that may outlive the runtime. Its
 wait operation moves the potentially large transition result out exactly once.
+The producer also applies the synchronous durable owner's operation-aware outbound reservation
+before publishing a task. An undersized batch is ordinary admission backpressure and cannot enter
+the worker only to be misclassified as a terminal durable failure.
 
 Mutex unlock/lock publishes each complete task to the sole worker. Completion-state mutex
 unlock/lock publishes the complete durable result to waiters. These ordinary synchronization edges,
@@ -69,7 +72,8 @@ The mutex publication argument is part of the concurrency contract.
 
 Focused tests submit election, proposal, and apply batches without waiting between them, request
 shutdown immediately, verify FIFO drain and completion, and reopen the durable log at the applied
-state. Boundary tests reject empty, oversized, closed-admission, and invalid completion use. Queue
+state. Boundary tests reject empty, oversized, aggregate-outbound-exhausting, closed-admission, and
+invalid completion use; outbound rejection preserves admission and accepts a smaller batch. Queue
 interleaving stress, TSan, allocation injection, worker-start injection, I/O failure fanout,
 thousands-of-groups fairness, and latency/throughput measurements remain in Phase 18.
 

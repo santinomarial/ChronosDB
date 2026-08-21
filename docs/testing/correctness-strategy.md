@@ -431,6 +431,9 @@ exhausts the real persistent-log record cap after one durable election.
 Durable batch limit coverage submits two legal broadcast transitions whose aggregate reservation
 exceeds the configured batch bound, then requires nonterminal rejection before term, vote, role, or
 the durable physical frontier changes and proves a smaller subsequent batch remains usable.
+The asynchronous owner applies that same reservation before FIFO publication: the oversized mix is
+counted as rejected rather than admitted or terminal, admission stays open, and one smaller election
+still completes durably.
 
 Canonical empty-state recovery rejects a vote in term zero and requires an index-zero snapshot to
 have zero term, Manifest generation, part-set checksum, and configuration index with no voters.

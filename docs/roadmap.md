@@ -893,8 +893,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   snapshot authority before explicitly reclaiming every older or crash-orphaned future application
   snapshot and directory-syncing cleanup. A bounded FIFO asynchronous owner now exclusively runs
   the durable runtime,
-  applies explicit batch/operation backpressure, publishes owning completions, drains on shutdown,
-  and fails queued work closed after terminal storage errors; group-aware fairness remains deferred. A leader
+  applies explicit batch/operation and pre-queue aggregate-outbound backpressure, publishes owning
+  completions, drains on shutdown, and fails queued work closed after terminal storage errors;
+  group-aware fairness remains deferred. A leader
   under stable or joint membership can now produce a checked quorum-sync receipt after
   majority-derived durable commit, and tablet application composes it with visibility. Protocol
   2.0 now negotiates the client capability, admits durability value 3 only under its feature bit,

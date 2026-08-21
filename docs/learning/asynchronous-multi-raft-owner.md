@@ -5,6 +5,9 @@
 `AsyncDurableMultiRaftRuntime` moves durable Raft batches off producer threads while keeping the
 existing physical log single-owned. `try_submit` either transfers a complete batch and returns an
 `AsyncDurableRaftCompletion`, or immediately reports invalid input, overload, or closed admission.
+The same operation-aware outbound reservation used by the synchronous durable owner runs before
+queue publication, so an undersized batch is rejected as ordinary backpressure without stopping the
+worker.
 The completion can be polled with `is_ready` or consumed with `wait`. Because transitions may own
 large message batches, `wait` moves the result out exactly once instead of copying it.
 Every admitted batch also receives a nonzero runtime-lifetime submission sequence under the FIFO

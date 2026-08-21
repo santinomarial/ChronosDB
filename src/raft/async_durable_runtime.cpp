@@ -1,5 +1,7 @@
 #include "chronos/raft/async_durable_runtime.hpp"
 
+#include "durable_batch_admission.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -198,6 +200,11 @@ public:
         requests.size() > limits_.maximum_pending_operations) {
       return reject(common::Status{common::StatusCode::kResourceExhausted,
                                    "asynchronous durable Multi-Raft batch exceeds limits"});
+    }
+    if (const common::Status admitted =
+            detail::admit_durable_batch_outbound(requests, limits_.durable);
+        !admitted.is_ok()) {
+      return reject(admitted);
     }
 
     try {

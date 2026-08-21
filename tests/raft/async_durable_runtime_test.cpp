@@ -308,6 +308,33 @@ TEST(AsyncDurableMultiRaftRuntimeTest, RejectsInvalidAndOverCapacityBatchesWitho
   EXPECT_EQ(invalid_reclamation.wait().error().code(), common::StatusCode::kInvalidArgument);
 }
 
+TEST(AsyncDurableMultiRaftRuntimeTest, RejectsOutboundReservationBeforeSideQueue) {
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{0x26U});
+  AsyncDurableMultiRaftLimits limits{};
+  limits.durable.maximum_batch_outbound = 3U;
+  limits.durable.runtime.raft.maximum_voters = 3U;
+  auto runtime = AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group, {1U, 2U, 3U}}}, limits);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+
+  auto rejected =
+      runtime->try_submit({{group, StartElectionOperation{}}, {group, StartElectionOperation{}}});
+
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kResourceExhausted);
+  EXPECT_TRUE(runtime->is_accepting());
+  EXPECT_FALSE(runtime->metrics().terminal_failure);
+  EXPECT_EQ(runtime->metrics().rejected_batches, 1U);
+  EXPECT_EQ(runtime->metrics().admitted_batches, 0U);
+
+  auto admitted = runtime->try_submit({{group, StartElectionOperation{}}});
+  ASSERT_TRUE(admitted.has_value()) << admitted.error().to_string();
+  auto result = admitted->wait();
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  EXPECT_TRUE(runtime->shutdown().is_ok());
+}
+
 TEST(AsyncDurableMultiRaftRuntimeTest, CheckpointsAndReclaimsSharedLogOnTheOwningWorker) {
   TemporaryDirectory directory;
   const GroupId group = group_id(std::byte{0x25U});

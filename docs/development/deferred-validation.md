@@ -304,7 +304,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
 - Extend the implemented one-worker bounded durable Multi-Raft FIFO and ordered owning observations
   with allocation/worker-start/I/O failure injection, reactor continuations, observation
   deadlines/coalescing, timer batching, thread placement, and measured group-aware
-  fairness/no-starvation under hot/cold skew. The worker-affine application extension seam now
+  fairness/no-starvation under hot/cold skew. Producer admission now applies the durable batch's
+  operation-aware outbound reservation before queue publication. The worker-affine application
+  extension seam now
   initializes, prepares/completes each durable batch before publication, and shuts down on that
   owner. Its concrete bounded tablet application owns recovery, touched-group application,
   applied-index persistence, pinned snapshots, latest receipts, and weakly owned exact

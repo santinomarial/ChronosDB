@@ -146,7 +146,8 @@ public:
                 std::vector<RaftGroupConfiguration> groups, AsyncDurableMultiRaftLimits limits = {},
                 std::shared_ptr<AsyncDurableRaftWorkerExtension> extension = nullptr);
 
-  // Admission is nonblocking. The operation vector is moved into worker ownership only on success.
+  // Admission is nonblocking. Invalid size or aggregate outbound reservation is rejected before
+  // the operation vector moves into worker ownership.
   [[nodiscard]] common::Result<AsyncDurableRaftCompletion>
   try_submit(std::vector<DurableRaftRequest> requests);
 
