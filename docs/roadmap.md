@@ -868,7 +868,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   groups, node-global persistence sequences, outbound batches, and application indexes. A versioned
   checksummed full-state physical record codec, single-owner segmented append/sync/recovery log, and
   committed-order metadata state machine are implemented. Focused tests cover different group
-  leaders, isolation, node loss, reopen, metadata order, rotation, tail repair, and corruption.
+  leaders, isolation, node loss, reopen, metadata order, rotation, tail repair, corruption, and
+  terminal physical-sequence rejection before group mutation.
   A single-thread-affine durable runtime now batches caller-provided operations behind one local sync
   and withholds outbound messages until it completes. Mutable heads, tablet publications, row
   versions, and retry outcomes now distinguish WAL histories from Raft group/index histories;

@@ -28,6 +28,8 @@ InstallSnapshot responses cannot report it as the follower's installed snapshot 
 sequences. It returns per-group persistence batches and group-tagged outbound messages. The durable
 record boundary is [`multiplexed-raft-log-v1.md`](../formats/multiplexed-raft-log-v1.md). A dedicated
 metadata state machine consumes only consecutive committed metadata-group indexes.
+Once the recovered or emitted physical sequence reaches `UINT64_MAX`, the runtime fails closed
+before invoking another group transition so no unpersistable in-memory state can be installed.
 
 ## Consequences and alternatives
 

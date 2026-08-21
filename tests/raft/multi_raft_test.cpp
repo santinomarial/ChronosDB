@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <deque>
 #include <gtest/gtest.h>
+#include <limits>
 #include <map>
 #include <set>
 #include <utility>
@@ -144,6 +145,27 @@ TEST(MultiRaftTest, OutboundOverflowFailsRuntimeClosed) {
   ASSERT_FALSE(repeated.has_value());
   EXPECT_EQ(repeated.error().code(), common::StatusCode::kUnavailable);
   EXPECT_EQ(runtime->group_count(), 1U);
+}
+
+TEST(MultiRaftTest, RejectsExhaustedPhysicalSequenceBeforeMutatingGroup) {
+  const GroupId group = group_id(std::byte{6U});
+  auto runtime = MultiRaftRuntime::create(1U);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  const PersistentState before{};
+  ASSERT_TRUE(
+      runtime->add_group(group, {1U}, before, std::numeric_limits<std::uint64_t>::max()).is_ok());
+
+  auto exhausted = runtime->start_election(group);
+
+  ASSERT_FALSE(exhausted.has_value());
+  EXPECT_EQ(exhausted.error().code(), common::StatusCode::kOutOfRange);
+  EXPECT_TRUE(runtime->failed());
+  const RaftNode* node = runtime->find_group(group);
+  ASSERT_NE(node, nullptr);
+  EXPECT_EQ(node->persistent_state(), before);
+  EXPECT_EQ(node->current_term(), 0U);
+  EXPECT_EQ(node->role(), Role::kFollower);
+  EXPECT_EQ(runtime->start_election(group).error().code(), common::StatusCode::kUnavailable);
 }
 
 TEST(MultiRaftTest, RoutesReadBarrierProbeAndGroupScopedCompletion) {

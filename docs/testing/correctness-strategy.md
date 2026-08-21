@@ -419,6 +419,10 @@ Higher-term AppendEntries overwrite coverage targets an already committed entry 
 different term and same-term divergent bytes. Both cases require `CORRUPTION` while preserving the
 complete persistent state, current term, vote, and follower role.
 
+Multi-Raft physical-sequence exhaustion coverage restores a group at the terminal `UINT64_MAX`
+identity, attempts an election, and requires `OUT_OF_RANGE` plus fail-closed admission before the
+group's term, vote, role, or persistent state changes.
+
 Canonical empty-state recovery rejects a vote in term zero and requires an index-zero snapshot to
 have zero term, Manifest generation, part-set checksum, and configuration index with no voters.
 Focused cases exercise term-zero vote plus nonzero manifest and checksum identity.

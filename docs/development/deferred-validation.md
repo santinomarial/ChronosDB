@@ -234,11 +234,12 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   deletion shrinking (eight seeds and 4,000 generated actions in the focused test).
 - Extend the implemented hostile higher-term/payload-identity, pre-observation term/position/
   response-state, and exact compacted-prefix predecessor regression checks into exhaustive
-  persistence-before-response, sequence-exhaustion, response-state, and broader snapshot-boundary
-  properties. Higher-term committed-log overwrite coverage now rejects both term replacement and
-  matching-term divergent bytes before term/vote/role mutation. The exact snapshot-index-one alias
-  now returns a negative conflict response without reading compacted storage, including a
-  persistent higher-term/vote
+  persistence-before-response, sequence-exhaustion schedules, response-state, and broader snapshot-
+  boundary properties. Focused physical-sequence exhaustion coverage now proves a recovered
+  terminal identity fails closed before group term/vote/role mutation. Higher-term committed-log
+  overwrite coverage rejects both term replacement and matching-term divergent bytes before the
+  same state changes. The exact snapshot-index-one alias now returns a negative conflict response
+  without reading compacted storage, including a persistent higher-term/vote
   transition before response publication. Pending remote installation now also excludes local
   compaction until explicit completion/rejection; focused coverage proves the rejected compaction
   changes no state, the original snapshot still installs with its exact retained suffix, and an

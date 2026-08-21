@@ -27,6 +27,25 @@ public:
 
   Impl(const NodeId id, const MultiRaftLimits configured) : local_node_id(id), limits(configured) {}
 
+  [[nodiscard]] common::Result<GroupState*> transition_group(const GroupId& group_id) {
+    if (failed_state) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
+    }
+    const auto group = groups.find(group_id);
+    if (group == groups.end()) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
+    }
+    if (physical_sequence == std::numeric_limits<std::uint64_t>::max()) {
+      failed_state = true;
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kOutOfRange,
+                         "Multi-Raft physical persistence sequence is exhausted"});
+    }
+    return &group->second;
+  }
+
   [[nodiscard]] common::Result<MultiRaftTransition> wrap(const GroupId& group_id,
                                                          common::Result<Transition> transition) {
     if (!transition.has_value()) {
@@ -131,171 +150,99 @@ common::Status MultiRaftRuntime::remove_group(const GroupId& group_id) {
 }
 
 common::Result<MultiRaftTransition> MultiRaftRuntime::start_election(const GroupId& group_id) {
-  if (impl_->failed_state) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
-  }
-  const auto group = impl_->groups.find(group_id);
-  if (group == impl_->groups.end()) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
-  }
-  return impl_->wrap(group_id, group->second.node.start_election());
+  auto group = impl_->transition_group(group_id);
+  if (!group.has_value())
+    return common::make_unexpected(group.error());
+  return impl_->wrap(group_id, (*group)->node.start_election());
 }
 
 common::Result<MultiRaftTransition>
 MultiRaftRuntime::receive(const GroupId& group_id, const NodeId source, Message message) {
-  if (impl_->failed_state) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
-  }
-  const auto group = impl_->groups.find(group_id);
-  if (group == impl_->groups.end()) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
-  }
-  return impl_->wrap(group_id, group->second.node.receive(source, std::move(message)));
+  auto group = impl_->transition_group(group_id);
+  if (!group.has_value())
+    return common::make_unexpected(group.error());
+  return impl_->wrap(group_id, (*group)->node.receive(source, std::move(message)));
 }
 
 common::Result<MultiRaftTransition> MultiRaftRuntime::propose(const GroupId& group_id,
                                                               const std::uint8_t type,
                                                               std::vector<std::byte> payload) {
-  if (impl_->failed_state) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
-  }
-  const auto group = impl_->groups.find(group_id);
-  if (group == impl_->groups.end()) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
-  }
-  return impl_->wrap(group_id, group->second.node.propose(type, std::move(payload)));
+  auto group = impl_->transition_group(group_id);
+  if (!group.has_value())
+    return common::make_unexpected(group.error());
+  return impl_->wrap(group_id, (*group)->node.propose(type, std::move(payload)));
 }
 
 common::Result<MultiRaftTransition>
 MultiRaftRuntime::propose_exact_retained(const GroupId& group_id, const std::uint8_t type,
                                          std::vector<std::byte> payload) {
-  if (impl_->failed_state) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
-  }
-  const auto group = impl_->groups.find(group_id);
-  if (group == impl_->groups.end()) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
-  }
-  return impl_->wrap(group_id, group->second.node.propose_exact_retained(type, std::move(payload)));
+  auto group = impl_->transition_group(group_id);
+  if (!group.has_value())
+    return common::make_unexpected(group.error());
+  return impl_->wrap(group_id, (*group)->node.propose_exact_retained(type, std::move(payload)));
 }
 
 common::Result<MultiRaftTransition> MultiRaftRuntime::commit_current_term(const GroupId& group_id) {
-  if (impl_->failed_state) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
-  }
-  const auto group = impl_->groups.find(group_id);
-  if (group == impl_->groups.end()) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
-  }
-  return impl_->wrap(group_id, group->second.node.commit_current_term());
+  auto group = impl_->transition_group(group_id);
+  if (!group.has_value())
+    return common::make_unexpected(group.error());
+  return impl_->wrap(group_id, (*group)->node.commit_current_term());
 }
 
 common::Result<MultiRaftTransition>
 MultiRaftRuntime::begin_membership_change(const GroupId& group_id, std::vector<NodeId> new_voters) {
-  if (impl_->failed_state) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
-  }
-  const auto group = impl_->groups.find(group_id);
-  if (group == impl_->groups.end()) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
-  }
-  return impl_->wrap(group_id, group->second.node.begin_membership_change(std::move(new_voters)));
+  auto group = impl_->transition_group(group_id);
+  if (!group.has_value())
+    return common::make_unexpected(group.error());
+  return impl_->wrap(group_id, (*group)->node.begin_membership_change(std::move(new_voters)));
 }
 
 common::Result<MultiRaftTransition>
 MultiRaftRuntime::finalize_membership_change(const GroupId& group_id) {
-  if (impl_->failed_state) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
-  }
-  const auto group = impl_->groups.find(group_id);
-  if (group == impl_->groups.end()) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
-  }
-  return impl_->wrap(group_id, group->second.node.finalize_membership_change());
+  auto group = impl_->transition_group(group_id);
+  if (!group.has_value())
+    return common::make_unexpected(group.error());
+  return impl_->wrap(group_id, (*group)->node.finalize_membership_change());
 }
 
 common::Result<MultiRaftTransition>
 MultiRaftRuntime::complete_snapshot_install(const GroupId& group_id, const NodeId source,
                                             SnapshotMetadata snapshot, const bool installed) {
-  if (impl_->failed_state) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
-  }
-  const auto group = impl_->groups.find(group_id);
-  if (group == impl_->groups.end()) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
-  }
-  return impl_->wrap(group_id, group->second.node.complete_snapshot_install(
-                                   source, std::move(snapshot), installed));
+  auto group = impl_->transition_group(group_id);
+  if (!group.has_value())
+    return common::make_unexpected(group.error());
+  return impl_->wrap(
+      group_id, (*group)->node.complete_snapshot_install(source, std::move(snapshot), installed));
 }
 
 common::Result<MultiRaftTransition> MultiRaftRuntime::compact_snapshot(const GroupId& group_id,
                                                                        SnapshotMetadata snapshot) {
-  if (impl_->failed_state) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
-  }
-  const auto group = impl_->groups.find(group_id);
-  if (group == impl_->groups.end()) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
-  }
-  return impl_->wrap(group_id, group->second.node.compact_snapshot(std::move(snapshot)));
+  auto group = impl_->transition_group(group_id);
+  if (!group.has_value())
+    return common::make_unexpected(group.error());
+  return impl_->wrap(group_id, (*group)->node.compact_snapshot(std::move(snapshot)));
 }
 
 common::Result<MultiRaftTransition> MultiRaftRuntime::heartbeat(const GroupId& group_id) {
-  if (impl_->failed_state) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
-  }
-  const auto group = impl_->groups.find(group_id);
-  if (group == impl_->groups.end()) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
-  }
-  return impl_->wrap(group_id, group->second.node.heartbeat());
+  auto group = impl_->transition_group(group_id);
+  if (!group.has_value())
+    return common::make_unexpected(group.error());
+  return impl_->wrap(group_id, (*group)->node.heartbeat());
 }
 
 common::Result<MultiRaftTransition> MultiRaftRuntime::begin_read_barrier(const GroupId& group_id) {
-  if (impl_->failed_state) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
-  }
-  const auto group = impl_->groups.find(group_id);
-  if (group == impl_->groups.end()) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
-  }
-  return impl_->wrap(group_id, group->second.node.begin_read_barrier());
+  auto group = impl_->transition_group(group_id);
+  if (!group.has_value())
+    return common::make_unexpected(group.error());
+  return impl_->wrap(group_id, (*group)->node.begin_read_barrier());
 }
 
 common::Result<MultiRaftTransition> MultiRaftRuntime::mark_applied(const GroupId& group_id,
                                                                    const LogIndex index) {
-  if (impl_->failed_state) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
-  }
-  const auto group = impl_->groups.find(group_id);
-  if (group == impl_->groups.end()) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
-  }
-  return impl_->wrap(group_id, group->second.node.mark_applied(index));
+  auto group = impl_->transition_group(group_id);
+  if (!group.has_value())
+    return common::make_unexpected(group.error());
+  return impl_->wrap(group_id, (*group)->node.mark_applied(index));
 }
 
 common::Result<std::vector<GroupPersistentState>>

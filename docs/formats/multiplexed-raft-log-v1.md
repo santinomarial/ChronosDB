@@ -80,6 +80,9 @@ segment numbers and physical sequences are contiguous from one. After node-wide 
 reclamation, they are contiguous from the base and first sequence named by a valid
 [Raft Recovery Anchor v1](raft-recovery-anchor-v1.md). A segment is at most 1 GiB; the runtime target
 may rotate sooner. The maximum physical record remains 16 MiB.
+Physical sequence `UINT64_MAX` may identify the terminal record, but no later runtime transition or
+checkpoint is admitted because another contiguous record identity cannot be assigned. Transition
+rejection occurs before the group core can mutate in-memory state.
 
 ## Installation and durability
 

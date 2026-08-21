@@ -39,6 +39,11 @@ also composes a complete all-group full-state checkpoint with the immutable reco
 ADR 0269 before reclaiming older whole segments. It does not yet expose `QUORUM_SYNC` through the
 native client durability negotiation.
 
+Physical sequence `UINT64_MAX` is a valid terminal record identity but has no successor. If a
+runtime recovers or emits that identity, later transition admission fails closed before calling the
+group core. This prevents an operation from changing volatile term, vote, log, commit, apply, or
+snapshot state when no physical persistence identity remains for the resulting transition.
+
 ## Consequences and alternatives
 
 Full-state records increase write amplification but make the latest state of every group explicit
@@ -52,6 +57,7 @@ because it could hide loss of a previously durable record.
 Invariants 1, 4, 5, 8, 10, 14, and 18 apply. Focused tests cover rotation, shared-group recovery,
 latest-state reconstruction, sequence continuation, exclusive ownership, explicit incomplete-tail
 repair, fail-closed complete-record corruption, batched persist-before-send release, durable
-applied-index recovery, and anchored all-group prefix reclamation. Injected syscall failures,
+applied-index recovery, terminal-sequence pre-admission, and anchored all-group prefix reclamation.
+Injected syscall failures,
 process crash points, asynchronous reclamation scheduling, sustained corruption campaigns, and
 Linux power-loss qualification remain required.

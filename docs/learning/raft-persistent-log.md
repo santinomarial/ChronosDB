@@ -34,6 +34,10 @@ segment. `DurableMultiRaftRuntime` appends several groups from a bounded caller-
 one synchronization, and withholds every associated transition and outbound message until that
 boundary completes. The same rule now covers persisted `applied_index` advancement.
 
+The maximum physical sequence is a terminal record identity. Once recovered or emitted, the
+Multi-Raft owner rejects and fails closed before invoking another deterministic group transition;
+otherwise the group could change in memory before discovering that no persistence identity remains.
+
 Snapshot installation is deliberately two-stage. A received request exposes pending metadata but
 sends no success response. After the application owner durably installs the named manifest/part
 state, a completion operation persists the compacted Raft state and only then releases success.
