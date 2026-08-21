@@ -76,6 +76,11 @@ struct RaftSimulationFinalizeMembershipChange {
   friend bool operator==(const RaftSimulationFinalizeMembershipChange&,
                          const RaftSimulationFinalizeMembershipChange&) = default;
 };
+struct RaftSimulationBeginReadBarrier {
+  NodeId node_id{};
+  friend bool operator==(const RaftSimulationBeginReadBarrier&,
+                         const RaftSimulationBeginReadBarrier&) = default;
+};
 struct RaftSimulationCompleteSnapshotInstall {
   NodeId node_id{};
   bool installed{};
@@ -95,7 +100,8 @@ using RaftSimulationAction =
                  RaftSimulationSetLink, RaftSimulationCrash, RaftSimulationRestart,
                  RaftSimulationFailNextPersistence, RaftSimulationMarkApplied,
                  RaftSimulationBeginMembershipChange, RaftSimulationFinalizeMembershipChange,
-                 RaftSimulationCompleteSnapshotInstall, RaftSimulationCompactSnapshot>;
+                 RaftSimulationBeginReadBarrier, RaftSimulationCompleteSnapshotInstall,
+                 RaftSimulationCompactSnapshot>;
 
 struct RaftSimulationLimits {
   std::size_t maximum_pending_messages{65'536U};
@@ -126,6 +132,7 @@ struct RaftSimulationStats {
   std::uint64_t crashes{};
   std::uint64_t restarts{};
   std::uint64_t persistence_failures{};
+  std::uint64_t completed_read_barriers{};
   std::uint64_t safety_checks{};
   friend bool operator==(const RaftSimulationStats&, const RaftSimulationStats&) = default;
 };

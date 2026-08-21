@@ -844,10 +844,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   now records and replays explicit or seeded partitions, delay/reordering, duplicate/loss,
   crash/restart, atomic persistence faults, application, membership, and snapshot actions; it checks
   election, log, commit, and leader-completeness safety after every step and deletion-shrinks failing
-  traces. Seeded schedules now derive valid joint-membership begin/finalize and local snapshot-
-  compaction actions from current state and replay that churn exactly. Long/exhaustive campaigns,
-  clock changes, physical-log faults, and the full exit evidence remain deferred. Linearizable reads
-  now use one bounded explicit current-term leadership
+  traces. Seeded schedules now derive valid joint-membership begin/finalize, local snapshot-
+  compaction, and current-term read-barrier actions from current state and replay that churn exactly.
+  Long/exhaustive campaigns, clock changes, physical-log faults, and the full exit evidence remain
+  deferred. Linearizable reads now use one bounded explicit current-term leadership
   probe, require a current-term committed entry, freeze stable or joint voter quorums at issuance,
   reject nonvoter probe sources before higher-term observation while retaining learner replication,
   abandon pending work on leadership change, and return an exact committed read index that must be

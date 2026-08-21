@@ -88,3 +88,9 @@ the same preservation, including the pending barrier, before retrying the exact 
 persistence transition. Production wire
 versioning, tablet snapshot acquisition, exhaustive schedules, partitions, duplication, restart,
 and long randomized simulation remain Phase 14 integration and hardening work.
+
+**Retrospective note (2026-08-21):** the deterministic simulator now exposes explicit read-barrier
+actions and automatically derives eligible leaders for seeded schedules. Candidates have a
+current-term committed entry, no pending barrier, and mutually admitted voter configurations.
+Generated traces cover partition, loss, duplication, completion, and exact replay; long and
+exhaustive campaigns remain deferred.

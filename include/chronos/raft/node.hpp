@@ -83,6 +83,7 @@ public:
   [[nodiscard]] bool joint_membership_active() const noexcept;
   [[nodiscard]] bool joint_membership_can_finalize() const noexcept;
   [[nodiscard]] bool final_membership_pending() const noexcept;
+  [[nodiscard]] bool read_barrier_pending() const noexcept;
   [[nodiscard]] const PersistentState& persistent_state() const noexcept;
 
 private:

@@ -227,13 +227,13 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   with every generated message kind, checksum-repaired mutation, truncation, fragmented reading,
   exact successful re-encoding, and cursor validation; sustained campaigns remain open.
 - Long seed matrices, exhaustive bounded schedules, chunk/dependency trace shrinking, timer/clock
-  changes, physical segmented-log syscall faults, and automated randomized read-barrier generation.
-  The bounded simulator now derives valid joint-membership begin/finalize, local snapshot-
-  compaction, and pending snapshot-completion candidates from current state. Focused explicit and
-  seeded coverage exercises partition, delay/reordering, duplicate/loss, crash/restart, atomic
-  persistence failure, application, automatically generated membership/compaction churn, exact
-  replay including generated completion of a prepared external snapshot install, safety-model
-  comparison, and deletion shrinking.
+  changes, and physical segmented-log syscall faults. The bounded simulator now derives valid
+  joint-membership begin/finalize, local snapshot-compaction, pending snapshot-completion, and
+  current-term read-barrier candidates from current state. Focused explicit and seeded coverage
+  exercises partition, delay/reordering, duplicate/loss, crash/restart, atomic persistence failure,
+  application, automatically generated membership/compaction/read-barrier churn, exact replay
+  including generated completion of a prepared external snapshot install, safety-model comparison,
+  and deletion shrinking.
 - Extend the implemented hostile higher-term/payload-identity, pre-observation term/position/
   response-state, and exact compacted-prefix predecessor regression checks into exhaustive
   persistence-before-response, sequence-exhaustion schedules, response-state, and broader snapshot-

@@ -22,10 +22,13 @@ The action trace owns proposal and membership payloads. Message and action ident
 within a replay. A repository-defined fixed PRNG makes seeded choices independent of the standard
 library. Seeded generation first derives bounded valid candidates from current state. That permits
 automatic joint-membership begin/finalize and stable local snapshot compaction without emitting an
-invalid action that would terminate the schedule. If a chosen action class is unavailable, progress
-prefers message delivery, a leader heartbeat, an election, or restart before another link mutation.
-One caller thread exclusively owns nodes, links, queues, durable images, the trace, and safety-model
-state.
+invalid action that would terminate the schedule. Eligible leaders may also begin current-term read
+barriers; the simulator counts completed barriers while their exact request/response traffic remains
+subject to delay, duplication, loss, partitions, and replay. Membership transitions wait for the
+virtual network to drain, and election/read-barrier sources must be admitted by every target's
+current configuration. If a chosen action class is unavailable, progress prefers message delivery,
+a leader heartbeat, an election, or restart before another link mutation. One caller thread
+exclusively owns nodes, links, queues, durable images, the trace, and safety-model state.
 
 ## Persistence and failure behavior
 
@@ -71,9 +74,9 @@ corpus evidence shows a need.
 
 Focused coverage includes partition, duplicate, commit propagation, crash/restart, atomic
 persistence failure, exact replay, seeded schedules that automatically produce joint-membership and
-local-compaction churn, generated completion of a pending external snapshot install, explicit joint
-membership and compaction, trace shrinking, and bound validation. The production core additionally
-rejects AppendEntries predecessors below an
+local-compaction churn plus completed read barriers, generated completion of a pending external
+snapshot install, explicit joint membership and compaction, trace shrinking, and bound validation.
+The production core additionally rejects AppendEntries predecessors below an
 installed snapshot without interpreting the compacted entry as retained log storage, and its
 higher-term regression requires persistence before the negative response. The same core serializes
 pending external installation against local compaction so one simulator node cannot create a second

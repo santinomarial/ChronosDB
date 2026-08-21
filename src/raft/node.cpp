@@ -1741,6 +1741,9 @@ bool RaftNode::final_membership_pending() const noexcept {
   const std::optional<JointConfiguration>& joint = impl_->joint;
   return joint.has_value() && joint->final_pending;
 }
+bool RaftNode::read_barrier_pending() const noexcept {
+  return impl_->pending_read_barrier.has_value();
+}
 const PersistentState& RaftNode::persistent_state() const noexcept {
   return impl_->state;
 }

@@ -81,6 +81,11 @@ with the accepted response. Higher-term response preparation has the same failur
 also preserves the pending barrier until the complete demotion transition can be returned.
 Each barrier sends `O(voters)` messages and retains `O(voters)` bounded state.
 
+The deterministic simulator exposes barrier issuance as a replayable action. Seeded generation
+selects only leaders with a current-term committed entry, no pending barrier, and voter targets that
+all admit the leader as a source. Requests and responses then traverse the ordinary virtual network,
+so delay, loss, duplication, partition, crash, and completion remain part of the retained trace.
+
 ## Tradeoffs and likely interview questions
 
 An explicit probe avoids coupling reads to log catch-up and avoids clock assumptions, at the cost of

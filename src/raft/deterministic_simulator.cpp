@@ -6,6 +6,7 @@
 #include <new>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <utility>
 
@@ -194,6 +195,8 @@ public:
     }
     if (transition.snapshot_install.has_value())
       node.pending_snapshot = std::move(transition.snapshot_install);
+    if (transition.read_barrier_ready.has_value())
+      ++stats_.completed_read_barriers;
     return check_safety();
   }
 
@@ -314,10 +317,16 @@ public:
               ++stats_.dropped;
               return check_safety();
             }
+            const std::size_t message_kind = message.outbound.message.index();
             auto transition =
                 destination->active->receive(message.source, std::move(message.outbound.message));
-            if (!transition.has_value())
-              return transition.error();
+            if (!transition.has_value()) {
+              return common::Status{transition.error().code(),
+                                    transition.error().message() + " (simulated message kind " +
+                                        std::to_string(message_kind) + ", source " +
+                                        std::to_string(message.source) + ", destination " +
+                                        std::to_string(message.outbound.destination) + ")"};
+            }
             ++stats_.delivered;
             return apply_transition(*destination, std::move(*transition));
           } else if constexpr (std::is_same_v<Action, RaftSimulationDrop>) {
@@ -399,6 +408,8 @@ public:
                   return node->active->begin_membership_change(value.voters);
                 else if constexpr (std::is_same_v<Action, RaftSimulationFinalizeMembershipChange>)
                   return node->active->finalize_membership_change();
+                else if constexpr (std::is_same_v<Action, RaftSimulationBeginReadBarrier>)
+                  return node->active->begin_read_barrier();
                 else if constexpr (std::is_same_v<Action, RaftSimulationCompleteSnapshotInstall>) {
                   if (!node->pending_snapshot.has_value())
                     return common::make_unexpected(
@@ -547,6 +558,7 @@ common::Status DeterministicRaftSimulator::run_seeded(const RaftSeededSimulation
       std::vector<NodeId> campaigners;
       std::vector<NodeId> membership_starters;
       std::vector<NodeId> membership_finalizers;
+      std::vector<NodeId> read_barrier_starters;
       struct SnapshotCandidate {
         NodeId node_id{};
         SnapshotMetadata snapshot;
@@ -566,6 +578,7 @@ common::Status DeterministicRaftSimulator::run_seeded(const RaftSeededSimulation
       campaigners.reserve(impl.nodes_.size());
       membership_starters.reserve(impl.nodes_.size());
       membership_finalizers.reserve(impl.nodes_.size());
+      read_barrier_starters.reserve(impl.nodes_.size());
       snapshot_candidates.reserve(impl.nodes_.size());
       snapshot_completions.reserve(impl.nodes_.size());
       for (const Impl::NodeSlot& node : impl.nodes_) {
@@ -581,9 +594,36 @@ common::Status DeterministicRaftSimulator::run_seeded(const RaftSeededSimulation
               membership_starters.push_back(node.id);
             if (active_node.joint_membership_can_finalize() && can_append_membership)
               membership_finalizers.push_back(node.id);
+            const std::optional<Term> committed_term =
+                state_term_at(node.durable, active_node.commit_index());
+            bool barrier_sources_admitted = true;
+            for (const NodeId voter : active_node.voters()) {
+              const Impl::NodeSlot* peer = impl.find_node(voter);
+              if (peer == nullptr || !peer->active.has_value() ||
+                  !std::binary_search(peer->active->voters().begin(), peer->active->voters().end(),
+                                      node.id)) {
+                barrier_sources_admitted = false;
+                break;
+              }
+            }
+            if (!active_node.read_barrier_pending() && barrier_sources_admitted &&
+                committed_term.has_value() && *committed_term == active_node.current_term()) {
+              read_barrier_starters.push_back(node.id);
+            }
           } else if (std::binary_search(active_node.voters().begin(), active_node.voters().end(),
                                         node.id)) {
-            campaigners.push_back(node.id);
+            bool campaign_source_admitted = true;
+            for (const NodeId voter : active_node.voters()) {
+              const Impl::NodeSlot* peer = impl.find_node(voter);
+              if (peer == nullptr || !peer->active.has_value() ||
+                  !std::binary_search(peer->active->voters().begin(), peer->active->voters().end(),
+                                      node.id)) {
+                campaign_source_admitted = false;
+                break;
+              }
+            }
+            if (campaign_source_admitted)
+              campaigners.push_back(node.id);
           }
           if (active_node.applied_index() < active_node.commit_index()) {
             applicable.push_back(node.id);
@@ -640,9 +680,10 @@ common::Status DeterministicRaftSimulator::run_seeded(const RaftSeededSimulation
       }
       std::vector<std::uint64_t> messages;
       messages.reserve(impl.pending_count_);
-      for (const std::optional<Impl::NetworkSlot>& message : impl.network_)
+      for (const std::optional<Impl::NetworkSlot>& message : impl.network_) {
         if (message.has_value())
           messages.push_back(message->id);
+      }
       const std::uint64_t choice = random.next() % 20U;
       RaftSimulationAction next = [&]() -> RaftSimulationAction {
         if (!messages.empty())
@@ -690,7 +731,7 @@ common::Status DeterministicRaftSimulator::run_seeded(const RaftSeededSimulation
         const NodeId node = active[random.next() % active.size()];
         if (!impl.find_node(node)->fail_next_persistence)
           next = RaftSimulationFailNextPersistence{node};
-      } else if (choice == 13U && !membership_starters.empty()) {
+      } else if (choice == 13U && !membership_starters.empty() && messages.empty()) {
         const NodeId leader = membership_starters[random.next() % membership_starters.size()];
         Impl::NodeSlot* leader_slot = impl.find_node(leader);
         if (leader_slot == nullptr || !leader_slot->active.has_value())
@@ -709,7 +750,7 @@ common::Status DeterministicRaftSimulator::run_seeded(const RaftSeededSimulation
         }
         if (!std::ranges::equal(voters, leader_node.committed_voters()))
           next = RaftSimulationBeginMembershipChange{leader, std::move(voters)};
-      } else if (choice == 14U && !membership_finalizers.empty()) {
+      } else if (choice == 14U && !membership_finalizers.empty() && messages.empty()) {
         next = RaftSimulationFinalizeMembershipChange{
             membership_finalizers[random.next() % membership_finalizers.size()]};
       } else if (choice == 15U && !snapshot_candidates.empty()) {
@@ -727,7 +768,10 @@ common::Status DeterministicRaftSimulator::run_seeded(const RaftSeededSimulation
             snapshot_completions[random.next() % snapshot_completions.size()];
         next = RaftSimulationCompleteSnapshotInstall{
             candidate.node_id, candidate.can_install && ((random.next() & 1U) != 0U)};
-      } else if (choice >= 17U && !campaigners.empty()) {
+      } else if (choice == 17U && !read_barrier_starters.empty()) {
+        next = RaftSimulationBeginReadBarrier{
+            read_barrier_starters[random.next() % read_barrier_starters.size()]};
+      } else if (choice >= 18U && !campaigners.empty()) {
         next = RaftSimulationStartElection{campaigners[random.next() % campaigners.size()]};
       }
       common::Status result = step(std::move(next));

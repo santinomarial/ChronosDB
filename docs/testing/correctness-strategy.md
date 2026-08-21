@@ -391,9 +391,10 @@ SPSC tests cover empty/full transitions, counter wraparound, publication/reclama
 Before production integration, virtual-time simulation explores elections, replication, membership, snapshot installation, crashes, disk errors, partitions, duplication, delay, and reordering. Traces are seed-replayable and shrinkable. Safety checkers cover election safety, log matching, leader completeness, committed apply order, read-mode histories, and absence of uncommitted visibility.
 
 The current bounded simulator automatically derives valid joint-membership begin/finalize and local
-snapshot-compaction candidates from the evolving state, while retaining exact generated-action
-replay. Completion actions are also generated when an external snapshot installation is already
-pending; broader seed matrices and exhaustive bounded schedule enumeration remain deferred.
+snapshot-compaction candidates from the evolving state. It also starts eligible current-term read
+barriers, records observed completions, and retains exact generated-action replay. Completion
+actions are generated when an external snapshot installation is already pending; broader seed
+matrices and exhaustive bounded schedule enumeration remain deferred.
 
 Applied-index allocation coverage starts with two committed, unapplied entries and fails every owned
 copy of the first post-apply persistent state. Each failure must return `RESOURCE_EXHAUSTED`, retain

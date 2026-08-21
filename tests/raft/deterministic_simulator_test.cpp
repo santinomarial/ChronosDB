@@ -113,11 +113,15 @@ TEST(DeterministicRaftSimulatorTest, GeneratesReplayableMembershipAndSnapshotChu
   std::size_t membership_starts = 0U;
   std::size_t membership_finalizations = 0U;
   std::size_t snapshot_compactions = 0U;
-  for (std::uint64_t seed = 1U; seed <= 8U; ++seed) {
+  std::size_t read_barrier_starts = 0U;
+  std::uint64_t completed_read_barriers = 0U;
+  for (std::uint64_t seed = 1U; seed <= 32U; ++seed) {
     auto simulation = DeterministicRaftSimulator::create(churn_config);
     ASSERT_TRUE(simulation.has_value()) << simulation.error().to_string();
     ASSERT_TRUE(simulation->run_seeded({.seed = seed, .actions = 2'000U}).is_ok())
-        << "seed=" << seed << " " << simulation->status().to_string();
+        << "seed=" << seed << " " << simulation->status().to_string()
+        << " trace=" << simulation->trace().size()
+        << " action=" << simulation->trace().back().index();
     for (const RaftSimulationAction& action : simulation->trace()) {
       membership_starts +=
           std::holds_alternative<RaftSimulationBeginMembershipChange>(action) ? 1U : 0U;
@@ -125,7 +129,10 @@ TEST(DeterministicRaftSimulatorTest, GeneratesReplayableMembershipAndSnapshotChu
           std::holds_alternative<RaftSimulationFinalizeMembershipChange>(action) ? 1U : 0U;
       snapshot_compactions +=
           std::holds_alternative<RaftSimulationCompactSnapshot>(action) ? 1U : 0U;
+      read_barrier_starts +=
+          std::holds_alternative<RaftSimulationBeginReadBarrier>(action) ? 1U : 0U;
     }
+    completed_read_barriers += simulation->stats().completed_read_barriers;
 
     std::vector<RaftSimulationAction> trace(simulation->trace().begin(), simulation->trace().end());
     auto replay = DeterministicRaftSimulator::create(churn_config);
@@ -139,6 +146,8 @@ TEST(DeterministicRaftSimulatorTest, GeneratesReplayableMembershipAndSnapshotChu
   EXPECT_GT(membership_starts, 0U);
   EXPECT_GT(membership_finalizations, 0U);
   EXPECT_GT(snapshot_compactions, 0U);
+  EXPECT_GT(read_barrier_starts, 0U);
+  EXPECT_GT(completed_read_barriers, 0U);
 }
 
 TEST(DeterministicRaftSimulatorTest, DrivesJointMembershipAndLocalSnapshotCompaction) {
