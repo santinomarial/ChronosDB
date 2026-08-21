@@ -30,8 +30,10 @@ must never be persisted or used to infer durability after restart.
 
 Cross-component routing and application can preserve authoritative in-process execution order even
 when fixed slots are reused or connections are compacted. Focused runtime, timer, TLS, and TCP tests
-prove nonzero consecutive identities and propagation. Wraparound, high-contention mixed-producer
-ordering, and restart-boundary misuse checks remain Phase 18 work.
+prove nonzero consecutive identities and propagation. One real mutual-TLS aggregate retains an
+application completion, timer completion, and inbound completion in their exact consecutive
+submission order. Wraparound, high-contention mixed-producer ordering, and restart-boundary misuse
+checks remain Phase 18 work.
 
 ## References
 

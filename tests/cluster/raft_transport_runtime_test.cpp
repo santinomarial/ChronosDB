@@ -395,7 +395,7 @@ TEST(RaftTransportRuntimeTest, RetainsSaturatedResultRingBehindRoutingBackpressu
   ASSERT_TRUE(durable->shutdown().is_ok());
 }
 
-TEST(RaftTransportRuntimeTest, RoutesDurableInboundResponseThroughUnifiedPollOwner) {
+TEST(RaftTransportRuntimeTest, PreservesApplicationTimerAndInboundDurableFifo) {
   TemporaryDirectory directory1;
   TemporaryDirectory directory2;
   auto durable1 = raft::AsyncDurableMultiRaftRuntime::create_new(
@@ -456,7 +456,7 @@ TEST(RaftTransportRuntimeTest, RoutesDurableInboundResponseThroughUnifiedPollOwn
        .pool = {.maximum_peers = 1U}});
   ASSERT_TRUE(outbound2.has_value());
   DeadlineSource deadlines;
-  deadlines.delay = std::chrono::seconds{5};
+  deadlines.delay = std::chrono::milliseconds{1};
   auto timers2 = raft::RaftTimerDriver::create(
       {.runtime = &*durable2,
        .election_deadlines = &deadlines,
@@ -482,6 +482,22 @@ TEST(RaftTransportRuntimeTest, RoutesDurableInboundResponseThroughUnifiedPollOwn
                                  .current_term = 0U},
                                 start)
                     .is_ok());
+    deadlines.delay = std::chrono::seconds{5};
+    auto application = transport2->try_submit_application(
+        {group(), raft::ProposeOperation{.type = 1U, .payload = {std::byte{0x42U}}}});
+    ASSERT_TRUE(application.has_value()) << application.error().to_string();
+    for (std::size_t iteration = 0U;
+         iteration < 16'384U && transport2->metrics().timer_results == 0U; ++iteration) {
+      ASSERT_TRUE(transport2->poll_once(std::chrono::milliseconds{100}).is_ok())
+          << transport2->failure().to_string();
+      ASSERT_TRUE(server1->poll_once(std::chrono::milliseconds{0}).is_ok());
+      auto received = server1->take_completed();
+      ASSERT_TRUE(received.has_value()) << received.error().to_string();
+    }
+    ASSERT_EQ(transport2->metrics().application_results, 1U);
+    ASSERT_EQ(transport2->metrics().timer_results, 1U);
+    ASSERT_EQ(transport2->metrics().pending_results, 2U);
+
     Authenticator node2_server_authenticator;
     node2_server_authenticator.principal = 800U;
     std::vector<std::vector<std::byte>> frames{
@@ -489,7 +505,7 @@ TEST(RaftTransportRuntimeTest, RoutesDurableInboundResponseThroughUnifiedPollOwn
             {.group_id = group(),
              .source = 1U,
              .destination = 2U,
-             .message = raft::RequestVoteRequest{1U, 1U, 0U, 0U}})
+             .message = raft::RequestVoteRequest{2U, 1U, 0U, 0U}})
             .value()};
     auto connector1 = RaftTransportTcpConnector::begin(
         std::move(frames),
@@ -518,50 +534,73 @@ TEST(RaftTransportRuntimeTest, RoutesDurableInboundResponseThroughUnifiedPollOwn
     auto node1_peer = connector1->take_connected_peer();
     ASSERT_TRUE(node1_peer.has_value());
 
-    std::optional<RaftTransportRuntimeResult> node2_result;
-    std::optional<RaftTransportCompletedReceive> node1_response;
-    for (std::size_t iteration = 0U;
-         iteration < 16'384U && (!node2_result.has_value() || !node1_response.has_value());
+    std::vector<RaftTransportRuntimeResult> node2_results;
+    for (std::size_t iteration = 0U; iteration < 16'384U && node2_results.size() != 3U;
          ++iteration) {
       ASSERT_TRUE(
           node1_peer->carrier.on_ready(true, true, std::chrono::steady_clock::now()).is_ok());
       ASSERT_TRUE(transport2->poll_once(std::chrono::milliseconds{0}).is_ok())
           << transport2->failure().to_string();
       ASSERT_TRUE(server1->poll_once(std::chrono::milliseconds{0}).is_ok());
-      if (!node2_result.has_value()) {
+      while (node2_results.size() != 3U) {
         auto next = transport2->take_completed();
-        if (next.has_value())
-          node2_result = std::move(*next);
-        else
+        if (!next.has_value()) {
           ASSERT_EQ(next.error().code(), common::StatusCode::kUnavailable);
+          break;
+        }
+        node2_results.push_back(std::move(*next));
       }
-      if (!node1_response.has_value()) {
-        auto next = server1->take_completed();
-        ASSERT_TRUE(next.has_value()) << next.error().to_string();
-        node1_response = std::move(*next);
-      }
+      auto received = server1->take_completed();
+      ASSERT_TRUE(received.has_value()) << received.error().to_string();
     }
-    ASSERT_TRUE(node2_result.has_value());
-    const RaftTransportRuntimeResult* inbound_result =
-        node2_result.transform([](const RaftTransportRuntimeResult& value) { return &value; })
+    ASSERT_EQ(node2_results.size(), 3U);
+    const RaftTransportRuntimeResult& application_result = node2_results[0];
+    const RaftTransportRuntimeResult& timer_result = node2_results[1];
+    const RaftTransportRuntimeResult& inbound_result = node2_results[2];
+    EXPECT_EQ(application_result.submission_sequence, *application);
+    EXPECT_EQ(timer_result.submission_sequence, *application + 1U);
+    EXPECT_EQ(inbound_result.submission_sequence, *application + 2U);
+
+    EXPECT_EQ(application_result.origin, RaftTransportRuntimeResultOrigin::kApplication);
+    EXPECT_EQ(application_result.result.status.code(), common::StatusCode::kUnavailable);
+    const raft::RaftGroupObservation* application_observation =
+        application_result.observation
+            .transform([](const raft::RaftGroupObservation& value) { return &value; })
             .value_or(nullptr);
-    ASSERT_NE(inbound_result, nullptr);
-    EXPECT_EQ(inbound_result->origin, RaftTransportRuntimeResultOrigin::kInbound);
-    EXPECT_EQ(inbound_result->remote_source_node_id, 1U);
+    ASSERT_NE(application_observation, nullptr);
+    EXPECT_EQ(application_observation->role, raft::Role::kFollower);
+    EXPECT_EQ(application_observation->current_term, 0U);
+
+    EXPECT_EQ(timer_result.origin, RaftTransportRuntimeResultOrigin::kTimer);
+    const raft::RaftTimerAction* timer_action =
+        timer_result.timer_action
+            .transform([](const raft::RaftTimerAction& value) { return &value; })
+            .value_or(nullptr);
+    ASSERT_NE(timer_action, nullptr);
+    EXPECT_EQ(timer_action->kind, raft::RaftTimerActionKind::kStartElection);
+    const raft::RaftGroupObservation* timer_observation =
+        timer_result.observation
+            .transform([](const raft::RaftGroupObservation& value) { return &value; })
+            .value_or(nullptr);
+    ASSERT_NE(timer_observation, nullptr);
+    EXPECT_EQ(timer_observation->role, raft::Role::kCandidate);
+    EXPECT_EQ(timer_observation->current_term, 1U);
+
+    EXPECT_EQ(inbound_result.origin, RaftTransportRuntimeResultOrigin::kInbound);
+    EXPECT_EQ(inbound_result.remote_source_node_id, 1U);
     const raft::RaftGroupObservation* inbound_observation =
-        inbound_result->observation
+        inbound_result.observation
             .transform([](const raft::RaftGroupObservation& value) { return &value; })
             .value_or(nullptr);
     ASSERT_NE(inbound_observation, nullptr);
-    EXPECT_EQ(inbound_observation->current_term, 1U);
-    ASSERT_TRUE(node1_response.has_value());
-    const RaftTransportCompletedReceive* response =
-        node1_response.transform([](const RaftTransportCompletedReceive& value) { return &value; })
-            .value_or(nullptr);
-    ASSERT_NE(response, nullptr);
-    EXPECT_EQ(response->source_node_id, 2U);
-    EXPECT_TRUE(response->result.status.is_ok());
-    EXPECT_GE(transport2->metrics().routed_results, 1U);
+    EXPECT_EQ(inbound_observation->role, raft::Role::kFollower);
+    EXPECT_EQ(inbound_observation->current_term, 2U);
+    EXPECT_EQ(transport2->metrics().application_results, 1U);
+    EXPECT_EQ(transport2->metrics().timer_results, 1U);
+    EXPECT_EQ(transport2->metrics().inbound_results, 1U);
+    EXPECT_EQ(transport2->metrics().routed_results, 2U);
+    EXPECT_EQ(transport2->metrics().completed_results, 3U);
+    EXPECT_EQ(transport2->metrics().pending_results, 0U);
   }
   ASSERT_TRUE(server1->shutdown().is_ok());
   ASSERT_TRUE(durable1->shutdown().is_ok());

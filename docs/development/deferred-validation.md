@@ -363,8 +363,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   retains complete post-sync results for routing.
   Timer and transport owners now expose their exact earliest monotonic deadlines; clock-change and
   high-cardinality deadline-scan validation remain deferred.
-  Runtime-lifetime FIFO submission identities now order timer and multi-connection inbound results;
-  exhaustion and high-contention mixed-producer ordering remain deferred.
+  Runtime-lifetime FIFO submission identities now order timer and multi-connection inbound results.
+  One real mutual-TLS aggregate retains application, timer, and inbound completions in exact
+  consecutive order; exhaustion and high-contention mixed-producer ordering remain deferred.
   Inbound disconnect now retains already admitted durable work through result pickup; exhaustive
   disconnect timing, descriptor-pressure, and crash matrices remain deferred.
   Outbound terminal events now immediately retain whole retry frames and enter capped reconnect;
@@ -375,9 +376,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   inbound/outbound readiness, FIFO activity/results, retry-safe routing, and application pickup.
   A focused saturation test now retains an unroutable timer result at the FIFO head, fills the
   result ring with a later application completion, and leaves another durable application completion
-  in its bounded owner without allowing pickup or over-admission. High-contention mixed external
-  completion producers, many-group/peer skew, storage stalls, disconnect/reconnect storms, and
-  deterministic multi-node production-carrier faults remain.
+  in its bounded owner without allowing pickup or over-admission. A real mutual-TLS test also proves
+  exact consecutive pickup across application, timer, and inbound producers while routing both
+  successful network transitions. High-contention mixed external completion producers,
+  many-group/peer skew, storage stalls, disconnect/reconnect storms, and deterministic multi-node
+  production-carrier faults remain.
 - Broad leader-churn and partition matrices, semantic dependency-aware trace shrinking, clock
   changes, physical disk failures, ASan/UBSan/TSan, fuzzing, independent model checking,
   commit/catch-up/snapshot benchmarks, and API review.

@@ -43,10 +43,10 @@ durable runtime must outlive it; ordinary peer failures remain reconnect-local, 
 poll, listener, timer, or unexpected routing errors fail the owner closed.
 
 Focused tests prove exact deadline wakeup into a synchronized single-voter election result, bounded
-result-ring saturation behind a missing outbound route, and a real two-node mutual-TLS
-request/response path through inbound admission, asynchronous durability, ordered timer activity,
-outbound route establishment, and response receipt. Multi-node churn, high-contention mixed
-producers, storage stalls, and long fault schedules remain Phase 18 work.
+result-ring saturation behind a missing outbound route, and a real two-node mutual-TLS path that
+retains application, timer, and inbound results in exact consecutive durable-submission order while
+routing both successful network transitions. Multi-node churn, high-contention mixed producers,
+storage stalls, and long fault schedules remain Phase 18 work.
 
 ## References
 

@@ -35,7 +35,8 @@ application owners each preserve durable FIFO submission identity; intake compar
 Results are routed in that same order and stop at the first missing/full route. A routed entry stays
 owned until pickup, but does not prevent later FIFO entries from being queued. This separates
 network liveness from potentially slower tablet application without creating another unbounded
-queue.
+queue. Focused real mutual-TLS coverage retains application, timer, and inbound completions together
+and observes their exact consecutive durable-submission order at pickup.
 
 Timer rearming uses the observation executed immediately after each inbound receive or timer action
 in the same durable batch. A newer inbound activity observation advances the timer generation, so a

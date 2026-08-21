@@ -41,9 +41,11 @@ bytes change.
 The constructive single-voter transport test elects a leader, fills the one-slot application bound,
 routes a current-term proposal, then routes a read barrier and receives its exact application-origin
 completion and ordered observation. It also rejects a timer-owned operation. The real listener/TLS
-test requires socket permission and passed outside the restricted workspace sandbox. Mixed
-three-producer stress, allocation injection, multi-node barrier loss, and saturation schedules
-remain in the hardening ledger.
+test requires socket permission and passed outside the restricted workspace sandbox. That aggregate
+retains a failed follower application completion, an election timer completion, and a higher-term
+inbound request in exact consecutive order while routing the two successful transitions.
+High-contention three-producer stress, allocation injection, and multi-node barrier loss remain in
+the hardening ledger; focused result-ring saturation is covered separately.
 
 ## Affected invariants
 
