@@ -53,10 +53,12 @@ retried. The set adds no scheduler, synchronization primitive, durable bytes, or
 Invariants 1, 4, 5, 8, 11, 15, and 18 apply. Focused tests cover definition bounds, child identity,
 ordered initialization/preparation/completion, reverse shutdown, partial-initialization cleanup,
 continuation after a throwing shutdown, completion fail-stop behavior, and unchanged direct
-extension behavior.
+extension behavior. The throwing-shutdown case now first drains one accepted durable election,
+proves its completion remains successful with exact metrics, continues reverse child cleanup,
+retains the shutdown failure idempotently, and reopens the exact persisted term and vote.
 
-Allocation fault injection, TSan, shutdown under active production application, and long-running
-hook watchdog measurements remain Phase 18 work.
+Allocation fault injection, returned-error and physical-close failure schedules, shutdown under
+active production application, and long-running hook watchdog measurements remain Phase 18 work.
 
 ## References
 

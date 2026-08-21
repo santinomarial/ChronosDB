@@ -211,14 +211,39 @@ TEST(AsyncDurableRaftWorkerExtensionSetTest, ContinuesReverseShutdownAfterAChild
   ASSERT_TRUE(set.has_value()) << set.error().to_string();
 
   const GroupId group = group_id(std::byte{3U});
-  auto runtime = AsyncDurableMultiRaftRuntime::create_new(
-      1U, {.directory_path = directory.path().string()}, {{group, {1U}}}, {}, *set);
+  const RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+  const std::vector<RaftGroupConfiguration> groups{{group, {1U}}};
+  auto runtime = AsyncDurableMultiRaftRuntime::create_new(1U, log_config, groups, {}, *set);
   ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  auto election = runtime->try_submit({{group, StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+
   const common::Status shutdown = runtime->shutdown();
   EXPECT_EQ(shutdown.code(), common::StatusCode::kInternal);
+  EXPECT_EQ(runtime->terminal_status(), shutdown);
+  EXPECT_TRUE(election->is_ready());
+  auto elected = election->wait();
+  ASSERT_TRUE(elected.has_value()) << elected.error().to_string();
+  ASSERT_EQ(elected->size(), 1U);
+  EXPECT_TRUE(elected->front().status.is_ok());
+  const AsyncDurableMultiRaftMetrics metrics = runtime->metrics();
+  EXPECT_FALSE(metrics.accepting);
+  EXPECT_TRUE(metrics.terminal_failure);
+  EXPECT_EQ(metrics.admitted_batches, 1U);
+  EXPECT_EQ(metrics.completed_batches, 1U);
+  EXPECT_EQ(metrics.failed_batches, 0U);
+  EXPECT_EQ(metrics.pending_batches, 0U);
+  EXPECT_EQ(metrics.written_completion_notifications, 1U);
   EXPECT_EQ(trace->copy(),
-            (std::vector<std::string>{"A:initialize", "B:initialize", "B:shutdown", "A:shutdown"}));
+            (std::vector<std::string>{"A:initialize", "B:initialize", "A:prepare", "B:prepare",
+                                      "A:complete", "B:complete", "B:shutdown", "A:shutdown"}));
   EXPECT_EQ(runtime->shutdown(), shutdown);
+
+  auto reopened = DurableMultiRaftRuntime::open_existing(1U, log_config, {}, groups);
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  ASSERT_NE(reopened->find_group(group), nullptr);
+  EXPECT_EQ(reopened->find_group(group)->current_term(), 1U);
+  EXPECT_EQ(reopened->find_group(group)->persistent_state().voted_for, 1U);
 }
 
 TEST(AsyncDurableRaftWorkerExtensionSetTest, StopsBatchCompletionAtTheFirstChildFailure) {

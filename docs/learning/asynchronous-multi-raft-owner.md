@@ -109,6 +109,10 @@ converge exactly after the join.
 Initialization failure prevents admission and still invokes extension shutdown for partial cleanup.
 For a composed extension, that cleanup includes the child whose initialization returned failure;
 shutdown continues through earlier children even when a later child returns an error or throws.
+A shutdown-hook failure happens only after accepted work drains: it marks the owner terminal and is
+returned by repeated shutdown, but does not retroactively replace an already published successful
+completion. Focused coverage persists an election before a child throws during reverse shutdown and
+then reopens the exact term and vote.
 
 ## Complexity, tradeoffs, and interview questions
 
