@@ -341,8 +341,9 @@ RaftNode& RaftNode::operator=(RaftNode&&) noexcept = default;
 common::Result<RaftNode> RaftNode::create(const NodeId node_id, std::vector<NodeId> voters,
                                           PersistentState persistent, const RaftLimits limits) {
   if (node_id == 0U || voters.empty() || voters.size() > limits.maximum_voters ||
-      limits.maximum_voters == 0U || limits.maximum_log_entries == 0U ||
-      limits.maximum_entry_bytes == 0U || limits.maximum_append_entries == 0U) {
+      limits.maximum_voters == 0U || limits.maximum_voters > kMaximumMembershipVoters ||
+      limits.maximum_log_entries == 0U || limits.maximum_entry_bytes == 0U ||
+      limits.maximum_append_entries == 0U) {
     return common::make_unexpected(invalid("Raft identity, membership, or limits are invalid"));
   }
   std::ranges::sort(voters);

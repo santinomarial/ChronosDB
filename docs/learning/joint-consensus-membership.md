@@ -28,6 +28,9 @@ transport, and persistence. A returned persistent transition must be synchronize
 messages are released. Followers preflight the complete candidate log and prospective commit before
 mutating persistent state, so damaged or impossible membership histories fail without a partial
 installation. Reopen derives the same active set from the retained log.
+Node construction also rejects a configured voter limit above 65,535, the exact maximum
+representable by Membership Command v1's two count fields, so every admitted reconfiguration
+remains encodable.
 
 A bootstrap learner can receive replication but cannot start an election or grant a vote. New peers
 receive replication as soon as the joint entry is appended. A leader excluded from the final set

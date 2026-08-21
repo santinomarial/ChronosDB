@@ -175,6 +175,20 @@ TEST(RaftNodeTest, RejectsPersistentSnapshotNewerThanCurrentTerm) {
   EXPECT_EQ(node.error().code(), common::StatusCode::kInvalidArgument);
 }
 
+TEST(RaftNodeTest, RejectsUnencodableMembershipVoterLimitAtConstruction) {
+  RaftLimits limits{};
+  limits.maximum_voters = kMaximumMembershipVoters + 1U;
+
+  auto node = RaftNode::create(1U, {1U}, {}, limits);
+
+  ASSERT_FALSE(node.has_value());
+  EXPECT_EQ(node.error().code(), common::StatusCode::kInvalidArgument);
+
+  limits.maximum_voters = kMaximumMembershipVoters;
+  node = RaftNode::create(1U, {1U}, {}, limits);
+  ASSERT_TRUE(node.has_value()) << node.error().to_string();
+}
+
 TEST(RaftNodeTest, RejectsNoncanonicalEmptyPersistentState) {
   PersistentState term_zero_vote{};
   term_zero_vote.voted_for = 2U;

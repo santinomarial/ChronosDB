@@ -25,9 +25,11 @@ little-endian. A command is an exact byte string with a 32-byte header, bounded 
 | final 4 | 4 | CRC32C over every preceding byte |
 
 Both voter arrays are nonempty where required, ascending, unique, nonzero, and bounded by the
-runtime voter limit. The union of the old and new arrays must also fit that limit. Encoders sort the
-arrays; decoders reject noncanonical bytes, invalid field relationships, trailing data, checksum
-damage, and unknown versions or kinds.
+runtime voter limit. Because both counts are `u16`, that configured limit is in `1..65535`; node
+construction rejects a larger value before any transition can depend on an unencodable membership
+command. The union of the old and new arrays must also fit that limit. Encoders sort the arrays;
+decoders reject noncanonical bytes, invalid field relationships, trailing data, checksum damage,
+and unknown versions or kinds.
 
 ## State transition
 

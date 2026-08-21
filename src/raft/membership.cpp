@@ -8,7 +8,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <span>
 #include <string>
 #include <type_traits>
@@ -87,7 +86,7 @@ enum class Kind : std::uint8_t { kJoint = 1U, kFinal = 2U };
 
 common::Result<std::vector<std::byte>>
 encode_membership_command_v1(MembershipCommand command, const std::size_t maximum_voters) {
-  if (maximum_voters == 0U || maximum_voters > std::numeric_limits<std::uint16_t>::max()) {
+  if (maximum_voters == 0U || maximum_voters > kMaximumMembershipVoters) {
     return common::make_unexpected(invalid("membership voter limit is invalid"));
   }
   Kind kind = Kind::kJoint;
@@ -157,7 +156,7 @@ encode_membership_command_v1(MembershipCommand command, const std::size_t maximu
 
 common::Result<MembershipCommand> decode_membership_command_v1(const common::ByteView bytes,
                                                                const std::size_t maximum_voters) {
-  if (maximum_voters == 0U || maximum_voters > std::numeric_limits<std::uint16_t>::max())
+  if (maximum_voters == 0U || maximum_voters > kMaximumMembershipVoters)
     return common::make_unexpected(invalid("membership voter limit is invalid"));
   if (bytes.size() < kMembershipCommandHeaderSize + kMembershipCommandTrailerSize)
     return common::make_unexpected(corruption("membership command is shorter than framing"));

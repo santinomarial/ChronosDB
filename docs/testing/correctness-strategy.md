@@ -421,6 +421,8 @@ encoder and checksum-repaired decoder cases cover both invalid combinations.
 Higher-term AppendEntries overwrite coverage targets an already committed entry with both a
 different term and same-term divergent bytes. Both cases require `CORRUPTION` while preserving the
 complete persistent state, current term, vote, and follower role.
+Membership configuration coverage rejects `maximum_voters = 65536` at node construction and accepts
+the exact `u16` format maximum, preventing a delayed encoder-only failure during reconfiguration.
 
 Multi-Raft physical-sequence exhaustion coverage restores a group at the terminal `UINT64_MAX`
 identity, attempts an election, and requires `OUT_OF_RANGE` plus fail-closed admission before the

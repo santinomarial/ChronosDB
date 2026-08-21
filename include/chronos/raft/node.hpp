@@ -13,6 +13,7 @@
 namespace chronos::raft {
 
 struct RaftLimits {
+  // Membership Command v1 stores each voter count as uint16.
   std::size_t maximum_voters{31U};
   std::size_t maximum_log_entries{1U << 20U};
   std::size_t maximum_entry_bytes{std::size_t{16U} * 1024U * 1024U};

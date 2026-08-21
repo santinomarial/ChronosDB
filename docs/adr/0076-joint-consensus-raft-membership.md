@@ -28,6 +28,9 @@ grant a vote. Recovery deterministically derives membership from the complete re
 rejects corrupt or impossible transitions. Generic application proposals cannot use the reserved
 entry types. Metadata and tablet application owners advance over membership entries as internal
 no-ops. A removed leader propagates its final commit transition and then steps down.
+The configured voter bound must fit Membership Command v1's unsigned 16-bit count fields. Values
+above 65,535 fail node construction rather than creating a runtime whose membership operations can
+never be encoded.
 
 ## Consequences and alternatives
 
@@ -52,4 +55,5 @@ matrices remain required before the Phase 14/15 exit gates can be claimed.
 Invariants 4, 8, 9, 10, 13, 14, and 18 apply. Focused tests cover canonical encoding and damage,
 old/new commit and election quorums, premature-final rejection, leader removal, learner election
 rejection, invalid-history preflight, durable reopen, Multi-Raft operations, and ordered tablet and
-metadata application across internal entries.
+metadata application across internal entries. Limit coverage rejects an unencodable configured
+voter bound at node construction and accepts the exact format maximum.

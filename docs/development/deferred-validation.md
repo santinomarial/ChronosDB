@@ -261,6 +261,8 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   AppendEntries `leader_commit` rejects the same reserved value before higher-term observation.
   AppendEntries responses reject it as an impossible actual `match_index` through all three paths.
   InstallSnapshot responses reject it as an impossible installed boundary through all three paths.
+  Node construction now also exact-bounds `maximum_voters` to the membership command's `u16`
+  representation; broader hostile limit combinations remain part of exhaustive configuration tests.
 - Persistent file owner, vote/log fsync ordering, crash/restart at every transition, idempotent
   recovery, application to tablet state, snapshot creation/install, and log compaction. Extend the
   implemented read barrier through production transport and tablet snapshot acquisition.

@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <variant>
 #include <vector>
 
@@ -17,6 +18,7 @@ inline constexpr std::uint8_t kJointMembershipEntryType = 254U;
 inline constexpr std::uint8_t kFinalMembershipEntryType = 255U;
 inline constexpr std::size_t kMembershipCommandHeaderSize = 32U;
 inline constexpr std::size_t kMembershipCommandTrailerSize = 4U;
+inline constexpr std::size_t kMaximumMembershipVoters = std::numeric_limits<std::uint16_t>::max();
 
 struct JointMembershipCommand {
   std::vector<NodeId> old_voters;
