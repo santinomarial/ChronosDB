@@ -13,8 +13,13 @@ namespace chronos::raft::test {
 
 enum class DurableIoFault : std::uint8_t {
   kNone,
+  kDirectoryOpen,
+  kFileOpen,
   kFileCreate,
+  kStat,
+  kRead,
   kWrite,
+  kTruncate,
   kDataSync,
   kFullSync,
   kRename,
@@ -24,9 +29,10 @@ enum class DurableIoFault : std::uint8_t {
   kFileClose,
 };
 
-// Injects one selected durable-I/O failure. File creation fails before mutation so no descriptor is
-// lost. The write, synchronization, rename, and close modes perform the real operation before
-// reporting EIO, modeling an ambiguous result. Arm only after constructing the owner.
+// Injects one selected durable-I/O failure. Open, stat, read, and file creation fail before
+// mutation so no descriptor is lost. Write, truncate, synchronization, rename, unlink, and close
+// perform the real operation before reporting EIO, modeling an ambiguous result. Write-path tests
+// arm after constructing their owner; recovery tests may arm before opening one.
 class DurableIoFaultPosixSyscalls final : public io::detail::PosixSyscalls {
 public:
   DurableIoFaultPosixSyscalls() noexcept : delegate_(io::detail::system_posix_syscalls()) {}
@@ -37,9 +43,17 @@ public:
   }
 
   int open_directory(const char* const path, const int flags) override {
+    if (consume(DurableIoFault::kDirectoryOpen)) {
+      errno = EIO;
+      return -1;
+    }
     return delegate_.open_directory(path, flags);
   }
   int open_at(const io::detail::OpenAtRequest& request) override {
+    if (consume(DurableIoFault::kFileOpen)) {
+      errno = EIO;
+      return -1;
+    }
     if (consume(DurableIoFault::kFileCreate)) {
       errno = EIO;
       return -1;
@@ -50,6 +64,10 @@ public:
     return delegate_.mkdir_at(request);
   }
   ssize_t pread(const io::detail::ReadAtRequest& request) override {
+    if (consume(DurableIoFault::kRead)) {
+      errno = EIO;
+      return -1;
+    }
     return delegate_.pread(request);
   }
   ssize_t pwrite(const io::detail::WriteAtRequest& request) override {
@@ -61,10 +79,19 @@ public:
     return result;
   }
   int fstat(const int descriptor, struct stat* const metadata) override {
+    if (consume(DurableIoFault::kStat)) {
+      errno = EIO;
+      return -1;
+    }
     return delegate_.fstat(descriptor, metadata);
   }
   int ftruncate(const io::detail::TruncateRequest& request) override {
-    return delegate_.ftruncate(request);
+    const int result = delegate_.ftruncate(request);
+    if (result == 0 && consume(DurableIoFault::kTruncate)) {
+      errno = EIO;
+      return -1;
+    }
+    return result;
   }
   int fdatasync(const int descriptor) override {
     const int result = delegate_.fdatasync(descriptor);

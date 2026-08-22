@@ -69,10 +69,14 @@ uses the already-published newest anchor, validates its exact checkpoint, observ
 cleanup, and continues at the next sequence. Broader multi-artifact schedules remain separate.
 
 Recovery owns the directory and advisory lock before it enumerates the namespace. Failure injection
-now covers that enumeration, ambiguous stale-temporary unlink and cleanup directory sync, and the
-final active-file and directory synchronization gates. Every failed open unwinds all temporary
-handles and releases `LOCK`; a fresh owner then reopens the exact state and accepts the next
-physical sequence. Open, stat, read, and incomplete-tail repair syscall matrices remain separate.
+now covers directory and file opens; every directory, lock, anchor, segment, and final-active
+metadata inspection; anchor, segment-header, record-header, and record-body reads; namespace
+enumeration; ambiguous stale-temporary unlink and cleanup directory sync; and the final active-file
+and directory synchronization gates. Incomplete-tail repair additionally injects the repair-only
+size check and ambiguous real truncate, file-sync, and directory-sync results. Every failed open
+unwinds all temporary handles and releases `LOCK`. A fresh owner validates either the unchanged
+incomplete suffix or the already-truncated complete prefix, recovers the same exact logical state,
+and accepts the next physical sequence.
 
 Explicit close adds no synchronization boundary. It invalidates the active segment, advisory lock,
 and directory in that order, continues after an error, and returns the first physical close error.

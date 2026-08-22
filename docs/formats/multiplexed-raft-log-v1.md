@@ -116,10 +116,14 @@ Recovery validates the namespace, authoritative anchor when present, every retai
 and every retained record in physical order before returning latest per-group state. It may
 explicitly truncate only a structurally incomplete suffix in the highest segment. Complete
 checksum failure, retained gaps, unknown entries, and non-regular entries fail closed.
-An I/O failure during namespace enumeration, recognized-temporary cleanup, or the final active-file
-and directory synchronization gates aborts recovery and releases the exclusive owner. A later open
-restarts validation from the filesystem state; it does not resume partially constructed in-memory
-recovery state.
+An I/O failure while opening or inspecting the directory, lock, anchor, retained segments, or final
+active handle; reading the anchor, segment headers, or records; enumerating or cleaning the
+namespace; repairing an incomplete final tail; or performing the final synchronization gates aborts
+recovery and releases the exclusive owner. Truncate and synchronization results may be ambiguous,
+so a failed repair may already have removed the incomplete suffix. A later open always restarts
+validation from the filesystem state and safely accepts either the original incomplete suffix or
+the already-truncated complete prefix; it never resumes partially constructed in-memory recovery
+state.
 
 ## Remaining limitation
 
