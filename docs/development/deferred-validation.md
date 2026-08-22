@@ -529,9 +529,12 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   transport, request deadlines/coalescing, apply waiting, and exact tablet snapshot acquisition.
 - Extend the implemented metadata Raft codec/application/reopen path and complete-schema-definition
   entry, complete table-policy command, and owning deterministic recovery projection with cluster
-  epochs and snapshot transfer/reclamation around the implemented exact-entry Metadata Application
-  Snapshot v1 codec, locked storage, install-before-Raft compaction, and snapshot-plus-suffix
-  recovery. Add golden fixtures, fuzzing, allocation/crash injection, policy-transition matrices, and
+  epochs, snapshot transfer, and scheduled reclamation around the implemented exact-entry Metadata
+  Application Snapshot v1 codec, locked storage, install-before-Raft compaction, and snapshot-plus-
+  suffix recovery. Metadata storage reclamation now injects every authoritative preflight stage,
+  directory enumeration, each ordered unlink, and final sync for nonzero and zero Raft authority,
+  with exact partial-deletion retry convergence. Add golden fixtures, fuzzing, allocation injection,
+  composed compaction/reclamation process crashes, policy-transition matrices, cleanup metrics, and
   large-catalog limits/measurements.
 - Extend the implemented committed-only tablet command application and full retained-log rebuild
   with crash injection around publication/applied-index persistence. Extend the implemented durable

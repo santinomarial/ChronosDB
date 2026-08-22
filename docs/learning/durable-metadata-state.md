@@ -69,7 +69,11 @@ Obsolete application snapshots are reclaimed only against the current durable Ra
 owner exact-matches its adopted snapshot, revalidates that file, removes every older or future
 canonical final, and synchronizes the directory. With a zero Raft snapshot it can remove all
 pre-compaction crash orphans. Cleanup failure is retryable and does not reinterpret the already
-durable catalog authority.
+durable catalog authority. Reclamation validates the authoritative file through open, stat, size,
+and exact read before listing deletion candidates. An enumeration, any individual unlink, or final
+directory-sync failure leaves only a valid prefix of the planned obsolete deletions; the owner stays
+usable, never removes the authority, and an exact retry converges. The zero-authority path follows
+the same rule while treating every canonical final as an orphan.
 
 Command/definition size, names, columns, role arrays, endpoint bytes, replicas, nodes, schemas, and
 tablets are explicitly bounded. Decoding validates fixed headers before length-driven work, owns

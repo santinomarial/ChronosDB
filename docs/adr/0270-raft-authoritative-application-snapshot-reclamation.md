@@ -42,11 +42,16 @@ Automatic highest-file retention was rejected because a pre-Raft crash orphan ma
 index. Reader pins are unnecessary for v1 because snapshot loads own and decode all bytes before the
 file handle is released; no live state retains mapped or borrowed file storage.
 
-Scheduling, cleanup metrics, syscall fault injection, process-kill matrices, and device
+Scheduling, cleanup metrics, process-kill matrices, tablet-owner syscall fault injection, and device
 qualification remain hardening work.
 
 ## Validation and invariants
 
 Invariants 1–5, 8, 10, 11, 14, and 18 apply. Real-filesystem tests retain an exact middle authority
 while deleting older and future files, reclaim all files for a zero-snapshot boundary, and exercise
-the tablet and metadata state-machine wrappers after repeated compaction.
+the tablet and metadata state-machine wrappers after repeated compaction. Metadata storage
+one-shot injection covers authoritative-file open, validation stat, size stat, and read before any
+mutation; directory enumeration; failure at each ordered obsolete-file unlink; and final directory
+sync. Eight nonzero-authority cases always preserve and revalidate the middle authority. Five
+zero-authority cases expose only the exact partial orphan deletion already completed. Every failure
+keeps the owner usable, and exact retry plus reopen converges.
