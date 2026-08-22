@@ -90,12 +90,14 @@ record after 16 bytes, require strict byte-preserving rejection, and authorize e
 The fifth attempt alone returns success, and strict reopen recovers its exact snapshot. Other
 repeated stage combinations remain separate evidence.
 
-A four-schedule reopen matrix first creates an RTAS partial temporary, then fails cleanup before its
-unlink or after unlink at directory sync. A fresh storage owner removes or accepts that cleanup
-state and reaches a partial Raft completion record. Repair reopen then fails before truncation at
-the size check or after real truncation. Every failed open releases its lock; the final owners derive
-the same pre-completion state from the remaining bytes and permit one exact success. Other reopen
-pairings, simultaneous faults, and physical power loss remain deferred.
+A complete eight-schedule reopen matrix first creates an RTAS partial temporary, then fails cleanup
+before its unlink or after unlink at directory sync. A fresh storage owner removes or accepts that
+cleanup state and reaches a partial Raft completion record. Repair reopen then fails before
+truncation at the size check, after real truncation, after repaired-file sync, or after repair-
+directory sync.
+Every failed open releases its lock; the final owners derive the same pre-completion state from the
+remaining bytes and permit one exact success. Simultaneous faults and physical power loss remain
+deferred.
 
 **Retrospective update (ADR 0130):** that decision reconciles a persisted Raft snapshot with a
 checkpoint-behind catching-up movement and installs the ready checkpoint before advancing live

@@ -59,10 +59,10 @@ response and leaves recovery—not retry memory—to select the next authority.
 The repeated-fault lifecycle performs that incomplete-record rejection and authorized 16-byte
 repair twice in succession. Each fresh runtime reconstructs the same pre-completion group state;
 only the later complete record becomes snapshot authority.
-The composed reopen matrix also pairs RTAS cleanup failure with repair failure. Repair may fail at
-the final size check with the incomplete tail intact or after the real truncate has removed it.
-Both paths release `LOCK`; the next recovery validates the observed file rather than assuming which
-operation happened.
+The composed reopen matrix also pairs both RTAS cleanup outcomes with every repair failure. Repair
+may fail at the final size check with the incomplete tail intact, after the real truncate has
+removed it, or after either synchronization boundary. Every path releases `LOCK`; the next recovery
+validates the observed file rather than assuming which operation happened.
 
 Rotation first data-synchronizes and closes the predecessor. Either result may be ambiguous, so a
 reported error poisons the writer even if the kernel operation completed. Deterministic tests inject

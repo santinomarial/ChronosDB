@@ -231,19 +231,31 @@ struct ReopenFailureCase {
   bool raft_tail_removed;
 };
 
-constexpr std::array<ReopenFailureCase, 4U> kReopenFailures{
+constexpr std::array<ReopenFailureCase, 8U> kReopenFailures{
     ReopenFailureCase{test::SnapshotStorageFault::kPriorTemporaryUnlink,
                       raft::test::DurableIoFault::kStat, 4U, "cleanup_unlink_then_repair_size_stat",
                       "fstat file size", false, false},
     ReopenFailureCase{test::SnapshotStorageFault::kPriorTemporaryUnlink,
                       raft::test::DurableIoFault::kTruncate, 0U,
                       "cleanup_unlink_then_repair_truncate", "ftruncate", false, true},
+    ReopenFailureCase{test::SnapshotStorageFault::kPriorTemporaryUnlink,
+                      raft::test::DurableIoFault::kFullSync, 0U,
+                      "cleanup_unlink_then_repair_file_sync", "fsync regular file", false, true},
+    ReopenFailureCase{test::SnapshotStorageFault::kPriorTemporaryUnlink,
+                      raft::test::DurableIoFault::kDirectorySync, 0U,
+                      "cleanup_unlink_then_repair_directory_sync", "fsync directory", false, true},
     ReopenFailureCase{test::SnapshotStorageFault::kFinalDirectorySync,
                       raft::test::DurableIoFault::kStat, 4U, "cleanup_sync_then_repair_size_stat",
                       "fstat file size", true, false},
     ReopenFailureCase{test::SnapshotStorageFault::kFinalDirectorySync,
                       raft::test::DurableIoFault::kTruncate, 0U,
                       "cleanup_sync_then_repair_truncate", "ftruncate", true, true},
+    ReopenFailureCase{test::SnapshotStorageFault::kFinalDirectorySync,
+                      raft::test::DurableIoFault::kFullSync, 0U,
+                      "cleanup_sync_then_repair_file_sync", "fsync regular file", true, true},
+    ReopenFailureCase{test::SnapshotStorageFault::kFinalDirectorySync,
+                      raft::test::DurableIoFault::kDirectorySync, 0U,
+                      "cleanup_sync_then_repair_directory_sync", "fsync directory", true, true},
 };
 
 void expect_recovered_retry_success(const raft::DurableRaftResult& result,
