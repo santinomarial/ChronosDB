@@ -145,6 +145,14 @@ common::Result<DurableMultiRaftRuntime> DurableMultiRaftRuntime::open_existing(
     const NodeId local_node_id, const RaftPersistentLogConfig& log_config,
     const RaftPersistentLogOpenOptions& open_options, std::vector<RaftGroupConfiguration> groups,
     DurableMultiRaftLimits limits) {
+  return open_existing_with(local_node_id, log_config, open_options, std::move(groups), limits,
+                            io::detail::system_posix_syscalls());
+}
+
+common::Result<DurableMultiRaftRuntime> DurableMultiRaftRuntime::open_existing_with(
+    const NodeId local_node_id, const RaftPersistentLogConfig& log_config,
+    const RaftPersistentLogOpenOptions& open_options, std::vector<RaftGroupConfiguration> groups,
+    DurableMultiRaftLimits limits, io::detail::PosixSyscalls& syscalls) {
   if (limits.maximum_batch_operations == 0U || limits.maximum_batch_outbound == 0U) {
     return common::make_unexpected(invalid("durable Multi-Raft batch limits are invalid"));
   }
@@ -152,7 +160,7 @@ common::Result<DurableMultiRaftRuntime> DurableMultiRaftRuntime::open_existing(
   if (!bounded_limits.has_value())
     return common::make_unexpected(bounded_limits.error());
   limits = *bounded_limits;
-  auto log = RaftPersistentLog::open_existing(log_config, open_options);
+  auto log = RaftPersistentLog::open_existing_with(log_config, open_options, syscalls);
   if (!log.has_value())
     return common::make_unexpected(log.error());
   auto runtime = restore_runtime(local_node_id, limits, std::move(groups),

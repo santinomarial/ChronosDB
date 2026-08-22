@@ -73,8 +73,10 @@ never occurred and resumes the exact pending path; an ambiguous full write or sy
 the complete snapshot and answers an exact leader retry from that authority. The partial-record
 image is rejected byte-for-byte by strict recovery, then explicit repair truncates only that suffix,
 synchronizes it, recovers the prior state, and permits the same exact completion retry. Persistent-
-log recovery I/O failures, simultaneous faults in both owners, and physical power loss remain
-deferred.
+log repair additionally injects pre-truncate size inspection and ambiguous truncate, file-sync, and
+directory-sync errors. Every failed recovery releases ownership; retry accepts either the unchanged
+incomplete suffix or the already-truncated prefix, then completes the exact snapshot. Simultaneous
+faults in both owners and physical power loss remain deferred.
 
 **Retrospective update (ADR 0130):** that decision reconciles a persisted Raft snapshot with a
 checkpoint-behind catching-up movement and installs the ready checkpoint before advancing live

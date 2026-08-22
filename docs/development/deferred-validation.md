@@ -386,10 +386,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   multi-artifact cleanup schedules remain deferred. Recovery now injects namespace enumeration,
   ambiguous stale-temporary unlink and cleanup directory sync, and the final active-file and
   directory syncs. Every failed open releases the durable lock; a retry recovers the exact record
-  and continues its sequence. Recovery open/stat/read/repair syscall matrices remain deferred. The
-  physical persistent-log close matrix now injects every nonempty
-  failure combination after the real active-file, advisory-lock, and directory closes; every
-  schedule invalidates all three handles, retains the first error, stays idempotent, releases
+  and continues its sequence. Recovery open/stat/read/repair syscall matrices now cover every
+  enumerated boundary and exact retry. The physical persistent-log close matrix now injects every
+  nonempty failure combination after the real active-file, advisory-lock, and directory closes.
+  Every schedule invalidates all three handles, retains the first error, stays idempotent, releases
   ownership, and exactly reopens the synchronized term/state. The asynchronous owner now combines
   all seven of those physical schedules with extension shutdown success and failure after draining
   an accepted election. Extension failure wins in lifecycle order, physical cleanup always
@@ -474,10 +474,12 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   mixed-version processes, broader count-shape corruption campaigns, and broader reclamation
   matrices. The composed tablet RTAS/Raft install now has a ten-cut real-process `SIGKILL` matrix;
   the RTAS owner also covers one-shot failures at every install and cleanup syscall. Physical
-  power-loss, repeated/mixed faults, and persistent-log recovery I/O faults remain. RTAS and Raft
-  completion-record prefix-write failures are covered, including strict byte preservation,
-  explicitly authorized Raft tail repair, and exact convergence. Full-record write/data-sync errors
-  are covered before and after the underlying operation as absent and ambiguous authority.
+  power-loss and repeated/mixed cross-owner faults remain. RTAS and Raft completion-record prefix-
+  write failures are covered, including strict byte preservation, explicitly authorized Raft tail
+  repair, and exact convergence. The composed repair path injects its size, truncate, file-sync, and
+  directory-sync boundaries; every error releases ownership and converges from either possible
+  filesystem image. Full-record write/data-sync errors are covered before and after the underlying
+  operation as absent and ambiguous authority.
 - Connect the implemented two-stage Raft snapshot request/completion boundary to versioned tablet
   and metadata snapshot bytes, resumable transfer, and manifest installation. The local tablet
   handoff is versioned and process-crash tested; metadata snapshot bytes and end-to-end transport

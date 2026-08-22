@@ -175,6 +175,11 @@ private:
   create_new_with(NodeId local_node_id, const RaftPersistentLogConfig& log_config,
                   std::vector<RaftGroupConfiguration> groups, DurableMultiRaftLimits limits,
                   io::detail::PosixSyscalls& syscalls);
+  [[nodiscard]] static common::Result<DurableMultiRaftRuntime>
+  open_existing_with(NodeId local_node_id, const RaftPersistentLogConfig& log_config,
+                     const RaftPersistentLogOpenOptions& open_options,
+                     std::vector<RaftGroupConfiguration> groups, DurableMultiRaftLimits limits,
+                     io::detail::PosixSyscalls& syscalls);
   std::unique_ptr<Impl> impl_;
 
   friend class AsyncDurableMultiRaftRuntime;

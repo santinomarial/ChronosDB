@@ -18,6 +18,15 @@ public:
     return DurableMultiRaftRuntime::create_new_with(local_node_id, log_config, std::move(groups),
                                                     limits, syscalls);
   }
+
+  [[nodiscard]] static common::Result<DurableMultiRaftRuntime>
+  open_existing(NodeId local_node_id, const RaftPersistentLogConfig& log_config,
+                const RaftPersistentLogOpenOptions& open_options,
+                std::vector<RaftGroupConfiguration> groups, DurableMultiRaftLimits limits,
+                io::detail::PosixSyscalls& syscalls) {
+    return DurableMultiRaftRuntime::open_existing_with(local_node_id, log_config, open_options,
+                                                       std::move(groups), limits, syscalls);
+  }
 };
 
 } // namespace chronos::raft::detail

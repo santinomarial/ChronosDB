@@ -49,6 +49,10 @@ prefix write. Strict durable-runtime reopen returns corruption without changing 
 Repair-authorized reopen truncates and synchronizes exactly those 16 bytes, restores the preceding
 group state, and lets the application owner retry the completion. This exercises the public
 composition of failed append, explicit tail-repair authority, and persist-before-response behavior.
+The same composed image injects failure at repair size inspection and ambiguous real truncate,
+file-sync, and directory-sync operations. Each failed runtime open releases the durable lock. A
+fresh open validates either the original incomplete suffix or the already-truncated prefix before
+the application retries completion, so no in-memory recovery progress becomes authority.
 
 Rotation first data-synchronizes and closes the predecessor. Either result may be ambiguous, so a
 reported error poisons the writer even if the kernel operation completed. Deterministic tests inject
