@@ -65,6 +65,17 @@ process termination before the rename leaves no final authority after temporary 
 termination after the rename exposes only the exact validated immutable bytes. Repeated reopen and
 retry therefore converge without manufacturing or losing an acknowledged snapshot.
 
+Owned compaction has a cross-domain crash boundary: application bytes are installed first, while
+Raft retains the replayable log until its own compaction record is written and synchronized. A
+ten-cut real-process matrix terminates the owner after each application installation transition,
+the Raft record write and sync, and the successful return. Before Raft selects the snapshot,
+recovery rebuilds from the retained log; an exact retry creates the missing application file or
+adopts the deterministic orphan already renamed into place. Once the process-restart image selects
+the Raft snapshot, recovery fails closed unless that exact file agrees with all `SnapshotMetadata`,
+then reconstructs the same catalog. Reopening a second time proves the converged authority is
+stable. The completed-write cut is useful process-crash evidence but does not replace device or
+power-loss qualification; the API acknowledges compaction only after Raft synchronization.
+
 Obsolete application snapshots are reclaimed only against the current durable Raft boundary. The
 owner exact-matches its adopted snapshot, revalidates that file, removes every older or future
 canonical final, and synchronizes the directory. With a zero Raft snapshot it can remove all

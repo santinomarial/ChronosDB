@@ -29,6 +29,25 @@ inline constexpr std::string_view kAfterMetadataOrphanReclamationDirectorySync =
     "after_metadata_orphan_reclamation_directory_sync";
 inline constexpr std::string_view kAfterMetadataOrphanReclamationSuccess =
     "after_metadata_orphan_reclamation_success";
+inline constexpr std::string_view kAfterMetadataCompactionTemporaryCreate =
+    "after_metadata_compaction_temporary_create";
+inline constexpr std::string_view kAfterMetadataCompactionWrite = "after_metadata_compaction_write";
+inline constexpr std::string_view kAfterMetadataCompactionReadback =
+    "after_metadata_compaction_readback";
+inline constexpr std::string_view kAfterMetadataCompactionFileSync =
+    "after_metadata_compaction_file_sync";
+inline constexpr std::string_view kAfterMetadataCompactionTemporaryClose =
+    "after_metadata_compaction_temporary_close";
+inline constexpr std::string_view kAfterMetadataCompactionRename =
+    "after_metadata_compaction_rename";
+inline constexpr std::string_view kAfterMetadataCompactionDirectorySync =
+    "after_metadata_compaction_directory_sync";
+inline constexpr std::string_view kAfterMetadataCompactionRaftWrite =
+    "after_metadata_compaction_raft_write";
+inline constexpr std::string_view kAfterMetadataCompactionRaftSync =
+    "after_metadata_compaction_raft_sync";
+inline constexpr std::string_view kAfterMetadataCompactionSuccess =
+    "after_metadata_compaction_success";
 
 } // namespace chronos::raft::test
 

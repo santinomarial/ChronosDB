@@ -52,10 +52,16 @@ snapshot, compacts Raft, commits a suffix node command, closes both owners, prov
 the snapshot is rejected, and reconstructs the exact complete catalog from snapshot plus suffix.
 ADR 0269 now provides node-wide shared-log reclamation after every resident group has a fresh full
 state record, and ADR 0270 removes every application snapshot except the exact Raft authority. Crash
-injection, snapshot transfer, reclamation fault injection, fuzzing, and large catalogs remain
-deferred. A membership-boundary filesystem test compacts an application entry before retained
-joint/final commands, requires the installed metadata snapshot to carry the older voter set, and
-keeps the live group on the newer stable set.
+injection now includes a ten-cut real-process `SIGKILL` matrix spanning application temporary
+creation, write, readback, file sync, close, rename, and directory sync followed by the Raft record
+write, Raft sync, and successful return. Pre-Raft-authority images replay the retained log and an
+exact retry either installs the snapshot or adopts the immutable orphan left after rename;
+post-Raft-record images require and exact-match that application snapshot. Every schedule proves
+catalog reconstruction, retry convergence, and a second reopen. This is process-restart evidence,
+not physical power-loss qualification. Snapshot transfer, composed cross-owner injected-I/O
+schedules, fuzzing, and large catalogs remain deferred. A membership-boundary filesystem test
+compacts an application entry before retained joint/final commands, requires the installed metadata
+snapshot to carry the older voter set, and keeps the live group on the newer stable set.
 
 Invariants 1–6, 8, 10, 11, 14, and 18 apply.
 

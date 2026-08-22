@@ -1,12 +1,14 @@
 #ifndef CHRONOS_TESTS_RAFT_METADATA_SNAPSHOT_INSTALL_CRASH_FIXTURE_HPP_
 #define CHRONOS_TESTS_RAFT_METADATA_SNAPSHOT_INSTALL_CRASH_FIXTURE_HPP_
 
+#include "chronos/raft/durable_runtime.hpp"
 #include "chronos/raft/metadata_codec.hpp"
 #include "chronos/raft/metadata_snapshot_storage.hpp"
 
 #include <cstddef>
 #include <filesystem>
 #include <utility>
+#include <vector>
 
 namespace chronos::raft::test {
 
@@ -40,6 +42,26 @@ metadata_crash_snapshot(const LogIndex included = 7U) {
 [[nodiscard]] inline MetadataSnapshotStorageConfig
 metadata_crash_storage_config(const std::filesystem::path& directory) {
   return {.directory_path = directory.string(), .group_id = metadata_crash_group_id()};
+}
+
+[[nodiscard]] inline RaftPersistentLogConfig
+metadata_compaction_log_config(const std::filesystem::path& root) {
+  return {.directory_path = (root / "raft").string()};
+}
+
+[[nodiscard]] inline MetadataSnapshotStorageConfig
+metadata_compaction_storage_config(const std::filesystem::path& root) {
+  return {.directory_path = (root / "metadata-snapshots").string(),
+          .group_id = metadata_crash_group_id()};
+}
+
+[[nodiscard]] inline std::vector<RaftGroupConfiguration> metadata_crash_groups() {
+  return {{metadata_crash_group_id(), {1U}}};
+}
+
+[[nodiscard]] inline ProposeOperation metadata_compaction_proposal() {
+  return {kRaftMetadataCommandEntryType,
+          encode_metadata_command_v1(ClusterNodeMetadata{1U, "node-1"}).value()};
 }
 
 } // namespace chronos::raft::test

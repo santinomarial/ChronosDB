@@ -535,9 +535,13 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   directory enumeration, each ordered unlink, and final sync for nonzero and zero Raft authority,
   with exact partial-deletion retry convergence. Its eleven-schedule real-process matrix also kills
   the owner after enumeration, each unlink, final sync, and success release, then proves exact retry
-  and repeated-reopen convergence. Add golden fixtures, fuzzing, allocation injection, composed
-  compaction/reclamation process crashes, policy-transition matrices, cleanup metrics, and large-
-  catalog limits/measurements.
+  and repeated-reopen convergence. Owned metadata compaction now has a ten-cut real-process matrix
+  across all seven application-install transitions, the Raft record write/sync, and success release;
+  it proves retained-log recovery before Raft authority, exact orphan adoption, required snapshot
+  recovery afterward, catalog reconstruction, and repeated-reopen convergence. Add golden fixtures,
+  fuzzing, allocation injection, cross-owner composed injected-I/O schedules, policy-transition
+  matrices, cleanup metrics, physical power-loss qualification, and large-catalog
+  limits/measurements.
 - Extend the implemented committed-only tablet command application and full retained-log rebuild
   with crash injection around publication/applied-index persistence. Extend the implemented durable
   application-snapshot creation/compaction plus prefix/suffix recovery with mismatch/fault matrices,
