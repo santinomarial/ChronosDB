@@ -363,13 +363,18 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   also fills the real unread completion pipe, observes successful coalescing, drains it, and proves
   later completions resume physical wakeups. A controlled record-limit failure during shutdown now
   fans one retained terminal status out to the current batch and eight queued observations with
-  exact terminal accounting and notification counts. Syscall-level storage/notification failures
-  remain deferred. The physical persistent-log close matrix now injects every nonempty failure
-  combination after the real active-file, advisory-lock, and directory closes; every schedule
-  invalidates all three handles, retains the first error, stays idempotent, releases ownership, and
-  exactly reopens the synchronized term/state. The asynchronous owner now combines all seven of
-  those physical schedules with extension shutdown success and failure after draining an accepted
-  election. Extension failure wins in lifecycle order, physical cleanup always completes, the
+  exact terminal accounting and notification counts. A completion-I/O matrix injects all nine pipe
+  creation/configuration failure points, interrupted and terminal writes, and interrupted and
+  terminal reads. It proves exact descriptor and durable-lock cleanup, retry-on-interrupt behavior,
+  fail-closed terminal-write arbitration after result publication, exact failed-notification
+  metrics, consumer-side drain retry, and synchronized reopen. Broader durable-storage syscall
+  failures remain deferred. The physical persistent-log close matrix now injects every nonempty
+  failure combination after the real active-file, advisory-lock, and directory closes; every
+  schedule invalidates all three handles, retains the first error, stays idempotent, releases
+  ownership, and exactly reopens the synchronized term/state. The asynchronous owner now combines
+  all seven of those physical schedules with extension shutdown success and failure after draining
+  an accepted election. Extension failure wins in lifecycle order, physical cleanup always
+  completes, the
   successful completion and exact terminal metrics remain intact, repeated shutdown is inert, and
   the synchronized term/vote reopens. A composed-extension test now
   drains a durable election before a later child throws during reverse shutdown, retains the

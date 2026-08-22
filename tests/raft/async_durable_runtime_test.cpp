@@ -6,10 +6,12 @@
 #include <array>
 #include <atomic>
 #include <barrier>
+#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <fcntl.h>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <memory>
@@ -190,6 +192,102 @@ void fail_worker_start(void* const context) {
   throw std::system_error{std::make_error_code(std::errc::resource_unavailable_try_again),
                           "injected durable worker start failure"};
 }
+
+class FaultingCompletionIo final : public detail::AsyncDurableRaftCompletionIo {
+public:
+  explicit FaultingCompletionIo(std::optional<std::size_t> setup_failure = std::nullopt,
+                                std::vector<int> write_errors = {},
+                                std::vector<int> read_errors = {})
+      : setup_failure_(setup_failure), write_errors_(std::move(write_errors)),
+        read_errors_(std::move(read_errors)) {}
+
+  int create_pipe(std::array<int, 2>& descriptors) override {
+    if (fail_setup_call())
+      return -1;
+    return ::pipe(descriptors.data());
+  }
+
+  int get_status_flags(const int descriptor) override {
+    if (fail_setup_call())
+      return -1;
+    return ::fcntl(descriptor, F_GETFL, 0);
+  }
+
+  int get_descriptor_flags(const int descriptor) override {
+    if (fail_setup_call())
+      return -1;
+    return ::fcntl(descriptor, F_GETFD, 0);
+  }
+
+  int set_status_flags(const int descriptor, const int flags) override {
+    if (fail_setup_call())
+      return -1;
+    return ::fcntl(descriptor, F_SETFL, flags);
+  }
+
+  int set_descriptor_flags(const int descriptor, const int flags) override {
+    if (fail_setup_call())
+      return -1;
+    return ::fcntl(descriptor, F_SETFD, flags);
+  }
+
+  ssize_t write(const int descriptor, const void* const source, const std::size_t size) override {
+    const std::size_t call = write_calls_.fetch_add(1U);
+    if (call < write_errors_.size() && write_errors_[call] != 0) {
+      errno = write_errors_[call];
+      return -1;
+    }
+    return ::write(descriptor, source, size);
+  }
+
+  ssize_t read(const int descriptor, void* const destination, const std::size_t size) override {
+    const std::size_t call = read_calls_.fetch_add(1U);
+    if (call < read_errors_.size() && read_errors_[call] != 0) {
+      errno = read_errors_[call];
+      return -1;
+    }
+    return ::read(descriptor, destination, size);
+  }
+
+  int close(const int descriptor) override {
+    close_calls_.fetch_add(1U);
+    return ::close(descriptor);
+  }
+
+  [[nodiscard]] std::size_t setup_calls() const noexcept {
+    return setup_calls_;
+  }
+
+  [[nodiscard]] std::size_t write_calls() const noexcept {
+    return write_calls_.load();
+  }
+
+  [[nodiscard]] std::size_t read_calls() const noexcept {
+    return read_calls_.load();
+  }
+
+  [[nodiscard]] std::size_t close_calls() const noexcept {
+    return close_calls_.load();
+  }
+
+private:
+  [[nodiscard]] bool fail_setup_call() {
+    const std::size_t call = setup_calls_++;
+    if (setup_failure_.has_value() && call == *setup_failure_) {
+      errno = EIO;
+      return true;
+    }
+    return false;
+  }
+
+  std::optional<std::size_t> setup_failure_;
+  std::vector<int> write_errors_;
+  std::vector<int> read_errors_;
+  std::size_t setup_calls_{};
+  std::atomic<std::size_t> write_calls_;
+  std::atomic<std::size_t> read_calls_;
+  std::atomic<std::size_t> close_calls_;
+};
 
 class ApplyingWorkerExtension final : public AsyncDurableRaftWorkerExtension {
 public:
@@ -972,6 +1070,163 @@ TEST(AsyncDurableMultiRaftRuntimeTest, FansOutOneTerminalFailureToQueuedCompleti
   ASSERT_TRUE(runtime->drain_completion_notifications().is_ok());
   descriptor.revents = 0;
   EXPECT_EQ(::poll(&descriptor, 1U, 0), 0);
+}
+
+TEST(AsyncDurableMultiRaftRuntimeTest,
+     CompletionPipeSetupFailureClosesDescriptorsAndReleasesDurableStorage) {
+  constexpr std::size_t kCompletionPipeSetupCalls = 9U;
+  for (std::size_t failed_call = 0U; failed_call < kCompletionPipeSetupCalls; ++failed_call) {
+    SCOPED_TRACE(failed_call);
+    TemporaryDirectory directory;
+    const GroupId group = group_id(static_cast<std::byte>(0x50U + failed_call));
+    const RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+    const std::vector<RaftGroupConfiguration> groups{{group, {1U}}};
+    auto durable = DurableMultiRaftRuntime::create_new(1U, log_config, groups);
+    ASSERT_TRUE(durable.has_value()) << durable.error().to_string();
+    auto elected = durable->execute_batch({{group, StartElectionOperation{}}});
+    ASSERT_TRUE(elected.has_value()) << elected.error().to_string();
+
+    FaultingCompletionIo completion_io{failed_call};
+    auto runtime = detail::AsyncDurableMultiRaftRuntimeTestAccess::start_with_completion_io(
+        std::move(*durable), completion_io);
+
+    ASSERT_FALSE(runtime.has_value());
+    EXPECT_EQ(runtime.error().code(), common::StatusCode::kIoError);
+    EXPECT_EQ(completion_io.setup_calls(), failed_call + 1U);
+    EXPECT_EQ(completion_io.close_calls(), failed_call == 0U ? 0U : 2U);
+
+    auto reopened = DurableMultiRaftRuntime::open_existing(1U, log_config, {}, groups);
+    ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+    ASSERT_NE(reopened->find_group(group), nullptr);
+    EXPECT_EQ(reopened->find_group(group)->current_term(), 1U);
+    EXPECT_EQ(reopened->find_group(group)->persistent_state().voted_for, 1U);
+    EXPECT_TRUE(reopened->close().is_ok());
+  }
+}
+
+TEST(AsyncDurableMultiRaftRuntimeTest, RetriesInterruptedCompletionWriteWithoutFailingTheOwner) {
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{0x59U});
+  const RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+  auto durable = DurableMultiRaftRuntime::create_new(1U, log_config, {{group, {1U}}});
+  ASSERT_TRUE(durable.has_value()) << durable.error().to_string();
+  FaultingCompletionIo completion_io{std::nullopt, {EINTR}};
+  auto runtime = detail::AsyncDurableMultiRaftRuntimeTestAccess::start_with_completion_io(
+      std::move(*durable), completion_io);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+
+  auto election = runtime->try_submit({{group, StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  auto elected = election->wait();
+  ASSERT_TRUE(elected.has_value()) << elected.error().to_string();
+  EXPECT_TRUE(runtime->shutdown().is_ok());
+
+  const AsyncDurableMultiRaftMetrics metrics = runtime->metrics();
+  EXPECT_FALSE(metrics.terminal_failure);
+  EXPECT_EQ(metrics.completed_batches, 1U);
+  EXPECT_EQ(metrics.written_completion_notifications, 1U);
+  EXPECT_EQ(metrics.coalesced_completion_notifications, 0U);
+  EXPECT_EQ(metrics.failed_completion_notifications, 0U);
+  EXPECT_EQ(completion_io.write_calls(), 2U);
+}
+
+TEST(AsyncDurableMultiRaftRuntimeTest,
+     TerminalCompletionWriteFailureFailsClosedAndPreservesPublishedDurableResult) {
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{0x5aU});
+  const RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+  const std::vector<RaftGroupConfiguration> groups{{group, {1U}}};
+  auto durable = DurableMultiRaftRuntime::create_new(1U, log_config, groups);
+  ASSERT_TRUE(durable.has_value()) << durable.error().to_string();
+  FaultingCompletionIo completion_io{std::nullopt, {EIO}};
+  auto extension = std::make_shared<BlockingWorkerExtension>();
+  [[maybe_unused]] BlockingWorkerReleaseGuard release_on_exit{extension.get()};
+  auto runtime = detail::AsyncDurableMultiRaftRuntimeTestAccess::start_with_completion_io(
+      std::move(*durable), completion_io, {}, extension);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+
+  auto election = runtime->try_submit({{group, StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  ASSERT_TRUE(extension->wait_until_blocked());
+  auto first_queued = runtime->try_observe_group(group);
+  auto second_queued = runtime->try_observe_group(group);
+  ASSERT_TRUE(first_queued.has_value()) << first_queued.error().to_string();
+  ASSERT_TRUE(second_queued.has_value()) << second_queued.error().to_string();
+  extension->release();
+
+  auto elected = election->wait();
+  ASSERT_TRUE(elected.has_value()) << elected.error().to_string();
+  ASSERT_EQ(elected->size(), 1U);
+  EXPECT_TRUE(elected->front().status.is_ok());
+  auto first_failed = first_queued->wait();
+  auto second_failed = second_queued->wait();
+  ASSERT_FALSE(first_failed.has_value());
+  ASSERT_FALSE(second_failed.has_value());
+  EXPECT_EQ(first_failed.error(), second_failed.error());
+  EXPECT_EQ(first_failed.error().code(), common::StatusCode::kIoError);
+  EXPECT_NE(first_failed.error().to_string().find("signaling durable Raft completion"),
+            std::string::npos);
+
+  const common::Status shutdown = runtime->shutdown();
+  EXPECT_EQ(shutdown, first_failed.error());
+  EXPECT_EQ(runtime->terminal_status(), shutdown);
+  EXPECT_FALSE(runtime->is_accepting());
+  const AsyncDurableMultiRaftMetrics metrics = runtime->metrics();
+  EXPECT_TRUE(metrics.terminal_failure);
+  EXPECT_EQ(metrics.admitted_batches, 3U);
+  EXPECT_EQ(metrics.completed_batches, 1U);
+  EXPECT_EQ(metrics.failed_batches, 2U);
+  EXPECT_EQ(metrics.pending_batches, 0U);
+  EXPECT_EQ(metrics.pending_operations, 0U);
+  EXPECT_EQ(metrics.written_completion_notifications, 1U);
+  EXPECT_EQ(metrics.coalesced_completion_notifications, 0U);
+  EXPECT_EQ(metrics.failed_completion_notifications, 1U);
+  EXPECT_EQ(completion_io.write_calls(), 2U);
+
+  auto reopened = DurableMultiRaftRuntime::open_existing(1U, log_config, {}, groups);
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  ASSERT_NE(reopened->find_group(group), nullptr);
+  EXPECT_EQ(reopened->find_group(group)->current_term(), 1U);
+  EXPECT_EQ(reopened->find_group(group)->persistent_state().voted_for, 1U);
+  EXPECT_TRUE(reopened->close().is_ok());
+}
+
+TEST(AsyncDurableMultiRaftRuntimeTest,
+     InterruptedAndTerminalCompletionReadsRemainRetryableByTheConsumer) {
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{0x5bU});
+  auto durable = DurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group, {1U}}});
+  ASSERT_TRUE(durable.has_value()) << durable.error().to_string();
+  FaultingCompletionIo completion_io{std::nullopt, {}, {EINTR, EIO}};
+  auto runtime = detail::AsyncDurableMultiRaftRuntimeTestAccess::start_with_completion_io(
+      std::move(*durable), completion_io);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+
+  auto election = runtime->try_submit({{group, StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  auto elected = election->wait();
+  ASSERT_TRUE(elected.has_value()) << elected.error().to_string();
+  pollfd descriptor{.fd = runtime->completion_descriptor(), .events = POLLIN};
+  ASSERT_EQ(::poll(&descriptor, 1U, 1000), 1);
+
+  const common::Status failed_drain = runtime->drain_completion_notifications();
+  EXPECT_EQ(failed_drain.code(), common::StatusCode::kIoError);
+  EXPECT_NE(failed_drain.to_string().find("draining durable Raft completion notifications"),
+            std::string::npos);
+  EXPECT_TRUE(runtime->is_accepting());
+  EXPECT_FALSE(runtime->metrics().terminal_failure);
+  EXPECT_EQ(completion_io.read_calls(), 2U);
+
+  EXPECT_TRUE(runtime->drain_completion_notifications().is_ok());
+  descriptor.revents = 0;
+  EXPECT_EQ(::poll(&descriptor, 1U, 0), 0);
+  auto observed = runtime->try_observe_group(group);
+  ASSERT_TRUE(observed.has_value()) << observed.error().to_string();
+  auto observation = observed->wait();
+  ASSERT_TRUE(observation.has_value()) << observation.error().to_string();
+  EXPECT_TRUE(runtime->shutdown().is_ok());
+  EXPECT_FALSE(runtime->metrics().terminal_failure);
 }
 
 TEST(AsyncDurableMultiRaftRuntimeTest, WakesAndDrainsCompletionDescriptor) {

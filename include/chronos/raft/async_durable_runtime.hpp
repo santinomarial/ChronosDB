@@ -102,6 +102,7 @@ struct AsyncDurableMultiRaftMetrics {
   // already-readable pipe. These counters do not publish completion state.
   std::uint64_t written_completion_notifications{};
   std::uint64_t coalesced_completion_notifications{};
+  std::uint64_t failed_completion_notifications{};
   std::size_t pending_batches{};
   std::size_t pending_operations{};
   std::size_t high_water_pending_batches{};
@@ -112,6 +113,7 @@ struct AsyncDurableMultiRaftMetrics {
 };
 
 namespace detail {
+class AsyncDurableRaftCompletionIo;
 class AsyncDurableMultiRaftRuntimeTestAccess;
 class AsyncDurableRaftCompletionState;
 class AsyncRaftLogReclamationCompletionState;
@@ -223,7 +225,8 @@ private:
   [[nodiscard]] static common::Result<AsyncDurableMultiRaftRuntime>
   start_with(DurableMultiRaftRuntime runtime, AsyncDurableMultiRaftLimits limits,
              std::shared_ptr<AsyncDurableRaftWorkerExtension> extension,
-             const common::TimeSource& time_source, void (*worker_start_hook)(void*),
+             const common::TimeSource& time_source,
+             detail::AsyncDurableRaftCompletionIo& completion_io, void (*worker_start_hook)(void*),
              void* worker_start_context);
   [[nodiscard]] static common::Result<AsyncDurableMultiRaftRuntime>
   create_new_with(NodeId local_node_id, const RaftPersistentLogConfig& log_config,

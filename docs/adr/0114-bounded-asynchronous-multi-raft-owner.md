@@ -104,8 +104,14 @@ plus batch, group-observation, and checkpoint/reclamation admission. Every injec
 exact rejection metrics, and reaches success only after every observed allocation point. The sweep
 also proves delegated create/reopen allocation failure stays inside the `Result` boundary. It found
 and closed two exception leaks: thread-state allocation during startup and the observation
-convenience vector. Broader queue-interleaving stress, syscall-level I/O failure injection,
-thousands-of-groups fairness, and whole-owner latency/throughput measurements remain in Phase 18.
+convenience vector. A completion-I/O matrix now injects pipe creation and all eight flag-setup
+syscalls, interrupted and terminal writes, and interrupted and terminal reads. Setup failure closes
+both created descriptors, releases transferred durable storage, and exactly reopens it. `EINTR`
+retries; a terminal write preserves the already-published result, fails queued work and the owner
+closed with exact failure metrics, and reopens the synchronized state; a terminal consumer read is
+reported without poisoning the owner and can be retried. Broader queue-interleaving stress, durable-
+storage I/O failure injection beyond close, thousands-of-groups fairness, and whole-owner
+latency/throughput measurements remain in Phase 18.
 
 ## Migration or rollback considerations
 

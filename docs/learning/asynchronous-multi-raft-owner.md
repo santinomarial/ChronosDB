@@ -88,10 +88,10 @@ counter participates in publication, and no thread is detached.
 The completion pipe is nonblocking and close-on-exec. A successful write follows result publication;
 pipe saturation coalesces wakeups because unread data already keeps the descriptor readable. Runtime
 destruction joins the worker before closing either pipe descriptor. Saturating metrics count
-physical signal bytes separately from full-pipe coalescing; they provide diagnostics but do not
-replace the completion mutex or descriptor readiness as publication edges. A bounded test leaves the
-real pipe unread until coalescing occurs, consumes every completed observation, drains the pipe, and
-proves a later completion creates a fresh wakeup.
+physical signal bytes, full-pipe coalescing, and terminal signal failures separately; they provide
+diagnostics but do not replace the completion mutex or descriptor readiness as publication edges. A
+bounded test leaves the real pipe unread until coalescing occurs, consumes every completed
+observation, drains the pipe, and proves a later completion creates a fresh wakeup.
 
 Completion state is shared ownership, so it can outlive the runtime. Requests are unique ownership
 and are released after exactly one completion. Runtime destruction stops admission, drains or
@@ -117,6 +117,16 @@ so they can prove each failed construction releases its physical-log lock withou
 storage allocations. Separate batch, observation, and reclamation sweeps prove failed admission
 publishes no task, leaves zero pending ownership, increments the matching rejection metric exactly,
 and permits the next allocation point to retry on the same owner.
+
+Completion-pipe creation or flag-configuration failure occurs before worker launch. It closes both
+descriptors if the pipe exists, releases the transferred synchronous owner, and returns `IO_ERROR`.
+Signal and drain operations retry `EINTR`; a full-pipe `EAGAIN` is successful coalescing because the
+descriptor is already readable. Any other signal failure occurs after the current result is
+published: that result remains authoritative, queued work receives the retained I/O error, and the
+owner fails closed. A terminal drain error belongs to the single descriptor consumer; it returns
+`IO_ERROR` without changing owner state, so the consumer can retry the unread pipe. Deterministic
+injection covers every setup syscall plus interrupted and terminal write/read paths and exact
+synchronized reopen after owner failure.
 
 Capacity rejection changes no Raft or disk state. Per-operation statuses remain ordinary successful
 batch results. A top-level durable batch or checkpoint/reclamation failure is ambiguous with respect
