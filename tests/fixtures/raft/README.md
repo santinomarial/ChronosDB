@@ -17,5 +17,13 @@ Minor 0 has no membership checkpoint. Minor 1 is its canonical semantic upgrade 
 index 0 and voters `{1,2,3}`. The pair independently fixes both historical layout and the current
 encoder output.
 
+The `metadata-application-snapshot-minor-{0,1}.hex` pair uses metadata group UUID bytes
+`07 00...00`, included index/generation 8, included term 3, configuration index 6, and voters
+`{1,2,3}`. Both retain a valid Metadata Command v1 cluster-node entry at `(index=2, term=1)` for
+node 7 and endpoint `n`; minor 1 adds a valid Tablet Group Binding v1 entry at `(index=8, term=3)`
+for tablet UUID `01 00...00` and group UUID `02 00...00`. Their nested envelopes, application
+identities, and outer bytes were independently derived with Python `struct`, `hashlib` SHA-256 over
+the `CHRMASN\x01` domain, and the standalone CRC32C implementation described above.
+
 The standard compiler CI matrix compares production encoding byte-for-byte and decodes these
 immutable bytes under GCC, Clang/libc++, and AppleClang.

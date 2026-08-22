@@ -43,8 +43,12 @@ catalog or reinterpreting existing command formats. Future compact state images 
 version and equivalent schema/placement succession validation.
 
 Focused tests cover canonical round trip with internal gaps, an internal-only prefix, damage,
-unknown types, ordering, and resource bounds. Durable installation, crash points, recovery,
-compaction, prefix reclamation, fuzzing, and large-catalog qualification remain follow-up work.
+unknown types, ordering, and resource bounds. Independently packed golden fixtures freeze the
+complete minor-0 and minor-1 bytes, including membership, application SHA-256 identity, entry
+alignment, nested-payload CRC32C, header CRC32C, and whole-file CRC32C; production encoding and
+decoding must match both. ADRs 0267–0270 now cover durable installation, process crash points,
+owned recovery/compaction, physical-log reclamation, and obsolete snapshot reclamation. Fuzzing,
+allocation-failure coverage, and large-catalog qualification remain follow-up work.
 
 Invariants 1, 4–6, 8, 10, 11, 14, and 18 apply.
 

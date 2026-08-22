@@ -1182,6 +1182,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/raft/metadata_codec_test.cpp
     tests/raft/metadata_snapshot_header_self_contained.cpp
     tests/raft/metadata_snapshot_compaction_failure_test.cpp
+    tests/raft/metadata_snapshot_golden_test.cpp
     tests/raft/metadata_snapshot_storage_header_self_contained.cpp
     tests/raft/metadata_snapshot_storage_failure_test.cpp
     tests/raft/metadata_snapshot_storage_test.cpp

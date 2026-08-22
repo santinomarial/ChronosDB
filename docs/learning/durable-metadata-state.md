@@ -86,6 +86,14 @@ removes. Both paths retain the installed application orphan, withhold compaction
 converge only when a later retry durably selects those exact bytes. This ordering is why the two
 owners can be recovered independently without allowing Raft to reference missing catalog state.
 
+The structural format is pinned independently for compatibility. One minor-0 fixture retains a
+valid Metadata Command v1 cluster-node payload; one minor-1 fixture adds a valid Tablet Group
+Binding v1 payload. Their nested envelopes and outer bytes were packed from the specifications with
+independent SHA-256 and CRC32C implementations. Production encoding must equal each complete fixture
+and decoding must reconstruct its exact group, snapshot metadata, voters, entry gaps, types, and
+payloads. This catches compiler- or refactor-dependent layout drift that a round trip through the
+same implementation could miss.
+
 Obsolete application snapshots are reclaimed only against the current durable Raft boundary. The
 owner exact-matches its adopted snapshot, revalidates that file, removes every older or future
 canonical final, and synchronizes the directory. With a zero Raft snapshot it can remove all

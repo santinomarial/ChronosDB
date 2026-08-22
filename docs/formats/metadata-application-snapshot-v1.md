@@ -71,3 +71,9 @@ durable installation and recovery must exact-decode them before accepting applic
 Local durable files use `metadata-snapshot-<20-digit-index>.rmas` in a directory exclusively owned
 by one metadata group. Installation exact-validates before and after write, file-syncs, renames
 without replacement, and directory-syncs before reporting success.
+
+Compiler-independent golden fixtures freeze both emitted layouts under
+`tests/fixtures/raft/metadata-application-snapshot-minor-{0,1}.hex`. They were constructed directly
+from this specification with little-endian packing, `hashlib` SHA-256, and a standalone bitwise
+CRC32C implementation; neither the ChronosDB codec nor checksum implementation generated the
+expected bytes. Tests require exact production encode equality and exact decode reconstruction.
