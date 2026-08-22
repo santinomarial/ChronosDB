@@ -47,8 +47,9 @@ eight-cut real-process `SIGKILL` matrix covers temporary creation, write, readba
 temporary close, final rename, directory sync, and post-success release. Every cut reopens to the
 exact absent or installed authority, removes interrupted temporaries, converges through an
 idempotent retry, and survives a second reopen. Directory/device qualification and wider runtime
-recovery composition remain deferred. Metadata snapshot reclamation fault injection is covered
-separately by ADR 0270.
+recovery schedules remain deferred. ADR 0268 now composes application partial-write and
+post-rename directory-sync faults with later Raft write failures. Metadata snapshot reclamation
+fault injection is covered separately by ADR 0270.
 
 Invariants 1, 2, 4–6, 8, 10, 11, 14, and 18 apply.
 

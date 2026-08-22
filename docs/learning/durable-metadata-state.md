@@ -76,6 +76,16 @@ then reconstructs the same catalog. Reopening a second time proves the converged
 stable. The completed-write cut is useful process-crash evidence but does not replace device or
 power-loss qualification; the API acknowledges compaction only after Raft synchronization.
 
+Injected-I/O composition additionally arms the application and Raft owners together. If the
+application temporary is only partially written, or its final directory sync fails after rename,
+the same compaction call returns failure without touching Raft. Recovery cleans the temporary or
+adopts the exact final, reconstructs the catalog from the retained log, and retries while the Raft
+fault remains armed. A pre-write Raft error leaves a clean retained log; a prefix write followed by
+error leaves an incomplete final record that strict recovery rejects and explicit tail repair
+removes. Both paths retain the installed application orphan, withhold compaction success twice, and
+converge only when a later retry durably selects those exact bytes. This ordering is why the two
+owners can be recovered independently without allowing Raft to reference missing catalog state.
+
 Obsolete application snapshots are reclaimed only against the current durable Raft boundary. The
 owner exact-matches its adopted snapshot, revalidates that file, removes every older or future
 canonical final, and synchronizes the directory. With a zero Raft snapshot it can remove all

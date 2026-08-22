@@ -538,9 +538,12 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   and repeated-reopen convergence. Owned metadata compaction now has a ten-cut real-process matrix
   across all seven application-install transitions, the Raft record write/sync, and success release;
   it proves retained-log recovery before Raft authority, exact orphan adoption, required snapshot
-  recovery afterward, catalog reconstruction, and repeated-reopen convergence. Add golden fixtures,
-  fuzzing, allocation injection, cross-owner composed injected-I/O schedules, policy-transition
-  matrices, cleanup metrics, physical power-loss qualification, and large-catalog
+  recovery afterward, catalog reconstruction, and repeated-reopen convergence. A four-schedule
+  cross-owner matrix also crosses application partial-write and post-rename directory-sync failures
+  with a pre-write or partial Raft record on retry, including strict partial-tail rejection,
+  authorized repair, exact orphan adoption, and a second reopen. Add golden fixtures, fuzzing,
+  allocation injection, repeated and broader cross-stage injected-I/O combinations,
+  policy-transition matrices, cleanup metrics, physical power-loss qualification, and large-catalog
   limits/measurements.
 - Extend the implemented committed-only tablet command application and full retained-log rebuild
   with crash injection around publication/applied-index persistence. Extend the implemented durable

@@ -58,10 +58,15 @@ write, Raft sync, and successful return. Pre-Raft-authority images replay the re
 exact retry either installs the snapshot or adopts the immutable orphan left after rename;
 post-Raft-record images require and exact-match that application snapshot. Every schedule proves
 catalog reconstruction, retry convergence, and a second reopen. This is process-restart evidence,
-not physical power-loss qualification. Snapshot transfer, composed cross-owner injected-I/O
-schedules, fuzzing, and large catalogs remain deferred. A membership-boundary filesystem test
-compacts an application entry before retained joint/final commands, requires the installed metadata
-snapshot to carry the older voter set, and keeps the live group on the newer stable set.
+not physical power-loss qualification. A separate four-schedule injected-I/O matrix arms both
+owners, crosses application partial-write and post-rename directory-sync failures with either a
+pre-write or partial Raft record on the next attempt, and proves that the first owner failure
+prevents the second mutation. Reopen removes or adopts the exact application state; strict Raft
+recovery rejects a partial record, explicitly authorized tail repair restores the retained log, and
+an exact retry plus second reopen converge. Snapshot transfer, repeated and broader cross-stage
+fault combinations, fuzzing, and large catalogs remain deferred. A membership-boundary filesystem
+test compacts an application entry before retained joint/final commands, requires the installed
+metadata snapshot to carry the older voter set, and keeps the live group on the newer stable set.
 
 Invariants 1–6, 8, 10, 11, 14, and 18 apply.
 
