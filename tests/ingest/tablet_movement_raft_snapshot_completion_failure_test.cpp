@@ -562,5 +562,137 @@ INSTANTIATE_TEST_SUITE_P(EveryMixedOwnerFailure, TabletMovementRaftSnapshotMixed
                            return std::string{parameter.param.name};
                          });
 
+TEST(TabletMovementRaftSnapshotRepeatedFailureTest,
+     SurvivesTwoPartialWritesInEachOwnerBeforeSuccess) {
+  TemporaryCompletionRoot root;
+  ASSERT_FALSE(root.path().empty());
+  const RaftTabletApplicationSnapshot expected = test::crash_application_snapshot();
+  auto bytes = encode_raft_tablet_application_snapshot_v1(expected);
+  ASSERT_TRUE(bytes.has_value()) << bytes.error().to_string();
+  auto recovered_movement = test::crash_recovered_movement(*bytes);
+  ASSERT_TRUE(recovered_movement.has_value()) << recovered_movement.error().to_string();
+  {
+    auto storage = RaftTabletSnapshotStorage::create(test::crash_snapshot_config(root.path()));
+    ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+    auto runtime = raft::DurableMultiRaftRuntime::create_new(
+        4U, test::crash_log_config(root.path()), test::crash_groups());
+    ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+    EXPECT_TRUE(runtime->close().is_ok());
+  }
+
+  const std::filesystem::path snapshot_temporary =
+      root.path() / "snapshots" / "snapshot-00000000000000000009.rtas.tmp";
+  for (std::size_t attempt = 0U; attempt < 2U; ++attempt) {
+    SCOPED_TRACE(attempt);
+    test::OneShotSnapshotStorageFault snapshot_syscalls{
+        test::SnapshotStorageFault::kTemporaryPartialWrite};
+    auto storage = detail::RaftTabletSnapshotStorageTestAccess::open_existing(
+        test::crash_snapshot_config(root.path()), snapshot_syscalls);
+    ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+    EXPECT_FALSE(std::filesystem::exists(snapshot_temporary));
+    auto runtime = raft::DurableMultiRaftRuntime::open_existing(
+        4U, test::crash_log_config(root.path()), {}, test::crash_groups());
+    ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+    auto pending = test::request_crash_snapshot(*runtime, expected.raft_snapshot);
+    ASSERT_TRUE(pending.has_value()) << pending.error().to_string();
+    snapshot_syscalls.arm();
+
+    auto completed = complete_recovered_tablet_movement_raft_snapshot(
+        *recovered_movement, test::crash_table_id(), *storage, *pending, *runtime);
+
+    ASSERT_FALSE(completed.has_value());
+    EXPECT_EQ(completed.error().code(), common::StatusCode::kIoError);
+    EXPECT_TRUE(snapshot_syscalls.fired());
+    EXPECT_TRUE(std::filesystem::exists(snapshot_temporary));
+    auto installed = storage->load(expected.raft_snapshot.last_included_index);
+    ASSERT_FALSE(installed.has_value());
+    EXPECT_EQ(installed.error().code(), common::StatusCode::kNotFound);
+    EXPECT_FALSE(runtime->failed());
+    const raft::RaftNode* recovered_group = runtime->find_group(test::crash_group_id());
+    ASSERT_NE(recovered_group, nullptr);
+    EXPECT_NE(recovered_group->persistent_state().snapshot, expected.raft_snapshot);
+    EXPECT_TRUE(runtime->close().is_ok());
+  }
+
+  auto storage = RaftTabletSnapshotStorage::open_existing(test::crash_snapshot_config(root.path()));
+  ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+  EXPECT_FALSE(std::filesystem::exists(snapshot_temporary));
+  auto before_raft_failures = storage->load(expected.raft_snapshot.last_included_index);
+  ASSERT_FALSE(before_raft_failures.has_value());
+  EXPECT_EQ(before_raft_failures.error().code(), common::StatusCode::kNotFound);
+
+  for (std::size_t attempt = 0U; attempt < 2U; ++attempt) {
+    SCOPED_TRACE(attempt);
+    CompletionFaultSyscalls completion_syscalls{CompletionIoFault::kWritePrefixThenError};
+    auto runtime = raft::detail::DurableMultiRaftRuntimeTestAccess::open_existing(
+        4U, test::crash_log_config(root.path()),
+        raft::RaftPersistentLogOpenOptions{.repair_incomplete_final_tail = true},
+        test::crash_groups(), {}, completion_syscalls);
+    ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+    auto pending = test::request_crash_snapshot(*runtime, expected.raft_snapshot);
+    ASSERT_TRUE(pending.has_value()) << pending.error().to_string();
+    completion_syscalls.arm();
+
+    auto completed = complete_recovered_tablet_movement_raft_snapshot(
+        *recovered_movement, test::crash_table_id(), *storage, *pending, *runtime);
+
+    ASSERT_FALSE(completed.has_value());
+    EXPECT_EQ(completed.error().code(), common::StatusCode::kIoError);
+    EXPECT_TRUE(completion_syscalls.fired());
+    EXPECT_TRUE(runtime->failed());
+    auto installed = storage->load(expected.raft_snapshot.last_included_index);
+    ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+    EXPECT_EQ(installed->bytes, *bytes);
+    EXPECT_TRUE(runtime->close().is_ok());
+
+    std::filesystem::path active_segment;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(root.path() / "raft")) {
+      if (entry.path().extension() == ".rlog")
+        active_segment = entry.path();
+    }
+    ASSERT_FALSE(active_segment.empty());
+    const std::uintmax_t incomplete_size = std::filesystem::file_size(active_segment);
+    auto strict = raft::DurableMultiRaftRuntime::open_existing(
+        4U, test::crash_log_config(root.path()), {}, test::crash_groups());
+    ASSERT_FALSE(strict.has_value());
+    EXPECT_EQ(strict.error().code(), common::StatusCode::kCorruption);
+    EXPECT_EQ(std::filesystem::file_size(active_segment), incomplete_size);
+    auto repaired = raft::DurableMultiRaftRuntime::open_existing(
+        4U, test::crash_log_config(root.path()),
+        raft::RaftPersistentLogOpenOptions{.repair_incomplete_final_tail = true},
+        test::crash_groups());
+    ASSERT_TRUE(repaired.has_value()) << repaired.error().to_string();
+    EXPECT_EQ(std::filesystem::file_size(active_segment) + kPartialRecordBytes, incomplete_size);
+    const raft::RaftNode* recovered_group = repaired->find_group(test::crash_group_id());
+    ASSERT_NE(recovered_group, nullptr);
+    EXPECT_NE(recovered_group->persistent_state().snapshot, expected.raft_snapshot);
+    EXPECT_TRUE(repaired->close().is_ok());
+  }
+
+  auto runtime = raft::DurableMultiRaftRuntime::open_existing(
+      4U, test::crash_log_config(root.path()), {}, test::crash_groups());
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  auto pending = test::request_crash_snapshot(*runtime, expected.raft_snapshot);
+  ASSERT_TRUE(pending.has_value()) << pending.error().to_string();
+  auto completed = complete_recovered_tablet_movement_raft_snapshot(
+      *recovered_movement, test::crash_table_id(), *storage, *pending, *runtime);
+  ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
+  const auto* response =
+      std::get_if<raft::InstallSnapshotResponse>(&completed->acknowledgement.outbound.message);
+  ASSERT_NE(response, nullptr);
+  EXPECT_TRUE(response->success);
+  EXPECT_EQ(runtime->find_group(test::crash_group_id())->persistent_state().snapshot,
+            expected.raft_snapshot);
+  EXPECT_TRUE(runtime->close().is_ok());
+
+  auto repeated = raft::DurableMultiRaftRuntime::open_existing(
+      4U, test::crash_log_config(root.path()), {}, test::crash_groups());
+  ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
+  EXPECT_EQ(repeated->find_group(test::crash_group_id())->persistent_state().snapshot,
+            expected.raft_snapshot);
+  EXPECT_TRUE(repeated->close().is_ok());
+}
+
 } // namespace
 } // namespace chronos::ingest

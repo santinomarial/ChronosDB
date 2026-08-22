@@ -56,6 +56,9 @@ the application retries completion, so no in-memory recovery progress becomes au
 Mixed-owner schedules retain the same rule after a preceding RTAS failure: the Raft fault remains
 armed across runtime reopen, then its definite or partial write failure withholds the second
 response and leaves recovery—not retry memory—to select the next authority.
+The repeated-fault lifecycle performs that incomplete-record rejection and authorized 16-byte
+repair twice in succession. Each fresh runtime reconstructs the same pre-completion group state;
+only the later complete record becomes snapshot authority.
 
 Rotation first data-synchronizes and closes the predecessor. Either result may be ambiguous, so a
 reported error poisons the writer even if the kernel operation completed. Deterministic tests inject

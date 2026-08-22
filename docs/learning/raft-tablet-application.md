@@ -106,6 +106,9 @@ The composed mixed-owner matrix adds another restart boundary. RTAS first fails 
 or after final rename, public reopen selects no file or the exact immutable file, and only then does
 the retained Raft fault fail the next completion write. A third attempt succeeds from the recovered
 product state; neither earlier attempt produces a success response.
+The longer repeated schedule stops two RTAS temporary writes and two Raft completion-record writes
+at 16 bytes each. Cleanup and repair restart from observed bytes every time, and the application
+sees no success until the fifth attempt synchronizes the complete Raft record.
 
 After that durable transition,
 `checkpoint_recovered_tablet_movement_catch_up` reconciles the target's exact persisted snapshot

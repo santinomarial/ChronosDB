@@ -65,6 +65,8 @@ remains retryable; only final directory-sync uncertainty poisons the live owner,
 converges in every case. The write case also covers a successful 16-byte prefix followed by `EIO`;
 reopen removes that incomplete temporary rather than interpreting its bytes. A composed two-fault
 matrix crosses that partial temporary and final directory-sync uncertainty with definite and
-partial Raft-log writes on the following retry. Larger repeated-fault schedules, power-loss
+partial Raft-log writes on the following retry. A longer lifecycle repeats the partial RTAS write
+twice, removing the recognized temporary on each reopen, before two separately repaired partial
+Raft writes and a successful fifth completion. Other repeated-fault shapes, power-loss
 qualification, permission matrices, snapshot transport, and physical-log reclamation remain
 deferred.

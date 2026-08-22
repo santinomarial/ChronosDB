@@ -82,8 +82,14 @@ prefix or final directory synchronization, reopens both owners, and then fails t
 completion before its write or after a 16-byte record prefix. Neither attempt releases success.
 RTAS reopen selects absent or exact immutable bytes, while Raft reopen selects the complete prior
 prefix directly or through explicit tail repair; a third exact attempt completes and repeated strict
-reopen recovers the snapshot. Schedules with more than one failure per owner, failures during both
-owner reopens, simultaneous faults, and physical power loss remain deferred.
+reopen recovers the snapshot.
+
+A deterministic repeated-fault lifecycle extends this to five attempts. The first two each stop an
+RTAS temporary after 16 bytes and require public cleanup. The next two each stop the Raft completion
+record after 16 bytes, require strict byte-preserving rejection, and authorize exact tail repair.
+The fifth attempt alone returns success, and strict reopen recovers its exact snapshot. Other
+repeated stage combinations, failures during both owner reopens, simultaneous faults, and physical
+power loss remain deferred.
 
 **Retrospective update (ADR 0130):** that decision reconciles a persisted Raft snapshot with a
 checkpoint-behind catching-up movement and installs the ready checkpoint before advancing live
