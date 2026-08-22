@@ -20,6 +20,7 @@ enum class DurableIoFault : std::uint8_t {
   kRename,
   kDirectorySync,
   kUnlink,
+  kListDirectory,
   kFileClose,
 };
 
@@ -105,6 +106,10 @@ public:
     return delegate_.try_lock_exclusive(descriptor);
   }
   int list_directory_entries(int descriptor, std::vector<io::DirectoryEntry>& entries) override {
+    if (consume(DurableIoFault::kListDirectory)) {
+      errno = EIO;
+      return -1;
+    }
     return delegate_.list_directory_entries(descriptor, entries);
   }
   int unlink_at(const int directory_descriptor, const char* const name) override {

@@ -455,10 +455,17 @@ RaftPersistentLog::create_new_with(const RaftPersistentLogConfig& config,
 common::Result<RaftPersistentLog>
 RaftPersistentLog::open_existing(const RaftPersistentLogConfig& config,
                                  const RaftPersistentLogOpenOptions& options) {
+  return open_existing_with(config, options, io::detail::system_posix_syscalls());
+}
+
+common::Result<RaftPersistentLog>
+RaftPersistentLog::open_existing_with(const RaftPersistentLogConfig& config,
+                                      const RaftPersistentLogOpenOptions& options,
+                                      io::detail::PosixSyscalls& syscalls) {
   const common::Status valid = validate_config(config);
   if (!valid.is_ok())
     return common::make_unexpected(valid);
-  auto directory = io::PosixDirectory::open(config.directory_path);
+  auto directory = io::detail::PosixHandleFactory::open_directory(config.directory_path, syscalls);
   if (!directory.has_value())
     return common::make_unexpected(directory.error());
   auto lock = directory->acquire_existing_exclusive_lock(kLockName);

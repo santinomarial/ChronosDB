@@ -116,6 +116,10 @@ Recovery validates the namespace, authoritative anchor when present, every retai
 and every retained record in physical order before returning latest per-group state. It may
 explicitly truncate only a structurally incomplete suffix in the highest segment. Complete
 checksum failure, retained gaps, unknown entries, and non-regular entries fail closed.
+An I/O failure during namespace enumeration, recognized-temporary cleanup, or the final active-file
+and directory synchronization gates aborts recovery and releases the exclusive owner. A later open
+restarts validation from the filesystem state; it does not resume partially constructed in-memory
+recovery state.
 
 ## Remaining limitation
 

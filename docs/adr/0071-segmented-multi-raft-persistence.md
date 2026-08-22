@@ -92,8 +92,10 @@ directory sync, and close. Pre-rename failure retains the old base while post-re
 the complete checkpoint base; both recover the same latest group states and next sequence.
 Reclamation injection now covers ambiguous real old-segment deletion and its directory sync, then
 old-anchor deletion and its directory sync across a second checkpoint. Restart selects the newest
-anchor and recovers its exact checkpoint in every case. Broader multi-artifact cleanup schedules,
-recovery syscall failures, process crash points, sustained corruption campaigns, and Linux
-power-loss qualification remain required. A focused CLI smoke test covers both benchmark modes and
-exact artifact/recovery status; a clean controlled-host measurement campaign remains required
-before making performance claims.
+anchor and recovers its exact checkpoint in every case. Recovery injection now covers namespace
+enumeration, stale-temporary unlink and directory sync, plus the final active-file and directory
+syncs. Every failed open releases ownership and an exact retry continues the physical sequence.
+Broader multi-artifact cleanup schedules, recovery open/stat/read/repair syscall failures, process
+crash points, sustained corruption campaigns, and Linux power-loss qualification remain required. A
+focused CLI smoke test covers both benchmark modes and exact artifact/recovery status; a clean
+controlled-host measurement campaign remains required before making performance claims.

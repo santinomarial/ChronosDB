@@ -383,8 +383,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   validation. Reclamation now injects ambiguous real old-segment deletion and the following
   directory sync, then old-anchor deletion and its directory sync during a second checkpoint.
   Restart always selects the newest anchor and recovers its exact two-record checkpoint. Broader
-  multi-artifact cleanup schedules and recovery syscall matrices remain deferred. The physical
-  persistent-log close matrix now injects every nonempty
+  multi-artifact cleanup schedules remain deferred. Recovery now injects namespace enumeration,
+  ambiguous stale-temporary unlink and cleanup directory sync, and the final active-file and
+  directory syncs. Every failed open releases the durable lock; a retry recovers the exact record
+  and continues its sequence. Recovery open/stat/read/repair syscall matrices remain deferred. The
+  physical persistent-log close matrix now injects every nonempty
   failure combination after the real active-file, advisory-lock, and directory closes; every
   schedule invalidates all three handles, retains the first error, stays idempotent, releases
   ownership, and exactly reopens the synchronized term/state. The asynchronous owner now combines

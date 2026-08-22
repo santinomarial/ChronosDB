@@ -474,6 +474,66 @@ TEST(RaftPersistentLogTest, ReclamationDeletionAndSyncFailuresRecoverNewestAutho
   }
 }
 
+TEST(RaftPersistentLogTest, RecoveryNamespaceCleanupAndFinalSyncFailuresReleaseLockForExactRetry) {
+  struct RecoveryFailure {
+    test::DurableIoFault fault;
+    bool create_stale_temporary;
+    std::string_view expected_operation;
+  };
+  constexpr std::array failures{
+      RecoveryFailure{test::DurableIoFault::kListDirectory, false, "list directory entries"},
+      RecoveryFailure{test::DurableIoFault::kUnlink, true, "unlinkat WAL entry"},
+      RecoveryFailure{test::DurableIoFault::kDirectorySync, true, "fsync directory"},
+      RecoveryFailure{test::DurableIoFault::kFullSync, false, "fsync regular file"},
+      RecoveryFailure{test::DurableIoFault::kDirectorySync, false, "fsync directory"},
+  };
+
+  for (std::size_t failure_index = 0U; failure_index < failures.size(); ++failure_index) {
+    SCOPED_TRACE(failure_index);
+    TemporaryDirectory directory;
+    const RaftPersistentLogConfig config{.directory_path = directory.path().string()};
+    const GroupPersistentState persisted =
+        state(group_id(static_cast<std::byte>(0xA0U + failure_index)), 1U, std::byte{0x91U});
+    auto log = RaftPersistentLog::create_new(config);
+    ASSERT_TRUE(log.has_value()) << log.error().to_string();
+    ASSERT_TRUE(log->append(persisted).has_value());
+    ASSERT_TRUE(log->synchronize().has_value());
+    ASSERT_TRUE(log->close().is_ok());
+
+    const std::filesystem::path temporary = directory.path() / "raft-00000000000000000002.tmp";
+    if (failures[failure_index].create_stale_temporary) {
+      std::ofstream output(temporary, std::ios::binary);
+      output.write("stale", 5);
+      output.close();
+      ASSERT_TRUE(std::filesystem::exists(temporary));
+    }
+
+    test::DurableIoFaultPosixSyscalls syscalls;
+    syscalls.arm(failures[failure_index].fault);
+    auto failed = detail::RaftPersistentLogTestAccess::open_existing(config, {}, syscalls);
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), common::StatusCode::kIoError);
+    EXPECT_NE(failed.error().to_string().find(failures[failure_index].expected_operation),
+              std::string::npos);
+    EXPECT_EQ(syscalls.injected_faults(), 1U);
+    EXPECT_FALSE(std::filesystem::exists(temporary));
+
+    auto reopened = RaftPersistentLog::open_existing(config);
+    ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+    EXPECT_EQ(reopened->recovery().base_segment_number, 1U);
+    EXPECT_EQ(reopened->recovery().segment_count, 1U);
+    EXPECT_EQ(reopened->recovery().record_count, 1U);
+    EXPECT_EQ(reopened->durable_physical_sequence(), 1U);
+    ASSERT_EQ(reopened->recovery().latest_group_states.size(), 1U);
+    EXPECT_EQ(reopened->recovery().latest_group_states.front(), persisted);
+    auto appended = reopened->append(state(persisted.group_id, 2U, static_cast<std::byte>(0x92U)));
+    ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
+    EXPECT_EQ(appended->physical_sequence, 2U);
+    ASSERT_TRUE(reopened->synchronize().has_value());
+    EXPECT_TRUE(reopened->close().is_ok());
+  }
+}
+
 TEST(RaftPersistentLogTest, RejectsNonconsecutiveCheckpointWithoutAdvancingTheWriter) {
   TemporaryDirectory directory;
   const RaftPersistentLogConfig config{.directory_path = directory.path().string()};

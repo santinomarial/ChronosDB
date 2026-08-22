@@ -68,6 +68,12 @@ owner retains the reported error before updating its public reclamation counters
 uses the already-published newest anchor, validates its exact checkpoint, observes the completed
 cleanup, and continues at the next sequence. Broader multi-artifact schedules remain separate.
 
+Recovery owns the directory and advisory lock before it enumerates the namespace. Failure injection
+now covers that enumeration, ambiguous stale-temporary unlink and cleanup directory sync, and the
+final active-file and directory synchronization gates. Every failed open unwinds all temporary
+handles and releases `LOCK`; a fresh owner then reopens the exact state and accepts the next
+physical sequence. Open, stat, read, and incomplete-tail repair syscall matrices remain separate.
+
 Explicit close adds no synchronization boundary. It invalidates the active segment, advisory lock,
 and directory in that order, continues after an error, and returns the first physical close error.
 Because POSIX close can release a descriptor even when it reports failure, none of those descriptor

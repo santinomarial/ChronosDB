@@ -12,6 +12,12 @@ public:
   create_new(const RaftPersistentLogConfig& config, io::detail::PosixSyscalls& syscalls) {
     return RaftPersistentLog::create_new_with(config, syscalls);
   }
+
+  [[nodiscard]] static common::Result<RaftPersistentLog>
+  open_existing(const RaftPersistentLogConfig& config, const RaftPersistentLogOpenOptions& options,
+                io::detail::PosixSyscalls& syscalls) {
+    return RaftPersistentLog::open_existing_with(config, options, syscalls);
+  }
 };
 
 } // namespace chronos::raft::detail

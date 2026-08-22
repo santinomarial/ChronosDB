@@ -107,6 +107,10 @@ private:
   explicit RaftPersistentLog(std::unique_ptr<Impl> impl) noexcept;
   [[nodiscard]] static common::Result<RaftPersistentLog>
   create_new_with(const RaftPersistentLogConfig& config, io::detail::PosixSyscalls& syscalls);
+  [[nodiscard]] static common::Result<RaftPersistentLog>
+  open_existing_with(const RaftPersistentLogConfig& config,
+                     const RaftPersistentLogOpenOptions& options,
+                     io::detail::PosixSyscalls& syscalls);
   std::unique_ptr<Impl> impl_;
 
   friend class DurableMultiRaftRuntime;
