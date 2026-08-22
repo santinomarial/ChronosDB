@@ -16,10 +16,11 @@ namespace chronos::raft::test {
   return GroupId{bytes};
 }
 
-[[nodiscard]] inline MetadataApplicationSnapshot metadata_crash_snapshot() {
-  SnapshotMetadata metadata{.last_included_index = 7U,
-                            .last_included_term = 2U,
-                            .manifest_generation = 7U,
+[[nodiscard]] inline MetadataApplicationSnapshot
+metadata_crash_snapshot(const LogIndex included = 7U) {
+  SnapshotMetadata metadata{.last_included_index = included,
+                            .last_included_term = included == 7U ? 2U : 3U,
+                            .manifest_generation = included,
                             .part_set_checksum = {},
                             .configuration_index = 4U,
                             .voters = {1U, 2U}};

@@ -42,7 +42,7 @@ Automatic highest-file retention was rejected because a pre-Raft crash orphan ma
 index. Reader pins are unnecessary for v1 because snapshot loads own and decode all bytes before the
 file handle is released; no live state retains mapped or borrowed file storage.
 
-Scheduling, cleanup metrics, process-kill matrices, tablet-owner syscall fault injection, and device
+Scheduling, cleanup metrics, tablet-owner syscall and process-kill matrices, and device
 qualification remain hardening work.
 
 ## Validation and invariants
@@ -54,4 +54,8 @@ one-shot injection covers authoritative-file open, validation stat, size stat, a
 mutation; directory enumeration; failure at each ordered obsolete-file unlink; and final directory
 sync. Eight nonzero-authority cases always preserve and revalidate the middle authority. Five
 zero-authority cases expose only the exact partial orphan deletion already completed. Every failure
-keeps the owner usable, and exact retry plus reopen converges.
+keeps the owner usable, and exact retry plus reopen converges. An eleven-schedule metadata storage
+`SIGKILL` matrix stops after enumeration, each individual unlink, final directory sync, and success
+release for both nonzero and zero authority. Reopen observes exactly the completed deletion prefix,
+then exact retry and a second reopen converge without deleting the middle authority or retaining a
+zero-authority orphan.

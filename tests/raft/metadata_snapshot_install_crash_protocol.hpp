@@ -13,6 +13,22 @@ inline constexpr std::string_view kAfterMetadataTemporaryClose = "after_metadata
 inline constexpr std::string_view kAfterMetadataRename = "after_metadata_rename";
 inline constexpr std::string_view kAfterMetadataDirectorySync = "after_metadata_directory_sync";
 inline constexpr std::string_view kAfterMetadataSuccessRelease = "after_metadata_success_release";
+inline constexpr std::string_view kAfterMetadataAuthoritativeReclamationList =
+    "after_metadata_authoritative_reclamation_list";
+inline constexpr std::string_view kAfterMetadataAuthoritativeReclamationUnlink =
+    "after_metadata_authoritative_reclamation_unlink";
+inline constexpr std::string_view kAfterMetadataAuthoritativeReclamationDirectorySync =
+    "after_metadata_authoritative_reclamation_directory_sync";
+inline constexpr std::string_view kAfterMetadataAuthoritativeReclamationSuccess =
+    "after_metadata_authoritative_reclamation_success";
+inline constexpr std::string_view kAfterMetadataOrphanReclamationList =
+    "after_metadata_orphan_reclamation_list";
+inline constexpr std::string_view kAfterMetadataOrphanReclamationUnlink =
+    "after_metadata_orphan_reclamation_unlink";
+inline constexpr std::string_view kAfterMetadataOrphanReclamationDirectorySync =
+    "after_metadata_orphan_reclamation_directory_sync";
+inline constexpr std::string_view kAfterMetadataOrphanReclamationSuccess =
+    "after_metadata_orphan_reclamation_success";
 
 } // namespace chronos::raft::test
 

@@ -1242,7 +1242,8 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_static_analysis(chronos_raft_metadata_snapshot_crash_child)
 
   add_executable(chronos_raft_metadata_snapshot_crash_tests
-                 tests/raft/metadata_snapshot_install_crash_matrix_test.cpp)
+                 tests/raft/metadata_snapshot_install_crash_matrix_test.cpp
+                 tests/raft/metadata_snapshot_reclamation_crash_matrix_test.cpp)
   set_target_properties(chronos_raft_metadata_snapshot_crash_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_raft_metadata_snapshot_crash_tests PRIVATE cxx_std_23)
   target_include_directories(

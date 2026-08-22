@@ -73,7 +73,10 @@ durable catalog authority. Reclamation validates the authoritative file through 
 and exact read before listing deletion candidates. An enumeration, any individual unlink, or final
 directory-sync failure leaves only a valid prefix of the planned obsolete deletions; the owner stays
 usable, never removes the authority, and an exact retry converges. The zero-authority path follows
-the same rule while treating every canonical final as an orphan.
+the same rule while treating every canonical final as an orphan. Real-process termination after
+enumeration, any completed unlink, directory synchronization, or reported success reopens to that
+exact namespace prefix. Retrying and reopening again preserves the middle authoritative snapshot or
+converges to an empty zero-authority directory, respectively.
 
 Command/definition size, names, columns, role arrays, endpoint bytes, replicas, nodes, schemas, and
 tablets are explicitly bounded. Decoding validates fixed headers before length-driven work, owns
