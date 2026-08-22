@@ -54,5 +54,9 @@ Compaction coverage rejects a joint-state boundary, accepts a stable boundary be
 joint/final entries, reopens that suffix from the older checkpoint, and allocation-sweeps compaction
 through the final entry with a retained application suffix. Metadata and tablet owners both preserve
 the boundary-time voters when later reconfiguration entries remain live.
-Golden fixtures, corruption campaigns, mixed-version process tests,
-snapshot installation crash points, and reclamation remain deferred.
+Independent minor-0/minor-1 golden fixtures now fix the historical and current bytes for one
+nonempty snapshot with a retained suffix. Focused disk recovery loads that minor-0 record through
+the segmented log, canonicalizes it through `RaftNode`, writes minor 1, reopens the mixed-format
+history, and reclaims the legacy segment behind a current checkpoint. Separate old/new process
+interoperability, hostile voter-count campaigns, snapshot installation crash points, and broader
+reclamation matrices remain deferred.

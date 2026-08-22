@@ -468,8 +468,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   truncates at every byte of a two-segment/two-group anchored checkpoint, then removes each
   authority artifact; strict and repair-authorized opens reject all 1,239 images without mutation.
   Physical power-loss qualification remains.
-- Exercise the v1.1 snapshot membership checkpoint with golden minor-0/minor-1 fixtures,
-  mixed-version processes, hostile voter counts, snapshot-install crash points, and reclamation.
+- Extend the v1.1 snapshot membership checkpoint validation beyond the independent
+  minor-0/minor-1 golden fixtures and focused legacy-record recovery, current rewrite, mixed-format
+  reopen, and legacy-segment reclamation with separate mixed-version processes, hostile voter
+  counts, snapshot-install crash points, and broader reclamation matrices.
 - Connect the implemented two-stage Raft snapshot request/completion boundary to versioned tablet
   and metadata snapshot bytes, resumable transfer, manifest installation, and process-crash tests.
 - Extend the implemented one-worker bounded durable Multi-Raft FIFO and ordered owning observations

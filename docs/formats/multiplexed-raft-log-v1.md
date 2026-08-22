@@ -153,6 +153,14 @@ header. Crossing each target with 1, 3, and 8 groups verifies 24 exact layouts t
 latest-state reconstruction, next-sequence append, fresh-base checkpoint reclamation, and a later
 tail. The oracle performs the documented header-plus-record arithmetic independently of the writer.
 
+Independent golden records fix both the historical minor-0 layout and the current minor-1 layout
+for one nonempty snapshot with a retained suffix. The current codec decodes both; semantic recovery
+backfills the absent legacy voter checkpoint, and current encoding matches the minor-1 bytes
+exactly. A focused segmented-log test opens the minor-0 disk record, writes the canonical minor-1
+state, reopens that mixed-format history, checkpoints it again, reclaims the legacy segment, and
+reopens the current-only authority. This is format-history compatibility within the current binary,
+not separate old/new process interoperability or power-loss qualification.
+
 ## Remaining limitation
 
 `MultiRaftRuntime` returns this full logical state with a persist-before-send contract.
