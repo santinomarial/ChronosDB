@@ -58,5 +58,8 @@ Independent minor-0/minor-1 golden fixtures now fix the historical and current b
 nonempty snapshot with a retained suffix. Focused disk recovery loads that minor-0 record through
 the segmented log, canonicalizes it through `RaftNode`, writes minor 1, reopens the mixed-format
 history, and reclaims the legacy segment behind a current checkpoint. Separate old/new process
-interoperability, hostile voter-count campaigns, snapshot installation crash points, and broader
-reclamation matrices remain deferred.
+interoperability, snapshot installation crash points, and broader reclamation matrices remain
+deferred. The physical codec now applies the membership-command `u16` voter ceiling before encoding
+or allocation-driving decode. Boundary coverage accepts 65,535 voters, rejects encoder input at
+65,536, rejects checksummed count fields at 65,536, 65,537, and `UINT32_MAX`, and proves repeated
+strict disk recovery releases the lock without changing the hostile image.

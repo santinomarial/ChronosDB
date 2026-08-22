@@ -1,12 +1,19 @@
+#include "chronos/common/byte_writer.hpp"
+#include "chronos/common/crc32c.hpp"
 #include "chronos/common/status.hpp"
+#include "chronos/raft/membership.hpp"
 #include "chronos/raft/multiplexed_log.hpp"
 #include "chronos/raft/node.hpp"
 #include "chronos/raft/persistent_log.hpp"
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <iterator>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -15,6 +22,9 @@
 
 namespace chronos::raft {
 namespace {
+
+inline constexpr std::size_t kSnapshotVoterCountRecordOffset = kMultiplexedLogHeaderSize + 96U;
+inline constexpr std::size_t kSnapshotVotersRecordOffset = kMultiplexedLogHeaderSize + 104U;
 
 [[nodiscard]] GroupId group_id(const std::byte seed) {
   common::Uuid::Bytes bytes{};
@@ -88,6 +98,50 @@ private:
   state.log = {LogEntry{6U, 3U, 1U, {std::byte{0x11U}, std::byte{0x22U}}},
                LogEntry{7U, 4U, 2U, {}}};
   return state;
+}
+
+[[nodiscard]] bool append_bytes(const std::filesystem::path& path, const common::ByteView bytes) {
+  std::ofstream output{path, std::ios::binary | std::ios::app};
+  if (!output.is_open())
+    return false;
+  for (const std::byte value : bytes)
+    output.put(static_cast<char>(std::to_integer<unsigned char>(value)));
+  output.close();
+  return output.good();
+}
+
+[[nodiscard]] bool write_u32(std::vector<std::byte>& record, const std::size_t offset,
+                             const std::uint32_t value) {
+  if (offset > record.size() || record.size() - offset < sizeof(value))
+    return false;
+  common::ByteWriter writer{common::MutableByteView{record}.subspan(offset, sizeof(value))};
+  return writer.write_u32_le(value).is_ok();
+}
+
+[[nodiscard]] bool refresh_record_integrity(std::vector<std::byte>& record) {
+  constexpr std::size_t kTotalSizeOffset = 16U;
+  constexpr std::size_t kPayloadSizeOffset = 20U;
+  constexpr std::size_t kPayloadCrcOffset = 48U;
+  constexpr std::size_t kHeaderCrcOffset = 52U;
+  if (record.size() < kMultiplexedLogHeaderSize + kMultiplexedLogTrailerSize ||
+      record.size() > std::numeric_limits<std::uint32_t>::max()) {
+    return false;
+  }
+  const std::size_t payload_size =
+      record.size() - kMultiplexedLogHeaderSize - kMultiplexedLogTrailerSize;
+  if (!write_u32(record, kTotalSizeOffset, static_cast<std::uint32_t>(record.size())) ||
+      !write_u32(record, kPayloadSizeOffset, static_cast<std::uint32_t>(payload_size)) ||
+      !write_u32(record, kPayloadCrcOffset,
+                 common::crc32c(
+                     common::ByteView{record}.subspan(kMultiplexedLogHeaderSize, payload_size))) ||
+      !write_u32(record, kHeaderCrcOffset, 0U) ||
+      !write_u32(record, kHeaderCrcOffset,
+                 common::crc32c(common::ByteView{record}.first(kMultiplexedLogHeaderSize)))) {
+    return false;
+  }
+  return write_u32(
+      record, record.size() - kMultiplexedLogTrailerSize,
+      common::crc32c(common::ByteView{record}.first(record.size() - kMultiplexedLogTrailerSize)));
 }
 
 TEST(MultiplexedLogTest, RoundTripsIndependentGroupPersistentStateAndDetectsCorruption) {
@@ -166,12 +220,7 @@ TEST(MultiplexedLogTest, RecoversLegacyDiskHistoryAndReclaimsItAfterCurrentRewri
 
   const std::vector<std::byte> legacy_fixture = load_hex_fixture("multiplexed-state-minor-0.hex");
   const std::filesystem::path first_segment = directory.path() / "raft-00000000000000000001.rlog";
-  std::ofstream legacy_output{first_segment, std::ios::binary | std::ios::app};
-  ASSERT_TRUE(legacy_output.is_open());
-  for (const std::byte value : legacy_fixture)
-    legacy_output.put(static_cast<char>(std::to_integer<unsigned char>(value)));
-  legacy_output.close();
-  ASSERT_TRUE(legacy_output.good());
+  ASSERT_TRUE(append_bytes(first_segment, legacy_fixture));
 
   const GroupId group = group_id(std::byte{0x41U});
   auto reopened = RaftPersistentLog::open_existing(config);
@@ -213,6 +262,87 @@ TEST(MultiplexedLogTest, RecoversLegacyDiskHistoryAndReclaimsItAfterCurrentRewri
   EXPECT_EQ(reopened->recovery().segment_count, 1U);
   ASSERT_EQ(reopened->recovery().latest_group_states.size(), 1U);
   EXPECT_EQ(reopened->recovery().latest_group_states.front(), checkpoint);
+}
+
+TEST(MultiplexedLogTest, BoundsHostileSnapshotVoterCountsBeforeAllocationAndRecovery) {
+  PersistentState exact_state{};
+  exact_state.current_term = 1U;
+  exact_state.commit_index = 1U;
+  exact_state.applied_index = 1U;
+  exact_state.snapshot.last_included_index = 1U;
+  exact_state.snapshot.last_included_term = 1U;
+  exact_state.snapshot.manifest_generation = 1U;
+  exact_state.snapshot.configuration_index = 1U;
+  exact_state.snapshot.voters.reserve(kMaximumMembershipVoters);
+  for (std::size_t ordinal = 1U; ordinal <= kMaximumMembershipVoters; ++ordinal)
+    exact_state.snapshot.voters.push_back(static_cast<NodeId>(ordinal));
+  const GroupPersistentState exact{group_id(std::byte{0x51U}), 1U, exact_state};
+
+  auto encoded = encode_multiplexed_log_record_v1(exact);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  auto decoded = decode_multiplexed_log_record_v1(*encoded);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(decoded->persistent, exact);
+
+  PersistentState oversized_state = exact_state;
+  oversized_state.snapshot.voters.push_back(static_cast<NodeId>(kMaximumMembershipVoters + 1U));
+  auto oversized = encode_multiplexed_log_record_v1(
+      GroupPersistentState{exact.group_id, 2U, std::move(oversized_state)});
+  ASSERT_FALSE(oversized.has_value());
+  EXPECT_EQ(oversized.error().code(), common::StatusCode::kInvalidArgument);
+
+  const std::size_t voter_end =
+      kSnapshotVotersRecordOffset + kMaximumMembershipVoters * sizeof(NodeId);
+  ASSERT_LE(voter_end, encoded->size() - kMultiplexedLogTrailerSize);
+  std::array<std::byte, sizeof(NodeId)> extra_voter{};
+  common::ByteWriter extra_writer{extra_voter};
+  ASSERT_TRUE(
+      extra_writer.write_u64_le(static_cast<NodeId>(kMaximumMembershipVoters + 1U)).is_ok());
+  std::vector<std::byte> hostile = *encoded;
+  hostile.insert(hostile.begin() + static_cast<std::ptrdiff_t>(voter_end), extra_voter.begin(),
+                 extra_voter.end());
+  ASSERT_TRUE(refresh_record_integrity(hostile));
+
+  constexpr std::array hostile_counts{
+      static_cast<std::uint32_t>(kMaximumMembershipVoters + 1U),
+      static_cast<std::uint32_t>(kMaximumMembershipVoters + 2U),
+      std::numeric_limits<std::uint32_t>::max(),
+  };
+  for (const std::uint32_t hostile_count : hostile_counts) {
+    SCOPED_TRACE(hostile_count);
+    std::vector<std::byte> candidate = hostile;
+    ASSERT_TRUE(write_u32(candidate, kSnapshotVoterCountRecordOffset, hostile_count));
+    ASSERT_TRUE(refresh_record_integrity(candidate));
+    decoded = decode_multiplexed_log_record_v1(candidate);
+    ASSERT_FALSE(decoded.has_value());
+    EXPECT_EQ(decoded.error().code(), common::StatusCode::kCorruption);
+  }
+
+  ASSERT_TRUE(write_u32(hostile, kSnapshotVoterCountRecordOffset, hostile_counts.front()));
+  ASSERT_TRUE(refresh_record_integrity(hostile));
+  TemporaryDirectory directory;
+  const RaftPersistentLogConfig config{.directory_path = directory.path().string()};
+  auto log = RaftPersistentLog::create_new(config);
+  ASSERT_TRUE(log.has_value()) << log.error().to_string();
+  ASSERT_TRUE(log->close().is_ok());
+  const std::filesystem::path segment = directory.path() / "raft-00000000000000000001.rlog";
+  ASSERT_TRUE(append_bytes(segment, hostile));
+  std::ifstream before_input{segment, std::ios::binary};
+  ASSERT_TRUE(before_input.is_open());
+  const std::vector<char> before{std::istreambuf_iterator<char>{before_input},
+                                 std::istreambuf_iterator<char>{}};
+  ASSERT_FALSE(before.empty());
+
+  for (std::size_t attempt = 0U; attempt < 2U; ++attempt) {
+    auto rejected = RaftPersistentLog::open_existing(config);
+    ASSERT_FALSE(rejected.has_value());
+    EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
+  }
+  std::ifstream after_input{segment, std::ios::binary};
+  ASSERT_TRUE(after_input.is_open());
+  const std::vector<char> after{std::istreambuf_iterator<char>{after_input},
+                                std::istreambuf_iterator<char>{}};
+  EXPECT_EQ(after, before);
 }
 
 TEST(MultiplexedLogTest, EncodesTheExactMaximumAndRejectsTheNextByte) {

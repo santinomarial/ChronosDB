@@ -40,7 +40,9 @@ term-zero persistent state has no recorded vote. A nonempty snapshot checkpoint 
 membership base for suffix validation. Local compaction derives that base at the exact
 last-included index. A prefix ending in joint state is not representable and must be rejected; later
 membership entries may remain in the retained suffix only when replay from the stable checkpoint is
-valid.
+valid. Although the physical count field is `u32`, the format accepts at most 65,535 snapshot voters,
+matching Membership Command v1's `u16` count ceiling. Encoders reject a larger in-memory set, and
+decoders reject a larger count as corruption before reserving its voter array.
 
 Each log entry contains logical index (8), term (8), type (1), seven required-zero bytes, payload
 length (4), four required-zero bytes, and payload.
@@ -160,6 +162,13 @@ exactly. A focused segmented-log test opens the minor-0 disk record, writes the 
 state, reopens that mixed-format history, checkpoints it again, reclaims the legacy segment, and
 reopens the current-only authority. This is format-history compatibility within the current binary,
 not separate old/new process interoperability or power-loss qualification.
+
+The hostile voter-count boundary accepts and round-trips exactly 65,535 voters. It rejects encoder
+input at 65,536 and fully checksummed records declaring 65,536, 65,537, or `UINT32_MAX`. The
+65,536 image contains enough bytes for the claimed array, so rejection depends on the format limit
+rather than truncation. Repeated strict segmented-log recovery returns corruption, releases the
+owner lock, and preserves that image byte-for-byte. This is focused count-bound coverage, not an
+exhaustive coordinated-corruption campaign.
 
 ## Remaining limitation
 

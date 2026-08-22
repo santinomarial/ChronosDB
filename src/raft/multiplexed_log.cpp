@@ -4,6 +4,7 @@
 #include "chronos/common/byte_writer.hpp"
 #include "chronos/common/checked_math.hpp"
 #include "chronos/common/crc32c.hpp"
+#include "chronos/raft/membership.hpp"
 #include "chronos/raft/persistent_state_budget.hpp"
 
 #include <algorithm>
@@ -145,7 +146,7 @@ common::Result<std::vector<std::byte>>
 encode_multiplexed_log_record_v1(const GroupPersistentState& persistent) {
   if (persistent.group_id.is_nil() || persistent.physical_sequence == 0U ||
       persistent.state.log.size() > std::numeric_limits<std::uint32_t>::max() ||
-      persistent.state.snapshot.voters.size() > std::numeric_limits<std::uint32_t>::max()) {
+      persistent.state.snapshot.voters.size() > kMaximumMembershipVoters) {
     return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
                                                   "multiplexed log identity or state is invalid"});
   }
@@ -277,8 +278,9 @@ decode_multiplexed_log_record_v1(const common::ByteView encoded) {
     configuration_index = *decoded_configuration_index;
     voter_count = *decoded_voter_count;
   }
-  if (voter_count > reader.remaining() / sizeof(NodeId))
+  if (voter_count > kMaximumMembershipVoters || voter_count > reader.remaining() / sizeof(NodeId)) {
     return common::make_unexpected(corrupt("multiplexed log snapshot voter count is invalid"));
+  }
   std::vector<NodeId> snapshot_voters;
   snapshot_voters.reserve(voter_count);
   for (std::uint32_t index = 0U; index < voter_count; ++index) {

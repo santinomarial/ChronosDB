@@ -20,7 +20,11 @@ every earlier record.
 
 Bounds apply before allocation: segment size is at most 1 GiB, record size is at most 16 MiB, and
 configuration limits total segments, records, and recovered groups. Public headers contain no POSIX
-types. Minor-1 persistent-state payload accounting is exact:
+types. The minor-1 snapshot voter count is physically `u32` but cannot exceed the 65,535-voter
+Membership Command v1 ceiling; decode rejects a larger checksummed count before reserving storage,
+and encode rejects a larger source vector. Exact-limit and over-limit tests include repeated
+fail-closed disk recovery with byte preservation. Minor-1 persistent-state payload accounting is
+exact:
 `112 + 8 * snapshot_voters + sum(32 + entry_payload_bytes)`. The core checks that aggregate rather
 than relying only on per-entry and entry-count bounds.
 Legacy snapshots without an encoded voter checkpoint are canonicalized from bootstrap membership
