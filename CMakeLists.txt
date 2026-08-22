@@ -1711,6 +1711,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/ingest/tablet_movement_catch_up_checkpoint_header_self_contained.cpp
     tests/ingest/tablet_movement_catch_up_checkpoint_test.cpp
     tests/ingest/tablet_movement_raft_snapshot_completion_header_self_contained.cpp
+    tests/ingest/tablet_movement_raft_snapshot_completion_failure_test.cpp
     tests/ingest/tablet_movement_raft_snapshot_completion_test.cpp
     tests/ingest/tablet_movement_snapshot_handoff_header_self_contained.cpp
     tests/ingest/tablet_movement_snapshot_handoff_test.cpp

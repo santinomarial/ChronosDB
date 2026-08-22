@@ -62,9 +62,16 @@ write and sync, and after composed success becomes releasable. Recovery uses pub
 proves that pre-Raft RTAS files are either absent temporaries or safe immutable orphans, resumes the
 pending path when Raft authority is absent, and otherwise proves that an exact repeated leader
 request receives success from the persisted snapshot. The RTAS half separately covers one-shot
-syscall failures at every install and temporary-cleanup operation. Raft-log and cross-owner mixed
-failure schedules, physical power-loss qualification, response transport, leader retry scheduling,
-physical part transfer, and reclamation remain deferred.
+syscall failures at every install and temporary-cleanup operation. Broader Raft-log and cross-owner
+mixed failure schedules, physical power-loss qualification, response transport, leader retry
+scheduling, physical part transfer, and reclamation remain deferred.
+
+A four-case composed failure matrix now injects `EIO` before and after the Raft completion-record
+write and its data sync. The durable runtime fails closed and the adapter releases no response in
+all cases. Public reopen observes no Raft authority when the write never occurred and resumes the
+exact pending path; an ambiguous full write or sync error recovers the complete snapshot and answers
+an exact leader retry from that authority. Partial-write tails, persistent-log recovery failures,
+simultaneous faults in both owners, and physical power loss remain deferred.
 
 **Retrospective update (ADR 0130):** that decision reconciles a persisted Raft snapshot with a
 checkpoint-behind catching-up movement and installs the ready checkpoint before advancing live

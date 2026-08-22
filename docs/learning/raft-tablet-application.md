@@ -89,6 +89,12 @@ cleanup calls. Pre-rename failures retain a retryable live owner. A failed final
 poisons that owner because name durability is uncertain, while a new public owner can revalidate the
 complete immutable file and converge through an exact retry.
 
+The following Raft persistence boundary is also failure-injected at both definite and ambiguous
+write/sync outcomes. Completion never yields an acknowledgment report once the runtime reports
+`EIO`. Reopen either finds no snapshot metadata and safely repeats the pending completion, or finds
+the complete record and answers the leader retry idempotently. The immutable RTAS is valid in both
+states and never becomes authority by itself.
+
 After that durable transition,
 `checkpoint_recovered_tablet_movement_catch_up` reconciles the target's exact persisted snapshot
 when movement still reopens as catching-up. It creates a private ready candidate, installs the next
