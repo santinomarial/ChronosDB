@@ -75,8 +75,15 @@ image is rejected byte-for-byte by strict recovery, then explicit repair truncat
 synchronizes it, recovers the prior state, and permits the same exact completion retry. Persistent-
 log repair additionally injects pre-truncate size inspection and ambiguous truncate, file-sync, and
 directory-sync errors. Every failed recovery releases ownership; retry accepts either the unchanged
-incomplete suffix or the already-truncated prefix, then completes the exact snapshot. Simultaneous
-faults in both owners and physical power loss remain deferred.
+incomplete suffix or the already-truncated prefix, then completes the exact snapshot.
+
+A four-schedule mixed-owner matrix now fails RTAS installation first at either a 16-byte temporary
+prefix or final directory synchronization, reopens both owners, and then fails the next Raft
+completion before its write or after a 16-byte record prefix. Neither attempt releases success.
+RTAS reopen selects absent or exact immutable bytes, while Raft reopen selects the complete prior
+prefix directly or through explicit tail repair; a third exact attempt completes and repeated strict
+reopen recovers the snapshot. Schedules with more than one failure per owner, failures during both
+owner reopens, simultaneous faults, and physical power loss remain deferred.
 
 **Retrospective update (ADR 0130):** that decision reconciles a persisted Raft snapshot with a
 checkpoint-behind catching-up movement and installs the ready checkpoint before advancing live

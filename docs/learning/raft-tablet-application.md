@@ -102,6 +102,10 @@ synchronizes only the structurally incomplete final suffix before the completion
 Repair fault injection covers the preceding size check and every mutating durability boundary.
 Whether the failed call leaves the 16-byte suffix present or already removed, ownership is released
 and the next public reopen derives the same pre-completion Raft authority before an exact retry.
+The composed mixed-owner matrix adds another restart boundary. RTAS first fails before publication
+or after final rename, public reopen selects no file or the exact immutable file, and only then does
+the retained Raft fault fail the next completion write. A third attempt succeeds from the recovered
+product state; neither earlier attempt produces a success response.
 
 After that durable transition,
 `checkpoint_recovered_tablet_movement_catch_up` reconciles the target's exact persisted snapshot

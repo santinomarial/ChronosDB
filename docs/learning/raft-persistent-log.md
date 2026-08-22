@@ -53,6 +53,9 @@ The same composed image injects failure at repair size inspection and ambiguous 
 file-sync, and directory-sync operations. Each failed runtime open releases the durable lock. A
 fresh open validates either the original incomplete suffix or the already-truncated prefix before
 the application retries completion, so no in-memory recovery progress becomes authority.
+Mixed-owner schedules retain the same rule after a preceding RTAS failure: the Raft fault remains
+armed across runtime reopen, then its definite or partial write failure withholds the second
+response and leaves recovery—not retry memory—to select the next authority.
 
 Rotation first data-synchronizes and closes the predecessor. Either result may be ambiguous, so a
 reported error poisons the writer even if the kernel operation completed. Deterministic tests inject
