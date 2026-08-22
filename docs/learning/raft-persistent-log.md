@@ -5,8 +5,10 @@
 `RaftPersistentLog` turns the full-state record codec into one node-level physical append stream.
 It owns the dedicated directory, advisory `LOCK`, active segment, write frontier, local durable
 frontier, and recovered latest state per logical group. `create_new` accepts only an empty dedicated
-directory (optionally containing the regular lock file); `open_existing` verifies the complete
-history before returning. `append` and `synchronize` deliberately expose different guarantees.
+directory (optionally containing the regular lock file). It may also restart its own interrupted
+pre-rename installation by removing only the exact regular segment-1 temporary while holding the
+lock; every other nonempty namespace fails closed. `open_existing` verifies the complete history
+before returning. `append` and `synchronize` deliberately expose different guarantees.
 
 ## Data structures and invariants
 
@@ -82,6 +84,13 @@ at every cleanup unlink and at the directory sync proves each completed removal 
 worst-case schedule repeats failed recovery six times, removing one artifact per attempt, then
 reports an ambiguous error after the final cleanup sync; every attempt releases `LOCK`, and the
 next open still recovers the authoritative checkpoint exactly.
+
+The [Raft persistent-log crash matrix](../testing/raft-persistent-log-crash-harness.md) complements
+those return-value injections with 31 real subprocess images. It sends `SIGKILL` after successful
+POSIX operations across initialization, rotation, checkpoint and anchor publication, and both
+cleanup epochs. Each image must recover one exact authority twice and accept the next sequence.
+Because the host kernel and storage stack remain alive, this is process-restart evidence rather than
+power-loss qualification.
 
 Explicit close adds no synchronization boundary. It invalidates the active segment, advisory lock,
 and directory in that order, continues after an error, and returns the first physical close error.

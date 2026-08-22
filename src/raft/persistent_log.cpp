@@ -416,11 +416,13 @@ RaftPersistentLog::create_new_with(const RaftPersistentLogConfig& config,
   auto directory = io::detail::PosixHandleFactory::open_directory(config.directory_path, syscalls);
   if (!directory.has_value())
     return common::make_unexpected(directory.error());
+  const std::string initial_temporary = segment_name(1U, kTemporarySuffix);
   auto initial_entries = directory->list_entries();
   if (!initial_entries.has_value())
     return common::make_unexpected(initial_entries.error());
   for (const io::DirectoryEntry& entry : *initial_entries) {
-    if (entry.name != kLockName || entry.type != io::DirectoryEntryType::kRegularFile) {
+    const bool recognized = entry.name == kLockName || entry.name == initial_temporary;
+    if (!recognized || entry.type != io::DirectoryEntryType::kRegularFile) {
       return common::make_unexpected(invalid("new Raft persistent-log directory is not empty"));
     }
   }
@@ -430,11 +432,30 @@ RaftPersistentLog::create_new_with(const RaftPersistentLogConfig& config,
   auto locked_entries = directory->list_entries();
   if (!locked_entries.has_value())
     return common::make_unexpected(locked_entries.error());
-  if (locked_entries->size() != 1U || locked_entries->front().name != kLockName ||
-      locked_entries->front().type != io::DirectoryEntryType::kRegularFile) {
+  bool lock_visible = false;
+  bool remove_interrupted_initialization = false;
+  for (const io::DirectoryEntry& entry : *locked_entries) {
+    if (entry.type != io::DirectoryEntryType::kRegularFile) {
+      return common::make_unexpected(invalid("new Raft persistent-log directory changed"));
+    }
+    if (entry.name == kLockName && !lock_visible) {
+      lock_visible = true;
+      continue;
+    }
+    if (entry.name == initial_temporary && !remove_interrupted_initialization) {
+      remove_interrupted_initialization = true;
+      continue;
+    }
     return common::make_unexpected(invalid("new Raft persistent-log directory changed"));
   }
-  common::Status status = directory->sync();
+  if (!lock_visible) {
+    return common::make_unexpected(invalid("new Raft persistent-log directory changed"));
+  }
+  common::Status status = common::Status::ok();
+  if (remove_interrupted_initialization)
+    status = directory->remove_file(initial_temporary);
+  if (status.is_ok())
+    status = directory->sync();
   if (!status.is_ok())
     return common::make_unexpected(status);
   auto installed = install_segment(*directory, config, 1U, 1U);

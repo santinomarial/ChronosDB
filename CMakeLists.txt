@@ -1190,20 +1190,35 @@ if(CHRONOS_BUILD_TESTS)
     tests/raft/multiplexed_log_header_self_contained.cpp
     tests/raft/multiplexed_log_test.cpp
     tests/raft/persistent_log_header_self_contained.cpp
+    tests/raft/persistent_log_crash_matrix_test.cpp
     tests/raft/persistent_log_test.cpp
     tests/raft/types_header_self_contained.cpp
   )
+  add_executable(chronos_raft_persistent_log_crash_child
+                 tests/raft/persistent_log_crash_child.cpp)
+  set_target_properties(chronos_raft_persistent_log_crash_child PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_raft_persistent_log_crash_child PRIVATE cxx_std_23)
+  target_include_directories(
+    chronos_raft_persistent_log_crash_child
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
+  target_link_libraries(chronos_raft_persistent_log_crash_child PRIVATE chronos::raft)
+  chronos_set_project_warnings(chronos_raft_persistent_log_crash_child)
+  chronos_enable_sanitizers(chronos_raft_persistent_log_crash_child)
+  chronos_enable_static_analysis(chronos_raft_persistent_log_crash_child)
   set_target_properties(chronos_raft_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_raft_tests PRIVATE cxx_std_23)
   target_compile_definitions(
     chronos_raft_tests
     PRIVATE CHRONOS_RAFT_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/raft"
+            CHRONOS_TEST_CRASH_CHILD_PATH="$<TARGET_FILE:chronos_raft_persistent_log_crash_child>"
   )
   target_include_directories(
     chronos_raft_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
                                "${CMAKE_CURRENT_SOURCE_DIR}/tests"
   )
   target_link_libraries(chronos_raft_tests PRIVATE chronos::raft GTest::gtest_main)
+  add_dependencies(chronos_raft_tests chronos_raft_persistent_log_crash_child)
   chronos_set_project_warnings(chronos_raft_tests)
   chronos_enable_sanitizers(chronos_raft_tests)
   chronos_enable_static_analysis(chronos_raft_tests)

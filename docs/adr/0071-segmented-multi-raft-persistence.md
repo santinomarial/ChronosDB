@@ -101,6 +101,13 @@ and an exact retry continues the physical sequence. A combined cleanup image wit
 temporaries, two obsolete segments, and one obsolete anchor now injects every ambiguous unlink and
 the cleanup directory sync. It also survives six consecutive failed opens followed by an ambiguous
 cleanup sync, monotonically preserves the authoritative base, and then reopens its exact checkpoint.
-Process crash points, sustained corruption campaigns, and Linux power-loss qualification remain
-required. A focused CLI smoke test covers both benchmark modes and exact artifact/recovery status;
-a clean controlled-host measurement campaign remains required before making performance claims.
+A 31-point subprocess `SIGKILL` matrix now covers authority-changing and data-bearing persistence
+boundaries in initial segment installation, rotation, checkpoint and recovery-anchor publication,
+and both reclamation cleanup epochs. It requires exact authority, idempotent repeated recovery,
+temporary cleanup, and next-sequence continuation. The matrix also exposed and now covers restart
+of pre-rename initial installation: under `LOCK`, `create_new` accepts and removes only the exact
+regular segment-1
+temporary before installing a fresh segment. Sustained corruption campaigns and Linux power-loss
+qualification remain required. A focused CLI smoke test covers both benchmark modes and exact
+artifact/recovery status; a clean controlled-host measurement campaign remains required before
+making performance claims.

@@ -192,6 +192,9 @@ existence of a design document alone is not implementation evidence.
   future test taxonomy mapped to architecture invariants.
 - [WAL crash harness](testing/wal-crash-harness.md): subprocess protocol, real-syscall crash
   boundaries, durability/recovery oracle, deterministic matrices, and evidence limitations.
+- [Raft persistent-log crash matrix](testing/raft-persistent-log-crash-harness.md): 31 subprocess
+  `SIGKILL` cuts across initialization, rotation, checkpoint publication, and reclamation, with an
+  exact recovery oracle and explicit power-loss limitations.
 - [Benchmark contract](benchmarks/benchmark-contract.md): mandatory run metadata, metrics, and comparison rules.
 - [Phase 1 foundation baseline](benchmarks/phase-1-foundation-baseline.md): clean common-benchmark
   target build times, artifact file sizes, and harness-iteration proxy on one Apple arm64 host.

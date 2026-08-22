@@ -458,8 +458,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   Persistent-log recovery now has exact-retry injected-I/O matrices for its directory, lock,
   anchor, retained-segment, final-active, namespace-cleanup, final-sync, and incomplete-tail-repair
   stages, including every unlink in a combined multi-temporary, multi-segment, multi-anchor cleanup
-  image and consecutive interrupted opens. Process-crash injection and physical power-loss
-  qualification remain.
+  image and consecutive interrupted opens. A 31-cut subprocess matrix now covers successful
+  initialization, rotation, checkpoint/anchor publication, and reclamation operations with exact
+  repeated recovery and continuation. Physical power-loss qualification remains.
 - Exercise the v1.1 snapshot membership checkpoint with golden minor-0/minor-1 fixtures,
   mixed-version processes, hostile voter counts, snapshot-install crash points, and reclamation.
 - Connect the implemented two-stage Raft snapshot request/completion boundary to versioned tablet

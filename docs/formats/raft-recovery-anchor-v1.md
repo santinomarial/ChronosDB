@@ -56,6 +56,13 @@ old-anchor unlink, or from the directory synchronization following either cleanu
 change recovery authority. On process restart the newest anchor still selects the exact checkpoint;
 obsolete artifacts that remain visible are cleanup residue and are removed only after validation.
 
+The subprocess crash matrix exercises every successful anchor write, file-sync, rename,
+directory-sync, and close boundary, followed by each obsolete-segment and obsolete-anchor unlink
+and directory synchronization. Every image must select the exact base described above, recover it
+identically twice, and continue at the next physical sequence. The evidence and its power-loss
+limits are documented in the
+[Raft persistent-log crash matrix](../testing/raft-persistent-log-crash-harness.md).
+
 Unknown files, nonregular entries, a damaged authoritative anchor, or damage in retained history
 remain corruption. Recovery does not fall back to an older anchor after the newest authority is
 damaged.

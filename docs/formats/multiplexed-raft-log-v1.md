@@ -74,6 +74,10 @@ state, bounded checkpoint voters, canonical post-legacy-backfill payload size, a
 Files are named `raft-NNNNNNNNNNNNNNNNNNNN.rlog`, using a nonzero, 20-digit, contiguous decimal
 segment number. `LOCK` is the only other durable entry. Installation may temporarily use the same
 stem with `.tmp`; recovery removes only recognized regular temporary files while holding `LOCK`.
+If initial creation stops before segment 1 is renamed, a later `create_new` may restart only when the
+locked namespace contains `LOCK` and the exact regular segment-1 temporary. It removes that
+temporary, synchronizes the directory, and performs the complete installation again. Any other
+entry remains an invalid nonempty creation namespace.
 
 Each segment starts with this 64-byte little-endian header:
 
@@ -128,6 +132,12 @@ non-authoritative anchors are removed in that order before one cleanup directory
 is independently retryable: an ambiguous unlink or sync error may leave any cleanup prefix absent,
 but it cannot change the selected anchor or retained logical state, and later recovery resumes from
 the newly observed namespace.
+
+A deterministic 31-point subprocess matrix sends `SIGKILL` after successful production-path
+operations spanning initial installation, rotation, checkpoint and anchor publication, and both
+cleanup epochs. It requires exact repeated recovery and next-sequence continuation. This is
+process-restart evidence over the host page cache; it does not qualify the ordering under power
+loss. See the [Raft persistent-log crash matrix](../testing/raft-persistent-log-crash-harness.md).
 
 ## Remaining limitation
 
