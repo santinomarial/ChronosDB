@@ -95,6 +95,11 @@ write/sync outcomes. Completion never yields an acknowledgment report once the r
 the complete record and answers the leader retry idempotently. The immutable RTAS is valid in both
 states and never becomes authority by itself.
 
+Short-write coverage crosses both owners. An RTAS temporary containing only a prefix is recognized
+and removed on reopen. A partial Raft completion record is different because it lives in the append
+stream: strict reopen preserves and rejects it, while repair-authorized reopen truncates and
+synchronizes only the structurally incomplete final suffix before the completion is retried.
+
 After that durable transition,
 `checkpoint_recovered_tablet_movement_catch_up` reconciles the target's exact persisted snapshot
 when movement still reopens as catching-up. It creates a private ready candidate, installs the next

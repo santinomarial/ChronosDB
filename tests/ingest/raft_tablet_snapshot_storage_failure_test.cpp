@@ -55,6 +55,7 @@ enum class SnapshotStorageFault : std::uint8_t {
   kTemporaryCreate,
   kTemporaryValidationStat,
   kTemporaryWrite,
+  kTemporaryPartialWrite,
   kTemporarySizeStat,
   kTemporaryReadback,
   kTemporaryFileSync,
@@ -97,6 +98,16 @@ public:
   ssize_t pwrite(const io::detail::WriteAtRequest& request) override {
     if (armed_ && fault_ == SnapshotStorageFault::kTemporaryWrite)
       return fail_ssize();
+    if (armed_ && fault_ == SnapshotStorageFault::kTemporaryPartialWrite) {
+      if (!partial_write_started_) {
+        partial_write_started_ = true;
+        constexpr std::size_t kPrefixSize = 16U;
+        const io::detail::WriteAtRequest prefix{request.descriptor, request.source, kPrefixSize,
+                                                request.offset};
+        return delegate_.pwrite(prefix);
+      }
+      return fail_ssize();
+    }
     return delegate_.pwrite(request);
   }
   int fstat(const int descriptor, struct stat* metadata) override {
@@ -170,6 +181,7 @@ private:
   io::detail::PosixSyscalls& delegate_;
   SnapshotStorageFault fault_;
   std::size_t regular_stat_calls_{};
+  bool partial_write_started_{false};
   bool armed_{false};
   bool fired_{false};
 };
@@ -181,13 +193,15 @@ struct InstallFailureCase {
   bool owner_poisoned;
 };
 
-constexpr std::array<InstallFailureCase, 10U> kInstallFailures{
+constexpr std::array<InstallFailureCase, 11U> kInstallFailures{
     InstallFailureCase{SnapshotStorageFault::kPriorTemporaryUnlink, "prior_temporary_unlink", false,
                        false},
     InstallFailureCase{SnapshotStorageFault::kTemporaryCreate, "temporary_create", false, false},
     InstallFailureCase{SnapshotStorageFault::kTemporaryValidationStat, "temporary_validation_stat",
                        false, false},
     InstallFailureCase{SnapshotStorageFault::kTemporaryWrite, "temporary_write", false, false},
+    InstallFailureCase{SnapshotStorageFault::kTemporaryPartialWrite, "temporary_partial_write",
+                       false, false},
     InstallFailureCase{SnapshotStorageFault::kTemporarySizeStat, "temporary_size_stat", false,
                        false},
     InstallFailureCase{SnapshotStorageFault::kTemporaryReadback, "temporary_readback", false,

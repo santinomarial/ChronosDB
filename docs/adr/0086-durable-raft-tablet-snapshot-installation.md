@@ -62,6 +62,7 @@ the composed Raft completion path. A deterministic one-shot failure matrix cover
 unlink, temporary create and validation, write, size/readback, file sync, close, final rename, and
 final directory sync, plus cleanup unlink and cleanup sync during reopen. Every pre-rename error
 remains retryable; only final directory-sync uncertainty poisons the live owner, and public reopen
-converges in every case. Partial-write failures after a written prefix, repeated/mixed faults,
+converges in every case. The write case also covers a successful 16-byte prefix followed by `EIO`;
+reopen removes that incomplete temporary rather than interpreting its bytes. Repeated/mixed faults,
 power-loss qualification, permission matrices, snapshot transport, and physical-log reclamation
 remain deferred.

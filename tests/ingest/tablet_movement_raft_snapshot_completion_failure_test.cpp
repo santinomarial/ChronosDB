@@ -56,6 +56,7 @@ private:
 
 enum class CompletionIoFault : std::uint8_t {
   kWriteBefore,
+  kWritePrefixThenError,
   kWriteAfter,
   kDataSyncBefore,
   kDataSyncAfter,
@@ -89,6 +90,15 @@ public:
   ssize_t pwrite(const io::detail::WriteAtRequest& request) override {
     if (armed_ && fault_ == CompletionIoFault::kWriteBefore)
       return fail_ssize();
+    if (armed_ && fault_ == CompletionIoFault::kWritePrefixThenError) {
+      if (!partial_write_started_) {
+        partial_write_started_ = true;
+        const io::detail::WriteAtRequest prefix{request.descriptor, request.source,
+                                                kPartialRecordBytes, request.offset};
+        return delegate_.pwrite(prefix);
+      }
+      return fail_ssize();
+    }
     const ssize_t result = delegate_.pwrite(request);
     if (armed_ && fault_ == CompletionIoFault::kWriteAfter && result >= 0 &&
         static_cast<std::size_t>(result) == request.size) {
@@ -144,7 +154,9 @@ private:
   }
 
   io::detail::PosixSyscalls& delegate_;
+  static constexpr std::size_t kPartialRecordBytes = 16U;
   CompletionIoFault fault_;
+  bool partial_write_started_{false};
   bool armed_{false};
   bool fired_{false};
 };
@@ -153,13 +165,16 @@ struct CompletionFailureCase {
   CompletionIoFault fault;
   std::string_view name;
   bool raft_authority_recovered;
+  bool tail_repair_required;
 };
 
-constexpr std::array<CompletionFailureCase, 4U> kCompletionFailures{
-    CompletionFailureCase{CompletionIoFault::kWriteBefore, "write_before", false},
-    CompletionFailureCase{CompletionIoFault::kWriteAfter, "write_after", true},
-    CompletionFailureCase{CompletionIoFault::kDataSyncBefore, "data_sync_before", true},
-    CompletionFailureCase{CompletionIoFault::kDataSyncAfter, "data_sync_after", true},
+constexpr std::array<CompletionFailureCase, 5U> kCompletionFailures{
+    CompletionFailureCase{CompletionIoFault::kWriteBefore, "write_before", false, false},
+    CompletionFailureCase{CompletionIoFault::kWritePrefixThenError, "write_prefix_then_error",
+                          false, true},
+    CompletionFailureCase{CompletionIoFault::kWriteAfter, "write_after", true, false},
+    CompletionFailureCase{CompletionIoFault::kDataSyncBefore, "data_sync_before", true, false},
+    CompletionFailureCase{CompletionIoFault::kDataSyncAfter, "data_sync_after", true, false},
 };
 
 void expect_recovered_retry_success(const raft::DurableRaftResult& result,
@@ -216,9 +231,28 @@ TEST_P(TabletMovementRaftSnapshotCompletionFailureTest,
     EXPECT_EQ(installed->bytes, *bytes);
   }
 
+  std::filesystem::path active_segment;
+  for (const std::filesystem::directory_entry& entry :
+       std::filesystem::directory_iterator(root.path() / "raft")) {
+    if (entry.path().extension() == ".rlog")
+      active_segment = entry.path();
+  }
+  ASSERT_FALSE(active_segment.empty());
+  const std::uintmax_t failed_size = std::filesystem::file_size(active_segment);
+  if (failure.tail_repair_required) {
+    auto strict = raft::DurableMultiRaftRuntime::open_existing(
+        4U, test::crash_log_config(root.path()), {}, test::crash_groups());
+    ASSERT_FALSE(strict.has_value());
+    EXPECT_EQ(strict.error().code(), common::StatusCode::kCorruption);
+    EXPECT_EQ(std::filesystem::file_size(active_segment), failed_size);
+  }
+  const raft::RaftPersistentLogOpenOptions open_options{.repair_incomplete_final_tail =
+                                                            failure.tail_repair_required};
   auto runtime = raft::DurableMultiRaftRuntime::open_existing(
-      4U, test::crash_log_config(root.path()), {}, test::crash_groups());
+      4U, test::crash_log_config(root.path()), open_options, test::crash_groups());
   ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  if (failure.tail_repair_required)
+    EXPECT_EQ(std::filesystem::file_size(active_segment) + 16U, failed_size);
   const raft::RaftNode* group = runtime->find_group(test::crash_group_id());
   ASSERT_NE(group, nullptr);
   EXPECT_EQ(group->persistent_state().snapshot == expected.raft_snapshot,

@@ -44,6 +44,12 @@ asynchronous-owner tests execute the real record write or data synchronization b
 `EIO`, fan that status out to all accepted work, and then reopen the exact complete term/vote record
 without treating the failed call as an acknowledgment.
 
+The composed tablet-snapshot completion tests also stop one completion record after a real 16-byte
+prefix write. Strict durable-runtime reopen returns corruption without changing the segment.
+Repair-authorized reopen truncates and synchronizes exactly those 16 bytes, restores the preceding
+group state, and lets the application owner retry the completion. This exercises the public
+composition of failed append, explicit tail-repair authority, and persist-before-response behavior.
+
 Rotation first data-synchronizes and closes the predecessor. Either result may be ambiguous, so a
 reported error poisons the writer even if the kernel operation completed. Deterministic tests inject
 `EIO` after each real predecessor operation, verify that later appends return the retained root

@@ -66,12 +66,15 @@ syscall failures at every install and temporary-cleanup operation. Broader Raft-
 mixed failure schedules, physical power-loss qualification, response transport, leader retry
 scheduling, physical part transfer, and reclamation remain deferred.
 
-A four-case composed failure matrix now injects `EIO` before and after the Raft completion-record
-write and its data sync. The durable runtime fails closed and the adapter releases no response in
-all cases. Public reopen observes no Raft authority when the write never occurred and resumes the
-exact pending path; an ambiguous full write or sync error recovers the complete snapshot and answers
-an exact leader retry from that authority. Partial-write tails, persistent-log recovery failures,
-simultaneous faults in both owners, and physical power loss remain deferred.
+A five-case composed failure matrix now injects `EIO` before and after the Raft completion-record
+write and its data sync, plus after a 16-byte record prefix. The durable runtime fails closed and the
+adapter releases no response in all cases. Public reopen observes no Raft authority when the write
+never occurred and resumes the exact pending path; an ambiguous full write or sync error recovers
+the complete snapshot and answers an exact leader retry from that authority. The partial-record
+image is rejected byte-for-byte by strict recovery, then explicit repair truncates only that suffix,
+synchronizes it, recovers the prior state, and permits the same exact completion retry. Persistent-
+log recovery I/O failures, simultaneous faults in both owners, and physical power loss remain
+deferred.
 
 **Retrospective update (ADR 0130):** that decision reconciles a persisted Raft snapshot with a
 checkpoint-behind catching-up movement and installs the ready checkpoint before advancing live

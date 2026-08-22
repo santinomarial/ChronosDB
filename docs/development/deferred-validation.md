@@ -474,9 +474,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   mixed-version processes, broader count-shape corruption campaigns, and broader reclamation
   matrices. The composed tablet RTAS/Raft install now has a ten-cut real-process `SIGKILL` matrix;
   the RTAS owner also covers one-shot failures at every install and cleanup syscall. Physical
-  power-loss, partial-write-after-prefix, repeated/mixed faults, and persistent-log recovery faults
-  remain. Raft completion-record write/data-sync errors are covered before and after the underlying
-  operation, including exact convergence from absent and ambiguous authority.
+  power-loss, repeated/mixed faults, and persistent-log recovery I/O faults remain. RTAS and Raft
+  completion-record prefix-write failures are covered, including strict byte preservation,
+  explicitly authorized Raft tail repair, and exact convergence. Full-record write/data-sync errors
+  are covered before and after the underlying operation as absent and ambiguous authority.
 - Connect the implemented two-stage Raft snapshot request/completion boundary to versioned tablet
   and metadata snapshot bytes, resumable transfer, and manifest installation. The local tablet
   handoff is versioned and process-crash tested; metadata snapshot bytes and end-to-end transport
