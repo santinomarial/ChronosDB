@@ -146,6 +146,13 @@ repair-authorized recovery must classify all 1,239 images as corruption and leav
 namespace unchanged. This exhausts single low-bit mutations and truncations for that canonical
 image; it is not a proof against multiple coordinated checksum-preserving modifications.
 
+The deterministic recovery-layout matrix uses canonical 213-byte records and segment targets
+`277`, `278`, `489`, `490`, `491`, `702`, `703`, and `1024`. These values exercise exact and
+one-byte-adjacent capacity boundaries for one, two, three, and four records after the segment
+header. Crossing each target with 1, 3, and 8 groups verifies 24 exact layouts through interleaved
+latest-state reconstruction, next-sequence append, fresh-base checkpoint reclamation, and a later
+tail. The oracle performs the documented header-plus-record arithmetic independently of the writer.
+
 ## Remaining limitation
 
 `MultiRaftRuntime` returns this full logical state with a persist-before-send contract.

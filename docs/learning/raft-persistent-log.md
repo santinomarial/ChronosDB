@@ -100,6 +100,15 @@ After each original file is restored, clean recovery must reproduce base 3, both
 records, both latest group states, and physical sequence 4. This is exhaustive for single low-bit
 mutations and truncations of that bounded image, not for coordinated adversarial checksum repair.
 
+The recovery-layout matrix checks a different dimension: target-size arithmetic and latest-state
+selection. A canonical state encodes to 213 bytes. Eight targets straddle the exact one-, two-,
+three-, and four-record capacities after the 64-byte header, and each runs with 1, 3, and 8 groups.
+For every one of the 24 cases, a small independent model advances only when
+`active_end + 213 > target`, while checkpointing resets it to a fresh base. Reopen must match the
+model's segment number/count, end offset, record count, physical frontier, and UUID-sorted latest
+states before and after ordinary continuation, checkpoint reclamation, and a checkpoint tail.
+Variable payload sizes and production-scale histories remain separate campaigns.
+
 Explicit close adds no synchronization boundary. It invalidates the active segment, advisory lock,
 and directory in that order, continues after an error, and returns the first physical close error.
 Because POSIX close can release a descriptor even when it reports failure, none of those descriptor

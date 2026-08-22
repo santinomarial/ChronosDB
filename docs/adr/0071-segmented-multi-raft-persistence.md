@@ -108,10 +108,18 @@ temporary cleanup, and next-sequence continuation. The matrix also exposed and n
 of pre-rename initial installation: under `LOCK`, `create_new` accepts and removes only the exact
 regular segment-1 temporary before installing a fresh segment.
 A deterministic sustained corruption campaign now uses a two-group checkpoint spanning two
-retained segments and its authoritative anchor. It flips
-one bit at all 618 durable-authority byte positions, truncates at all 618 strict prefixes, and
-removes each of the three authority files. Strict and repair-authorized recovery both return
+retained segments and its authoritative anchor. It flips one bit at all 618 durable-authority byte
+positions, truncates at all 618 strict prefixes, and removes each of the three authority files.
+Strict and repair-authorized recovery both return
 `CORRUPTION`, leave every damaged image unchanged, and release `LOCK`; restoring the original image
 recovers the exact checkpoint. Linux power-loss qualification remains required. A focused CLI smoke
 test covers both benchmark modes and exact artifact/recovery status; a clean controlled-host
 measurement campaign remains required before making performance claims.
+
+A separate 24-case recovery matrix fixes the encoded record size at 213 bytes and crosses segment
+targets `277`, `278`, `489`, `490`, `491`, `702`, `703`, and `1024` with 1, 3, and 8 logical groups.
+Those targets straddle exact capacities of one through four records after the 64-byte header. An
+independent arithmetic oracle predicts every rotation, active offset, record/segment count, physical
+sequence, checkpoint base, and reclaimed prefix through ordinary reopen, continuation, node-wide
+checkpointing, and post-checkpoint continuation. Variable-sized and large-scale recovery campaigns
+remain separate evidence.

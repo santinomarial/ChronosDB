@@ -85,6 +85,23 @@ Its focused reproduction command is:
 build/debug/chronos_raft_tests --gtest_filter='RaftPersistentLogCorruptionCampaignTest.*'
 ```
 
+## Target-size and recovered-state matrix
+
+A second in-process matrix uses a fixed 213-byte canonical record and segment targets `277`, `278`,
+`489`, `490`, `491`, `702`, `703`, and `1024`. With the 64-byte segment header, these targets sit on
+or beside the exact one-, two-, three-, and four-record capacity boundaries. Each target runs with
+1, 3, and 8 interleaved groups, for 24 cases.
+
+An independent arithmetic model predicts the active segment, segment count, end offset, record
+count, physical sequence, checkpoint base, and reclaimed prefix. Its latest-state vector is keyed by
+the ordered group UUIDs. Every case verifies an ordinary reopen, a next-sequence continuation,
+node-wide checkpoint reclamation into a fresh base, and a post-checkpoint tail through the public
+API. The focused command is:
+
+```bash
+build/debug/chronos_raft_tests --gtest_filter='TargetAndGroupCrossProduct/RaftPersistentLogRecoveryMatrixTest.*'
+```
+
 ## Evidence boundary
 
 `SIGKILL` terminates one process but leaves the host kernel, page cache, filesystem, and storage

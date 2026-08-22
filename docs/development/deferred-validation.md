@@ -454,7 +454,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   dispatch; focused asynchronous terminal-failure coverage uses a real persistent-log record-cap
   failure rather than an invalid runtime configuration. The durable owner now tightens each core's
   aggregate state budget to the segment target before group construction, with exact focused
-  accepted/rejected boundary coverage; broader target-size and recovered-state matrices remain.
+  accepted/rejected boundary coverage. A 24-case persistent-log matrix crosses eight segment
+  targets around exact one-, two-, three-, and four-record capacities with 1, 3, and 8 groups. Its
+  independent layout/latest-state oracle covers ordinary recovery, continuation, checkpoint
+  reclamation, and post-checkpoint continuation. Variable-sized records and large-scale campaigns
+  remain.
   Persistent-log recovery now has exact-retry injected-I/O matrices for its directory, lock,
   anchor, retained-segment, final-active, namespace-cleanup, final-sync, and incomplete-tail-repair
   stages, including every unlink in a combined multi-temporary, multi-segment, multi-anchor cleanup

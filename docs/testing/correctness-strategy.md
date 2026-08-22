@@ -587,6 +587,12 @@ positions, truncates each file at all 618 strict prefixes, and removes each of t
 files. Strict and repair-authorized recovery reject all 1,239 images as corruption, preserve each
 damaged image exactly, release the owner lock, and recover the exact checkpoint after restoration.
 
+Raft target/recovery coverage crosses eight targets around the exact one-, two-, three-, and
+four-record capacities of a canonical 213-byte record with 1, 3, and 8 groups. Across all 24 cases,
+an independent layout model predicts ordinary rotations, offsets, counts, physical sequences,
+latest per-group states, checkpoint base/reclaimed prefix, and post-checkpoint continuation. Every
+stage closes and reopens the public persistent log before its exact state is compared.
+
 Multi-Raft physical-sequence exhaustion coverage restores a group at the terminal `UINT64_MAX`
 identity, attempts an election, and requires `OUT_OF_RANGE` plus fail-closed admission before the
 group's term, vote, role, or persistent state changes.
