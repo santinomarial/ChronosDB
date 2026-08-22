@@ -94,6 +94,11 @@ and decoding must reconstruct its exact group, snapshot metadata, voters, entry 
 payloads. This catches compiler- or refactor-dependent layout drift that a round trip through the
 same implementation could miss.
 
+The structural codec also keeps allocation failure inside its result boundary. Dedicated sweeps
+select every allocation made while encoding each minor and while decoding its voter vector, entry
+container, and owned payloads. Every selected failure is `RESOURCE_EXHAUSTED`; a retry without that
+failure reconstructs the exact snapshot, so no partially decoded state escapes.
+
 Obsolete application snapshots are reclaimed only against the current durable Raft boundary. The
 owner exact-matches its adopted snapshot, revalidates that file, removes every older or future
 canonical final, and synchronizes the directory. With a zero Raft snapshot it can remove all

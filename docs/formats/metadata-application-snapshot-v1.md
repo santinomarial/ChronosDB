@@ -77,3 +77,7 @@ Compiler-independent golden fixtures freeze both emitted layouts under
 from this specification with little-endian packing, `hashlib` SHA-256, and a standalone bitwise
 CRC32C implementation; neither the ChronosDB codec nor checksum implementation generated the
 expected bytes. Tests require exact production encode equality and exact decode reconstruction.
+Dedicated test-only allocator sweeps fail every observed encoder allocation and every voter,
+entry-container, and payload allocation owned by both minor-version decoders. Each failure must
+return `RESOURCE_EXHAUSTED`; the first non-failing retry must reproduce the canonical bytes or exact
+decoded snapshot, respectively.
