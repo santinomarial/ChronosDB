@@ -60,7 +60,10 @@ nested command, and then applies only the committed retained suffix. A failed li
 poisons the owner; restart revalidates authoritative snapshot and log bytes. Snapshot installation
 withholds success at every failed filesystem stage. A directory-sync failure after the final rename
 also poisons the live storage owner because the name may be visible without proved directory
-durability; reopening revalidates that exact final before an idempotent retry can adopt it.
+durability; reopening revalidates that exact final before an idempotent retry can adopt it. Abrupt
+process termination before the rename leaves no final authority after temporary cleanup, while
+termination after the rename exposes only the exact validated immutable bytes. Repeated reopen and
+retry therefore converge without manufacturing or losing an acknowledged snapshot.
 
 Obsolete application snapshots are reclaimed only against the current durable Raft boundary. The
 owner exact-matches its adopted snapshot, revalidates that file, removes every older or future

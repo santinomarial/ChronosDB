@@ -489,8 +489,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   local tablet handoff is versioned and process-crash tested. Metadata snapshot installation now
   fails closed under one-shot injection at every install syscall, distinguishes post-rename
   ambiguity by poisoning the live owner, and converges after interrupted-temporary cleanup failures
-  before and after unlink. Metadata snapshot transfer, process-crash coverage, and end-to-end
-  transport orchestration remain.
+  before and after unlink. Its eight-cut real-process matrix now covers every install transition
+  through post-success release with exact repeated reopen convergence. Metadata snapshot transfer
+  and end-to-end transport orchestration remain.
 - Extend the implemented one-worker bounded durable Multi-Raft FIFO and ordered owning observations
   with I/O failure injection, reactor continuations, observation deadlines/coalescing, timer
   batching, thread placement, and measured group-aware

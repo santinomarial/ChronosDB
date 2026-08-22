@@ -1228,6 +1228,42 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_static_analysis(chronos_raft_tests)
   gtest_discover_tests(chronos_raft_tests DISCOVERY_TIMEOUT 30)
 
+  add_executable(chronos_raft_metadata_snapshot_crash_child
+                 tests/raft/metadata_snapshot_install_crash_child.cpp)
+  set_target_properties(chronos_raft_metadata_snapshot_crash_child PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_raft_metadata_snapshot_crash_child PRIVATE cxx_std_23)
+  target_include_directories(
+    chronos_raft_metadata_snapshot_crash_child
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
+  target_link_libraries(chronos_raft_metadata_snapshot_crash_child PRIVATE chronos::raft)
+  chronos_set_project_warnings(chronos_raft_metadata_snapshot_crash_child)
+  chronos_enable_sanitizers(chronos_raft_metadata_snapshot_crash_child)
+  chronos_enable_static_analysis(chronos_raft_metadata_snapshot_crash_child)
+
+  add_executable(chronos_raft_metadata_snapshot_crash_tests
+                 tests/raft/metadata_snapshot_install_crash_matrix_test.cpp)
+  set_target_properties(chronos_raft_metadata_snapshot_crash_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_raft_metadata_snapshot_crash_tests PRIVATE cxx_std_23)
+  target_include_directories(
+    chronos_raft_metadata_snapshot_crash_tests
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
+  target_link_libraries(
+    chronos_raft_metadata_snapshot_crash_tests PRIVATE chronos::raft GTest::gtest_main
+  )
+  target_compile_definitions(
+    chronos_raft_metadata_snapshot_crash_tests
+    PRIVATE CHRONOS_TEST_CRASH_CHILD_PATH="$<TARGET_FILE:chronos_raft_metadata_snapshot_crash_child>"
+  )
+  add_dependencies(
+    chronos_raft_metadata_snapshot_crash_tests chronos_raft_metadata_snapshot_crash_child
+  )
+  chronos_set_project_warnings(chronos_raft_metadata_snapshot_crash_tests)
+  chronos_enable_sanitizers(chronos_raft_metadata_snapshot_crash_tests)
+  chronos_enable_static_analysis(chronos_raft_metadata_snapshot_crash_tests)
+  gtest_discover_tests(chronos_raft_metadata_snapshot_crash_tests DISCOVERY_TIMEOUT 30)
+
   add_executable(
     chronos_raft_allocation_failure_tests
     tests/raft/async_durable_runtime_allocation_failure_test.cpp

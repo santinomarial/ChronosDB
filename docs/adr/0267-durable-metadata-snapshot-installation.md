@@ -42,9 +42,12 @@ one-shot POSIX injection covers every installation syscall boundary, including p
 writes and the post-rename directory-sync ambiguity. Each failure withholds success; only the
 post-rename sync failure poisons the live owner, and a clean reopen removes any temporary, discovers
 the exact final authority, and converges under an exact retry. Separate reopen tests fail cleanup
-before unlink and after unlink at directory sync, then prove that the next open converges. Process
-crash injection, directory/device qualification, reclamation fault injection, and wider runtime
-recovery composition remain deferred.
+before unlink and after unlink at directory sync, then prove that the next open converges. An
+eight-cut real-process `SIGKILL` matrix covers temporary creation, write, readback, file sync,
+temporary close, final rename, directory sync, and post-success release. Every cut reopens to the
+exact absent or installed authority, removes interrupted temporaries, converges through an
+idempotent retry, and survives a second reopen. Directory/device qualification, reclamation fault
+injection, and wider runtime recovery composition remain deferred.
 
 Invariants 1, 2, 4–6, 8, 10, 11, 14, and 18 apply.
 
