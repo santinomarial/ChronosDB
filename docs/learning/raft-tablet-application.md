@@ -109,6 +109,9 @@ product state; neither earlier attempt produces a success response.
 The longer repeated schedule stops two RTAS temporary writes and two Raft completion-record writes
 at 16 bytes each. Cleanup and repair restart from observed bytes every time, and the application
 sees no success until the fifth attempt synchronizes the complete Raft record.
+Reopen faults are composed too: RTAS cleanup can fail with its temporary present or already removed,
+and later Raft repair can fail with its 16-byte tail present or already truncated. Subsequent owners
+revalidate each image and reach the same pre-completion application/Raft product state.
 
 After that durable transition,
 `checkpoint_recovered_tablet_movement_catch_up` reconciles the target's exact persisted snapshot

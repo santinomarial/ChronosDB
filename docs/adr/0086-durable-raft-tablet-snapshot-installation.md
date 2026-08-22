@@ -67,6 +67,8 @@ reopen removes that incomplete temporary rather than interpreting its bytes. A c
 matrix crosses that partial temporary and final directory-sync uncertainty with definite and
 partial Raft-log writes on the following retry. A longer lifecycle repeats the partial RTAS write
 twice, removing the recognized temporary on each reopen, before two separately repaired partial
-Raft writes and a successful fifth completion. Other repeated-fault shapes, power-loss
-qualification, permission matrices, snapshot transport, and physical-log reclamation remain
-deferred.
+Raft writes and a successful fifth completion. A separate reopen matrix fails RTAS cleanup before
+unlink or after unlink at directory sync, then later fails Raft repair before or after truncation;
+fresh owners converge from all four resulting images. Other repeated/reopen fault shapes,
+power-loss qualification, permission matrices, snapshot transport, and physical-log reclamation
+remain deferred.
