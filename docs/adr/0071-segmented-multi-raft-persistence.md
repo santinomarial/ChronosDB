@@ -87,7 +87,10 @@ successful retry rotates. Successor installation fault injection now covers excl
 creation plus ambiguous real header write, full-file sync, no-replace rename, and directory sync
 results. Reopen removes a pre-rename temporary or adopts a valid empty post-rename successor, always
 recovers only the exact predecessor record prefix, and then accepts the next sequence. Recovery-
-anchor installation, reclamation, and recovery syscall failures, process crash points, sustained
+anchor installation injection now covers temporary creation, real write, file sync, rename,
+directory sync, and close. Pre-rename failure retains the old base while post-rename failure adopts
+the complete checkpoint base; both recover the same latest group states and next sequence.
+Reclamation deletion/synchronization and recovery syscall failures, process crash points, sustained
 corruption campaigns, and Linux power-loss qualification remain required. A focused CLI smoke test
 covers both benchmark modes and exact artifact/recovery status; a clean controlled-host measurement
 campaign remains required before making performance claims.

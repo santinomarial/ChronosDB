@@ -45,6 +45,12 @@ synchronize the directory. A crash before anchor publication retains the old his
 publication can recover solely from the complete checkpoint even if old-segment deletion was
 partial. Individual segment headers and records retain their existing CRC coverage.
 
+At process restart, a reported failure before the rename leaves the old base authoritative and any
+recognized anchor temporary is removed while holding `LOCK`. A reported failure after an ambiguous
+successful rename can leave the complete anchor authoritative; recovery validates its entire
+checkpoint before removing old history. Either path recovers the same latest group states and next
+physical sequence. This arbitration does not by itself qualify the ordering under power loss.
+
 Unknown files, nonregular entries, a damaged authoritative anchor, or damage in retained history
 remain corruption. Recovery does not fall back to an older anchor after the newest authority is
 damaged.

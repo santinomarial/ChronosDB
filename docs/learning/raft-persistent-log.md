@@ -53,6 +53,14 @@ recovers the unattempted record: the exact predecessor prefix remains authoritat
 sequence appends successfully to segment 2. These process-level tests do not qualify power-loss
 behavior.
 
+Recovery-anchor publication follows the same temporary-write-sync-rename-directory-sync sequence
+and then closes the anchor file. Occurrence-selective injection reaches all six anchor boundaries
+after the complete checkpoint is synchronized. Before rename, reopen removes any temporary and
+retains the old base, treating the checkpoint segment as contiguous later history. After the real
+rename, reopen treats the valid anchor as authoritative and removes the old segment only after the
+checkpoint validates. Both paths recover identical latest group states and continue at the same
+next physical sequence. This establishes process-restart arbitration, not power-loss qualification.
+
 Explicit close adds no synchronization boundary. It invalidates the active segment, advisory lock,
 and directory in that order, continues after an error, and returns the first physical close error.
 Because POSIX close can release a descriptor even when it reports failure, none of those descriptor

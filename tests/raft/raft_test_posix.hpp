@@ -29,7 +29,8 @@ class DurableIoFaultPosixSyscalls final : public io::detail::PosixSyscalls {
 public:
   DurableIoFaultPosixSyscalls() noexcept : delegate_(io::detail::system_posix_syscalls()) {}
 
-  void arm(const DurableIoFault fault) noexcept {
+  void arm(const DurableIoFault fault, const std::size_t matching_calls_to_skip = 0U) noexcept {
+    matching_calls_to_skip_.store(matching_calls_to_skip);
     armed_.store(fault);
   }
 
@@ -73,9 +74,13 @@ public:
   }
   int fsync(const int descriptor) override {
     const int result = delegate_.fsync(descriptor);
-    if (result == 0 && consume(DurableIoFault::kFullSync)) {
-      errno = EIO;
-      return -1;
+    if (result == 0 && armed_.load() == DurableIoFault::kFullSync) {
+      struct stat metadata {};
+      if (delegate_.fstat(descriptor, &metadata) == 0 && S_ISREG(metadata.st_mode) &&
+          consume(DurableIoFault::kFullSync)) {
+        errno = EIO;
+        return -1;
+      }
     }
     if (result == 0 && armed_.load() == DurableIoFault::kDirectorySync) {
       struct stat metadata {};
@@ -119,6 +124,13 @@ public:
 
 private:
   [[nodiscard]] bool consume(const DurableIoFault expected) noexcept {
+    if (armed_.load() != expected)
+      return false;
+    std::size_t calls_to_skip = matching_calls_to_skip_.load();
+    while (calls_to_skip != 0U) {
+      if (matching_calls_to_skip_.compare_exchange_weak(calls_to_skip, calls_to_skip - 1U))
+        return false;
+    }
     DurableIoFault armed = expected;
     if (!armed_.compare_exchange_strong(armed, DurableIoFault::kNone))
       return false;
@@ -128,6 +140,7 @@ private:
 
   io::detail::PosixSyscalls& delegate_;
   std::atomic<DurableIoFault> armed_;
+  std::atomic<std::size_t> matching_calls_to_skip_;
   std::atomic<std::size_t> injected_faults_;
 };
 

@@ -377,8 +377,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   failure plus ambiguous real header-write, full-file-sync, no-replace-rename, and directory-sync
   results. Reopen removes a recognized pre-rename temporary or adopts a valid empty post-rename
   successor, recovers only the predecessor record, and accepts the next sequence. Recovery-anchor
-  installation, reclamation, and recovery syscall matrices remain deferred. The physical
-  persistent-log close matrix now injects every nonempty
+  installation now injects temporary creation plus ambiguous real write, file sync, rename,
+  directory sync, and close results after the checkpoint is synchronized. Pre-rename restart keeps
+  the old base; post-rename restart adopts the checkpoint base and removes old history only after
+  validation. Reclamation deletion/synchronization and recovery syscall matrices remain deferred.
+  The physical persistent-log close matrix now injects every nonempty
   failure combination after the real active-file, advisory-lock, and directory closes; every
   schedule invalidates all three handles, retains the first error, stays idempotent, releases
   ownership, and exactly reopens the synchronized term/state. The asynchronous owner now combines
