@@ -66,7 +66,7 @@ then removes older anchors and synchronizes again. Ambiguous real-unlink and rea
 injection covers both cleanup epochs, including a second checkpoint with an older anchor. The live
 owner retains the reported error before updating its public reclamation counters, while restart
 uses the already-published newest anchor, validates its exact checkpoint, observes the completed
-cleanup, and continues at the next sequence. Broader multi-artifact schedules remain separate.
+cleanup, and continues at the next sequence.
 
 Recovery owns the directory and advisory lock before it enumerates the namespace. Failure injection
 now covers directory and file opens; every directory, lock, anchor, segment, and final-active
@@ -76,7 +76,12 @@ and directory synchronization gates. Incomplete-tail repair additionally injects
 size check and ambiguous real truncate, file-sync, and directory-sync results. Every failed open
 unwinds all temporary handles and releases `LOCK`. A fresh owner validates either the unchanged
 incomplete suffix or the already-truncated complete prefix, recovers the same exact logical state,
-and accepts the next physical sequence.
+and accepts the next physical sequence. A combined namespace matrix adds four recognized
+temporaries, two obsolete segments, and one obsolete anchor below an authoritative base. Injection
+at every cleanup unlink and at the directory sync proves each completed removal is monotonic. A
+worst-case schedule repeats failed recovery six times, removing one artifact per attempt, then
+reports an ambiguous error after the final cleanup sync; every attempt releases `LOCK`, and the
+next open still recovers the authoritative checkpoint exactly.
 
 Explicit close adds no synchronization boundary. It invalidates the active segment, advisory lock,
 and directory in that order, continues after an error, and returns the first physical close error.

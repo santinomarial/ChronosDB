@@ -123,7 +123,11 @@ recovery and releases the exclusive owner. Truncate and synchronization results 
 so a failed repair may already have removed the incomplete suffix. A later open always restarts
 validation from the filesystem state and safely accepts either the original incomplete suffix or
 the already-truncated complete prefix; it never resumes partially constructed in-memory recovery
-state.
+state. After full validation, recognized temporaries, segments below the authoritative base, and
+non-authoritative anchors are removed in that order before one cleanup directory sync. Each removal
+is independently retryable: an ambiguous unlink or sync error may leave any cleanup prefix absent,
+but it cannot change the selected anchor or retained logical state, and later recovery resumes from
+the newly observed namespace.
 
 ## Remaining limitation
 

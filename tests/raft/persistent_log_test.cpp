@@ -534,6 +534,156 @@ TEST(RaftPersistentLogTest, RecoveryNamespaceCleanupAndFinalSyncFailuresReleaseL
   }
 }
 
+TEST(RaftPersistentLogTest, MultiArtifactCleanupFailureSchedulesReleaseLockForExactRetry) {
+  constexpr std::size_t kCleanupArtifactCount = 7U;
+  constexpr std::size_t kConsecutiveFailureSchedule = kCleanupArtifactCount + 1U;
+  constexpr std::size_t kScheduleCount = kConsecutiveFailureSchedule + 1U;
+
+  for (std::size_t schedule = 0U; schedule < kScheduleCount; ++schedule) {
+    SCOPED_TRACE(schedule);
+    TemporaryDirectory directory;
+    const RaftPersistentLogConfig config{.directory_path = directory.path().string()};
+    const GroupId group = group_id(static_cast<std::byte>(0xD0U + schedule));
+    auto log = RaftPersistentLog::create_new(config);
+    ASSERT_TRUE(log.has_value()) << log.error().to_string();
+    ASSERT_TRUE(log->append(state(group, 1U, std::byte{0xC1U})).has_value());
+    ASSERT_TRUE(log->synchronize().has_value());
+
+    const std::filesystem::path first_segment = directory.path() / "raft-00000000000000000001.rlog";
+    std::ifstream first_segment_input(first_segment, std::ios::binary);
+    const std::vector<char> first_segment_bytes{std::istreambuf_iterator<char>{first_segment_input},
+                                                std::istreambuf_iterator<char>{}};
+    ASSERT_FALSE(first_segment_bytes.empty());
+
+    const GroupPersistentState first_checkpoint = state(group, 2U, std::byte{0xC2U});
+    auto first_reclaimed = log->checkpoint_and_reclaim({first_checkpoint});
+    ASSERT_TRUE(first_reclaimed.has_value()) << first_reclaimed.error().to_string();
+    ASSERT_EQ(first_reclaimed->base_segment_number, 2U);
+    const std::filesystem::path second_segment =
+        directory.path() / "raft-00000000000000000002.rlog";
+    const std::filesystem::path second_anchor =
+        directory.path() / "raft-base-00000000000000000002.rbase";
+    std::ifstream second_segment_input(second_segment, std::ios::binary);
+    const std::vector<char> second_segment_bytes{
+        std::istreambuf_iterator<char>{second_segment_input}, std::istreambuf_iterator<char>{}};
+    ASSERT_FALSE(second_segment_bytes.empty());
+    std::ifstream second_anchor_input(second_anchor, std::ios::binary);
+    const std::vector<char> second_anchor_bytes{std::istreambuf_iterator<char>{second_anchor_input},
+                                                std::istreambuf_iterator<char>{}};
+    ASSERT_FALSE(second_anchor_bytes.empty());
+
+    const GroupPersistentState authoritative = state(group, 3U, std::byte{0xC3U});
+    auto second_reclaimed = log->checkpoint_and_reclaim({authoritative});
+    ASSERT_TRUE(second_reclaimed.has_value()) << second_reclaimed.error().to_string();
+    ASSERT_EQ(second_reclaimed->base_segment_number, 3U);
+    ASSERT_TRUE(log->close().is_ok());
+
+    const auto restore = [](const std::filesystem::path& path, const std::vector<char>& bytes) {
+      std::ofstream output(path, std::ios::binary | std::ios::trunc);
+      if (!output.is_open())
+        return false;
+      output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+      output.close();
+      return output.good();
+    };
+    ASSERT_TRUE(restore(first_segment, first_segment_bytes));
+    ASSERT_TRUE(restore(second_segment, second_segment_bytes));
+    ASSERT_TRUE(restore(second_anchor, second_anchor_bytes));
+
+    const std::array temporary_names{
+        std::string_view{"raft-00000000000000000004.tmp"},
+        std::string_view{"raft-00000000000000000005.tmp"},
+        std::string_view{"raft-base-00000000000000000004.rbase.tmp"},
+        std::string_view{"raft-base-00000000000000000005.rbase.tmp"},
+    };
+    for (const std::string_view name : temporary_names) {
+      std::ofstream output(directory.path() / name, std::ios::binary | std::ios::trunc);
+      ASSERT_TRUE(output.is_open());
+      output.write("stale", 5);
+      output.close();
+      ASSERT_TRUE(output.good());
+    }
+    const std::array cleanup_order{
+        directory.path() / temporary_names[0],
+        directory.path() / temporary_names[1],
+        directory.path() / temporary_names[2],
+        directory.path() / temporary_names[3],
+        first_segment,
+        second_segment,
+        second_anchor,
+    };
+    for (const std::filesystem::path& artifact : cleanup_order)
+      ASSERT_TRUE(std::filesystem::exists(artifact));
+    const std::filesystem::path authoritative_segment =
+        directory.path() / "raft-00000000000000000003.rlog";
+    const std::filesystem::path authoritative_anchor =
+        directory.path() / "raft-base-00000000000000000003.rbase";
+    ASSERT_TRUE(std::filesystem::exists(authoritative_segment));
+    ASSERT_TRUE(std::filesystem::exists(authoritative_anchor));
+
+    test::DurableIoFaultPosixSyscalls syscalls;
+    if (schedule < kCleanupArtifactCount) {
+      syscalls.arm(test::DurableIoFault::kUnlink, schedule);
+      auto failed = detail::RaftPersistentLogTestAccess::open_existing(config, {}, syscalls);
+      ASSERT_FALSE(failed.has_value());
+      EXPECT_EQ(failed.error().code(), common::StatusCode::kIoError);
+      EXPECT_NE(failed.error().to_string().find("unlinkat WAL entry"), std::string::npos);
+      EXPECT_EQ(syscalls.injected_faults(), 1U);
+      for (std::size_t artifact = 0U; artifact < cleanup_order.size(); ++artifact)
+        EXPECT_EQ(std::filesystem::exists(cleanup_order[artifact]), artifact > schedule);
+    } else if (schedule == kCleanupArtifactCount) {
+      syscalls.arm(test::DurableIoFault::kDirectorySync);
+      auto failed = detail::RaftPersistentLogTestAccess::open_existing(config, {}, syscalls);
+      ASSERT_FALSE(failed.has_value());
+      EXPECT_EQ(failed.error().code(), common::StatusCode::kIoError);
+      EXPECT_NE(failed.error().to_string().find("fsync directory"), std::string::npos);
+      EXPECT_EQ(syscalls.injected_faults(), 1U);
+      for (const std::filesystem::path& artifact : cleanup_order)
+        EXPECT_FALSE(std::filesystem::exists(artifact));
+    } else {
+      for (std::size_t failed_attempt = 0U; failed_attempt + 1U < cleanup_order.size();
+           ++failed_attempt) {
+        SCOPED_TRACE(failed_attempt);
+        syscalls.arm(test::DurableIoFault::kUnlink);
+        auto failed = detail::RaftPersistentLogTestAccess::open_existing(config, {}, syscalls);
+        ASSERT_FALSE(failed.has_value());
+        EXPECT_EQ(failed.error().code(), common::StatusCode::kIoError);
+        EXPECT_NE(failed.error().to_string().find("unlinkat WAL entry"), std::string::npos);
+        EXPECT_EQ(syscalls.injected_faults(), failed_attempt + 1U);
+        for (std::size_t artifact = 0U; artifact < cleanup_order.size(); ++artifact) {
+          EXPECT_EQ(std::filesystem::exists(cleanup_order[artifact]), artifact > failed_attempt);
+        }
+      }
+      syscalls.arm(test::DurableIoFault::kDirectorySync);
+      auto failed = detail::RaftPersistentLogTestAccess::open_existing(config, {}, syscalls);
+      ASSERT_FALSE(failed.has_value());
+      EXPECT_EQ(failed.error().code(), common::StatusCode::kIoError);
+      EXPECT_NE(failed.error().to_string().find("fsync directory"), std::string::npos);
+      EXPECT_EQ(syscalls.injected_faults(), kCleanupArtifactCount);
+      for (const std::filesystem::path& artifact : cleanup_order)
+        EXPECT_FALSE(std::filesystem::exists(artifact));
+    }
+
+    EXPECT_TRUE(std::filesystem::exists(authoritative_segment));
+    EXPECT_TRUE(std::filesystem::exists(authoritative_anchor));
+    auto reopened = RaftPersistentLog::open_existing(config);
+    ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+    EXPECT_EQ(reopened->recovery().base_segment_number, 3U);
+    EXPECT_EQ(reopened->recovery().segment_count, 1U);
+    EXPECT_EQ(reopened->recovery().record_count, 1U);
+    EXPECT_EQ(reopened->durable_physical_sequence(), 3U);
+    ASSERT_EQ(reopened->recovery().latest_group_states.size(), 1U);
+    EXPECT_EQ(reopened->recovery().latest_group_states.front(), authoritative);
+    auto appended = reopened->append(state(group, 4U, std::byte{0xC4U}));
+    ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
+    EXPECT_EQ(appended->physical_sequence, 4U);
+    ASSERT_TRUE(reopened->synchronize().has_value());
+    EXPECT_TRUE(reopened->close().is_ok());
+    for (const std::filesystem::path& artifact : cleanup_order)
+      EXPECT_FALSE(std::filesystem::exists(artifact));
+  }
+}
+
 TEST(RaftPersistentLogTest, RecoveryOpenStatAndReadFailuresReleaseLockForExactRetry) {
   struct RecoveryFailure {
     test::DurableIoFault fault;

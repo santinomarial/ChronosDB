@@ -97,7 +97,10 @@ lock, anchor, retained-segment, and final-active open and metadata boundaries; a
 record-header, and record-body reads; namespace enumeration and cleanup; final synchronization; and
 the incomplete-tail repair size, truncate, file-sync, and directory-sync boundaries. Every failed
 open releases ownership, including when an ambiguous repair failure already truncated the suffix,
-and an exact retry continues the physical sequence. Broader multi-artifact cleanup schedules,
-process crash points, sustained corruption campaigns, and Linux power-loss qualification remain
-required. A focused CLI smoke test covers both benchmark modes and exact artifact/recovery status; a
-clean controlled-host measurement campaign remains required before making performance claims.
+and an exact retry continues the physical sequence. A combined cleanup image with four recognized
+temporaries, two obsolete segments, and one obsolete anchor now injects every ambiguous unlink and
+the cleanup directory sync. It also survives six consecutive failed opens followed by an ambiguous
+cleanup sync, monotonically preserves the authoritative base, and then reopens its exact checkpoint.
+Process crash points, sustained corruption campaigns, and Linux power-loss qualification remain
+required. A focused CLI smoke test covers both benchmark modes and exact artifact/recovery status;
+a clean controlled-host measurement campaign remains required before making performance claims.
