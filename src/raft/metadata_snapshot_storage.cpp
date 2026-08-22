@@ -2,6 +2,7 @@
 
 #include "chronos/io/posix_io.hpp"
 #include "chronos/raft/schema_definition_codec.hpp"
+#include "io/posix_syscalls.hpp"
 
 #include <array>
 #include <charconv>
@@ -179,12 +180,13 @@ common::Result<std::string> metadata_snapshot_file_name(const LogIndex last_incl
 }
 
 common::Result<MetadataSnapshotStorage>
-MetadataSnapshotStorage::open(MetadataSnapshotStorageConfig config, const bool create_lock) {
+MetadataSnapshotStorage::open_with(MetadataSnapshotStorageConfig config, const bool create_lock,
+                                   io::detail::PosixSyscalls& syscalls) {
   if (config.directory_path.empty() || config.group_id.is_nil() || config.file_permissions == 0U ||
       (config.file_permissions & ~0777U) != 0U || !valid_limits(config.codec_limits)) {
     return common::make_unexpected(invalid("metadata snapshot storage config is invalid"));
   }
-  auto directory = io::PosixDirectory::open(config.directory_path);
+  auto directory = io::detail::PosixHandleFactory::open_directory(config.directory_path, syscalls);
   if (!directory.has_value())
     return common::make_unexpected(directory.error());
   auto lock = create_lock
@@ -210,7 +212,7 @@ MetadataSnapshotStorage::operator=(MetadataSnapshotStorage&&) noexcept = default
 common::Result<MetadataSnapshotStorage>
 MetadataSnapshotStorage::create(MetadataSnapshotStorageConfig config) {
   try {
-    return open(std::move(config), true);
+    return open_with(std::move(config), true, io::detail::system_posix_syscalls());
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("metadata snapshot storage allocation failed"));
   }
@@ -218,7 +220,7 @@ MetadataSnapshotStorage::create(MetadataSnapshotStorageConfig config) {
 common::Result<MetadataSnapshotStorage>
 MetadataSnapshotStorage::open_existing(MetadataSnapshotStorageConfig config) {
   try {
-    return open(std::move(config), false);
+    return open_with(std::move(config), false, io::detail::system_posix_syscalls());
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("metadata snapshot storage allocation failed"));
   }

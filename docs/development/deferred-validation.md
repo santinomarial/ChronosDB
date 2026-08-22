@@ -484,10 +484,13 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   write failures are also covered independently, including strict byte preservation, explicitly
   authorized Raft tail repair, and exact convergence. Full-record write/data-sync errors are covered
   before and after the underlying operation as absent and ambiguous authority.
-- Connect the implemented two-stage Raft snapshot request/completion boundary to versioned tablet
-  and metadata snapshot bytes, resumable transfer, and manifest installation. The local tablet
-  handoff is versioned and process-crash tested; metadata snapshot bytes and end-to-end transport
-  orchestration remain.
+- Connect the implemented two-stage Raft snapshot request/completion boundary to the existing
+  versioned tablet and metadata snapshot bytes, resumable transfer, and manifest installation. The
+  local tablet handoff is versioned and process-crash tested. Metadata snapshot installation now
+  fails closed under one-shot injection at every install syscall, distinguishes post-rename
+  ambiguity by poisoning the live owner, and converges after interrupted-temporary cleanup failures
+  before and after unlink. Metadata snapshot transfer, process-crash coverage, and end-to-end
+  transport orchestration remain.
 - Extend the implemented one-worker bounded durable Multi-Raft FIFO and ordered owning observations
   with I/O failure injection, reactor continuations, observation deadlines/coalescing, timer
   batching, thread placement, and measured group-aware

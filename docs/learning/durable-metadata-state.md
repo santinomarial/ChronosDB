@@ -57,7 +57,10 @@ entries plus the Raft membership checkpoint rather than inventing a second lates
 grammar. Its locked storage installs exact immutable bytes before the owner compacts Raft to
 matching metadata. Recovery requires that snapshot, recomputes its entry digest, decodes every
 nested command, and then applies only the committed retained suffix. A failed live application
-poisons the owner; restart revalidates authoritative snapshot and log bytes.
+poisons the owner; restart revalidates authoritative snapshot and log bytes. Snapshot installation
+withholds success at every failed filesystem stage. A directory-sync failure after the final rename
+also poisons the live storage owner because the name may be visible without proved directory
+durability; reopening revalidates that exact final before an idempotent retry can adopt it.
 
 Obsolete application snapshots are reclaimed only against the current durable Raft boundary. The
 owner exact-matches its adopted snapshot, revalidates that file, removes every older or future

@@ -11,7 +11,15 @@
 #include <string>
 #include <vector>
 
+namespace chronos::io::detail {
+class PosixSyscalls;
+}
+
 namespace chronos::raft {
+
+namespace detail {
+class MetadataSnapshotStorageTestAccess;
+}
 
 struct MetadataSnapshotStorageConfig {
   std::string directory_path;
@@ -69,9 +77,12 @@ public:
 private:
   class Impl;
   [[nodiscard]] static common::Result<MetadataSnapshotStorage>
-  open(MetadataSnapshotStorageConfig config, bool create_lock);
+  open_with(MetadataSnapshotStorageConfig config, bool create_lock,
+            io::detail::PosixSyscalls& syscalls);
   explicit MetadataSnapshotStorage(std::unique_ptr<Impl> implementation) noexcept;
   std::unique_ptr<Impl> implementation_;
+
+  friend class detail::MetadataSnapshotStorageTestAccess;
 };
 
 } // namespace chronos::raft

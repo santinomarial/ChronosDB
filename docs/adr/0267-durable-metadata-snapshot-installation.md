@@ -37,9 +37,14 @@ implementation intentionally mirrors the established tablet application-snapshot
 protocol, with a separate directory and filename namespace so the two authorities cannot collide.
 
 Real-filesystem tests cover exclusive ownership, first install, exact retry, same-index conflict,
-highest selection after reopen, temporary cleanup, and damaged-final rejection. Crash injection,
-directory/device qualification, reclamation fault injection, and wider runtime recovery composition
-remain deferred.
+highest selection after reopen, temporary cleanup, and damaged-final rejection. Deterministic
+one-shot POSIX injection covers every installation syscall boundary, including partial temporary
+writes and the post-rename directory-sync ambiguity. Each failure withholds success; only the
+post-rename sync failure poisons the live owner, and a clean reopen removes any temporary, discovers
+the exact final authority, and converges under an exact retry. Separate reopen tests fail cleanup
+before unlink and after unlink at directory sync, then prove that the next open converges. Process
+crash injection, directory/device qualification, reclamation fault injection, and wider runtime
+recovery composition remain deferred.
 
 Invariants 1, 2, 4–6, 8, 10, 11, 14, and 18 apply.
 
