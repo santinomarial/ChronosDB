@@ -1190,6 +1190,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/raft/multiplexed_log_header_self_contained.cpp
     tests/raft/multiplexed_log_test.cpp
     tests/raft/persistent_log_header_self_contained.cpp
+    tests/raft/persistent_log_corruption_campaign_test.cpp
     tests/raft/persistent_log_crash_matrix_test.cpp
     tests/raft/persistent_log_test.cpp
     tests/raft/types_header_self_contained.cpp

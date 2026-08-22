@@ -460,7 +460,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   stages, including every unlink in a combined multi-temporary, multi-segment, multi-anchor cleanup
   image and consecutive interrupted opens. A 31-cut subprocess matrix now covers successful
   initialization, rotation, checkpoint/anchor publication, and reclamation operations with exact
-  repeated recovery and continuation. Physical power-loss qualification remains.
+  repeated recovery and continuation. A bounded sustained-corruption campaign flips one bit and
+  truncates at every byte of a two-segment/two-group anchored checkpoint, then removes each
+  authority artifact; strict and repair-authorized opens reject all 1,239 images without mutation.
+  Physical power-loss qualification remains.
 - Exercise the v1.1 snapshot membership checkpoint with golden minor-0/minor-1 fixtures,
   mixed-version processes, hostile voter counts, snapshot-install crash points, and reclamation.
 - Connect the implemented two-stage Raft snapshot request/completion boundary to versioned tablet

@@ -581,6 +581,12 @@ rejected before term, role, or persistent-state observation. Durable-runtime bou
 a 300-byte segment target: the exact 24-byte first-entry payload succeeds, while 25 bytes is rejected
 nonterminally before group state or the durable physical sequence changes.
 
+Raft persistent-log retained-byte coverage builds a canonical two-group checkpoint spanning two
+segments and one recovery anchor. It flips the low bit at every one of the 618 authority-byte
+positions, truncates each file at all 618 strict prefixes, and removes each of the three authority
+files. Strict and repair-authorized recovery reject all 1,239 images as corruption, preserve each
+damaged image exactly, release the owner lock, and recover the exact checkpoint after restoration.
+
 Multi-Raft physical-sequence exhaustion coverage restores a group at the terminal `UINT64_MAX`
 identity, attempts an election, and requires `OUT_OF_RANGE` plus fail-closed admission before the
 group's term, vote, role, or persistent state changes.

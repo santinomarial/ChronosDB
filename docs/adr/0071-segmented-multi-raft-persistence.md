@@ -106,8 +106,12 @@ boundaries in initial segment installation, rotation, checkpoint and recovery-an
 and both reclamation cleanup epochs. It requires exact authority, idempotent repeated recovery,
 temporary cleanup, and next-sequence continuation. The matrix also exposed and now covers restart
 of pre-rename initial installation: under `LOCK`, `create_new` accepts and removes only the exact
-regular segment-1
-temporary before installing a fresh segment. Sustained corruption campaigns and Linux power-loss
-qualification remain required. A focused CLI smoke test covers both benchmark modes and exact
-artifact/recovery status; a clean controlled-host measurement campaign remains required before
-making performance claims.
+regular segment-1 temporary before installing a fresh segment.
+A deterministic sustained corruption campaign now uses a two-group checkpoint spanning two
+retained segments and its authoritative anchor. It flips
+one bit at all 618 durable-authority byte positions, truncates at all 618 strict prefixes, and
+removes each of the three authority files. Strict and repair-authorized recovery both return
+`CORRUPTION`, leave every damaged image unchanged, and release `LOCK`; restoring the original image
+recovers the exact checkpoint. Linux power-loss qualification remains required. A focused CLI smoke
+test covers both benchmark modes and exact artifact/recovery status; a clean controlled-host
+measurement campaign remains required before making performance claims.

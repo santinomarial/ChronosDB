@@ -92,6 +92,14 @@ cleanup epochs. Each image must recover one exact authority twice and accept the
 Because the host kernel and storage stack remain alive, this is process-restart evidence rather than
 power-loss qualification.
 
+The sustained corruption campaign uses a canonical two-group checkpoint split across two retained
+segments plus one authoritative anchor. Its 618 single-bit images, 618 strict-prefix truncations,
+and three missing-artifact images are each opened in strict and repair-authorized modes. Every open
+must return `CORRUPTION`, release `LOCK`, and preserve the damaged byte image and namespace exactly.
+After each original file is restored, clean recovery must reproduce base 3, both checkpoint
+records, both latest group states, and physical sequence 4. This is exhaustive for single low-bit
+mutations and truncations of that bounded image, not for coordinated adversarial checksum repair.
+
 Explicit close adds no synchronization boundary. It invalidates the active segment, advisory lock,
 and directory in that order, continues after an error, and returns the first physical close error.
 Because POSIX close can release a descriptor even when it reports failure, none of those descriptor

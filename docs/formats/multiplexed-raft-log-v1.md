@@ -139,6 +139,13 @@ cleanup epochs. It requires exact repeated recovery and next-sequence continuati
 process-restart evidence over the host page cache; it does not qualify the ordering under power
 loss. See the [Raft persistent-log crash matrix](../testing/raft-persistent-log-crash-harness.md).
 
+The retained-byte corruption campaign builds a two-group checkpoint whose two 277-byte segments and
+64-byte anchor contain 618 authority bytes. It flips one bit at every byte and truncates every file
+at every strict prefix, then removes each authority file in turn. Strict recovery and
+repair-authorized recovery must classify all 1,239 images as corruption and leave their bytes and
+namespace unchanged. This exhausts single low-bit mutations and truncations for that canonical
+image; it is not a proof against multiple coordinated checksum-preserving modifications.
+
 ## Remaining limitation
 
 `MultiRaftRuntime` returns this full logical state with a persist-before-send contract.

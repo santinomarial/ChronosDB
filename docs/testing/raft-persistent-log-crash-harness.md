@@ -63,6 +63,28 @@ build/debug/chronos_raft_tests --gtest_filter='EveryPersistentTransition/Persist
 The matrix is also discovered by the normal CTest and sanitizer configurations. Its child process
 inherits the matching instrumentation.
 
+## Companion retained-byte corruption campaign
+
+The same persistent-log test binary builds a canonical two-group checkpoint spanning two 277-byte
+retained segments and one 64-byte authoritative anchor. A bounded in-process campaign creates 1,239
+distinct damaged images:
+
+- one low-bit flip at each of the 618 authority-byte positions;
+- every strict-prefix truncation of those three files, for another 618 images; and
+- removal of each authority file in turn.
+
+Every image is opened once in strict mode and once with incomplete-final-tail repair authorized.
+Both opens must return `CORRUPTION`, release `LOCK`, and leave all remaining names and bytes exactly
+unchanged. Restoring the original artifact must reconstruct base segment 3, both records and group
+states, and physical sequence 4. The campaign is exhaustive for one low-bit mutation and every
+truncation of this canonical image; it does not model coordinated checksum-preserving modification.
+
+Its focused reproduction command is:
+
+```bash
+build/debug/chronos_raft_tests --gtest_filter='RaftPersistentLogCorruptionCampaignTest.*'
+```
+
 ## Evidence boundary
 
 `SIGKILL` terminates one process but leaves the host kernel, page cache, filesystem, and storage

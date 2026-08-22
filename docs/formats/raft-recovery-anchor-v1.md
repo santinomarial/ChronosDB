@@ -63,6 +63,12 @@ identically twice, and continue at the next physical sequence. The evidence and 
 limits are documented in the
 [Raft persistent-log crash matrix](../testing/raft-persistent-log-crash-harness.md).
 
+A companion deterministic corruption campaign flips one bit at every byte and truncates at every
+prefix of the authoritative anchor and both retained checkpoint segments, then removes each file in
+turn. Both strict and repair-authorized recovery reject every image without falling back, repairing,
+or changing the damaged namespace. Restoring the original bytes recovers the exact two-group
+checkpoint.
+
 Unknown files, nonregular entries, a damaged authoritative anchor, or damage in retained history
 remain corruption. Recovery does not fall back to an older anchor after the newest authority is
 damaged.
