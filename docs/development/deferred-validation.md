@@ -373,9 +373,12 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   the physical lock, and reopens the exact complete term/vote record. The predecessor data-sync and
   close boundaries of rotation now also execute the real operation before returning `EIO`, retain
   the writer's root cause, release ownership, and reopen the exact predecessor prefix before a
-  successful rotation retry. Successor segment and recovery-anchor installation, reclamation, and
-  recovery syscall matrices remain deferred. The physical persistent-log close matrix now injects
-  every nonempty
+  successful rotation retry. Successor installation now injects exclusive temporary-creation
+  failure plus ambiguous real header-write, full-file-sync, no-replace-rename, and directory-sync
+  results. Reopen removes a recognized pre-rename temporary or adopts a valid empty post-rename
+  successor, recovers only the predecessor record, and accepts the next sequence. Recovery-anchor
+  installation, reclamation, and recovery syscall matrices remain deferred. The physical
+  persistent-log close matrix now injects every nonempty
   failure combination after the real active-file, advisory-lock, and directory closes; every
   schedule invalidates all three handles, retains the first error, stays idempotent, releases
   ownership, and exactly reopens the synchronized term/state. The asynchronous owner now combines

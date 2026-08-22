@@ -105,9 +105,12 @@ an otherwise empty segment; a smaller target cannot cause a post-mutation encode
 
 The owner writes a new header to an exclusive temporary file, synchronizes the complete file,
 renames without replacement, and synchronizes the directory before appending any record. Rotation
-first data-synchronizes and closes the predecessor. A successful append means only that all record
-bytes completed the write path. A successful explicit synchronization advances the locally durable
-physical sequence through the then-complete active-file prefix.
+first data-synchronizes and closes the predecessor. A reported pre-rename failure may leave a
+recognized temporary for recovery to remove. A reported failure after an ambiguous successful
+rename may leave a valid empty successor for recovery to adopt; no record sequence is inferred from
+that header alone. A successful append means only that all record bytes completed the write path. A
+successful explicit synchronization advances the locally durable physical sequence through the
+then-complete active-file prefix.
 
 Recovery validates the namespace, authoritative anchor when present, every retained segment header,
 and every retained record in physical order before returning latest per-group state. It may

@@ -105,8 +105,8 @@ TEST(RaftPersistentLogTest, RotatesRecoversLatestGroupStatesAndContinuesSequence
 TEST(RaftPersistentLogTest,
      AmbiguousPredecessorSyncAndCloseFailuresDuringRotationRecoverExactPrefix) {
   constexpr std::array faults{
-      test::AmbiguousDurableIoFault::kDataSync,
-      test::AmbiguousDurableIoFault::kFileClose,
+      test::DurableIoFault::kDataSync,
+      test::DurableIoFault::kFileClose,
   };
   constexpr std::array expected_operations{"fdatasync", "close regular file"};
 
@@ -115,7 +115,7 @@ TEST(RaftPersistentLogTest,
     TemporaryDirectory directory;
     const RaftPersistentLogConfig config{.directory_path = directory.path().string(),
                                          .target_segment_size = 300U};
-    test::AmbiguousDurableIoFaultPosixSyscalls syscalls;
+    test::DurableIoFaultPosixSyscalls syscalls;
     auto log = detail::RaftPersistentLogTestAccess::create_new(config, syscalls);
     ASSERT_TRUE(log.has_value()) << log.error().to_string();
     const GroupId group = group_id(static_cast<std::byte>(0x40U + fault_index));
@@ -149,6 +149,72 @@ TEST(RaftPersistentLogTest,
     ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
     EXPECT_EQ(appended->segment_number, 2U);
     EXPECT_EQ(appended->physical_sequence, 2U);
+    EXPECT_TRUE(reopened->close().is_ok());
+  }
+}
+
+TEST(RaftPersistentLogTest, SuccessorInstallationFailuresRecoverAtTheExactVisibleBoundary) {
+  struct InstallationFailure {
+    test::DurableIoFault fault;
+    std::string_view expected_operation;
+    bool temporary_visible;
+    bool successor_visible;
+  };
+  constexpr std::array failures{
+      InstallationFailure{test::DurableIoFault::kFileCreate, "openat exclusive regular file", false,
+                          false},
+      InstallationFailure{test::DurableIoFault::kWrite, "pwrite", true, false},
+      InstallationFailure{test::DurableIoFault::kFullSync, "fsync regular file", true, false},
+      InstallationFailure{test::DurableIoFault::kRename, "same-directory no-replace rename", false,
+                          true},
+      InstallationFailure{test::DurableIoFault::kDirectorySync, "fsync directory", false, true},
+  };
+
+  for (std::size_t failure_index = 0U; failure_index < failures.size(); ++failure_index) {
+    SCOPED_TRACE(failure_index);
+    TemporaryDirectory directory;
+    const RaftPersistentLogConfig config{.directory_path = directory.path().string(),
+                                         .target_segment_size = 300U};
+    test::DurableIoFaultPosixSyscalls syscalls;
+    auto log = detail::RaftPersistentLogTestAccess::create_new(config, syscalls);
+    ASSERT_TRUE(log.has_value()) << log.error().to_string();
+    const GroupId group = group_id(static_cast<std::byte>(0x50U + failure_index));
+    const GroupPersistentState first = state(group, 1U, std::byte{0x61U});
+    const GroupPersistentState second = state(group, 2U, std::byte{0x62U});
+    ASSERT_TRUE(log->append(first).has_value());
+
+    syscalls.arm(failures[failure_index].fault);
+    auto failed = log->append(second);
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), common::StatusCode::kIoError);
+    EXPECT_NE(failed.error().to_string().find(failures[failure_index].expected_operation),
+              std::string::npos);
+    EXPECT_TRUE(log->is_failed());
+    EXPECT_EQ(log->failure_status(), failed.error());
+    EXPECT_EQ(log->written_position().segment_number, 1U);
+    EXPECT_EQ(log->written_position().physical_sequence, 1U);
+    EXPECT_EQ(log->recovery().segment_count, 1U);
+    EXPECT_EQ(syscalls.injected_faults(), 1U);
+    EXPECT_TRUE(log->close().is_ok());
+
+    const std::filesystem::path temporary = directory.path() / "raft-00000000000000000002.tmp";
+    const std::filesystem::path successor = directory.path() / "raft-00000000000000000002.rlog";
+    EXPECT_EQ(std::filesystem::exists(temporary), failures[failure_index].temporary_visible);
+    EXPECT_EQ(std::filesystem::exists(successor), failures[failure_index].successor_visible);
+
+    auto reopened = RaftPersistentLog::open_existing(config);
+    ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+    ASSERT_EQ(reopened->recovery().latest_group_states.size(), 1U);
+    EXPECT_EQ(reopened->recovery().latest_group_states.front(), first);
+    EXPECT_EQ(reopened->durable_physical_sequence(), 1U);
+    EXPECT_EQ(reopened->recovery().segment_count,
+              failures[failure_index].successor_visible ? 2U : 1U);
+    EXPECT_FALSE(std::filesystem::exists(temporary));
+    auto appended = reopened->append(second);
+    ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
+    EXPECT_EQ(appended->segment_number, 2U);
+    EXPECT_EQ(appended->physical_sequence, 2U);
+    ASSERT_TRUE(reopened->synchronize().has_value());
     EXPECT_TRUE(reopened->close().is_ok());
   }
 }

@@ -11,22 +11,25 @@
 
 namespace chronos::raft::test {
 
-enum class AmbiguousDurableIoFault : std::uint8_t {
+enum class DurableIoFault : std::uint8_t {
   kNone,
-  kRecordWrite,
+  kFileCreate,
+  kWrite,
   kDataSync,
+  kFullSync,
+  kRename,
+  kDirectorySync,
   kFileClose,
 };
 
-// Performs the selected real durable-file operation and then reports EIO once. This models an
-// ambiguous storage result: the bytes or synchronization may have completed even though the owner
-// must not release a transition. Arm only after construction so segment installation is unaffected.
-class AmbiguousDurableIoFaultPosixSyscalls final : public io::detail::PosixSyscalls {
+// Injects one selected durable-I/O failure. File creation fails before mutation so no descriptor is
+// lost. The write, synchronization, rename, and close modes perform the real operation before
+// reporting EIO, modeling an ambiguous result. Arm only after constructing the owner.
+class DurableIoFaultPosixSyscalls final : public io::detail::PosixSyscalls {
 public:
-  AmbiguousDurableIoFaultPosixSyscalls() noexcept
-      : delegate_(io::detail::system_posix_syscalls()) {}
+  DurableIoFaultPosixSyscalls() noexcept : delegate_(io::detail::system_posix_syscalls()) {}
 
-  void arm(const AmbiguousDurableIoFault fault) noexcept {
+  void arm(const DurableIoFault fault) noexcept {
     armed_.store(fault);
   }
 
@@ -34,6 +37,10 @@ public:
     return delegate_.open_directory(path, flags);
   }
   int open_at(const io::detail::OpenAtRequest& request) override {
+    if (consume(DurableIoFault::kFileCreate)) {
+      errno = EIO;
+      return -1;
+    }
     return delegate_.open_at(request);
   }
   int mkdir_at(const io::detail::MkdirAtRequest& request) override {
@@ -44,7 +51,7 @@ public:
   }
   ssize_t pwrite(const io::detail::WriteAtRequest& request) override {
     const ssize_t result = delegate_.pwrite(request);
-    if (result >= 0 && consume(AmbiguousDurableIoFault::kRecordWrite)) {
+    if (result >= 0 && consume(DurableIoFault::kWrite)) {
       errno = EIO;
       return -1;
     }
@@ -58,17 +65,35 @@ public:
   }
   int fdatasync(const int descriptor) override {
     const int result = delegate_.fdatasync(descriptor);
-    if (result == 0 && consume(AmbiguousDurableIoFault::kDataSync)) {
+    if (result == 0 && consume(DurableIoFault::kDataSync)) {
       errno = EIO;
       return -1;
     }
     return result;
   }
   int fsync(const int descriptor) override {
-    return delegate_.fsync(descriptor);
+    const int result = delegate_.fsync(descriptor);
+    if (result == 0 && consume(DurableIoFault::kFullSync)) {
+      errno = EIO;
+      return -1;
+    }
+    if (result == 0 && armed_.load() == DurableIoFault::kDirectorySync) {
+      struct stat metadata {};
+      if (delegate_.fstat(descriptor, &metadata) == 0 && S_ISDIR(metadata.st_mode) &&
+          consume(DurableIoFault::kDirectorySync)) {
+        errno = EIO;
+        return -1;
+      }
+    }
+    return result;
   }
   int rename_no_replace(const io::detail::RenameAtRequest& request) override {
-    return delegate_.rename_no_replace(request);
+    const int result = delegate_.rename_no_replace(request);
+    if (result == 0 && consume(DurableIoFault::kRename)) {
+      errno = EIO;
+      return -1;
+    }
+    return result;
   }
   int try_lock_exclusive(const int descriptor) override {
     return delegate_.try_lock_exclusive(descriptor);
@@ -81,7 +106,7 @@ public:
   }
   int close(const int descriptor) override {
     const int result = delegate_.close(descriptor);
-    if (result == 0 && consume(AmbiguousDurableIoFault::kFileClose)) {
+    if (result == 0 && consume(DurableIoFault::kFileClose)) {
       errno = EIO;
       return -1;
     }
@@ -93,16 +118,16 @@ public:
   }
 
 private:
-  [[nodiscard]] bool consume(const AmbiguousDurableIoFault expected) noexcept {
-    AmbiguousDurableIoFault armed = expected;
-    if (!armed_.compare_exchange_strong(armed, AmbiguousDurableIoFault::kNone))
+  [[nodiscard]] bool consume(const DurableIoFault expected) noexcept {
+    DurableIoFault armed = expected;
+    if (!armed_.compare_exchange_strong(armed, DurableIoFault::kNone))
       return false;
     injected_faults_.fetch_add(1U);
     return true;
   }
 
   io::detail::PosixSyscalls& delegate_;
-  std::atomic<AmbiguousDurableIoFault> armed_;
+  std::atomic<DurableIoFault> armed_;
   std::atomic<std::size_t> injected_faults_;
 };
 

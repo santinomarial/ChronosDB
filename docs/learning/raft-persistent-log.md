@@ -42,8 +42,16 @@ Rotation first data-synchronizes and closes the predecessor. Either result may b
 reported error poisons the writer even if the kernel operation completed. Deterministic tests inject
 `EIO` after each real predecessor operation, verify that later appends return the retained root
 cause, close the remaining physical ownership, and reopen only the exact predecessor record prefix.
-The reopened writer can then retry the rotation normally. Successor segment installation remains a
-separate fault boundary.
+The reopened writer can then retry the rotation normally.
+
+Successor installation has five ordered stages: exclusive temporary creation, complete header
+write, full-file synchronization, no-replace rename, and directory synchronization. Focused fault
+injection covers each stage. A failure before rename leaves either no successor or a recognized
+temporary that reopen removes while holding `LOCK`. An ambiguous error after the real rename or
+directory sync can leave the valid empty successor visible, so reopen adopts it. Neither case
+recovers the unattempted record: the exact predecessor prefix remains authoritative and the next
+sequence appends successfully to segment 2. These process-level tests do not qualify power-loss
+behavior.
 
 Explicit close adds no synchronization boundary. It invalidates the active segment, advisory lock,
 and directory in that order, continues after an error, and returns the first physical close error.

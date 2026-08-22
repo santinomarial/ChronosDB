@@ -986,8 +986,8 @@ TEST(AsyncDurableMultiRaftRuntimeTest, FailsClosedAfterTerminalDurableRuntimeErr
 TEST(AsyncDurableMultiRaftRuntimeTest,
      AmbiguousRecordWriteAndDataSyncFailuresFanOutAndRecoverExactState) {
   constexpr std::array faults{
-      test::AmbiguousDurableIoFault::kRecordWrite,
-      test::AmbiguousDurableIoFault::kDataSync,
+      test::DurableIoFault::kWrite,
+      test::DurableIoFault::kDataSync,
   };
   constexpr std::array expected_operations{"pwrite", "fdatasync"};
 
@@ -997,7 +997,7 @@ TEST(AsyncDurableMultiRaftRuntimeTest,
     const GroupId group = group_id(static_cast<std::byte>(0x34U + fault_index));
     const RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
     const std::vector<RaftGroupConfiguration> groups{{group, {1U}}};
-    test::AmbiguousDurableIoFaultPosixSyscalls syscalls;
+    test::DurableIoFaultPosixSyscalls syscalls;
     auto extension = std::make_shared<BlockingWorkerExtension>();
     [[maybe_unused]] BlockingWorkerReleaseGuard release_on_exit{extension.get()};
     auto runtime = detail::AsyncDurableMultiRaftRuntimeTestAccess::create_new(
