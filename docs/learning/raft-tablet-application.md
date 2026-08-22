@@ -77,6 +77,13 @@ the pending Raft request and local group, and runs `CompleteSnapshotInstallOpera
 durable runtime. Its returned success response is therefore held until the new Raft snapshot state
 is synchronized. A durable RTAS with no matching pending request remains an unreferenced safe file.
 
+A real-process crash matrix freezes that ordering at every durable application-file operation, the
+Raft state-record write and sync, and the success-release boundary. After `SIGKILL`, public reopen
+removes pre-rename temporaries, accepts a complete post-rename RTAS only as an orphan until Raft
+metadata agrees, and either resumes completion or answers an exact leader retry from recovered Raft
+authority. This establishes process-restart behavior; it does not substitute for power-loss and
+filesystem durability qualification.
+
 After that durable transition,
 `checkpoint_recovered_tablet_movement_catch_up` reconciles the target's exact persisted snapshot
 when movement still reopens as catching-up. It creates a private ready candidate, installs the next

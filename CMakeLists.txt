@@ -331,6 +331,7 @@ target_include_directories(
   PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 target_link_libraries(
   chronos_ingest
@@ -1664,6 +1665,19 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_static_analysis(chronos_wal_tests)
   gtest_discover_tests(chronos_wal_tests DISCOVERY_TIMEOUT 30 NO_PRETTY_VALUES)
 
+  add_executable(chronos_ingest_snapshot_install_crash_child
+                 tests/ingest/tablet_snapshot_install_crash_child.cpp)
+  set_target_properties(chronos_ingest_snapshot_install_crash_child PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_ingest_snapshot_install_crash_child PRIVATE cxx_std_23)
+  target_include_directories(
+    chronos_ingest_snapshot_install_crash_child
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
+  target_link_libraries(chronos_ingest_snapshot_install_crash_child PRIVATE chronos::ingest)
+  chronos_set_project_warnings(chronos_ingest_snapshot_install_crash_child)
+  chronos_enable_sanitizers(chronos_ingest_snapshot_install_crash_child)
+  chronos_enable_static_analysis(chronos_ingest_snapshot_install_crash_child)
+
   add_executable(
     chronos_ingest_tests
     tests/ingest/async_raft_tablet_application_header_self_contained.cpp
@@ -1699,6 +1713,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/ingest/tablet_movement_raft_snapshot_completion_test.cpp
     tests/ingest/tablet_movement_snapshot_handoff_header_self_contained.cpp
     tests/ingest/tablet_movement_snapshot_handoff_test.cpp
+    tests/ingest/tablet_snapshot_install_crash_matrix_test.cpp
     tests/ingest/tablet_state_header_self_contained.cpp
     tests/ingest/tablet_state_test.cpp
   )
@@ -1709,6 +1724,11 @@ if(CHRONOS_BUILD_TESTS)
                                  "${CMAKE_CURRENT_SOURCE_DIR}/tests"
   )
   target_link_libraries(chronos_ingest_tests PRIVATE chronos::ingest GTest::gtest_main)
+  target_compile_definitions(
+    chronos_ingest_tests
+    PRIVATE CHRONOS_TEST_CRASH_CHILD_PATH="$<TARGET_FILE:chronos_ingest_snapshot_install_crash_child>"
+  )
+  add_dependencies(chronos_ingest_tests chronos_ingest_snapshot_install_crash_child)
   chronos_set_project_warnings(chronos_ingest_tests)
   chronos_enable_sanitizers(chronos_ingest_tests)
   chronos_enable_static_analysis(chronos_ingest_tests)

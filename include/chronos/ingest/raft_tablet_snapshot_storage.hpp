@@ -11,7 +11,15 @@
 #include <string>
 #include <vector>
 
+namespace chronos::io::detail {
+class PosixSyscalls;
+}
+
 namespace chronos::ingest {
+
+namespace detail {
+class RaftTabletSnapshotStorageTestAccess;
+}
 
 struct RaftTabletSnapshotStorageConfig {
   std::string directory_path;
@@ -74,9 +82,12 @@ public:
 private:
   class Impl;
   [[nodiscard]] static common::Result<RaftTabletSnapshotStorage>
-  open(RaftTabletSnapshotStorageConfig config, bool create_lock);
+  open_with(RaftTabletSnapshotStorageConfig config, bool create_lock,
+            io::detail::PosixSyscalls& syscalls);
   explicit RaftTabletSnapshotStorage(std::unique_ptr<Impl> impl) noexcept;
   std::unique_ptr<Impl> impl_;
+
+  friend class detail::RaftTabletSnapshotStorageTestAccess;
 };
 
 } // namespace chronos::ingest

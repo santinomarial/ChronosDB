@@ -15,6 +15,10 @@
 
 namespace chronos::raft {
 
+namespace detail {
+class DurableMultiRaftRuntimeTestAccess;
+}
+
 struct RaftGroupConfiguration {
   GroupId group_id;
   std::vector<NodeId> voters;
@@ -174,6 +178,7 @@ private:
   std::unique_ptr<Impl> impl_;
 
   friend class AsyncDurableMultiRaftRuntime;
+  friend class detail::DurableMultiRaftRuntimeTestAccess;
 };
 
 } // namespace chronos::raft

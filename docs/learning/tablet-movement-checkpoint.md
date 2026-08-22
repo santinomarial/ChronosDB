@@ -74,7 +74,10 @@ The matching Raft metadata completion is now composed by
 `complete_recovered_tablet_movement_raft_snapshot`: only catching-up movement may enter it, the
 pending leader request must equal the RTAS's full metadata and movement endpoints, and success is
 returned only after the target Raft state is synchronized. Physical part transfer, response routing,
-and reclamation remain separate orchestration.
+and reclamation remain separate orchestration. Subprocess coverage kills the composed handoff after
+each RTAS durability operation, the Raft state write/sync, and success release; public reopen must
+converge by resuming an incomplete handoff or answering an exact retry from persisted Raft
+authority.
 
 `checkpoint_recovered_tablet_movement_catch_up` closes the checkpoint-advancement crash window. It
 requires the exact installed RTAS and target Raft boundary, advances a private candidate, installs

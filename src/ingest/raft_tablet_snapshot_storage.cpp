@@ -2,6 +2,7 @@
 
 #include "chronos/ingest/columnar_append_format.hpp"
 #include "chronos/io/posix_io.hpp"
+#include "io/posix_syscalls.hpp"
 
 #include <algorithm>
 #include <array>
@@ -197,7 +198,8 @@ raft_tablet_snapshot_file_name(const raft::LogIndex last_included_index) {
 }
 
 common::Result<RaftTabletSnapshotStorage>
-RaftTabletSnapshotStorage::open(RaftTabletSnapshotStorageConfig config, const bool create_lock) {
+RaftTabletSnapshotStorage::open_with(RaftTabletSnapshotStorageConfig config, const bool create_lock,
+                                     io::detail::PosixSyscalls& syscalls) {
   if (config.directory_path.empty() || config.group_id.is_nil() || config.file_permissions == 0U ||
       (config.file_permissions & ~0777U) != 0U ||
       config.codec_limits.maximum_snapshot_bytes <
@@ -210,7 +212,7 @@ RaftTabletSnapshotStorage::open(RaftTabletSnapshotStorageConfig config, const bo
       config.codec_limits.maximum_voters == 0U || config.codec_limits.maximum_voters > 1024U) {
     return common::make_unexpected(invalid("Raft tablet snapshot storage config is invalid"));
   }
-  auto directory = io::PosixDirectory::open(config.directory_path);
+  auto directory = io::detail::PosixHandleFactory::open_directory(config.directory_path, syscalls);
   if (!directory.has_value()) {
     return common::make_unexpected(directory.error());
   }
@@ -240,7 +242,7 @@ RaftTabletSnapshotStorage::operator=(RaftTabletSnapshotStorage&&) noexcept = def
 common::Result<RaftTabletSnapshotStorage>
 RaftTabletSnapshotStorage::create(RaftTabletSnapshotStorageConfig config) {
   try {
-    return open(std::move(config), true);
+    return open_with(std::move(config), true, io::detail::system_posix_syscalls());
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("Raft tablet snapshot storage allocation failed"));
   }
@@ -249,7 +251,7 @@ RaftTabletSnapshotStorage::create(RaftTabletSnapshotStorageConfig config) {
 common::Result<RaftTabletSnapshotStorage>
 RaftTabletSnapshotStorage::open_existing(RaftTabletSnapshotStorageConfig config) {
   try {
-    return open(std::move(config), false);
+    return open_with(std::move(config), false, io::detail::system_posix_syscalls());
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("Raft tablet snapshot storage allocation failed"));
   }

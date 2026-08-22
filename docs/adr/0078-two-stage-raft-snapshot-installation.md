@@ -79,9 +79,11 @@ resource limits, durable file installation, and resumability. Immediately accept
 rejected because it creates a fake application state. Log-only catch-up was rejected because it
 prevents bounded history and reclamation.
 
-The tablet and metadata application owners still need versioned snapshot contents and installation
-adapters. Production transport encoding, chunk orchestration, crash injection, and physical shared-
-segment reclamation remain follow-up work.
+The tablet application owner now has versioned snapshot contents, a durable installation adapter,
+and subprocess crash coverage through the composed application/Raft authority handoff. The
+metadata application owner still needs the equivalent snapshot-byte adapter. Production transport
+encoding, chunk orchestration, power-loss qualification, and physical shared-segment reclamation
+remain follow-up work.
 
 ## Affected invariants and validation
 

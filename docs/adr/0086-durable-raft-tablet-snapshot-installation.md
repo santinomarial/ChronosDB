@@ -55,6 +55,9 @@ deterministic temporary makes crash cleanup narrowly recognizable.
 
 Invariants 1–5, 8, 10, 11, 14, and 18 apply. Real-filesystem focused tests cover exclusive ownership,
 write/reopen/load, exact idempotent retry, highest-index selection, temporary cleanup, and installed
-corruption. Syscall fault injection, process-crash points, directory-sync uncertainty, permission
-matrices, application recovery composition, snapshot transfer, and physical-log reclamation remain
+corruption. A real-process `SIGKILL` matrix cuts installation after temporary creation, write,
+readback, file sync, temporary close, rename, and directory sync. Public reopen must remove every
+pre-rename temporary, retain only a complete post-rename final, and exact-retry either state through
+the composed Raft completion path. Injected syscall failures, power-loss/directory-sync
+qualification, permission matrices, snapshot transport, and physical-log reclamation remain
 deferred.

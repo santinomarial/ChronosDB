@@ -56,8 +56,14 @@ and emits no response. The RTAS file may already exist, which is harmless and di
 Invariants 1, 4, 5, 8, 10, 11, 14, and 18 apply. Real-filesystem tests prove RTAS-before-Raft
 ordering, exact pending source/full-metadata/target binding, synchronized success response release,
 movement catch-up only after completion, durable runtime reopen, advanced-phase rejection, and
-missing-pending failure. Syscall fault injection, process kills at each boundary, response
-transport, leader retry orchestration, physical part transfer, and reclamation remain deferred.
+missing-pending failure. A ten-cut subprocess matrix now sends `SIGKILL` after each RTAS create,
+write, readback, file-sync, close, rename, and directory-sync boundary, after the Raft state record
+write and sync, and after composed success becomes releasable. Recovery uses public owners twice,
+proves that pre-Raft RTAS files are either absent temporaries or safe immutable orphans, resumes the
+pending path when Raft authority is absent, and otherwise proves that an exact repeated leader
+request receives success from the persisted snapshot. Injected syscall failures, physical
+power-loss qualification, response transport, leader retry scheduling, physical part transfer, and
+reclamation remain deferred.
 
 **Retrospective update (ADR 0130):** that decision reconciles a persisted Raft snapshot with a
 checkpoint-behind catching-up movement and installs the ready checkpoint before advancing live

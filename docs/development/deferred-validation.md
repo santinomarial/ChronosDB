@@ -471,10 +471,13 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
 - Extend the v1.1 snapshot membership checkpoint validation beyond the independent
   minor-0/minor-1 golden fixtures and focused legacy-record recovery, current rewrite, mixed-format
   reopen, legacy-segment reclamation, and exact hostile voter-count boundaries with separate
-  mixed-version processes, snapshot-install crash points, broader count-shape corruption campaigns,
-  and broader reclamation matrices.
+  mixed-version processes, broader count-shape corruption campaigns, and broader reclamation
+  matrices. The composed tablet RTAS/Raft install now has a ten-cut real-process `SIGKILL` matrix;
+  physical power-loss and injected syscall-error qualification remain.
 - Connect the implemented two-stage Raft snapshot request/completion boundary to versioned tablet
-  and metadata snapshot bytes, resumable transfer, manifest installation, and process-crash tests.
+  and metadata snapshot bytes, resumable transfer, and manifest installation. The local tablet
+  handoff is versioned and process-crash tested; metadata snapshot bytes and end-to-end transport
+  orchestration remain.
 - Extend the implemented one-worker bounded durable Multi-Raft FIFO and ordered owning observations
   with I/O failure injection, reactor continuations, observation deadlines/coalescing, timer
   batching, thread placement, and measured group-aware
