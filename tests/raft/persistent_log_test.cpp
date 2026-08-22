@@ -381,6 +381,99 @@ TEST(RaftPersistentLogTest, RecoveryAnchorInstallationFailuresPreserveOneExactAu
   }
 }
 
+TEST(RaftPersistentLogTest, ReclamationDeletionAndSyncFailuresRecoverNewestAuthority) {
+  struct ReclamationFailure {
+    bool during_second_checkpoint;
+    test::DurableIoFault fault;
+    std::size_t matching_calls_to_skip;
+    std::string_view expected_operation;
+  };
+  constexpr std::array failures{
+      ReclamationFailure{false, test::DurableIoFault::kUnlink, 0U, "unlinkat WAL entry"},
+      ReclamationFailure{false, test::DurableIoFault::kDirectorySync, 2U, "fsync directory"},
+      ReclamationFailure{true, test::DurableIoFault::kUnlink, 1U, "unlinkat WAL entry"},
+      ReclamationFailure{true, test::DurableIoFault::kDirectorySync, 3U, "fsync directory"},
+  };
+
+  for (std::size_t failure_index = 0U; failure_index < failures.size(); ++failure_index) {
+    SCOPED_TRACE(failure_index);
+    TemporaryDirectory directory;
+    const RaftPersistentLogConfig config{.directory_path = directory.path().string()};
+    test::DurableIoFaultPosixSyscalls syscalls;
+    auto log = detail::RaftPersistentLogTestAccess::create_new(config, syscalls);
+    ASSERT_TRUE(log.has_value()) << log.error().to_string();
+    const GroupId first_group = group_id(static_cast<std::byte>(0x80U + failure_index));
+    const GroupId second_group = group_id(static_cast<std::byte>(0x90U + failure_index));
+    ASSERT_TRUE(log->append(state(first_group, 1U, std::byte{0x81U})).has_value());
+    ASSERT_TRUE(log->append(state(second_group, 2U, std::byte{0x82U})).has_value());
+    ASSERT_TRUE(log->synchronize().has_value());
+    const std::vector<GroupPersistentState> first_checkpoint{
+        state(first_group, 3U, std::byte{0x83U}),
+        state(second_group, 4U, std::byte{0x84U}),
+    };
+    const std::vector<GroupPersistentState> second_checkpoint{
+        state(first_group, 5U, std::byte{0x85U}),
+        state(second_group, 6U, std::byte{0x86U}),
+    };
+    if (failures[failure_index].during_second_checkpoint) {
+      auto reclaimed = log->checkpoint_and_reclaim(first_checkpoint);
+      ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+      EXPECT_EQ(reclaimed->base_segment_number, 2U);
+    }
+    const auto& checkpoint =
+        failures[failure_index].during_second_checkpoint ? second_checkpoint : first_checkpoint;
+    const std::uint64_t old_base = failures[failure_index].during_second_checkpoint ? 2U : 1U;
+    const std::uint64_t new_base = old_base + 1U;
+
+    syscalls.arm(failures[failure_index].fault, failures[failure_index].matching_calls_to_skip);
+    auto failed = log->checkpoint_and_reclaim(checkpoint);
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), common::StatusCode::kIoError);
+    EXPECT_NE(failed.error().to_string().find(failures[failure_index].expected_operation),
+              std::string::npos);
+    EXPECT_TRUE(log->is_failed());
+    EXPECT_EQ(log->failure_status(), failed.error());
+    EXPECT_EQ(log->written_position().segment_number, new_base);
+    EXPECT_EQ(log->written_position().physical_sequence, checkpoint.back().physical_sequence);
+    EXPECT_EQ(log->durable_physical_sequence(), checkpoint.back().physical_sequence);
+    EXPECT_EQ(log->recovery().base_segment_number, old_base);
+    EXPECT_EQ(log->recovery().segment_count, 2U);
+    EXPECT_EQ(log->recovery().record_count, 4U);
+    EXPECT_EQ(syscalls.injected_faults(), 1U);
+    EXPECT_TRUE(log->close().is_ok());
+
+    const std::filesystem::path obsolete_segment =
+        directory.path() /
+        (old_base == 1U ? "raft-00000000000000000001.rlog" : "raft-00000000000000000002.rlog");
+    const std::filesystem::path obsolete_anchor =
+        directory.path() / "raft-base-00000000000000000002.rbase";
+    const std::filesystem::path newest_anchor =
+        directory.path() / (new_base == 2U ? "raft-base-00000000000000000002.rbase"
+                                           : "raft-base-00000000000000000003.rbase");
+    EXPECT_FALSE(std::filesystem::exists(obsolete_segment));
+    if (old_base == 2U)
+      EXPECT_FALSE(std::filesystem::exists(obsolete_anchor));
+    EXPECT_TRUE(std::filesystem::exists(newest_anchor));
+
+    auto reopened = RaftPersistentLog::open_existing(config);
+    ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+    EXPECT_EQ(reopened->recovery().base_segment_number, new_base);
+    EXPECT_EQ(reopened->recovery().segment_count, 1U);
+    EXPECT_EQ(reopened->recovery().record_count, 2U);
+    EXPECT_EQ(reopened->durable_physical_sequence(), checkpoint.back().physical_sequence);
+    ASSERT_EQ(reopened->recovery().latest_group_states.size(), 2U);
+    EXPECT_EQ(reopened->recovery().latest_group_states[0], checkpoint[0]);
+    EXPECT_EQ(reopened->recovery().latest_group_states[1], checkpoint[1]);
+    const std::uint64_t next_sequence = checkpoint.back().physical_sequence + 1U;
+    auto appended =
+        reopened->append(state(first_group, next_sequence, static_cast<std::byte>(0x87U)));
+    ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
+    EXPECT_EQ(appended->physical_sequence, next_sequence);
+    ASSERT_TRUE(reopened->synchronize().has_value());
+    EXPECT_TRUE(reopened->close().is_ok());
+  }
+}
+
 TEST(RaftPersistentLogTest, RejectsNonconsecutiveCheckpointWithoutAdvancingTheWriter) {
   TemporaryDirectory directory;
   const RaftPersistentLogConfig config{.directory_path = directory.path().string()};

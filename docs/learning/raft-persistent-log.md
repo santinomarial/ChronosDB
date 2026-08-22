@@ -61,6 +61,13 @@ rename, reopen treats the valid anchor as authoritative and removes the old segm
 checkpoint validates. Both paths recover identical latest group states and continue at the same
 next physical sequence. This establishes process-restart arbitration, not power-loss qualification.
 
+After anchor publication, reclamation removes obsolete segments and synchronizes the directory,
+then removes older anchors and synchronizes again. Ambiguous real-unlink and real-directory-sync
+injection covers both cleanup epochs, including a second checkpoint with an older anchor. The live
+owner retains the reported error before updating its public reclamation counters, while restart
+uses the already-published newest anchor, validates its exact checkpoint, observes the completed
+cleanup, and continues at the next sequence. Broader multi-artifact schedules remain separate.
+
 Explicit close adds no synchronization boundary. It invalidates the active segment, advisory lock,
 and directory in that order, continues after an error, and returns the first physical close error.
 Because POSIX close can release a descriptor even when it reports failure, none of those descriptor

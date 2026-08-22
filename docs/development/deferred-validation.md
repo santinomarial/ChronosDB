@@ -380,8 +380,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   installation now injects temporary creation plus ambiguous real write, file sync, rename,
   directory sync, and close results after the checkpoint is synchronized. Pre-rename restart keeps
   the old base; post-rename restart adopts the checkpoint base and removes old history only after
-  validation. Reclamation deletion/synchronization and recovery syscall matrices remain deferred.
-  The physical persistent-log close matrix now injects every nonempty
+  validation. Reclamation now injects ambiguous real old-segment deletion and the following
+  directory sync, then old-anchor deletion and its directory sync during a second checkpoint.
+  Restart always selects the newest anchor and recovers its exact two-record checkpoint. Broader
+  multi-artifact cleanup schedules and recovery syscall matrices remain deferred. The physical
+  persistent-log close matrix now injects every nonempty
   failure combination after the real active-file, advisory-lock, and directory closes; every
   schedule invalidates all three handles, retains the first error, stays idempotent, releases
   ownership, and exactly reopens the synchronized term/state. The asynchronous owner now combines

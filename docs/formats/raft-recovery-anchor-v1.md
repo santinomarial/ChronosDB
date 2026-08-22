@@ -51,6 +51,11 @@ successful rename can leave the complete anchor authoritative; recovery validate
 checkpoint before removing old history. Either path recovers the same latest group states and next
 physical sequence. This arbitration does not by itself qualify the ordering under power loss.
 
+Once the newest anchor is visible, a reported error from an ambiguous successful old-segment or
+old-anchor unlink, or from the directory synchronization following either cleanup epoch, does not
+change recovery authority. On process restart the newest anchor still selects the exact checkpoint;
+obsolete artifacts that remain visible are cleanup residue and are removed only after validation.
+
 Unknown files, nonregular entries, a damaged authoritative anchor, or damage in retained history
 remain corruption. Recovery does not fall back to an older anchor after the newest authority is
 damaged.
