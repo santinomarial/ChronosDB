@@ -84,6 +84,11 @@ metadata agrees, and either resumes completion or answers an exact leader retry 
 authority. This establishes process-restart behavior; it does not substitute for power-loss and
 filesystem durability qualification.
 
+Deterministic I/O injection separately proves every RTAS installation call and both temporary-
+cleanup calls. Pre-rename failures retain a retryable live owner. A failed final directory sync
+poisons that owner because name durability is uncertain, while a new public owner can revalidate the
+complete immutable file and converge through an exact retry.
+
 After that durable transition,
 `checkpoint_recovered_tablet_movement_catch_up` reconciles the target's exact persisted snapshot
 when movement still reopens as catching-up. It creates a private ready candidate, installs the next

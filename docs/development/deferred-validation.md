@@ -473,7 +473,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   reopen, legacy-segment reclamation, and exact hostile voter-count boundaries with separate
   mixed-version processes, broader count-shape corruption campaigns, and broader reclamation
   matrices. The composed tablet RTAS/Raft install now has a ten-cut real-process `SIGKILL` matrix;
-  physical power-loss and injected syscall-error qualification remain.
+  the RTAS owner also covers one-shot failures at every install and cleanup syscall. Physical
+  power-loss, partial-write-after-prefix, repeated/mixed faults, and Raft-log failure composition
+  remain.
 - Connect the implemented two-stage Raft snapshot request/completion boundary to versioned tablet
   and metadata snapshot bytes, resumable transfer, and manifest installation. The local tablet
   handoff is versioned and process-crash tested; metadata snapshot bytes and end-to-end transport

@@ -61,9 +61,10 @@ write, readback, file-sync, close, rename, and directory-sync boundary, after th
 write and sync, and after composed success becomes releasable. Recovery uses public owners twice,
 proves that pre-Raft RTAS files are either absent temporaries or safe immutable orphans, resumes the
 pending path when Raft authority is absent, and otherwise proves that an exact repeated leader
-request receives success from the persisted snapshot. Injected syscall failures, physical
-power-loss qualification, response transport, leader retry scheduling, physical part transfer, and
-reclamation remain deferred.
+request receives success from the persisted snapshot. The RTAS half separately covers one-shot
+syscall failures at every install and temporary-cleanup operation. Raft-log and cross-owner mixed
+failure schedules, physical power-loss qualification, response transport, leader retry scheduling,
+physical part transfer, and reclamation remain deferred.
 
 **Retrospective update (ADR 0130):** that decision reconciles a persisted Raft snapshot with a
 checkpoint-behind catching-up movement and installs the ready checkpoint before advancing live

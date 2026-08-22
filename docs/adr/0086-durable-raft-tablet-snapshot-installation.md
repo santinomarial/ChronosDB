@@ -58,6 +58,10 @@ write/reopen/load, exact idempotent retry, highest-index selection, temporary cl
 corruption. A real-process `SIGKILL` matrix cuts installation after temporary creation, write,
 readback, file sync, temporary close, rename, and directory sync. Public reopen must remove every
 pre-rename temporary, retain only a complete post-rename final, and exact-retry either state through
-the composed Raft completion path. Injected syscall failures, power-loss/directory-sync
-qualification, permission matrices, snapshot transport, and physical-log reclamation remain
-deferred.
+the composed Raft completion path. A deterministic one-shot failure matrix covers prior-temporary
+unlink, temporary create and validation, write, size/readback, file sync, close, final rename, and
+final directory sync, plus cleanup unlink and cleanup sync during reopen. Every pre-rename error
+remains retryable; only final directory-sync uncertainty poisons the live owner, and public reopen
+converges in every case. Partial-write failures after a written prefix, repeated/mixed faults,
+power-loss qualification, permission matrices, snapshot transport, and physical-log reclamation
+remain deferred.

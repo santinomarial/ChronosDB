@@ -1699,6 +1699,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/ingest/raft_tablet_state_machine_test.cpp
     tests/ingest/raft_tablet_snapshot_header_self_contained.cpp
     tests/ingest/raft_tablet_snapshot_test.cpp
+    tests/ingest/raft_tablet_snapshot_storage_failure_test.cpp
     tests/ingest/raft_tablet_snapshot_storage_header_self_contained.cpp
     tests/ingest/raft_tablet_snapshot_storage_test.cpp
     tests/ingest/retry_directory_header_self_contained.cpp
