@@ -109,9 +109,12 @@ syscalls, interrupted and terminal writes, and interrupted and terminal reads. S
 both created descriptors, releases transferred durable storage, and exactly reopens it. `EINTR`
 retries; a terminal write preserves the already-published result, fails queued work and the owner
 closed with exact failure metrics, and reopens the synchronized state; a terminal consumer read is
-reported without poisoning the owner and can be retried. Broader queue-interleaving stress, durable-
-storage I/O failure injection beyond close, thousands-of-groups fairness, and whole-owner
-latency/throughput measurements remain in Phase 18.
+reported without poisoning the owner and can be retried. The active record-write and data-sync
+boundaries now have ambiguous real-I/O-then-`EIO` coverage: neither releases a transition, both fail
+queued work with the same terminal status, and exact reopen recovers the complete record that
+reached the file. Broader queue-interleaving stress, durable-storage rotation/reclamation/recovery
+I/O failure injection, thousands-of-groups fairness, and whole-owner latency/throughput measurements
+remain in Phase 18.
 
 ## Migration or rollback considerations
 

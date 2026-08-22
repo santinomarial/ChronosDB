@@ -983,6 +983,74 @@ TEST(AsyncDurableMultiRaftRuntimeTest, FailsClosedAfterTerminalDurableRuntimeErr
   EXPECT_EQ(runtime->shutdown(), failed.error());
 }
 
+TEST(AsyncDurableMultiRaftRuntimeTest,
+     AmbiguousRecordWriteAndDataSyncFailuresFanOutAndRecoverExactState) {
+  constexpr std::array faults{
+      test::AmbiguousDurableIoFault::kRecordWrite,
+      test::AmbiguousDurableIoFault::kDataSync,
+  };
+  constexpr std::array expected_operations{"pwrite", "fdatasync"};
+
+  for (std::size_t fault_index = 0U; fault_index < faults.size(); ++fault_index) {
+    SCOPED_TRACE(fault_index);
+    TemporaryDirectory directory;
+    const GroupId group = group_id(static_cast<std::byte>(0x34U + fault_index));
+    const RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+    const std::vector<RaftGroupConfiguration> groups{{group, {1U}}};
+    test::AmbiguousDurableIoFaultPosixSyscalls syscalls;
+    auto extension = std::make_shared<BlockingWorkerExtension>();
+    [[maybe_unused]] BlockingWorkerReleaseGuard release_on_exit{extension.get()};
+    auto runtime = detail::AsyncDurableMultiRaftRuntimeTestAccess::create_new(
+        1U, log_config, groups, {}, extension, syscalls);
+    ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+
+    syscalls.arm(faults[fault_index]);
+    auto election = runtime->try_submit({{group, StartElectionOperation{}}});
+    ASSERT_TRUE(election.has_value()) << election.error().to_string();
+    ASSERT_TRUE(extension->wait_until_blocked());
+    auto first_queued = runtime->try_observe_group(group);
+    auto second_queued = runtime->try_observe_group(group);
+    ASSERT_TRUE(first_queued.has_value()) << first_queued.error().to_string();
+    ASSERT_TRUE(second_queued.has_value()) << second_queued.error().to_string();
+    extension->release();
+
+    auto failed_election = election->wait();
+    auto first_failed = first_queued->wait();
+    auto second_failed = second_queued->wait();
+    ASSERT_FALSE(failed_election.has_value());
+    ASSERT_FALSE(first_failed.has_value());
+    ASSERT_FALSE(second_failed.has_value());
+    EXPECT_EQ(first_failed.error(), failed_election.error());
+    EXPECT_EQ(second_failed.error(), failed_election.error());
+    EXPECT_EQ(failed_election.error().code(), common::StatusCode::kIoError);
+    EXPECT_NE(failed_election.error().to_string().find(expected_operations[fault_index]),
+              std::string::npos);
+    EXPECT_EQ(syscalls.injected_faults(), 1U);
+
+    const common::Status shutdown = runtime->shutdown();
+    EXPECT_EQ(shutdown, failed_election.error());
+    EXPECT_EQ(runtime->terminal_status(), shutdown);
+    EXPECT_FALSE(runtime->is_accepting());
+    const AsyncDurableMultiRaftMetrics metrics = runtime->metrics();
+    EXPECT_TRUE(metrics.terminal_failure);
+    EXPECT_EQ(metrics.admitted_batches, 3U);
+    EXPECT_EQ(metrics.completed_batches, 0U);
+    EXPECT_EQ(metrics.failed_batches, 3U);
+    EXPECT_EQ(metrics.pending_batches, 0U);
+    EXPECT_EQ(metrics.pending_operations, 0U);
+    EXPECT_EQ(metrics.written_completion_notifications, 2U);
+    EXPECT_EQ(metrics.coalesced_completion_notifications, 0U);
+    EXPECT_EQ(metrics.failed_completion_notifications, 0U);
+
+    auto reopened = DurableMultiRaftRuntime::open_existing(1U, log_config, {}, groups);
+    ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+    ASSERT_NE(reopened->find_group(group), nullptr);
+    EXPECT_EQ(reopened->find_group(group)->current_term(), 1U);
+    EXPECT_EQ(reopened->find_group(group)->persistent_state().voted_for, 1U);
+    EXPECT_TRUE(reopened->close().is_ok());
+  }
+}
+
 TEST(AsyncDurableMultiRaftRuntimeTest, FansOutOneTerminalFailureToQueuedCompletionsDuringShutdown) {
   constexpr std::size_t kQueuedCompletions = 8U;
   TemporaryDirectory directory;

@@ -121,6 +121,6 @@ checksum failure, retained gaps, unknown entries, and non-regular entries fail c
 persistent states through `RaftPersistentLog`, cover them with one local sync, and then release the
 outbound messages. On a stable or joint-consensus leader, its checked quorum-sync receipt composes
 the required Raft quorum commit with those durable follower-response and leader-commit boundaries.
-No current asynchronous worker schedules the implemented caller-triggered all-group checkpoint
-reclamation, and native protocol/client acknowledgment does not yet expose the receipt as a
-requested durability mode.
+The bounded asynchronous durable owner schedules caller-triggered all-group checkpoint reclamation,
+but no autonomous reclamation policy chooses when to invoke it. Native protocol/client
+acknowledgment does not yet expose the receipt as a requested durability mode.

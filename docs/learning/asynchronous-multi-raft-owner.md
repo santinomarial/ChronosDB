@@ -128,6 +128,15 @@ owner fails closed. A terminal drain error belongs to the single descriptor cons
 injection covers every setup syscall plus interrupted and terminal write/read paths and exact
 synchronized reopen after owner failure.
 
+An active-record `pwrite` or `fdatasync` error is a top-level durable batch failure, even when the
+kernel operation actually completed before reporting an ambiguous error. The current completion
+contains no transition, all queued completions receive the same retained `IO_ERROR`, and the owner
+stops admission. Deterministic tests execute each real operation before injecting `EIO`; after the
+worker closes and releases its lock, reopen recovers the exact term and vote from the complete
+record that reached the file. This proves result suppression independently of what recovery later
+discovers. It does not model power loss or close the remaining rotation, reclamation, and recovery
+syscall matrices.
+
 Capacity rejection changes no Raft or disk state. Per-operation statuses remain ordinary successful
 batch results. A top-level durable batch or checkpoint/reclamation failure is ambiguous with respect
 to partial in-memory or filesystem progress, so the worker fails closed, gives all remaining

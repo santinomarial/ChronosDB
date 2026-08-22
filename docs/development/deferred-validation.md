@@ -367,8 +367,12 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   creation/configuration failure points, interrupted and terminal writes, and interrupted and
   terminal reads. It proves exact descriptor and durable-lock cleanup, retry-on-interrupt behavior,
   fail-closed terminal-write arbitration after result publication, exact failed-notification
-  metrics, consumer-side drain retry, and synchronized reopen. Broader durable-storage syscall
-  failures remain deferred. The physical persistent-log close matrix now injects every nonempty
+  metrics, consumer-side drain retry, and synchronized reopen. Ambiguous active-record `pwrite` and
+  `fdatasync` failures now execute the real syscall before returning `EIO`; the asynchronous owner
+  withholds the current transition, fans the retained status out to queued observations, releases
+  the physical lock, and reopens the exact complete term/vote record. Rotation, segment/anchor
+  installation, reclamation, and recovery syscall matrices remain deferred. The physical
+  persistent-log close matrix now injects every nonempty
   failure combination after the real active-file, advisory-lock, and directory closes; every
   schedule invalidates all three handles, retains the first error, stays idempotent, releases
   ownership, and exactly reopens the synchronized term/state. The asynchronous owner now combines

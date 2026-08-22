@@ -30,7 +30,13 @@ then becoming an over-budget minor-1 state once its voters are owned in memory.
 The owner is move-only and not internally synchronized. One caller serializes append, sync,
 observation, and close. Borrowed state is encoded during `append` and need not outlive the call.
 `LOCK` excludes another process or in-process owner. A write, sync, rotation, or installation error
-poisons the owner; later I/O is rejected with the retained root cause.
+poisons the owner; later I/O is rejected with the retained root cause. For an ambiguous append or
+synchronization error, the complete record may nevertheless exist on disk. The caller still
+receives failure and must not release its transition or outbound messages; recovery, rather than
+the failed in-memory owner, decides which complete checksummed prefix exists. Focused
+asynchronous-owner tests execute the real record write or data synchronization before returning
+`EIO`, fan that status out to all accepted work, and then reopen the exact complete term/vote record
+without treating the failed call as an acknowledgment.
 
 Explicit close adds no synchronization boundary. It invalidates the active segment, advisory lock,
 and directory in that order, continues after an error, and returns the first physical close error.
