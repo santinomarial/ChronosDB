@@ -1211,6 +1211,7 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_raft_allocation_failure_tests
+    tests/raft/async_durable_runtime_allocation_failure_test.cpp
     tests/raft/async_durable_worker_extension_set_allocation_failure_test.cpp
     tests/raft/node_allocation_failure_test.cpp
     tests/raft/transport_codec_allocation_failure_test.cpp
@@ -1219,7 +1220,8 @@ if(CHRONOS_BUILD_TESTS)
   set_target_properties(chronos_raft_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_raft_allocation_failure_tests PRIVATE cxx_std_23)
   target_include_directories(
-    chronos_raft_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+    chronos_raft_allocation_failure_tests
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/tests"
   )
   target_link_libraries(
     chronos_raft_allocation_failure_tests PRIVATE chronos::raft GTest::gtest_main

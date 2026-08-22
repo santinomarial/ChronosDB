@@ -44,6 +44,16 @@ void saturating_increment(std::uint64_t& value) noexcept {
                             std::error_code(error, std::generic_category()).message()};
 }
 
+template <typename Operation>
+[[nodiscard]] auto classify_allocation_failure(const char* const message,
+                                               Operation&& operation) -> decltype(operation()) {
+  try {
+    return operation();
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted, message});
+  }
+}
+
 [[nodiscard]] common::Result<std::array<int, 2>> create_completion_pipe() {
   std::array<int, 2> descriptors{-1, -1};
   if (::pipe(descriptors.data()) != 0)
@@ -192,20 +202,13 @@ public:
         worker_start_hook_(worker_start_context_);
       worker_ = std::thread{[this] { run(); }};
     } catch (const std::system_error& error) {
-      const common::Status failure{common::StatusCode::kResourceExhausted,
-                                   std::string{"cannot start durable Multi-Raft worker: "} +
-                                       error.what()};
-      {
-        const std::lock_guard lock{mutex_};
-        terminal_status_ = failure;
-        metrics_.accepting = false;
-        metrics_.terminal_failure = true;
-        shutdown_requested_ = true;
-      }
-      // The worker never acquired ownership, so close the just-created/opened durable owner on the
-      // caller thread. Its close status cannot replace the earlier startup root cause.
-      static_cast<void>(runtime_.close());
-      return failure;
+      return fail_worker_start(
+          common::Status{common::StatusCode::kResourceExhausted,
+                         std::string{"cannot start durable Multi-Raft worker: "} + error.what()});
+    } catch (const std::bad_alloc&) {
+      return fail_worker_start(
+          common::Status{common::StatusCode::kResourceExhausted,
+                         "cannot allocate durable Multi-Raft worker thread state"});
     }
     std::unique_lock lock{initialization_mutex_};
     initialization_condition_.wait(lock, [this] { return initialization_complete_; });
@@ -320,6 +323,16 @@ public:
     }
   }
 
+  [[nodiscard]] common::Result<AsyncDurableRaftCompletion>
+  try_observe_group(const GroupId& group_id) {
+    try {
+      return try_submit({DurableRaftRequest{group_id, ObserveGroupOperation{}}});
+    } catch (const std::bad_alloc&) {
+      return reject(common::Status{common::StatusCode::kResourceExhausted,
+                                   "cannot allocate asynchronous Raft group observation"});
+    }
+  }
+
   [[nodiscard]] common::Status shutdown() {
     const std::lock_guard shutdown_lock{shutdown_mutex_};
     {
@@ -401,6 +414,20 @@ public:
   }
 
 private:
+  [[nodiscard]] common::Status fail_worker_start(common::Status failure) {
+    {
+      const std::lock_guard lock{mutex_};
+      terminal_status_ = failure;
+      metrics_.accepting = false;
+      metrics_.terminal_failure = true;
+      shutdown_requested_ = true;
+    }
+    // The worker never acquired ownership, so close the just-created/opened durable owner on the
+    // caller thread. Its close status cannot replace the earlier startup root cause.
+    static_cast<void>(runtime_.close());
+    return failure;
+  }
+
   [[nodiscard]] static std::chrono::nanoseconds
   elapsed(const common::MonotonicTimePoint started,
           const common::MonotonicTimePoint finished) noexcept {
@@ -806,6 +833,34 @@ AsyncDurableMultiRaftRuntime::operator=(AsyncDurableMultiRaftRuntime&&) noexcept
 AsyncDurableMultiRaftRuntime::AsyncDurableMultiRaftRuntime(std::unique_ptr<Impl> impl) noexcept
     : impl_(std::move(impl)) {}
 
+common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::start_with(
+    DurableMultiRaftRuntime runtime, const AsyncDurableMultiRaftLimits limits,
+    std::shared_ptr<AsyncDurableRaftWorkerExtension> extension,
+    const common::TimeSource& time_source, void (*worker_start_hook)(void*),
+    void* const worker_start_context) {
+  auto completion_pipe = create_completion_pipe();
+  if (!completion_pipe.has_value())
+    return common::make_unexpected(completion_pipe.error());
+  std::unique_ptr<Impl> impl;
+  try {
+    impl =
+        std::make_unique<Impl>(std::move(runtime), limits, *completion_pipe, std::move(extension),
+                               time_source, worker_start_hook, worker_start_context);
+  } catch (const std::bad_alloc&) {
+    ::close((*completion_pipe)[0]);
+    ::close((*completion_pipe)[1]);
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "cannot allocate asynchronous durable Multi-Raft runtime owner"});
+  }
+  const common::Status started = impl->start();
+  if (!started.is_ok()) {
+    static_cast<void>(impl->shutdown());
+    return common::make_unexpected(started);
+  }
+  return AsyncDurableMultiRaftRuntime{std::move(impl)};
+}
+
 common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::create_new(
     const NodeId local_node_id, const RaftPersistentLogConfig& log_config,
     std::vector<RaftGroupConfiguration> groups, const AsyncDurableMultiRaftLimits limits,
@@ -825,31 +880,15 @@ common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::creat
       limits.worker_extension_hook_watchdog_threshold <= std::chrono::nanoseconds::zero()) {
     return common::make_unexpected(invalid("asynchronous durable Multi-Raft limits are invalid"));
   }
-  auto runtime = DurableMultiRaftRuntime::create_new_with(
-      local_node_id, log_config, std::move(groups), limits.durable, syscalls);
+  auto runtime = classify_allocation_failure(
+      "cannot allocate asynchronous durable Multi-Raft creation state", [&] {
+        return DurableMultiRaftRuntime::create_new_with(
+            local_node_id, log_config, std::move(groups), limits.durable, syscalls);
+      });
   if (!runtime.has_value())
     return common::make_unexpected(runtime.error());
-  auto completion_pipe = create_completion_pipe();
-  if (!completion_pipe.has_value())
-    return common::make_unexpected(completion_pipe.error());
-  std::unique_ptr<Impl> impl;
-  try {
-    impl =
-        std::make_unique<Impl>(std::move(*runtime), limits, *completion_pipe, std::move(extension),
-                               time_source, worker_start_hook, worker_start_context);
-  } catch (const std::bad_alloc&) {
-    ::close((*completion_pipe)[0]);
-    ::close((*completion_pipe)[1]);
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kResourceExhausted,
-                       "cannot allocate asynchronous durable Multi-Raft runtime owner"});
-  }
-  const common::Status started = impl->start();
-  if (!started.is_ok()) {
-    static_cast<void>(impl->shutdown());
-    return common::make_unexpected(started);
-  }
-  return AsyncDurableMultiRaftRuntime{std::move(impl)};
+  return start_with(std::move(*runtime), limits, std::move(extension), time_source,
+                    worker_start_hook, worker_start_context);
 }
 
 common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::open_existing(
@@ -872,31 +911,15 @@ common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::open_
       limits.worker_extension_hook_watchdog_threshold <= std::chrono::nanoseconds::zero()) {
     return common::make_unexpected(invalid("asynchronous durable Multi-Raft limits are invalid"));
   }
-  auto runtime = DurableMultiRaftRuntime::open_existing(local_node_id, log_config, open_options,
-                                                        std::move(groups), limits.durable);
+  auto runtime = classify_allocation_failure(
+      "cannot allocate asynchronous durable Multi-Raft reopen state", [&] {
+        return DurableMultiRaftRuntime::open_existing(local_node_id, log_config, open_options,
+                                                      std::move(groups), limits.durable);
+      });
   if (!runtime.has_value())
     return common::make_unexpected(runtime.error());
-  auto completion_pipe = create_completion_pipe();
-  if (!completion_pipe.has_value())
-    return common::make_unexpected(completion_pipe.error());
-  std::unique_ptr<Impl> impl;
-  try {
-    impl =
-        std::make_unique<Impl>(std::move(*runtime), limits, *completion_pipe, std::move(extension),
-                               time_source, worker_start_hook, worker_start_context);
-  } catch (const std::bad_alloc&) {
-    ::close((*completion_pipe)[0]);
-    ::close((*completion_pipe)[1]);
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kResourceExhausted,
-                       "cannot allocate asynchronous durable Multi-Raft runtime owner"});
-  }
-  const common::Status started = impl->start();
-  if (!started.is_ok()) {
-    static_cast<void>(impl->shutdown());
-    return common::make_unexpected(started);
-  }
-  return AsyncDurableMultiRaftRuntime{std::move(impl)};
+  return start_with(std::move(*runtime), limits, std::move(extension), time_source,
+                    worker_start_hook, worker_start_context);
 }
 
 common::Result<AsyncDurableRaftCompletion>
@@ -910,7 +933,11 @@ AsyncDurableMultiRaftRuntime::try_submit(std::vector<DurableRaftRequest> request
 
 common::Result<AsyncDurableRaftCompletion>
 AsyncDurableMultiRaftRuntime::try_observe_group(const GroupId& group_id) {
-  return try_submit({DurableRaftRequest{group_id, ObserveGroupOperation{}}});
+  if (impl_ == nullptr) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kUnavailable, "asynchronous durable Multi-Raft runtime is not open"});
+  }
+  return impl_->try_observe_group(group_id);
 }
 
 common::Result<AsyncRaftLogReclamationCompletion>

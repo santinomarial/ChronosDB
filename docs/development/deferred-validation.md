@@ -379,12 +379,15 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   dedicated allocation executable now sweeps every extension-set-owned creation and batch-context
   allocation, proves transferred children and partial contexts are released on the owner thread,
   retries preparation after failure, and injects child allocation failures through initialization,
-  preparation, completion, and reverse shutdown cleanup. Broader asynchronous-owner allocation
-  injection remains deferred. Deterministic worker-start failure now covers both fresh-create and
-  reopen owners: neither invokes an extension callback, both close the physical owner while
-  preserving the startup error, and exact reopen succeeds. The production replicated-ingest owner
-  now shuts down after routing has admitted a tablet proposal but before the coordinator picks up
-  its result. Coordinator
+  preparation, completion, and reverse shutdown cleanup. A broader async-owner executable now
+  sweeps every owner-construction allocation after durable transfer and every batch, observation,
+  and reclamation admission allocation. Failures classify as resource exhaustion, release or retain
+  exact ownership, preserve rejection accounting, and eventually succeed; delegated create/reopen
+  allocation failure also remains inside the result boundary. Deterministic worker-start failure
+  covers both fresh-create and reopen owners: neither invokes an extension callback, both close the
+  physical owner while preserving the startup error, and exact reopen succeeds. The production
+  replicated-ingest owner now shuts down after routing has admitted a tablet proposal but before the
+  coordinator picks up its result. Coordinator
   destruction drops only the response owner; worker shutdown drains the real tablet-plus-metadata
   application set, and reopen recovers the exact catalog, rows, applied index, and matching-retry
   identity. Monotonic extension-hook watchdog metrics now expose the active hook, live elapsed
@@ -433,8 +436,8 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
 - Connect the implemented two-stage Raft snapshot request/completion boundary to versioned tablet
   and metadata snapshot bytes, resumable transfer, manifest installation, and process-crash tests.
 - Extend the implemented one-worker bounded durable Multi-Raft FIFO and ordered owning observations
-  with allocation/I/O failure injection, reactor continuations, observation deadlines/coalescing,
-  timer batching, thread placement, and measured group-aware
+  with I/O failure injection, reactor continuations, observation deadlines/coalescing, timer
+  batching, thread placement, and measured group-aware
   fairness/no-starvation under hot/cold skew. Producer admission now applies the durable batch's
   operation-aware outbound reservation before queue publication. The worker-affine application
   extension seam now

@@ -12,6 +12,12 @@ namespace chronos::raft::detail {
 class AsyncDurableMultiRaftRuntimeTestAccess {
 public:
   [[nodiscard]] static common::Result<AsyncDurableMultiRaftRuntime>
+  start_with(DurableMultiRaftRuntime runtime, AsyncDurableMultiRaftLimits limits = {}) {
+    return AsyncDurableMultiRaftRuntime::start_with(std::move(runtime), limits, nullptr,
+                                                    common::system_time_source(), nullptr, nullptr);
+  }
+
+  [[nodiscard]] static common::Result<AsyncDurableMultiRaftRuntime>
   create_new(NodeId local_node_id, const RaftPersistentLogConfig& log_config,
              std::vector<RaftGroupConfiguration> groups, AsyncDurableMultiRaftLimits limits,
              std::shared_ptr<AsyncDurableRaftWorkerExtension> extension,

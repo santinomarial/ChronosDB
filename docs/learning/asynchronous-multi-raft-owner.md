@@ -110,6 +110,13 @@ fails, the caller still owns the synchronous runtime, so it retains the startup 
 newly created or reopened log on that thread, and invokes no extension callback. Deterministic
 create/reopen fault injection proves the physical lock is released and a retry recovers the exact
 term while the extension still begins with a pristine lifecycle.
+Allocation failures in delegated durable create/reopen work, async-owner construction, thread-state
+creation, and all three admission surfaces are reported as `RESOURCE_EXHAUSTED`; none may escape as
+`std::bad_alloc`. Exhaustive owner-only sweeps begin after transferring a real synchronous runtime,
+so they can prove each failed construction releases its physical-log lock without conflating lower
+storage allocations. Separate batch, observation, and reclamation sweeps prove failed admission
+publishes no task, leaves zero pending ownership, increments the matching rejection metric exactly,
+and permits the next allocation point to retry on the same owner.
 
 Capacity rejection changes no Raft or disk state. Per-operation statuses remain ordinary successful
 batch results. A top-level durable batch or checkpoint/reclamation failure is ambiguous with respect

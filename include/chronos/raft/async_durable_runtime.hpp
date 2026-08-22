@@ -221,6 +221,11 @@ private:
   class Impl;
   explicit AsyncDurableMultiRaftRuntime(std::unique_ptr<Impl> impl) noexcept;
   [[nodiscard]] static common::Result<AsyncDurableMultiRaftRuntime>
+  start_with(DurableMultiRaftRuntime runtime, AsyncDurableMultiRaftLimits limits,
+             std::shared_ptr<AsyncDurableRaftWorkerExtension> extension,
+             const common::TimeSource& time_source, void (*worker_start_hook)(void*),
+             void* worker_start_context);
+  [[nodiscard]] static common::Result<AsyncDurableMultiRaftRuntime>
   create_new_with(NodeId local_node_id, const RaftPersistentLogConfig& log_config,
                   std::vector<RaftGroupConfiguration> groups, AsyncDurableMultiRaftLimits limits,
                   std::shared_ptr<AsyncDurableRaftWorkerExtension> extension,

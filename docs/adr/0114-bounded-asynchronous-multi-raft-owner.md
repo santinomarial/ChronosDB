@@ -98,9 +98,14 @@ active across its configured watchdog threshold and proves both live detection a
 metrics for every lifecycle hook. A deterministic worker-launch `system_error` is injected into
 both fresh-create and reopen paths; each preserves that resource-exhaustion root cause, invokes no
 extension callback, releases the physical-log lock, and permits an exact successful reopen. Broader
-queue-interleaving stress, asynchronous-owner allocation injection, other syscall-level I/O failure
-injection, thousands-of-groups fairness, and whole-owner latency/throughput measurements remain in
-Phase 18.
+allocation sweeps now cover every async-owner construction allocation after durable-owner transfer,
+plus batch, group-observation, and checkpoint/reclamation admission. Every injected failure is
+`RESOURCE_EXHAUSTED`, releases transferred storage or leaves the live owner reusable, preserves
+exact rejection metrics, and reaches success only after every observed allocation point. The sweep
+also proves delegated create/reopen allocation failure stays inside the `Result` boundary. It found
+and closed two exception leaks: thread-state allocation during startup and the observation
+convenience vector. Broader queue-interleaving stress, syscall-level I/O failure injection,
+thousands-of-groups fairness, and whole-owner latency/throughput measurements remain in Phase 18.
 
 ## Migration or rollback considerations
 
