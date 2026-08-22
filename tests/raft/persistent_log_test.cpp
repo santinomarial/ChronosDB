@@ -102,6 +102,57 @@ TEST(RaftPersistentLogTest, RotatesRecoversLatestGroupStatesAndContinuesSequence
   EXPECT_EQ(appended->physical_sequence, 4U);
 }
 
+TEST(RaftPersistentLogTest,
+     AmbiguousPredecessorSyncAndCloseFailuresDuringRotationRecoverExactPrefix) {
+  constexpr std::array faults{
+      test::AmbiguousDurableIoFault::kDataSync,
+      test::AmbiguousDurableIoFault::kFileClose,
+  };
+  constexpr std::array expected_operations{"fdatasync", "close regular file"};
+
+  for (std::size_t fault_index = 0U; fault_index < faults.size(); ++fault_index) {
+    SCOPED_TRACE(fault_index);
+    TemporaryDirectory directory;
+    const RaftPersistentLogConfig config{.directory_path = directory.path().string(),
+                                         .target_segment_size = 300U};
+    test::AmbiguousDurableIoFaultPosixSyscalls syscalls;
+    auto log = detail::RaftPersistentLogTestAccess::create_new(config, syscalls);
+    ASSERT_TRUE(log.has_value()) << log.error().to_string();
+    const GroupId group = group_id(static_cast<std::byte>(0x40U + fault_index));
+    const GroupPersistentState first = state(group, 1U, std::byte{0x51U});
+    const GroupPersistentState second = state(group, 2U, std::byte{0x52U});
+    ASSERT_TRUE(log->append(first).has_value());
+
+    syscalls.arm(faults[fault_index]);
+    auto failed = log->append(second);
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), common::StatusCode::kIoError);
+    EXPECT_NE(failed.error().to_string().find(expected_operations[fault_index]), std::string::npos);
+    EXPECT_TRUE(log->is_failed());
+    EXPECT_EQ(log->failure_status(), failed.error());
+    EXPECT_EQ(log->written_position().segment_number, 1U);
+    EXPECT_EQ(log->written_position().physical_sequence, 1U);
+    EXPECT_EQ(log->recovery().segment_count, 1U);
+    EXPECT_EQ(syscalls.injected_faults(), 1U);
+    auto rejected = log->append(second);
+    ASSERT_FALSE(rejected.has_value());
+    EXPECT_EQ(rejected.error(), failed.error());
+    EXPECT_TRUE(log->close().is_ok());
+
+    auto reopened = RaftPersistentLog::open_existing(config);
+    ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+    ASSERT_EQ(reopened->recovery().latest_group_states.size(), 1U);
+    EXPECT_EQ(reopened->recovery().latest_group_states.front(), first);
+    EXPECT_EQ(reopened->durable_physical_sequence(), 1U);
+    EXPECT_EQ(reopened->recovery().segment_count, 1U);
+    auto appended = reopened->append(second);
+    ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
+    EXPECT_EQ(appended->segment_number, 2U);
+    EXPECT_EQ(appended->physical_sequence, 2U);
+    EXPECT_TRUE(reopened->close().is_ok());
+  }
+}
+
 TEST(RaftPersistentLogTest, CloseInvalidatesEveryHandleAndReturnsTheFirstPhysicalError) {
   constexpr std::array<std::string_view, 3U> close_operations{{
       "close regular file",

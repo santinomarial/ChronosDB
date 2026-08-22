@@ -15,6 +15,7 @@ enum class AmbiguousDurableIoFault : std::uint8_t {
   kNone,
   kRecordWrite,
   kDataSync,
+  kFileClose,
 };
 
 // Performs the selected real durable-file operation and then reports EIO once. This models an
@@ -79,7 +80,12 @@ public:
     return delegate_.unlink_at(directory_descriptor, name);
   }
   int close(const int descriptor) override {
-    return delegate_.close(descriptor);
+    const int result = delegate_.close(descriptor);
+    if (result == 0 && consume(AmbiguousDurableIoFault::kFileClose)) {
+      errno = EIO;
+      return -1;
+    }
+    return result;
   }
 
   [[nodiscard]] std::size_t injected_faults() const noexcept {

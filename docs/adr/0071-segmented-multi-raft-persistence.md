@@ -80,8 +80,11 @@ all invalidated, the first error is retained, repeated close is idempotent, and 
 reopens exactly. Ambiguous active-record `pwrite` and `fdatasync` failures now execute the real
 operation before returning `EIO` through the asynchronous owner. Both withhold the current
 transition, fan the retained root cause out to queued work, release the physical lock, and exactly
-reopen the complete term/vote record that reached the real file. Other rotation, segment/anchor
-installation, reclamation, and recovery syscall failures, process crash points, sustained
-corruption campaigns, and Linux power-loss qualification remain required. A focused CLI smoke test
-covers both benchmark modes and exact artifact/recovery status; a clean controlled-host measurement
-campaign remains required before making performance claims.
+reopen the complete term/vote record that reached the real file. The predecessor synchronization
+and close boundaries of rotation likewise execute the real operation before returning `EIO`; the
+poisoned writer retains the root cause and reopen recovers the exact predecessor prefix before a
+successful retry rotates. Successor segment and recovery-anchor installation, reclamation, and
+recovery syscall failures, process crash points, sustained corruption campaigns, and Linux
+power-loss qualification remain required. A focused CLI smoke test covers both benchmark modes and
+exact artifact/recovery status; a clean controlled-host measurement campaign remains required
+before making performance claims.

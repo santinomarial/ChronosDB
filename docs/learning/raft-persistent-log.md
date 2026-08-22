@@ -38,6 +38,13 @@ asynchronous-owner tests execute the real record write or data synchronization b
 `EIO`, fan that status out to all accepted work, and then reopen the exact complete term/vote record
 without treating the failed call as an acknowledgment.
 
+Rotation first data-synchronizes and closes the predecessor. Either result may be ambiguous, so a
+reported error poisons the writer even if the kernel operation completed. Deterministic tests inject
+`EIO` after each real predecessor operation, verify that later appends return the retained root
+cause, close the remaining physical ownership, and reopen only the exact predecessor record prefix.
+The reopened writer can then retry the rotation normally. Successor segment installation remains a
+separate fault boundary.
+
 Explicit close adds no synchronization boundary. It invalidates the active segment, advisory lock,
 and directory in that order, continues after an error, and returns the first physical close error.
 Because POSIX close can release a descriptor even when it reports failure, none of those descriptor
