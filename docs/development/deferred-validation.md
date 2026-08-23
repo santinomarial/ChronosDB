@@ -547,8 +547,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   retry after `RESOURCE_EXHAUSTED`. A structure-aware ASan/UBSan libFuzzer target combines raw bytes,
   generated canonical minors with valid nested payloads, lowered caller limits, checksum-repaired
   mutations, truncation, and stable semantic re-encoding; the standard deterministic smoke runs it
-  in CI. Add sustained fuzz campaigns, repeated and broader cross-stage injected-I/O combinations,
-  cleanup metrics, and physical power-loss qualification. A twelve-case real-filesystem policy
+  in CI. Add sustained fuzz campaigns, broader cross-stage injected-I/O combinations, cleanup
+  metrics, and physical power-loss qualification. Repeated failure coverage now interrupts and
+  cleans two consecutive application temporaries, then strictly rejects and explicitly repairs two
+  consecutive partial Raft compaction records before exact orphan adoption and a second reopen. A
+  twelve-case real-filesystem policy
   matrix now crosses legacy migration, complete replacement, matching projections, and divergent
   suffixes over the application-snapshot boundary. The structural codec now exact-round-trips its
   65,536-entry maximum, rejects entry 65,537 and lowered limits, and

@@ -86,6 +86,13 @@ removes. Both paths retain the installed application orphan, withhold compaction
 converge only when a later retry durably selects those exact bytes. This ordering is why the two
 owners can be recovered independently without allowing Raft to reference missing catalog state.
 
+Repeated failure does not weaken that convergence argument. A real-filesystem test performs two
+separate partial application-snapshot writes, reopening each time to remove the prior temporary,
+then performs two separate partial Raft compaction-record writes. Strict recovery rejects each
+incomplete Raft tail without mutation; explicitly authorized repair removes exactly the 16-byte
+prefix and preserves the installed application orphan. A final unfaulted retry adopts that orphan,
+installs matching Raft authority, reconstructs the catalog, and survives a second reopen.
+
 The structural format is pinned independently for compatibility. One minor-0 fixture retains a
 valid Metadata Command v1 cluster-node payload; one minor-1 fixture adds a valid Tablet Group
 Binding v1 payload. Their nested envelopes and outer bytes were packed from the specifications with

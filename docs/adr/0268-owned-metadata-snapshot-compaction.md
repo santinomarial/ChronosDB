@@ -63,8 +63,12 @@ owners, crosses application partial-write and post-rename directory-sync failure
 pre-write or partial Raft record on the next attempt, and proves that the first owner failure
 prevents the second mutation. Reopen removes or adopts the exact application state; strict Raft
 recovery rejects a partial record, explicitly authorized tail repair restores the retained log, and
-an exact retry plus second reopen converge. Snapshot transfer, repeated and broader cross-stage
-fault combinations, fuzzing, and large catalogs remain deferred. A membership-boundary filesystem
+an exact retry plus second reopen converge. Snapshot transfer, fuzzing, and large catalogs remain
+deferred. A repeated-failure test now interrupts two consecutive application temporaries and proves
+each following open removes the exact partial file, then interrupts two consecutive Raft compaction
+records and requires strict rejection plus explicit tail repair after each. The final retry adopts
+the immutable application orphan, compacts Raft, reconstructs the catalog, and survives another
+reopen. Broader cross-stage fault combinations remain deferred. A membership-boundary filesystem
 test compacts an application entry before retained joint/final commands, requires the installed
 metadata snapshot to carry the older voter set, and keeps the live group on the newer stable set.
 
