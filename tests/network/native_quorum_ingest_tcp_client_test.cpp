@@ -1,6 +1,7 @@
 #include "chronos/network/connection_buffers.hpp"
 #include "chronos/network/connection_state.hpp"
 #include "chronos/network/native_quorum_ingest_tcp_client.hpp"
+#include "chronos/network/native_quorum_ingest_tcp_execution.hpp"
 
 #include "gtest/gtest.h"
 #include <algorithm>
@@ -525,6 +526,135 @@ TEST(NativeQuorumIngestTcpClientTest, ExpiresAuthenticatedExchangeExactly) {
   EXPECT_EQ(client->state(), NativeQuorumIngestTcpClientState::kFailed);
   EXPECT_EQ(client->descriptor(), -1);
   EXPECT_EQ(server->requests(), 0U);
+}
+
+TEST(NativeQuorumIngestTcpExecutionTest, PollsACompleteRedirectedOperation) {
+  auto first = ScriptedNativeServer::create(ServerReply::kRedirect);
+  auto second = ScriptedNativeServer::create(ServerReply::kAcknowledge);
+  auto context = TlsClientContext::create(tls_client_config());
+  ASSERT_TRUE(first.has_value()) << first.error().to_string();
+  ASSERT_TRUE(second.has_value()) << second.error().to_string();
+  ASSERT_TRUE(context.has_value()) << context.error().to_string();
+  Authenticator authenticator;
+  NodeAuthorizer authorizer;
+  const auto start = NativeQuorumIngestTcpExecution::TimePoint::clock::now();
+  const std::vector command{std::byte{10U}, std::byte{11U}};
+  auto execution = NativeQuorumIngestTcpExecution::begin(
+      {.client = client_config(*context, first->endpoint(), second->endpoint(), authenticator,
+                               authorizer, 1U),
+       .operation_deadline = start + std::chrono::seconds{5}},
+      command);
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+
+  for (std::size_t iteration = 0U;
+       iteration < 20'000U && execution->state() == NativeQuorumIngestTcpExecutionState::kRunning;
+       ++iteration) {
+    ASSERT_TRUE(first->poll_once().is_ok());
+    ASSERT_TRUE(second->poll_once().is_ok());
+    const common::Status polled = execution->poll_once(std::chrono::milliseconds{1});
+    ASSERT_TRUE(polled.is_ok()) << polled.to_string();
+  }
+
+  ASSERT_EQ(execution->state(), NativeQuorumIngestTcpExecutionState::kComplete)
+      << execution->failure().to_string();
+  const auto metrics = execution->metrics();
+  EXPECT_GT(metrics.poll_calls, 0U);
+  EXPECT_GT(metrics.readiness_events, 0U);
+  EXPECT_EQ(metrics.attempts_started, 2U);
+  EXPECT_EQ(metrics.redirects_followed, 1U);
+  EXPECT_FALSE(metrics.active_client);
+  EXPECT_FALSE(execution->next_deadline().has_value());
+  EXPECT_EQ(execution->current_route().node_id, 2U);
+  EXPECT_EQ(first->commands(), std::vector<std::vector<std::byte>>{command});
+  EXPECT_EQ(second->commands(), std::vector<std::vector<std::byte>>{command});
+  const QuorumSyncIngestAcknowledgement expected{.group_id = group(),
+                                                 .leader_node_id = 2U,
+                                                 .leader_term = 8U,
+                                                 .log_index = 10U,
+                                                 .entry_term = 8U,
+                                                 .local_durable_physical_sequence = 12U};
+  EXPECT_EQ(*execution->result(), expected);
+  EXPECT_TRUE(execution->poll_once(std::chrono::milliseconds{100}).is_ok());
+}
+
+TEST(NativeQuorumIngestTcpExecutionTest, CancelsExplicitlyAndPreservesTheFirstStatus) {
+  auto listener = TcpListener::bind();
+  auto context = TlsClientContext::create(tls_client_config());
+  ASSERT_TRUE(listener.has_value()) << listener.error().to_string();
+  ASSERT_TRUE(context.has_value()) << context.error().to_string();
+  Authenticator authenticator;
+  NodeAuthorizer authorizer;
+  const auto start = NativeQuorumIngestTcpExecution::TimePoint::clock::now();
+  auto execution = NativeQuorumIngestTcpExecution::begin(
+      {.client = client_config(*context, listener->bound_endpoint(), {{127U, 0U, 0U, 1U}, 1U},
+                               authenticator, authorizer),
+       .operation_deadline = start + std::chrono::seconds{5}},
+      {std::byte{12U}});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+  EXPECT_EQ(execution->poll_once(std::chrono::milliseconds{-1}).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(execution->state(), NativeQuorumIngestTcpExecutionState::kRunning);
+
+  const common::Status cancelled = execution->cancel();
+  EXPECT_EQ(cancelled.code(), common::StatusCode::kCancelled);
+  EXPECT_EQ(execution->state(), NativeQuorumIngestTcpExecutionState::kCancelled);
+  EXPECT_EQ(execution->failure(), cancelled);
+  EXPECT_EQ(execution->poll_once(std::chrono::milliseconds{0}), cancelled);
+  EXPECT_EQ(execution->cancel(), cancelled);
+  EXPECT_EQ(execution->result().error(), cancelled);
+  EXPECT_FALSE(execution->metrics().active_client);
+  EXPECT_EQ(execution->metrics().attempts_started, 1U);
+}
+
+TEST(NativeQuorumIngestTcpExecutionTest, RejectsAnExpiredDeadlineBeforeOpeningASocket) {
+  auto listener = TcpListener::bind();
+  auto context = TlsClientContext::create(tls_client_config());
+  ASSERT_TRUE(listener.has_value()) << listener.error().to_string();
+  ASSERT_TRUE(context.has_value()) << context.error().to_string();
+  Authenticator authenticator;
+  NodeAuthorizer authorizer;
+  const auto start = NativeQuorumIngestTcpExecution::TimePoint::clock::now();
+  auto execution = NativeQuorumIngestTcpExecution::begin(
+      {.client = client_config(*context, listener->bound_endpoint(), {{127U, 0U, 0U, 1U}, 1U},
+                               authenticator, authorizer),
+       .operation_deadline = start},
+      {std::byte{13U}});
+  ASSERT_FALSE(execution.has_value());
+  EXPECT_EQ(execution.error().code(), common::StatusCode::kCancelled);
+  auto accepted = listener->accept_one();
+  ASSERT_TRUE(accepted.has_value()) << accepted.error().to_string();
+  EXPECT_FALSE(accepted->has_value());
+}
+
+TEST(NativeQuorumIngestTcpExecutionTest, BoundsTheKernelWaitByTheOperationDeadline) {
+  auto listener = TcpListener::bind();
+  auto context = TlsClientContext::create(tls_client_config());
+  ASSERT_TRUE(listener.has_value()) << listener.error().to_string();
+  ASSERT_TRUE(context.has_value()) << context.error().to_string();
+  Authenticator authenticator;
+  NodeAuthorizer authorizer;
+  const auto start = NativeQuorumIngestTcpExecution::TimePoint::clock::now();
+  const auto operation_deadline = start + std::chrono::milliseconds{30};
+  auto execution = NativeQuorumIngestTcpExecution::begin(
+      {.client = client_config(*context, listener->bound_endpoint(), {{127U, 0U, 0U, 1U}, 1U},
+                               authenticator, authorizer),
+       .operation_deadline = operation_deadline},
+      {std::byte{14U}});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+  EXPECT_EQ(execution->next_deadline(), operation_deadline);
+  common::Status progress = common::Status::ok();
+  for (std::size_t iteration = 0U;
+       iteration < 128U && execution->state() == NativeQuorumIngestTcpExecutionState::kRunning;
+       ++iteration) {
+    progress = execution->poll_once(std::chrono::milliseconds{100});
+  }
+  EXPECT_EQ(execution->state(), NativeQuorumIngestTcpExecutionState::kCancelled);
+  EXPECT_EQ(progress.code(), common::StatusCode::kCancelled);
+  EXPECT_EQ(execution->failure(), progress);
+  EXPECT_FALSE(execution->metrics().active_client);
+  EXPECT_FALSE(execution->next_deadline().has_value());
+  EXPECT_LT(NativeQuorumIngestTcpExecution::TimePoint::clock::now(),
+            operation_deadline + std::chrono::seconds{1});
 }
 
 } // namespace

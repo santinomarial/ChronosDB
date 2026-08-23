@@ -83,7 +83,9 @@ matches the bound group/current route and does not regress the redirect term. Th
 remain transport-independent. `NativeQuorumIngestTcpClient` composes them with nonblocking TCP,
 mutual TLS, certificate-principal-to-node authorization, bounded partial I/O, and separate connect,
 handshake, and exchange deadlines. It reconnects only for a validated redirect; an ambiguous
-transport failure is terminal.
+transport failure is terminal. `NativeQuorumIngestTcpExecution` supplies the constant-storage poll
+owner above that client, bounding each wait by both the active carrier phase and an optional whole-
+operation deadline while preserving explicit cancellation and terminal-only receipt publication.
 
 ## Compatibility and rejection
 

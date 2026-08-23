@@ -450,3 +450,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0413](0413-bounded-native-leader-redirect-routing.md) | Bounded native leader-redirect routing | accepted |
 | [0414](0414-exact-native-quorum-ingest-redirect-replay.md) | Exact native QUORUM_SYNC redirect replay | accepted |
 | [0415](0415-deadline-bound-native-quorum-ingest-tcp-client.md) | Deadline-bound native QUORUM_SYNC TCP client | accepted |
+| [0416](0416-bounded-native-quorum-ingest-tcp-execution.md) | Bounded native QUORUM_SYNC TCP execution | accepted |

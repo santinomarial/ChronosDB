@@ -29,12 +29,21 @@ reset only at their defined phase transitions, including an accepted redirect.
 
 The TCP owner is declared before the optional TLS session so reverse destruction always releases
 TLS before closing its borrowed descriptor. A redirect explicitly performs that order before
-opening the next route. Success closes transport and retains only the exact receipt; all failures
-are sticky. In particular, EOF after sending an ingest is ambiguous and cannot cause replay because
-only an authenticated leader redirect supplies retry authority. Memory is bounded by the route and
-session configuration plus one fixed I/O chunk, and work is linear in bytes plus logarithmic route
+opening the next route. Success closes transport and exposes only the exact receipt; the bounded
+request owner remains alive until its containing client is destroyed. All failures are sticky. In
+particular, EOF after sending an ingest is ambiguous and cannot cause replay because only an
+authenticated leader redirect supplies retry authority. Memory is bounded by the route and session
+configuration plus one fixed I/O chunk, and work is linear in bytes plus logarithmic route
 selection. One event-loop thread owns the entire composition, so it needs no synchronization or
 memory-ordering protocol.
+`NativeQuorumIngestTcpExecution` owns that event-loop step for one operation. It constructs one
+client, translates the client's current read/write interest into a single `pollfd`, and caps every
+kernel wait by the caller maximum, the current carrier phase deadline, and an optional absolute
+operation deadline. It drives the client even after a zero-readiness timeout so exact phase expiry
+cannot depend on socket activity. `POLLERR` and `POLLHUP` are applied only to the direction the
+client requested; the client still classifies connect or TLS failure. Explicit cancellation and
+whole-operation expiry destroy the client, preserve the first terminal status, and never expose a
+partial result. Metrics retain attempts, redirects, waits, readiness, and the last exact route.
 Protocol errors fail closed and release all retained bytes. Complexity is linear in handled
 bytes plus the finite active-request search; completed output-frame removal is linear in the finite
 queued-frame bound.

@@ -205,6 +205,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/network/native_leader_redirect_router.hpp>
 #include <chronos/network/native_quorum_ingest_retry.hpp>
 #include <chronos/network/native_quorum_ingest_tcp_client.hpp>
+#include <chronos/network/native_quorum_ingest_tcp_execution.hpp>
 #include <chronos/network/connection_state.hpp>
 #include <chronos/network/connection_buffers.hpp>
 #include <chronos/network/client_session.hpp>

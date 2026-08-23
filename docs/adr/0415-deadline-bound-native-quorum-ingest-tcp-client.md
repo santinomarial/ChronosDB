@@ -55,8 +55,10 @@ deadlines make the carrier finite when its event-loop owner services the exposed
 event-loop thread serializes methods, so no inter-thread memory-ordering argument applies.
 
 The composite owns no event loop, DNS, deployment-text route parser, credential reload, backoff,
-generic transport retry, connection pool, or `chronosd` client workflow. These remain embedding and
-process-integration concerns. No durable or network bytes change.
+generic transport retry, connection pool, or `chronosd` client workflow. ADR 0416 subsequently
+supplies a bounded single-operation `poll` owner with whole-operation cancellation and deadline.
+Strict route configuration and command/process integration remain separate concerns. No durable or
+network bytes change.
 
 ## Affected invariants
 
@@ -94,4 +96,5 @@ embedding and changes no server, durable, or wire state.
 - [Maintained mutual-TLS client socket](0172-maintained-mutual-tls-client-socket.md)
 - [Nonblocking IPv4 TCP descriptor ownership](0175-nonblocking-ipv4-tcp-descriptor-ownership.md)
 - [Exact native QUORUM_SYNC redirect replay](0414-exact-native-quorum-ingest-redirect-replay.md)
+- [Bounded native QUORUM_SYNC TCP execution](0416-bounded-native-quorum-ingest-tcp-execution.md)
 - [Native Protocol v2](../protocol/native-v2.md)

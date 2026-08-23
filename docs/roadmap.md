@@ -1048,8 +1048,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   it only from exact committed placement/stable membership plus an ordered follower observation;
   endpoint-aware client retry now has a bounded exact-group route-policy owner, exact portable
   QUORUM_SYNC session replay, and a deadline-bound mutually authenticated TCP reconnect carrier,
-  while packaged event-loop/configuration integration and multi-group query routing remain. A
-  Linux-only gate now provisions
+  plus a whole-operation-deadline-aware poll owner. Strict deployment configuration, a packaged
+  client command, and multi-group query routing remain. A Linux-only gate now provisions
   three retained roots, starts three actual daemons with distinct mTLS identities, proves quorum
   ingest, kills the acknowledged tablet leader, proves higher-term matching retry, and reopens
   identical applied/retry state from every root. General provisioning, remote query fragments,
