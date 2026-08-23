@@ -52,8 +52,11 @@ injection, partial shutdown faults, TSan, and multi-node transport remain harden
 steady-state subprocess test now kills the fully recovered outer database owner and proves the next
 owner reacquires every lock and rebuilds exact rows, retry identity, and application frontier. A
 snapshot-backed variant repeats that proof while metadata and tablet application-snapshot locks and
-retained suffixes are all live; startup, in-flight-write, snapshot-operation, and shutdown crash
-cuts remain deferred.
+retained suffixes are all live. A coordinator variant kills the owner after the observation and
+write proposal are admitted but before any response is observed; reopen accepts either atomic
+pre-write or committed state, and an exact protocol retry converges without duplicate rows or retry
+identity. Startup, additional write-stage, snapshot-operation, and shutdown crash cuts remain
+deferred.
 
 ## Affected invariants
 

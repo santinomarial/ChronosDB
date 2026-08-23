@@ -71,8 +71,12 @@ commits one retained suffix in each group, opens the packaged owner from both au
 application snapshots, and then reaches the same `SIGKILL` boundary. Parent recovery reacquires both
 snapshot locks, reconstructs four rows and two retry identities, replays the metadata suffix, and
 survives an exact suffix retry plus another reopen. These are steady-state owner-death boundaries;
-packaged startup, write, snapshot-install/compaction, and shutdown crash/syscall matrices, larger
-resident-set profiles, and broader TSan coverage remain deferred.
+a third child dies after the QUORUM_SYNC coordinator has admitted its observation and write proposal
+but before the caller observes a response. Recovery permits only the exact pre-write or fully
+committed publication, and the same request then returns first-application or matching-retry
+accordingly without duplicate rows. Packaged startup, remaining write stages,
+snapshot-install/compaction, and shutdown crash/syscall matrices, larger resident-set profiles, and
+broader TSan coverage remain deferred.
 
 ## Affected invariants
 

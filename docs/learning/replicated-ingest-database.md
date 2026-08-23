@@ -54,8 +54,12 @@ owner must reacquire the root and Raft locks, rebuild the same rows and retry di
 exact retry without duplication, and survive a second reopen. The same lifecycle also runs with
 authoritative metadata and tablet application snapshots plus committed retained suffixes, proving
 that all four lock domains are process-scoped and that Raft's exact snapshot boundary—not directory
-recency—still selects recovery state. This evidence does not cover a crash inside startup,
-persistence, application, snapshot installation/compaction, or shutdown.
+recency—still selects recovery state. This evidence does not provide deterministic cuts inside
+startup, persistence, application, snapshot installation/compaction, or shutdown. One additional
+cut stops the owner after the coordinator admits an observation and write proposal but before it
+publishes a response. The next owner accepts only the exact pre-write or committed publication,
+then uses the request identity to turn an ambiguous client retry into one application or a matching
+retry without duplicate rows.
 
 ## Query snapshot boundary
 

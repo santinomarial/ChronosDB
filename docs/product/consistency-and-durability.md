@@ -51,7 +51,10 @@ until the replicated service owns the complete application path. Authenticated r
 explicit receipt configuration identity, and replica crash reconciliation remain deferred. The [subprocess crash
 harness](../testing/wal-crash-harness.md) reconciles
 parent-received acknowledgments with recovered physical records after controlled process death; it
-does not extend this contract to unqualified power-loss or storage-stack failures. Benchmarks must follow the
+does not extend this contract to unqualified power-loss or storage-stack failures. A packaged
+replicated-coordinator test separately kills the process after a QUORUM_SYNC proposal is admitted
+but before a response is observed, accepts only the atomic pre-write or committed recovery state,
+and proves that the exact retry converges without duplicate rows. Benchmarks must follow the
 [benchmark contract](../benchmarks/benchmark-contract.md).
 
 The writer's runtime segment target and maximum application-payload setting are admission and

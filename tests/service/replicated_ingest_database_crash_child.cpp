@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -23,6 +24,7 @@ namespace {
 struct ChildConfig {
   std::filesystem::path root;
   bool use_snapshots{false};
+  std::string pause_after;
 };
 
 [[nodiscard]] ChildConfig parse_config(const int count, char** const values) {
@@ -34,6 +36,8 @@ struct ChildConfig {
       config.root = value;
     else if (key == "--operation")
       config.use_snapshots = value == "compaction";
+    else if (key == "--pause-after")
+      config.pause_after = value;
   }
   return config;
 }
@@ -213,6 +217,38 @@ struct ChildConfig {
           head::HeadCommitPosition::raft(crash_tablet_group(), expected_tablet_index)) {
     return {common::StatusCode::kInternal,
             "crash child packaged tablet publication disagrees with durable state"};
+  }
+
+  if (config.pause_after == "after_ingest_admission") {
+    auto election = database->ingest_runtime()->runtime()->try_submit(
+        {{crash_tablet_group(), raft::StartElectionOperation{}}});
+    if (!election.has_value())
+      return election.error();
+    auto elected = election->wait();
+    if (!elected.has_value())
+      return elected.error();
+    raft::AsyncDurableMultiRaftRuntime* const runtime = database->ingest_runtime()->runtime();
+    ReplicatedIngestCoordinator* const coordinator = database->ingest_runtime()->coordinator();
+    const std::uint64_t admitted_before = runtime->metrics().admitted_batches;
+    common::Status admitted = coordinator->admit(crash_request(crash_suffix_command(), 2U));
+    if (!admitted.is_ok())
+      return admitted;
+    for (std::size_t attempt = 0U; attempt < 10'000U; ++attempt) {
+      auto response = coordinator->poll();
+      if (!response.has_value())
+        return response.error();
+      if (response->has_value())
+        return {common::StatusCode::kInternal,
+                "crash child observed an ingest response before its admission boundary"};
+      if (runtime->metrics().admitted_batches >= admitted_before + 2U) {
+        std::cout << "ADMITTED 2\n" << std::flush;
+        for (;;)
+          static_cast<void>(::pause());
+      }
+      std::this_thread::yield();
+    }
+    return {common::StatusCode::kUnavailable,
+            "crash child timed out waiting for ingest proposal admission"};
   }
 
   std::cout << "READY " << recovered->visible_row_count() << ' ' << recovered->retry_entry_count()

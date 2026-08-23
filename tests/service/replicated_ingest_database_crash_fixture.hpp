@@ -6,6 +6,8 @@
 #include "chronos/ingest/raft_tablet_snapshot_storage.hpp"
 #include "chronos/ingest/retry_directory.hpp"
 #include "chronos/ingest/tablet_state.hpp"
+#include "chronos/network/messages.hpp"
+#include "chronos/network/spsc_queue.hpp"
 #include "chronos/raft/metadata_codec.hpp"
 #include "chronos/raft/metadata_snapshot_storage.hpp"
 #include "chronos/raft/schema_definition_codec.hpp"
@@ -113,6 +115,29 @@ crash_database_config(const std::filesystem::path& root, const bool use_snapshot
 
 [[nodiscard]] inline std::vector<std::byte> crash_suffix_command() {
   return crash_command(12U);
+}
+
+[[nodiscard]] inline network::NetworkTask crash_request(std::vector<std::byte> command,
+                                                        const std::uint64_t request_id) {
+  const network::IngestProtocolContext context{.protocol_major = network::kProtocolV2Major,
+                                               .protocol_minor = network::kProtocolV2LatestMinor,
+                                               .feature_bits =
+                                                   network::kProtocolV2QuorumSyncFeature};
+  auto payload =
+      network::encode_ingest_request(network::DurabilityMode::kQuorumSync, command, context)
+          .value();
+  return {.connection_id = 20U,
+          .principal_id = 19U,
+          .protocol = {.protocol_major = context.protocol_major,
+                       .protocol_minor = context.protocol_minor,
+                       .feature_bits = context.feature_bits,
+                       .maximum_payload_size = network::kDefaultMaximumPayloadSize},
+          .frame = {.header = {.protocol_major = context.protocol_major,
+                               .protocol_minor = context.protocol_minor,
+                               .message_type = network::MessageType::kIngestRequest,
+                               .request_id = request_id,
+                               .payload_size = static_cast<std::uint32_t>(payload.size())},
+                    .payload = std::move(payload)}};
 }
 
 [[nodiscard]] inline ReplicatedIngestRuntimeConfig
