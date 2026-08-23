@@ -75,12 +75,14 @@ Raft persistence outcomes. It proves exact convergence from both cleanup ambigui
 allowing a temporary file to become authority. An eight-case reopen matrix crosses those two
 cleanup failures with Raft partial-tail repair failures at size inspection, truncate, file sync, and
 directory sync. It verifies the exact pre/post-truncate byte state, lock release after both failed
-owners, successful later repair, orphan adoption, reclamation, and repeated reopen. A ten-cut
-real-process `SIGKILL` matrix stops after the same application-file transitions, then after the Raft
-state-record write, sync, and successful return. Reopen observes no application file, an immutable
-orphan, or the exact Raft authority as appropriate; state-machine recovery, idempotent retry or
-adoption, reclamation, and a second reopen converge with the exact rows and retry state. Obsolete-file
-reclamation, follower transfer, and physical shared-log/application-file fault injection are
-tracked by their extending ADRs. A membership-boundary integration test compacts an application
-entry before retained joint/final commands and requires the installed application snapshot to
-carry the older voter set while the live group retains the newer set.
+owners, successful later repair, orphan adoption, reclamation, and repeated reopen. A repeated-fault
+lifecycle additionally survives two application partial writes and two repaired Raft partial
+records before one exact orphan adoption, proving that retries accumulate neither temporary bytes
+nor hidden owner state. A ten-cut real-process `SIGKILL` matrix stops after the same application-file
+transitions, then after the Raft state-record write, sync, and successful return. Reopen observes no
+application file, an immutable orphan, or the exact Raft authority as appropriate; state-machine
+recovery, idempotent retry or adoption, reclamation, and a second reopen converge with the exact rows
+and retry state. Obsolete-file reclamation, follower transfer, and physical shared-log/application-file
+fault injection are tracked by their extending ADRs. A membership-boundary integration test
+compacts an application entry before retained joint/final commands and requires the installed
+application snapshot to carry the older voter set while the live group retains the newer set.

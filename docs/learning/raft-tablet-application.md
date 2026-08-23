@@ -94,6 +94,12 @@ the 16-byte tail intact; the other failures occur after truncation. A later repa
 the correct bytes in either case. Successful snapshot and runtime opens after the injected errors
 also prove that both domain locks were released before exact orphan adoption and repeated recovery.
 
+A repeated-fault lifecycle runs two 16-byte application partial writes, cleaning the prior
+temporary before each retry, followed by two 16-byte Raft partial records, repairing the prior tail
+before each retry. The installed RTAS remains exact and immutable through both Raft failures. One
+final compaction adopts it, advances authority, reclaims nothing current, and survives reopen. This
+guards against retry-local state leaking across attempts in either durable owner.
+
 Exact retransmissions also coalesce without re-entering the application owner. A competing remote
 snapshot receives a negative response while the first transfer retains the sole completion
 identity; after that identity resolves, a later request can be admitted normally.
