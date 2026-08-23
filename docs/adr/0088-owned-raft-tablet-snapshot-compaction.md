@@ -63,13 +63,17 @@ their exact row/retry counts and final group/index frontier. A ten-case applicat
 each post-ownership installation stage from temporary creation and validation through partial write,
 readback, sync, close, rename, and final directory sync. Every failed attempt leaves the retained
 Raft entry authoritative; public reopen cleans any temporary, exact retry installs or adopts the
-post-rename orphan, and a second reopen reconstructs the exact rows and retry state. Crossing these
-stages with Raft runtime-persistence failures remains deferred. A ten-cut real-process `SIGKILL`
-matrix stops after the same application-file transitions, then after the Raft state-record write,
-sync, and successful return. Reopen observes no application file, an immutable orphan, or the exact
-Raft authority as appropriate; state-machine recovery, idempotent retry or adoption, reclamation,
-and a second reopen converge with the exact rows and retry state. Obsolete-file reclamation,
-follower transfer, and physical shared-log/application-file fault injection are tracked by their
-extending ADRs. A membership-boundary integration test compacts an application entry before retained
-joint/final commands and requires the installed application snapshot to carry the older voter set
-while the live group retains the newer set.
+post-rename orphan, and a second reopen reconstructs the exact rows and retry state. A 50-case
+cross-owner matrix pairs every application failure with Raft write-before, partial-write,
+write-after, sync-before, and sync-after outcomes on the retry. It proves that the first failure
+never reaches Raft, the second leaves an installed immutable snapshot while failing the runtime
+closed, and reopen either repairs the partial tail and retries from retained-log authority or loads
+the exact recovered Raft snapshot. Reclamation and a second reopen converge in every product. A
+ten-cut real-process `SIGKILL` matrix stops after the same application-file transitions, then after
+the Raft state-record write, sync, and successful return. Reopen observes no application file, an
+immutable orphan, or the exact Raft authority as appropriate; state-machine recovery, idempotent
+retry or adoption, reclamation, and a second reopen converge with the exact rows and retry state.
+Obsolete-file reclamation, follower transfer, and physical shared-log/application-file fault
+injection are tracked by their extending ADRs. A membership-boundary integration test compacts an
+application entry before retained joint/final commands and requires the installed application
+snapshot to carry the older voter set while the live group retains the newer set.

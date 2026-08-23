@@ -73,7 +73,13 @@ stages, including a 16-byte partial temporary and final directory-sync ambiguity
 never reaches Raft compaction: its retained entry remains authority and the live tablet state does
 not fail closed. Public reopen removes any temporary, rebuilds the same rows and retry identity from
 Raft, and exact retry either installs a new file or adopts the complete post-rename orphan. Raft
-persistence fault products remain a separate matrix.
+persistence fault products then cross each of those application failures with five record outcomes:
+write-before, 16-byte partial write, write-after, sync-before, and sync-after. The first failed
+attempt never touches Raft; the retry installs or adopts the RTAS before the Raft error fails the
+runtime closed. Reopen repairs only the partial tail and deterministically recovers either the
+retained entry or the exact snapshot authority. Both paths reconstruct the same rows and retry
+identity, converge through orphan adoption when needed, reclaim nothing current, and survive a
+second reopen.
 
 Exact retransmissions also coalesce without re-entering the application owner. A competing remote
 snapshot receives a negative response while the first transfer retains the sole completion
