@@ -44,8 +44,9 @@ network bytes change.
 
 ADR 0414 subsequently supplies exact transport-independent QUORUM_SYNC body retention and fresh
 Protocol 2 session replay, and ADR 0415 supplies its deadline-bound authenticated TCP/TLS carrier.
-Deployment-text native endpoint configuration, event-loop/process composition, and multi-group
-SELECT routing remain separate work.
+ADR 0417 subsequently supplies strict deployment-text native endpoint and certificate-principal
+configuration. TLS credential/context ownership, process composition, and multi-group SELECT
+routing remain separate work.
 
 ## Affected invariants
 

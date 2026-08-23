@@ -368,6 +368,8 @@ existence of a design document alone is not implementation evidence.
   resident-group and voter declarations for replicated database recovery.
 - [Replicated peer configuration](operations/replicated-peer-config.md): strict bounded IPv4 route,
   TLS identity, and leaf-certificate-to-node authority for authenticated Raft transport.
+- [Native client route configuration](operations/native-client-route-config.md): strict bounded
+  native IPv4 route, TLS identity, and leaf-certificate-to-node authority for redirected clients.
 - [Windowed materialized-view state](learning/windowed-materialized-view.md): committed/event-time
   separation, corrections, watermarks, exact checkpoints, durable recovery, and retention frontier.
 - [Multi-tablet subscription order](learning/multi-tablet-subscription-order.md): canonical source

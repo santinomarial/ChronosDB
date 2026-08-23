@@ -48,9 +48,10 @@ operation. The whole-operation deadline can shorten but never extend a phase dea
 thread serializes all methods, so no inter-thread memory-ordering argument applies.
 
 The owner does not parse deployment text, own TLS credentials or contexts, resolve DNS, spawn a
-thread, manage multiple operations, or add a `chronosctl` command. Strict native route
-configuration and packaged command/process composition remain separate work. No durable or network
-bytes change.
+thread, manage multiple operations, or add a `chronosctl` command. ADR 0417 subsequently supplies
+strict native route and certificate-principal configuration. Secure file loading, TLS
+credential/context composition, and packaged command/process ownership remain separate work. No
+durable or network bytes change.
 
 ## Affected invariants
 

@@ -750,6 +750,8 @@ chronos_enable_static_analysis(chronos_tiering)
 
 add_library(
   chronos_service
+  src/service/native_client_route_authority.cpp
+  src/service/native_client_route_config.cpp
   src/service/replicated_distributed_grouped_query_receiver.cpp
   src/service/replicated_distributed_grouped_query_tcp_server.cpp
   src/service/native_protocol_service.cpp
@@ -983,6 +985,10 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_service_tests
+    tests/service/native_client_route_authority_header_self_contained.cpp
+    tests/service/native_client_route_authority_test.cpp
+    tests/service/native_client_route_config_header_self_contained.cpp
+    tests/service/native_client_route_config_test.cpp
     tests/service/native_protocol_service_header_self_contained.cpp
     tests/service/replicated_distributed_grouped_query_tcp_server_header_self_contained.cpp
     tests/service/replicated_distributed_query_header_self_contained.cpp

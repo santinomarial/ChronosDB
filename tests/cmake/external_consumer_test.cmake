@@ -210,6 +210,8 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/network/connection_buffers.hpp>
 #include <chronos/network/client_session.hpp>
 #include <chronos/network/epoll_reactor.hpp>
+#include <chronos/service/native_client_route_authority.hpp>
+#include <chronos/service/native_client_route_config.hpp>
 #include <chronos/wal/application.hpp>
 
 #include <array>

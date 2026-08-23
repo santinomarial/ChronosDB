@@ -16,6 +16,12 @@ before the first result; its node ID is a routing observation rather than an end
 borrowed TLS context while enforcing exact group, nondecreasing placement/term authority,
 same-term leader consistency, and a finite redirect count. It remains separate from the session so
 the framing owner never infers deployment routes or silently replays a request.
+`parse_native_client_route_config` supplies the strict deployment boundary for that map. Each
+node-sorted entry owns one usable IPv4 endpoint, expected TLS server identity, and unique leaf
+certificate fingerprint. `NativeClientRouteAuthority` then binds a verified fingerprint and
+connected address to the same stable node principal required by the carrier. The file deliberately
+contains no group, leader, term, membership, or placement state; request-specific routing authority
+still comes from the caller and authenticated protocol observations.
 `NativeQuorumIngestRetry` is the explicit higher-level replay composition: it owns one append,
 requires both Protocol 2 features, creates a fresh session/request ID per accepted redirect, and
 publishes only a group/current-leader/nonregressing-term receipt. Its reconnect event tells a later

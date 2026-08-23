@@ -969,10 +969,11 @@ were deliberately not run.
   current-term quorum read barrier before bounded native SELECT dispatch. Bounded Linux evidence now
   covers three authenticated daemon processes, quorum ingest, tablet-leader loss, a higher-term
   matching retry, and identical retained-root recovery. A globally atomic cross-group instant,
-  remote mutable-tablet fragments, strict native-client deployment configuration/a packaged
-  command, and three-process query failover remain absent. Native redirect selection, exact
-  QUORUM_SYNC body/session replay, the deadline-bound authenticated TCP/TLS reconnect carrier, and
-  single-operation poll scheduling now have exact-group, monotonic-authority, finite owners.
+  remote mutable-tablet fragments, secure native route-file/TLS credential loading and a packaged
+  command, and three-process query failover remain absent. Strict native endpoint and
+  certificate-principal configuration, redirect selection, exact QUORUM_SYNC body/session replay,
+  the deadline-bound authenticated TCP/TLS reconnect carrier, and single-operation poll scheduling
+  now have bounded, fail-closed owners.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
@@ -990,8 +991,8 @@ were deliberately not run.
 The exact subsystem/category ledger is
 [`deferred-validation.md`](../development/deferred-validation.md). Recommended order:
 
-1. Add remote mutable-tablet query fragments and strict route configuration/a packaged command for
-   the native redirect TCP/TLS execution, then extend the existing three-process
+1. Add remote mutable-tablet query fragments and secure route/TLS-context loading plus a packaged
+   command for the native redirect TCP/TLS execution, then extend the existing three-process
    quorum-ingest/failover gate through applied read-barrier native SELECT and the remaining real
    data-plane sequence.
 2. Specify database namespaces/catalog tombstones and placement-driven membership orchestration

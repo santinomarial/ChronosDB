@@ -52,9 +52,12 @@ owner retains the exact append and creates a fresh Protocol 2 session/request ID
 route. The TCP client carrier now drives nonblocking connect, mutual TLS, principal-to-node
 authorization, bounded partial I/O, per-phase deadlines, and redirect reconnect. Its execution
 owner schedules the descriptor, caps kernel waits by phase and whole-operation deadlines, and
-provides explicit cancellation and terminal metrics. Deployments must still build and retain the
-explicit route/TLS/authorization map and integrate the client workflow into a command or process.
-Multi-group SELECT is not redirected to one arbitrary group leader.
+provides explicit cancellation and terminal metrics. The strict
+[Native Client Route Configuration](native-client-route-config.md) parser and immutable authority
+now build the endpoint/TLS-identity/certificate-principal map without borrowing Raft transport
+configuration. Embeddings must still load that file securely, construct and retain one TLS client
+context per route, and integrate the workflow into a command or process. Multi-group SELECT is not
+redirected to one arbitrary group leader.
 
 For multi-voter groups, configure the complete transport bundle:
 
