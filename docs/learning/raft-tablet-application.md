@@ -100,6 +100,13 @@ before each retry. The installed RTAS remains exact and immutable through both R
 final compaction adopts it, advances authority, reclaims nothing current, and survives reopen. This
 guards against retry-local state leaking across attempts in either durable owner.
 
+Immutable mismatch coverage plants a structurally valid index-1 RTAS that disagrees with local
+derivation in one of seven fields: table, tablet, boundary term, Manifest generation, part-set
+checksum, voters, or command payload. Compaction returns corruption while retaining index-1 Raft
+authority and keeping both live owners usable. After applying index 2, compaction installs that
+distinct boundary, then authoritative reclamation removes the conflicting orphan. Reopen preserves
+the two-row, one-retry logical result.
+
 Exact retransmissions also coalesce without re-entering the application owner. A competing remote
 snapshot receives a negative response while the first transfer retains the sole completion
 identity; after that identity resolves, a later request can be admitted normally.

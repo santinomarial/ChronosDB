@@ -290,6 +290,72 @@ constexpr std::array<TabletCompactionReopenFailureCase, 8U> kReopenFailures{
         0U, "cleanup_sync_then_repair_directory_sync", "fsync directory", true, true},
 };
 
+enum class TabletCompactionMismatch : std::uint8_t {
+  kTable,
+  kTablet,
+  kTerm,
+  kManifestGeneration,
+  kPartSetChecksum,
+  kVoters,
+  kEntryPayload,
+};
+
+struct TabletCompactionMismatchCase {
+  TabletCompactionMismatch mismatch;
+  std::string_view name;
+};
+
+constexpr std::array<TabletCompactionMismatchCase, 7U> kMismatchCases{
+    TabletCompactionMismatchCase{TabletCompactionMismatch::kTable, "table"},
+    TabletCompactionMismatchCase{TabletCompactionMismatch::kTablet, "tablet"},
+    TabletCompactionMismatchCase{TabletCompactionMismatch::kTerm, "term"},
+    TabletCompactionMismatchCase{TabletCompactionMismatch::kManifestGeneration,
+                                 "manifest_generation"},
+    TabletCompactionMismatchCase{TabletCompactionMismatch::kPartSetChecksum, "part_set_checksum"},
+    TabletCompactionMismatchCase{TabletCompactionMismatch::kVoters, "voters"},
+    TabletCompactionMismatchCase{TabletCompactionMismatch::kEntryPayload, "entry_payload"},
+};
+
+[[nodiscard]] RaftTabletApplicationSnapshot
+conflicting_application_snapshot(const TabletCompactionMismatch mismatch) {
+  RaftTabletApplicationSnapshot snapshot{
+      .group_id = test::crash_group_id(),
+      .table_id = test::crash_compaction_schemas().front()->table_id(),
+      .tablet_id = test::crash_compaction_tablet_id(),
+      .raft_snapshot = {.last_included_index = 1U,
+                        .last_included_term = 1U,
+                        .manifest_generation = 1U,
+                        .part_set_checksum = {},
+                        .configuration_index = 0U,
+                        .voters = {4U}},
+      .entries = {{.index = 1U, .term = 1U, .payload = test::crash_compaction_command()}}};
+  switch (mismatch) {
+  case TabletCompactionMismatch::kTable:
+    snapshot.table_id = test::crash_id<schema::TableId>(std::byte{91U});
+    break;
+  case TabletCompactionMismatch::kTablet:
+    snapshot.tablet_id = test::crash_id<schema::TabletId>(std::byte{92U});
+    break;
+  case TabletCompactionMismatch::kTerm:
+    snapshot.raft_snapshot.last_included_term = 2U;
+    snapshot.entries.front().term = 2U;
+    break;
+  case TabletCompactionMismatch::kManifestGeneration:
+    snapshot.raft_snapshot.manifest_generation = 2U;
+    break;
+  case TabletCompactionMismatch::kPartSetChecksum:
+    snapshot.raft_snapshot.part_set_checksum.front() = std::byte{1U};
+    break;
+  case TabletCompactionMismatch::kVoters:
+    snapshot.raft_snapshot.voters.push_back(5U);
+    break;
+  case TabletCompactionMismatch::kEntryPayload:
+    snapshot.entries.front().payload.front() ^= std::byte{1U};
+    break;
+  }
+  return snapshot;
+}
+
 void expect_application_snapshot(const RaftTabletApplicationSnapshot& snapshot) {
   EXPECT_EQ(snapshot.group_id, test::crash_group_id());
   EXPECT_EQ(snapshot.table_id, test::crash_compaction_schemas().front()->table_id());
@@ -326,6 +392,9 @@ class TabletSnapshotCompactionCleanupPersistenceFailureTest
 
 class TabletSnapshotCompactionReopenFailureTest
     : public ::testing::TestWithParam<TabletCompactionReopenFailureCase> {};
+
+class TabletSnapshotCompactionMismatchTest
+    : public ::testing::TestWithParam<TabletCompactionMismatchCase> {};
 
 TEST_P(TabletSnapshotCompactionApplicationFailureTest,
        WithholdsRaftMutationAndConvergesAfterReopen) {
@@ -806,6 +875,128 @@ INSTANTIATE_TEST_SUITE_P(
       name += "_then_";
       name += std::get<1>(parameter.param).name;
       return name;
+    });
+
+TEST_P(TabletSnapshotCompactionMismatchTest,
+       RejectsImmutableSameIndexConflictAndAdvancesAtLaterBoundary) {
+  CompactionFailureDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const TabletCompactionMismatchCase mismatch = GetParam();
+  const std::filesystem::path conflicting_path =
+      directory.path() / "snapshots" / "snapshot-00000000000000000001.rtas";
+  const std::filesystem::path later_path =
+      directory.path() / "snapshots" / "snapshot-00000000000000000002.rtas";
+
+  auto runtime = raft::DurableMultiRaftRuntime::create_new(
+      4U, test::crash_log_config(directory.path()), test::crash_compaction_groups());
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  auto election =
+      runtime->execute_batch({{test::crash_group_id(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  ASSERT_EQ(election->size(), 1U);
+  ASSERT_TRUE(election->front().status.is_ok()) << election->front().status.to_string();
+  auto storage = RaftTabletSnapshotStorage::create(test::crash_snapshot_config(directory.path()));
+  ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+  const RaftTabletApplicationSnapshot conflicting =
+      conflicting_application_snapshot(mismatch.mismatch);
+  auto planted = storage->install(conflicting);
+  ASSERT_TRUE(planted.has_value()) << planted.error().to_string();
+  EXPECT_FALSE(planted->already_present);
+  auto recovered = RaftTabletStateMachine::recover(
+      test::crash_group_id(), *runtime, std::move(*storage),
+      test::crash_compaction_retry_directory(), test::crash_compaction_tablet(),
+      test::crash_compaction_schemas());
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  std::optional<RaftTabletStateMachine> machine{std::move(*recovered)};
+  auto proposed = runtime->execute_batch(
+      {{test::crash_group_id(),
+        raft::ProposeOperation{kRaftColumnarAppendEntryType, test::crash_compaction_command()}}});
+  ASSERT_TRUE(proposed.has_value()) << proposed.error().to_string();
+  ASSERT_EQ(proposed->size(), 1U);
+  ASSERT_TRUE(proposed->front().status.is_ok()) << proposed->front().status.to_string();
+  auto applied = machine->apply_committed();
+  ASSERT_TRUE(applied.has_value()) << applied.error().to_string();
+  ASSERT_EQ(applied->last_applied_index, 1U);
+  expect_tablet_recovered(*machine);
+
+  auto rejected = machine->compact_applied_prefix(1U, 1U, {});
+
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
+  EXPECT_FALSE(machine->failed());
+  EXPECT_FALSE(runtime->failed());
+  const raft::RaftNode* node = runtime->find_group(test::crash_group_id());
+  ASSERT_NE(node, nullptr);
+  EXPECT_EQ(node->persistent_state().snapshot.last_included_index, 0U);
+  ASSERT_EQ(node->persistent_state().log.size(), 1U);
+  EXPECT_TRUE(std::filesystem::exists(conflicting_path));
+
+  proposed = runtime->execute_batch(
+      {{test::crash_group_id(),
+        raft::ProposeOperation{kRaftColumnarAppendEntryType, test::crash_compaction_command()}}});
+  ASSERT_TRUE(proposed.has_value()) << proposed.error().to_string();
+  ASSERT_EQ(proposed->size(), 1U);
+  ASSERT_TRUE(proposed->front().status.is_ok()) << proposed->front().status.to_string();
+  applied = machine->apply_committed();
+  ASSERT_TRUE(applied.has_value()) << applied.error().to_string();
+  EXPECT_EQ(applied->last_applied_index, 2U);
+  EXPECT_EQ(applied->matching_retries, 1U);
+  auto publication = machine->tablet().snapshot();
+  ASSERT_TRUE(publication.has_value()) << publication.error().to_string();
+  EXPECT_EQ(publication->visible_row_count(), 2U);
+  EXPECT_EQ(publication->retry_entry_count(), 1U);
+  EXPECT_EQ(publication->applied_position(),
+            head::HeadCommitPosition::raft(test::crash_group_id(), 2U));
+
+  auto compacted = machine->compact_applied_prefix(2U, 2U, {});
+
+  ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
+  EXPECT_FALSE(compacted->application_snapshot_already_present);
+  EXPECT_EQ(compacted->application_entries, 2U);
+  EXPECT_EQ(compacted->snapshot.last_included_index, 2U);
+  node = runtime->find_group(test::crash_group_id());
+  ASSERT_NE(node, nullptr);
+  EXPECT_EQ(node->persistent_state().snapshot, compacted->snapshot);
+  EXPECT_TRUE(node->persistent_state().log.empty());
+  auto reclaimed = machine->reclaim_obsolete_snapshots();
+  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  EXPECT_EQ(reclaimed->authoritative_index, 2U);
+  EXPECT_EQ(reclaimed->reclaimed_files, 1U);
+  EXPECT_FALSE(std::filesystem::exists(conflicting_path));
+  EXPECT_TRUE(std::filesystem::exists(later_path));
+  machine.reset();
+  ASSERT_TRUE(runtime->close().is_ok());
+
+  auto repeated_runtime = raft::DurableMultiRaftRuntime::open_existing(
+      4U, test::crash_log_config(directory.path()), {}, test::crash_compaction_groups());
+  ASSERT_TRUE(repeated_runtime.has_value()) << repeated_runtime.error().to_string();
+  auto repeated_storage =
+      RaftTabletSnapshotStorage::open_existing(test::crash_snapshot_config(directory.path()));
+  ASSERT_TRUE(repeated_storage.has_value()) << repeated_storage.error().to_string();
+  auto installed = repeated_storage->load(2U);
+  ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+  EXPECT_EQ(installed->snapshot.raft_snapshot,
+            repeated_runtime->find_group(test::crash_group_id())->persistent_state().snapshot);
+  ASSERT_EQ(installed->snapshot.entries.size(), 2U);
+  auto repeated = RaftTabletStateMachine::recover(
+      test::crash_group_id(), *repeated_runtime, std::move(*repeated_storage),
+      test::crash_compaction_retry_directory(), test::crash_compaction_tablet(),
+      test::crash_compaction_schemas());
+  ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
+  publication = repeated->tablet().snapshot();
+  ASSERT_TRUE(publication.has_value()) << publication.error().to_string();
+  EXPECT_EQ(publication->visible_row_count(), 2U);
+  EXPECT_EQ(publication->retry_entry_count(), 1U);
+  EXPECT_EQ(publication->applied_position(),
+            head::HeadCommitPosition::raft(test::crash_group_id(), 2U));
+  ASSERT_TRUE(repeated_runtime->close().is_ok());
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    EveryImmutableFieldMismatch, TabletSnapshotCompactionMismatchTest,
+    ::testing::ValuesIn(kMismatchCases),
+    [](const ::testing::TestParamInfo<TabletCompactionMismatchCase>& parameter) {
+      return std::string{parameter.param.name};
     });
 
 TEST(TabletSnapshotCompactionRepeatedFailureTest,

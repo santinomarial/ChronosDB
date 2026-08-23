@@ -573,11 +573,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   durability and production-scale workload qualification remain open.
 - Extend the implemented committed-only tablet command application and full retained-log rebuild
   with crash injection around publication/applied-index persistence. Extend the implemented durable
-  application-snapshot creation/compaction plus prefix/suffix recovery beyond its ten-cut
-  process-crash, ten-case application-I/O, and 50-case cross-owner persistence matrices with
-  mismatch matrices; the ten-case cleanup-to-persistence, eight-case cleanup/Raft-tail-repair
-  reopen, and repeated-partial-failure lifecycles are implemented. Extend the implemented
-  obsolete-file and physical-log reclamation with scheduling; version CSEG/Manifest
+  application-snapshot creation/compaction plus prefix/suffix recovery beyond its completed ten-cut
+  process-crash, ten-case application-I/O, 50-case cross-owner persistence, ten-case
+  cleanup-to-persistence, eight-case cleanup/Raft-tail-repair reopen, repeated-partial-failure, and
+  seven-case immutable-mismatch coverage as new failure shapes are identified. Extend the
+  implemented obsolete-file and physical-log reclamation with scheduling; version CSEG/Manifest
   row identities for Raft source/group positions, and cover query row-version columns and
   compaction migration. Protocol 2.0 now negotiates the implemented joint-membership
   quorum-sync/application receipt without changing v1 bytes. Carry that request through the

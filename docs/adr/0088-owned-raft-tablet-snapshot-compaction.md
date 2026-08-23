@@ -78,11 +78,15 @@ directory sync. It verifies the exact pre/post-truncate byte state, lock release
 owners, successful later repair, orphan adoption, reclamation, and repeated reopen. A repeated-fault
 lifecycle additionally survives two application partial writes and two repaired Raft partial
 records before one exact orphan adoption, proving that retries accumulate neither temporary bytes
-nor hidden owner state. A ten-cut real-process `SIGKILL` matrix stops after the same application-file
-transitions, then after the Raft state-record write, sync, and successful return. Reopen observes no
-application file, an immutable orphan, or the exact Raft authority as appropriate; state-machine
-recovery, idempotent retry or adoption, reclamation, and a second reopen converge with the exact rows
-and retry state. Obsolete-file reclamation, follower transfer, and physical shared-log/application-file
-fault injection are tracked by their extending ADRs. A membership-boundary integration test
-compacts an application entry before retained joint/final commands and requires the installed
-application snapshot to carry the older voter set while the live group retains the newer set.
+nor hidden owner state. A seven-case immutable-mismatch matrix plants valid same-index orphans that
+differ by table, tablet, boundary term, Manifest generation, part-set checksum, voters, or command
+payload. Compaction rejects each without poisoning either owner or mutating Raft, then advances at a
+later applied boundary and reclaims the conflict under exact new authority. A ten-cut real-process
+`SIGKILL` matrix stops after the same application-file transitions, then after the Raft state-record
+write, sync, and successful return. Reopen observes no application file, an immutable orphan, or the
+exact Raft authority as appropriate; state-machine recovery, idempotent retry or adoption,
+reclamation, and a second reopen converge with the exact rows and retry state. Obsolete-file
+reclamation, follower transfer, and physical shared-log/application-file fault injection are
+tracked by their extending ADRs. A membership-boundary integration test compacts an application
+entry before retained joint/final commands and requires the installed application snapshot to
+carry the older voter set while the live group retains the newer set.
