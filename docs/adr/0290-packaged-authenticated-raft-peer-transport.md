@@ -36,12 +36,16 @@ transport rather than an external embedding gap. Startup remains fail-closed for
 missing voter routes, insecure keys, invalid peer files, transport thread failure, and unsupported
 snapshot/read completion work. The native client listener remains separate loopback plaintext.
 
-`chronosd` and the service suite build with the new cluster dependency. CLI checks cover help and
+`chronosd` and the service suite build with the cluster dependency. CLI checks cover help and
 incomplete transport bundles; the Linux replicated process regression continues proving local mode
-and now asserts `raft_transport=local`. The owning transport's real listener/TLS/durable-observation
-gate passed outside the restricted macOS socket sandbox. A real three-process certificate fixture,
-election/failover ingest gate, secure in-memory PEM loading, credential rotation, snapshot install,
-and read barriers remain subsequent work.
+and asserts `raft_transport=local`. A second Linux-only gate provisions three independent retained
+roots, starts three actual daemons with one CA and three distinct dual-EKU leaf identities, waits for
+a QUORUM_SYNC applied acknowledgement, kills the acknowledged tablet leader, and requires the same
+canonical command to return `MATCHING_RETRY` from a surviving leader in a higher term. It then
+reopens all three roots and requires two visible rows and one retry record on every replica. This is
+bounded loopback process evidence, not production deployment or timing evidence. Secure in-memory
+PEM loading, credential rotation, snapshot install, remote query fragments, and native client
+routing across independently led groups remain subsequent work.
 
 ## References
 

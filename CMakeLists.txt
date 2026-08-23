@@ -1508,7 +1508,10 @@ if(CHRONOS_BUILD_TESTS)
     target_include_directories(chronosd_process_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     target_link_libraries(chronosd_process_tests PRIVATE chronos::service GTest::gtest_main)
     target_compile_definitions(
-      chronosd_process_tests PRIVATE CHRONOSD_PATH="$<TARGET_FILE:chronosd>"
+      chronosd_process_tests
+      PRIVATE
+        CHRONOSD_PATH="$<TARGET_FILE:chronosd>"
+        CHRONOS_TEST_TLS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network/tls"
     )
     add_dependencies(chronosd_process_tests chronosd)
     chronos_set_project_warnings(chronosd_process_tests)

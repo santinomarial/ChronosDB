@@ -70,8 +70,15 @@ checks PING/PONG and explicit unconfigured rejection, then starts a configured r
 queries a table, sends `SIGTERM`, and verifies queryability after restart. Install-layout validation
 checks that the binary is packaged and its help path runs. Its replicated case negotiates Protocol
 2, applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact retry, and queries the
-same recovered row count. On non-Linux hosts, daemon/service build and durable-root initialization
-run, but the socket subprocess is not registered because the server reactor is Linux-only.
+same recovered row count. A separate replicated gate provisions three retained roots and distinct
+mutual-TLS identities, starts three actual daemon processes, obtains an applied quorum
+acknowledgement, kills the acknowledged tablet leader, observes a higher-term replacement, and
+requires an exact matching retry. Reopening each root then proves that all three applications
+recover the same two visible rows and one retry entry. It deliberately does not claim native
+multi-group query failover: SELECT still needs one daemon to lead every barrier group because client
+leader routing and remote fragments are not packaged. On non-Linux hosts, daemon/service build and
+durable-root initialization run, but the socket subprocess is not registered because the server
+reactor is Linux-only.
 
 Reviewers should ask: Which thread owns each queue endpoint? Can saturation allocate elsewhere? Can
 liveness imply data readiness? What happens to active socket work on `SIGTERM`? Which acknowledged

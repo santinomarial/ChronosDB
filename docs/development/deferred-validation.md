@@ -527,8 +527,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   query. Larger resident-set profiles remain. A strict bounded group/voter deployment parser and
   secure packaged daemon loading/routing now exist. A strict authenticated peer route/identity
   parser and exact certificate/address/node authority also exist, and an owning transport runtime
-  plus packaged daemon poll thread composes them with TLS contexts and randomized timers; add
-  in-memory credential loading, remote leader redirection, packaged startup/write/snapshot/shutdown
+  plus packaged daemon poll thread composes them with TLS contexts and randomized timers. A
+  Linux-only gate now starts three actual daemons with distinct mTLS identities, applies one quorum
+  write, kills its tablet leader, proves a higher-term matching retry on the surviving quorum, and
+  reopens identical tablet/retry state from all three roots; add in-memory credential loading,
+  packaged snapshot and deeper startup/write/shutdown
   syscall and intra-operation matrices beyond the completed retained-log and snapshot-backed
   steady-state owner `SIGKILL` lifecycles, snapshot-plus-suffix reopen, four-stage coordinator write
   matrix, and four-stage packaged-startup owner matrix, broader reconfiguration
@@ -919,10 +922,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   subprocess crashes after intent write/sync, each directory creation/sync, rename, and final root
   sync; concurrent multi-process creation; large-root scaling; Linux filesystem/power-loss and macOS
   persistence qualification; install/export and public API review.
-- Extend the packaged `chronosd` authenticated Raft peer lifecycle with remote leader routing,
+- Extend the packaged `chronosd` authenticated Raft peer lifecycle beyond the implemented
+  three-process quorum-ingest/failover/recovery gate with endpoint-aware native leader routing,
   remote fragments and a globally atomic cross-group policy beyond the implemented applied
-  read-barrier vector, live delivery, flush/CSEG/Manifest,
-  failover/movement, and object storage; then run it as three processes.
+  read-barrier vector, live delivery, flush/CSEG/Manifest, failover query, movement, and object
+  storage.
 - Configured `chronosd` Linux subprocess execution in CI, daemon ingest over real sockets, corrupt
   root/WAL/Raft startup cases, signals during ingest/query, queue saturation with multi-frame
   responses, cancellation, concurrent clients, TLS/auth configuration, secure UUID entropy-failure

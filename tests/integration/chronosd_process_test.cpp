@@ -3,35 +3,44 @@
 #include "chronos/network/messages.hpp"
 #include "chronos/network/protocol.hpp"
 #include "chronos/network/subscription_messages.hpp"
+#include "chronos/raft/durable_runtime.hpp"
 #include "chronos/raft/metadata_codec.hpp"
 #include "chronos/raft/schema_definition_codec.hpp"
 #include "chronos/raft/tablet_group_binding_codec.hpp"
 #include "chronos/runtime/database_bootstrap.hpp"
+#include "chronos/service/replicated_ingest_database.hpp"
 #include "chronos/service/replicated_ingest_runtime.hpp"
 #include "columnar/columnar_test_support.hpp"
 #include "ingest/ingest_test_support.hpp"
 
 #include <arpa/inet.h>
 #include <array>
+#include <chrono>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <fcntl.h>
 #include <filesystem>
 #include <gtest/gtest.h>
+#include <memory>
 #include <netinet/in.h>
 #include <optional>
 #include <poll.h>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <system_error>
+#include <thread>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace chronos::integration {
@@ -50,8 +59,8 @@ public:
                            const std::string& subscription_sql = {},
                            const std::string& subscription_key_file = {},
                            const std::string& replicated_groups_file = {}) {
-    int output[2]{};
-    if (::pipe(output) != 0)
+    std::array<int, 2U> output{};
+    if (::pipe(output.data()) != 0)
       return false;
     if (::fcntl(output[0], F_SETFD, FD_CLOEXEC) != 0 ||
         ::fcntl(output[1], F_SETFD, FD_CLOEXEC) != 0) {
@@ -76,6 +85,42 @@ public:
         ::execl(CHRONOSD_PATH, CHRONOSD_PATH, "--port", "0", "--data-dir", data_directory.c_str(),
                 "--subscription-sql", subscription_sql.c_str(), "--subscription-key-file",
                 subscription_key_file.c_str(), nullptr);
+      std::_Exit(127);
+    }
+    ::close(output[1]);
+    if (pid_ < 0) {
+      ::close(output[0]);
+      return false;
+    }
+    output_ = output[0];
+    return true;
+  }
+
+  [[nodiscard]] bool start_replicated_transport(const std::string& data_directory,
+                                                const std::string& replicated_groups_file,
+                                                const std::string& replicated_peers_file,
+                                                const std::string& certificate_file,
+                                                const std::string& private_key_file,
+                                                const std::string& trust_store_file) {
+    std::array<int, 2U> output{};
+    if (::pipe(output.data()) != 0)
+      return false;
+    if (::fcntl(output[0], F_SETFD, FD_CLOEXEC) != 0 ||
+        ::fcntl(output[1], F_SETFD, FD_CLOEXEC) != 0) {
+      ::close(output[0]);
+      ::close(output[1]);
+      return false;
+    }
+    pid_ = ::fork();
+    if (pid_ == 0) {
+      static_cast<void>(::dup2(output[1], STDOUT_FILENO));
+      ::close(output[0]);
+      ::close(output[1]);
+      ::execl(CHRONOSD_PATH, CHRONOSD_PATH, "--port", "0", "--data-dir", data_directory.c_str(),
+              "--replicated-groups", replicated_groups_file.c_str(), "--replicated-peers",
+              replicated_peers_file.c_str(), "--raft-tls-cert", certificate_file.c_str(),
+              "--raft-tls-key", private_key_file.c_str(), "--raft-tls-ca", trust_store_file.c_str(),
+              nullptr);
       std::_Exit(127);
     }
     ::close(output[1]);
@@ -113,6 +158,22 @@ public:
     static_cast<void>(::waitpid(pid_, &status, 0));
     pid_ = -1;
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+  }
+
+  [[nodiscard]] bool kill_abruptly() noexcept {
+    if (output_ >= 0) {
+      ::close(output_);
+      output_ = -1;
+    }
+    if (pid_ <= 0)
+      return false;
+    if (::kill(pid_, SIGKILL) != 0)
+      return false;
+    int status{};
+    if (::waitpid(pid_, &status, 0) != pid_)
+      return false;
+    pid_ = -1;
+    return WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL;
   }
 
 private:
@@ -282,6 +343,10 @@ void handshake_quorum_sync(const int client) {
   return columnar::test::id<schema::TabletId>(90U);
 }
 
+[[nodiscard]] std::vector<raft::RaftGroupConfiguration> replicated_cluster_groups() {
+  return {{replicated_metadata_group(), {1U, 2U, 3U}}, {replicated_tablet_group(), {1U, 2U, 3U}}};
+}
+
 [[nodiscard]] std::vector<std::byte> replicated_command() {
   auto batch = columnar::OwnedColumnarBatch::create(columnar::test::batch_schema(),
                                                     columnar::test::batch_columns())
@@ -305,8 +370,8 @@ void provision_replicated_database(const std::string& path) {
                                                         .maximum_sealed_generations = 2U,
                                                         .variable_column_bytes = 8U,
                                                         .maximum_retry_entries = 8U,
-                                                        .wal_segment_target_bytes = 64U * 1024U,
-                                                        .raft_segment_target_bytes = 64U * 1024U};
+                                                        .wal_segment_target_bytes = 64ULL * 1024U,
+                                                        .raft_segment_target_bytes = 64ULL * 1024U};
   auto bootstrap = runtime::DatabaseBootstrap::open_or_create(
       {.database_root = path, .new_database = descriptor});
   ASSERT_TRUE(bootstrap.has_value()) << bootstrap.error().to_string();
@@ -369,8 +434,224 @@ void provision_replicated_database(const std::string& path) {
   EXPECT_TRUE(bootstrap->close().is_ok());
 }
 
+[[nodiscard]] bool
+enqueue_outbound(const common::Result<std::vector<raft::DurableRaftResult>>& results,
+                 std::deque<raft::GroupOutboundMessage>& outbound) {
+  if (!results.has_value()) {
+    ADD_FAILURE() << results.error().to_string();
+    return false;
+  }
+  for (const raft::DurableRaftResult& result : *results) {
+    if (!result.status.is_ok()) {
+      ADD_FAILURE() << result.status.to_string();
+      return false;
+    }
+    if (!result.transition.has_value())
+      continue;
+    for (const raft::GroupOutboundMessage& message : result.transition->outbound)
+      outbound.push_back(message);
+  }
+  return true;
+}
+
+[[nodiscard]] bool
+route_outbound(std::array<std::unique_ptr<raft::DurableMultiRaftRuntime>, 3U>& runtimes,
+               std::deque<raft::GroupOutboundMessage>& outbound) {
+  constexpr std::size_t maximum_messages = 10'000U;
+  std::size_t routed{};
+  while (!outbound.empty()) {
+    if (++routed > maximum_messages) {
+      ADD_FAILURE() << "pre-provisioning Raft routing did not quiesce";
+      return false;
+    }
+    raft::GroupOutboundMessage message = std::move(outbound.front());
+    outbound.pop_front();
+    if (message.outbound.destination == 0U || message.outbound.destination > runtimes.size()) {
+      ADD_FAILURE() << "pre-provisioning Raft message has an invalid destination";
+      return false;
+    }
+    auto& destination = runtimes[static_cast<std::size_t>(message.outbound.destination - 1U)];
+    if (destination == nullptr) {
+      ADD_FAILURE() << "pre-provisioning Raft destination is unavailable";
+      return false;
+    }
+    auto received = destination->execute_batch(
+        {{message.group_id,
+          raft::ReceiveOperation{message.source, std::move(message.outbound.message)}}});
+    if (!enqueue_outbound(received, outbound))
+      return false;
+  }
+  return true;
+}
+
+void provision_replicated_cluster(const std::array<std::string, 3U>& roots) {
+  std::array<std::unique_ptr<runtime::DatabaseBootstrap>, 3U> bootstraps;
+  std::array<std::unique_ptr<raft::DurableMultiRaftRuntime>, 3U> runtimes;
+  const auto groups = replicated_cluster_groups();
+  for (std::size_t index = 0U; index < roots.size(); ++index) {
+    ASSERT_TRUE(std::filesystem::create_directory(roots[index]));
+    const runtime::DatabaseBootstrapDescriptor descriptor{
+        .database_id = repeated_id(0x92U),
+        .metadata_group_id = replicated_metadata_group(),
+        .local_node_id = static_cast<raft::NodeId>(index + 1U),
+        .mutable_head_rows = 8U,
+        .maximum_sealed_generations = 2U,
+        .variable_column_bytes = 8U,
+        .maximum_retry_entries = 8U,
+        .wal_segment_target_bytes = 64ULL * 1024U,
+        .raft_segment_target_bytes = 64ULL * 1024U};
+    auto bootstrap = runtime::DatabaseBootstrap::open_or_create(
+        {.database_root = roots[index], .new_database = descriptor});
+    ASSERT_TRUE(bootstrap.has_value()) << bootstrap.error().to_string();
+    bootstraps[index] = std::make_unique<runtime::DatabaseBootstrap>(std::move(*bootstrap));
+    auto durable = raft::DurableMultiRaftRuntime::create_new(
+        descriptor.local_node_id,
+        {.directory_path = bootstraps[index]->raft_directory_path(),
+         .target_segment_size = descriptor.raft_segment_target_bytes},
+        groups);
+    ASSERT_TRUE(durable.has_value()) << durable.error().to_string();
+    runtimes[index] = std::make_unique<raft::DurableMultiRaftRuntime>(std::move(*durable));
+  }
+
+  std::deque<raft::GroupOutboundMessage> outbound;
+  auto elections = runtimes.front()->execute_batch(
+      {{replicated_metadata_group(), raft::StartElectionOperation{}},
+       {replicated_tablet_group(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(enqueue_outbound(elections, outbound));
+  ASSERT_TRUE(route_outbound(runtimes, outbound));
+  ASSERT_EQ(runtimes.front()->find_group(replicated_metadata_group())->role(), raft::Role::kLeader);
+  ASSERT_EQ(runtimes.front()->find_group(replicated_tablet_group())->role(), raft::Role::kLeader);
+
+  const raft::ProposeOperation schema{
+      raft::kRaftSchemaDefinitionEntryType,
+      raft::encode_schema_definition_v1(
+          {.name = "events", .quoted = false, .schema = columnar::test::batch_schema()})
+          .value()};
+  const raft::ProposeOperation policy{
+      raft::kRaftMetadataCommandEntryType,
+      raft::encode_metadata_command_v1(
+          raft::TablePolicyMetadata{columnar::test::batch_schema()->table_id(), 1'000'000'000LL,
+                                    86'400'000'000'000LL, 86'400'000'000'000LL, 0LL, 8U})
+          .value()};
+  const raft::ProposeOperation placement{
+      raft::kRaftMetadataCommandEntryType,
+      raft::encode_metadata_command_v1(
+          raft::TabletPlacementMetadata{columnar::test::batch_schema()->table_id(),
+                                        replicated_tablet_id(),
+                                        1U,
+                                        {1U, 2U, 3U},
+                                        1U})
+          .value()};
+  const raft::ProposeOperation binding{
+      raft::kRaftTabletGroupBindingEntryType,
+      raft::encode_tablet_group_binding_v1({replicated_tablet_id(), replicated_tablet_group()})
+          .value()};
+  auto metadata = runtimes.front()->execute_batch({{replicated_metadata_group(), schema},
+                                                   {replicated_metadata_group(), policy},
+                                                   {replicated_metadata_group(), placement},
+                                                   {replicated_metadata_group(), binding}});
+  ASSERT_TRUE(enqueue_outbound(metadata, outbound));
+  ASSERT_TRUE(route_outbound(runtimes, outbound));
+  auto heartbeat =
+      runtimes.front()->execute_batch({{replicated_metadata_group(), raft::HeartbeatOperation{}}});
+  ASSERT_TRUE(enqueue_outbound(heartbeat, outbound));
+  ASSERT_TRUE(route_outbound(runtimes, outbound));
+  for (const auto& runtime : runtimes) {
+    ASSERT_NE(runtime, nullptr);
+    ASSERT_EQ(runtime->find_group(replicated_metadata_group())->commit_index(), 4U);
+  }
+
+  for (auto& runtime : runtimes) {
+    ASSERT_TRUE(runtime->close().is_ok());
+    runtime.reset();
+  }
+  for (auto& bootstrap : bootstraps) {
+    ASSERT_TRUE(bootstrap->close().is_ok());
+    bootstrap.reset();
+  }
+}
+
+[[nodiscard]] std::uint16_t reserve_loopback_port() {
+  const int descriptor = ::socket(AF_INET, SOCK_STREAM, 0);
+  if (descriptor < 0)
+    return 0U;
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_port = 0U;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  // POSIX requires the generic sockaddr view of the initialized IPv4 address.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  if (::bind(descriptor, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0) {
+    ::close(descriptor);
+    return 0U;
+  }
+  socklen_t size = sizeof(address);
+  // POSIX requires the generic sockaddr view for the initialized IPv4 address.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  if (::getsockname(descriptor, reinterpret_cast<sockaddr*>(&address), &size) != 0) {
+    ::close(descriptor);
+    return 0U;
+  }
+  const std::uint16_t port = ntohs(address.sin_port);
+  ::close(descriptor);
+  return port;
+}
+
+[[nodiscard]] std::string write_exclusive_file(std::string path, const std::string_view bytes) {
+  const int file = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  EXPECT_GE(file, 0);
+  if (file < 0)
+    return {};
+  EXPECT_EQ(::write(file, bytes.data(), bytes.size()), static_cast<ssize_t>(bytes.size()));
+  EXPECT_EQ(::fsync(file), 0);
+  EXPECT_EQ(::close(file), 0);
+  return path;
+}
+
+struct ReplicatedClusterFiles {
+  std::string groups;
+  std::string peers;
+  std::string trust_store;
+  std::array<std::string, 3U> certificates;
+  std::array<std::string, 3U> private_keys;
+};
+
+[[nodiscard]] ReplicatedClusterFiles
+write_replicated_cluster_files(const std::string& directory,
+                               const std::array<std::uint16_t, 3U>& ports) {
+  ReplicatedClusterFiles files;
+  files.groups = write_exclusive_file(directory + "/replicated-cluster-groups.conf",
+                                      "CHRONOSDB_REPLICATED_GROUPS_V1\n"
+                                      "90909090-9090-9090-9090-909090909090=1,2,3\n"
+                                      "91919191-9191-9191-9191-919191919191=1,2,3\n");
+  constexpr std::array<std::string_view, 3U> fingerprints{
+      "7145018d7511b2e2af9e5531e01e9061af0a43e0b193621be717906b20e253a9",
+      "baf82073b1ad1f131414b65c6b302bd1d09b7f3bbb224916e19f305f201b091f",
+      "63f54c1e48bd0323467c32bc3cef96126f1ed8700a7d95c4463397a229db83ec"};
+  std::string peers = "CHRONOSDB_REPLICATED_PEERS_V1\n";
+  for (std::size_t index = 0U; index < ports.size(); ++index) {
+    peers += std::to_string(index + 1U) + "=127.0.0.1:" + std::to_string(ports[index]) +
+             ",127.0.0.1," + std::string{fingerprints[index]} + "\n";
+  }
+  files.peers = write_exclusive_file(directory + "/replicated-cluster-peers.conf", peers);
+  const std::string fixture_directory = CHRONOS_TEST_TLS_FIXTURE_DIR;
+  files.trust_store = fixture_directory + "/cluster-ca.pem";
+  for (std::size_t index = 0U; index < ports.size(); ++index) {
+    files.certificates[index] = fixture_directory + "/node" + std::to_string(index + 1U) + ".pem";
+    files.private_keys[index] =
+        directory + "/node-" + std::to_string(index + 1U) + "-private-key.pem";
+    std::error_code error;
+    const bool copied = std::filesystem::copy_file(
+        fixture_directory + "/node" + std::to_string(index + 1U) + "-key.pem",
+        files.private_keys[index], std::filesystem::copy_options::none, error);
+    EXPECT_TRUE(copied) << error.message();
+    EXPECT_EQ(::chmod(files.private_keys[index].c_str(), 0600), 0);
+  }
+  return files;
+}
+
 [[nodiscard]] std::string write_replicated_groups(const std::string& directory) {
-  const std::string path = directory + "/replicated-groups.conf";
+  std::string path = directory + "/replicated-groups.conf";
   constexpr std::string_view bytes = "CHRONOSDB_REPLICATED_GROUPS_V1\n"
                                      "90909090-9090-9090-9090-909090909090=1\n"
                                      "91919191-9191-9191-9191-919191919191=1\n";
@@ -384,7 +665,8 @@ void provision_replicated_database(const std::string& path) {
   return path;
 }
 
-[[nodiscard]] network::Frame send_replicated_ingest(const int client) {
+[[nodiscard]] network::Frame send_replicated_ingest(const int client,
+                                                    const std::uint64_t request_id = 1U) {
   const network::IngestProtocolContext context{.protocol_major = network::kProtocolV2Major,
                                                .protocol_minor = network::kProtocolV2LatestMinor,
                                                .feature_bits =
@@ -396,12 +678,73 @@ void provision_replicated_database(const std::string& path) {
       send_all(client, network::encode_frame({.protocol_major = network::kProtocolV2Major,
                                               .protocol_minor = network::kProtocolV2LatestMinor,
                                               .message_type = network::MessageType::kIngestRequest,
-                                              .request_id = 1U},
+                                              .request_id = request_id},
                                              *payload)
                            .value()));
   auto response = network::decode_frame(receive_frame(client));
   EXPECT_TRUE(response.has_value());
   return response.value_or(network::Frame{});
+}
+
+struct ClusterIngestAcknowledgement {
+  std::size_t node_index{};
+  network::QuorumSyncIngestAcknowledgement acknowledgement;
+};
+
+[[nodiscard]] std::optional<ClusterIngestAcknowledgement>
+await_cluster_ingest(std::array<int, 3U>& clients, const std::array<bool, 3U>& active,
+                     std::array<std::uint64_t, 3U>& request_ids) {
+  constexpr std::size_t maximum_attempts = 200U;
+  for (std::size_t attempt = 0U; attempt < maximum_attempts; ++attempt) {
+    for (std::size_t index = 0U; index < clients.size(); ++index) {
+      if (!active[index] || clients[index] < 0)
+        continue;
+      const network::Frame response = send_replicated_ingest(clients[index], request_ids[index]++);
+      if (response.header.message_type == network::MessageType::kQuorumSyncIngestAcknowledgement) {
+        auto acknowledgement = network::decode_quorum_sync_ingest_acknowledgement(response.payload);
+        if (!acknowledgement.has_value()) {
+          ADD_FAILURE() << acknowledgement.error().to_string();
+          return std::nullopt;
+        }
+        return ClusterIngestAcknowledgement{index, *acknowledgement};
+      }
+      if (response.header.message_type == network::MessageType::kLeaderRedirect) {
+        auto redirect = network::decode_leader_redirect(response.payload);
+        if (!redirect.has_value()) {
+          ADD_FAILURE() << redirect.error().to_string();
+          return std::nullopt;
+        }
+        EXPECT_EQ(redirect->group_id, replicated_tablet_group());
+        EXPECT_GE(redirect->leader_node_id, 1U);
+        EXPECT_LE(redirect->leader_node_id, clients.size());
+        continue;
+      }
+      if (response.header.message_type == network::MessageType::kError) {
+        EXPECT_TRUE(network::decode_error_message(response.payload).has_value());
+        continue;
+      }
+      ADD_FAILURE() << "unexpected replicated ingest response type "
+                    << static_cast<unsigned int>(response.header.message_type);
+      return std::nullopt;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{25});
+  }
+  ADD_FAILURE() << "replicated ingest did not reach a leader before the attempt bound";
+  return std::nullopt;
+}
+
+void expect_recovered_replicated_cluster(const std::array<std::string, 3U>& roots) {
+  for (const std::string& root : roots) {
+    auto database = service::ReplicatedIngestDatabase::open_existing(
+        {.bootstrap = {.database_root = root}, .groups = replicated_cluster_groups()});
+    ASSERT_TRUE(database.has_value()) << database.error().to_string();
+    auto tablet =
+        database->ingest_runtime()->tablet_application()->snapshot(replicated_tablet_group());
+    ASSERT_TRUE(tablet.has_value()) << tablet.error().to_string();
+    EXPECT_EQ(tablet->visible_row_count(), 2U);
+    EXPECT_EQ(tablet->retry_entry_count(), 1U);
+    EXPECT_TRUE(database->shutdown().is_ok());
+  }
 }
 
 [[nodiscard]] network::Frame send_replicated_query(const int client, const std::uint64_t request_id,
@@ -587,6 +930,88 @@ TEST(ChronosdProcessTest, AppliesAndRecoversQuorumSyncThroughReplicatedDaemonMod
   EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
   ::close(client);
   EXPECT_EQ(child.stop(), 0);
+}
+
+TEST(ChronosdProcessTest, ReplicatesRetriesAndFailsOverAcrossThreeAuthenticatedDaemons) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::array<std::string, 3U> roots{
+      directory.path() + "/node-1", directory.path() + "/node-2", directory.path() + "/node-3"};
+  provision_replicated_cluster(roots);
+
+  std::array<std::uint16_t, 3U> raft_ports{};
+  for (std::size_t index = 0U; index < raft_ports.size(); ++index) {
+    do {
+      raft_ports[index] = reserve_loopback_port();
+    } while (raft_ports[index] != 0U &&
+             std::ranges::find(
+                 raft_ports.begin(), raft_ports.begin() + static_cast<std::ptrdiff_t>(index),
+                 raft_ports[index]) != raft_ports.begin() + static_cast<std::ptrdiff_t>(index));
+    ASSERT_NE(raft_ports[index], 0U);
+  }
+  const ReplicatedClusterFiles files = write_replicated_cluster_files(directory.path(), raft_ports);
+  ASSERT_FALSE(files.groups.empty());
+  ASSERT_FALSE(files.peers.empty());
+
+  std::array<ChildProcess, 3U> children;
+  std::array<int, 3U> clients{-1, -1, -1};
+  std::array<bool, 3U> active{true, true, true};
+  std::array<std::uint64_t, 3U> request_ids{1U, 1U, 1U};
+  for (std::size_t index = 0U; index < children.size(); ++index) {
+    ASSERT_TRUE(children[index].start_replicated_transport(
+        roots[index], files.groups, files.peers, files.certificates[index],
+        files.private_keys[index], files.trust_store));
+    const std::string startup = children[index].read_startup_line();
+    EXPECT_NE(startup.find("data_plane=replicated"), std::string::npos) << startup;
+    EXPECT_NE(startup.find("raft_transport=configured"), std::string::npos) << startup;
+    const std::uint16_t port = parse_port(startup);
+    ASSERT_NE(port, 0U) << startup;
+    clients[index] = connect_client(port);
+    ASSERT_GE(clients[index], 0);
+    handshake_quorum_sync(clients[index]);
+  }
+
+  auto first = await_cluster_ingest(clients, active, request_ids);
+  if (!first.has_value()) {
+    ADD_FAILURE() << "first replicated ingest did not complete";
+    return;
+  }
+  const ClusterIngestAcknowledgement first_result = *first;
+  EXPECT_EQ(first_result.acknowledgement.outcome, network::IngestOutcome::kApplied);
+  EXPECT_EQ(first_result.acknowledgement.group_id, replicated_tablet_group());
+  EXPECT_EQ(first_result.acknowledgement.leader_node_id, first_result.node_index + 1U);
+  EXPECT_GT(first_result.acknowledgement.leader_term, 0U);
+  EXPECT_GT(first_result.acknowledgement.log_index, 0U);
+
+  const std::size_t failed_leader = first_result.node_index;
+  ::close(clients[failed_leader]);
+  clients[failed_leader] = -1;
+  active[failed_leader] = false;
+  ASSERT_TRUE(children[failed_leader].kill_abruptly());
+
+  auto retried = await_cluster_ingest(clients, active, request_ids);
+  if (!retried.has_value()) {
+    ADD_FAILURE() << "retry after leader loss did not complete";
+    return;
+  }
+  const ClusterIngestAcknowledgement retry_result = *retried;
+  EXPECT_NE(retry_result.node_index, failed_leader);
+  EXPECT_EQ(retry_result.acknowledgement.outcome, network::IngestOutcome::kMatchingRetry);
+  EXPECT_EQ(retry_result.acknowledgement.group_id, replicated_tablet_group());
+  EXPECT_EQ(retry_result.acknowledgement.leader_node_id, retry_result.node_index + 1U);
+  EXPECT_GT(retry_result.acknowledgement.leader_term, first_result.acknowledgement.leader_term);
+  EXPECT_GT(retry_result.acknowledgement.log_index, first_result.acknowledgement.log_index);
+  EXPECT_EQ(retry_result.acknowledgement.entry_term, retry_result.acknowledgement.leader_term);
+  EXPECT_GT(retry_result.acknowledgement.entry_term, first_result.acknowledgement.entry_term);
+
+  for (std::size_t index = 0U; index < children.size(); ++index) {
+    if (!active[index])
+      continue;
+    ::close(clients[index]);
+    clients[index] = -1;
+    EXPECT_EQ(children[index].stop(), 0);
+  }
+  expect_recovered_replicated_cluster(roots);
 }
 
 TEST(ChronosdProcessTest, StreamsAcknowledgesAndResumesAConfiguredSubscription) {

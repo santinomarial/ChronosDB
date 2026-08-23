@@ -1046,8 +1046,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   SELECT are now composed. Protocol 2 now has a negotiated, terminal, placement/term-bound leader
   redirect response that rejects emission after partial query output. Replicated ingest now selects
   it only from exact committed placement/stable membership plus an ordered follower observation;
-  endpoint-aware client retry and multi-group query routing remain. Provisioning, remote query
-  fragments, snapshot installation handling, and real three-process failover remain external.
+  endpoint-aware client retry and multi-group query routing remain. A Linux-only gate now provisions
+  three retained roots, starts three actual daemons with distinct mTLS identities, proves quorum
+  ingest, kills the acknowledged tablet leader, proves higher-term matching retry, and reopens
+  identical applied/retry state from every root. General provisioning, remote query fragments,
+  snapshot installation handling, and three-process query failover remain external.
 
 - **Scope:** map tablets to Raft groups; multiplex logical records over physical logs, threads, timers, and connections; lifecycle, placement, snapshot transfer, fairness, and safe per-group reclamation.
 - **Explicit non-scope:** globally ordered logs, cross-tablet atomic transactions, distributed query execution, automatic rebalancing beyond scoped placement mechanics, and conflating physical offsets with logical indexes.

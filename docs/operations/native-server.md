@@ -67,6 +67,14 @@ only exact local single-voter groups were accepted. Non-replicated modes report
 bounded query gate; Raft snapshot installation remains a fail-closed gap rather than a silently
 discarded completion.
 
+The repository's Linux process qualification uses one CA and a distinct certificate/key for each
+of three loopback nodes. It proves authenticated election, QUORUM_SYNC application, abrupt tablet-
+leader loss, higher-term retry deduplication, orderly survivor shutdown, and identical recovery from
+all retained roots. It does not qualify deployment DNS, certificate rotation, packet faults,
+failover latency, snapshot transfer, rolling upgrades, or native SELECT when metadata and tablet
+groups have different leaders. Operators must not treat `raft_transport=configured` as evidence
+that those broader gates have passed.
+
 Set finite connection, event, frame, buffered-byte, queued-frame, in-flight request, handshake, and
 idle limits. Defaults are development bounds, not capacity guidance. Monitor accepted, rejected,
 active, closed, and timed-out connections; decoded/dispatched frames; overloads; dropped responses;

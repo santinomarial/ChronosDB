@@ -345,16 +345,18 @@ A packaged `chronosd` lifecycle now owns the bounded native reactor and worker h
 and single-node modes preserve Protocol 1 behavior. An explicit replicated mode securely loads
 resident group membership, recovers committed metadata/tablets, advertises Protocol 2 QUORUM_SYNC,
 and routes bounded ingest/cancellation/completion work. A Linux-only process gate performs a real
-loopback applied write and matching retry after daemon restart. The requested real
-three-process/data-plane workflow does not exist. A later focused
+loopback applied write and matching retry after daemon restart. A subsequent Linux-only gate starts
+three actual daemons over distinct mutual-TLS identities, obtains a quorum-applied write, kills its
+tablet leader, requires a higher-term matching retry from the surviving quorum, and reopens the
+same applied/retry state from all three retained roots. The broader requested
+three-process/data-plane workflow remains incomplete. A later focused
 gate uses real mutual-TLS query sockets around the complete movement state machine, but simulates the
 externally committed promotion/removal milestones and deterministic worker aggregates. A separate
 one-process service gate now carries a checksummed real CSEG through movement, installs and reopens
 it from a distinct target root, and queries the promoted target through the production mTLS worker
-stack. No
-gate starts three server processes, executes SQL through the native protocol, kills a process,
-applies a Raft command to mutable/CSEG storage, or queries a moved CSEG on another process. Those
-remain high-priority integration and hardening tasks, not passed checks.
+stack. No gate executes the broader historical SQL, distributed query, subscription, movement,
+CSEG, and object-storage sequence across those three processes. Those remain high-priority
+integration and hardening tasks, not passed checks.
 
 ## Public APIs and formats
 
@@ -964,9 +966,10 @@ were deliberately not run.
   and explicit packaged daemon advertisement exist. Authenticated multi-node peer transport is now
   packaged. Replicated query snapshots pin one committed binder catalog, fail closed for partial
   table residency, and now require every metadata/tablet publication to cover an exactly correlated
-  current-term quorum read barrier before bounded native SELECT dispatch. A globally atomic
-  cross-group instant, remote fragments/client leader routing, and real three-process failover
-  evidence are still absent.
+  current-term quorum read barrier before bounded native SELECT dispatch. Bounded Linux evidence now
+  covers three authenticated daemon processes, quorum ingest, tablet-leader loss, a higher-term
+  matching retry, and identical retained-root recovery. A globally atomic cross-group instant,
+  remote fragments/client leader routing, and three-process query failover remain absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
@@ -984,9 +987,9 @@ were deliberately not run.
 The exact subsystem/category ledger is
 [`deferred-validation.md`](../development/deferred-validation.md). Recommended order:
 
-1. Add remote query fragments and client leader routing, then run the real three-process data-plane
-   smoke path over the already composed worker-affine applications, authenticated transport,
-   QUORUM_SYNC ingest, and applied read-barrier native SELECT.
+1. Add remote query fragments and client leader routing, then extend the existing three-process
+   quorum-ingest/failover gate through applied read-barrier native SELECT and the remaining real
+   data-plane sequence.
 2. Specify database namespaces/catalog tombstones and placement-driven membership orchestration
    without changing Metadata Command v1 or Metadata Application Snapshot 1.0 bytes in place.
 3. Finish direct vector temporal winner lowering, mixed WAL/Raft recovery, durable retention
