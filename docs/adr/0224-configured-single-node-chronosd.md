@@ -49,8 +49,12 @@ ownership remain outside this step. Native SQL INSERT was composed by
 The daemon and configured service build on macOS; a local launch creates a valid bootstrap, metadata
 Raft log, and WAL before correctly failing because the repository's server reactor is Linux-only.
 The Linux-only subprocess test negotiates a real socket, creates a table, queries it, shuts down,
-restarts the same data directory, and queries the recovered catalog. The existing unconfigured
-PING/rejection subprocess case remains.
+restarts the same data directory, and queries the recovered catalog. A test-only daemon built from
+the same `chronosd` source link-wraps only its 16-byte `getrandom` calls. A trigger armed after
+startup fails the fifth CREATE identity read, returns an execution error over the real socket, and
+then normal packaged-daemon restarts prove that no metadata prefix or table was installed before a
+fresh non-resumed CREATE and another successful restart. The shipped daemon has no entropy-fault
+option. The existing unconfigured PING/rejection subprocess case remains.
 
 ## References
 

@@ -960,16 +960,17 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   execution, and focused coverage proves a historical aggregate cannot silently return present
   rows. Mixed current/temporal command dispatch, history retention, restart, and protocol-level
   historical result coverage remain deferred.
-- Native CREATE TABLE process-level entropy failure injection, duplicate/nil generator tests, DDL
-  response boundary tests, client retry identities, fully complete duplicate-request behavior,
-  concurrent/stale DDL, authorization, ALTER/DROP/rename, crash matrices through protocol dispatch,
-  and subprocess restart qualification. The common Linux/macOS system UUID adapter is now shared by
-  WAL, daemon bootstrap, and default native DDL/DML. The common adapter now has a typed injected
-  entropy boundary with focused immediate-failure and bounded-nil coverage. Its production Linux
-  completion loop now has deterministic partial-read, `EINTR`, zero-progress, terminal-error, and
-  invalid-result coverage. Outer native CREATE failure composition remains deferred. Focused
-  service coverage proves nonnil generation, injected identities, canonical durable completion
-  fields, and immediate queryability.
+- Native CREATE TABLE duplicate/nil generator tests, DDL response boundary tests, client retry
+  identities, fully complete duplicate-request behavior, concurrent/stale DDL, authorization,
+  ALTER/DROP/rename, crash matrices through protocol dispatch, and broader subprocess restart
+  qualification. The common Linux/macOS system UUID adapter is now shared by WAL, daemon bootstrap,
+  and default native DDL/DML. The common adapter has a typed injected entropy boundary with focused
+  immediate-failure and bounded-nil coverage. Its production Linux completion loop has deterministic
+  partial-read, `EINTR`, zero-progress, terminal-error, and invalid-result coverage. Focused service
+  and Linux process composition now fail the fifth CREATE candidate, preserve an absent table and
+  metadata prefix across restart, and prove the subsequent CREATE is fresh rather than resumed.
+  Existing service coverage also proves nonnil generation, injected identities, canonical durable
+  completion fields, and immediate queryability.
 - SQL INSERT columnar materialization allocation-failure sweeps, every logical type and integer
   boundary, hostile maximum-width variable values, exact preflight byte accounting before allocation,
   codec round trips, fuzz/property coverage, and ASan/UBSan. Focused coverage now proves schema-order

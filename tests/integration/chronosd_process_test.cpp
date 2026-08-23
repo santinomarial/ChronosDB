@@ -97,6 +97,37 @@ public:
     return true;
   }
 
+  [[nodiscard]] bool start_with_entropy_failure(const std::string& data_directory,
+                                                const std::string& trigger_file) {
+    std::array<int, 2U> output{};
+    if (::pipe(output.data()) != 0)
+      return false;
+    if (::fcntl(output[0], F_SETFD, FD_CLOEXEC) != 0 ||
+        ::fcntl(output[1], F_SETFD, FD_CLOEXEC) != 0) {
+      ::close(output[0]);
+      ::close(output[1]);
+      return false;
+    }
+    pid_ = ::fork();
+    if (pid_ == 0) {
+      static_cast<void>(::dup2(output[1], STDOUT_FILENO));
+      ::close(output[0]);
+      ::close(output[1]);
+      if (::setenv("CHRONOS_TEST_GETRANDOM_FAILURE_TRIGGER", trigger_file.c_str(), 1) != 0)
+        std::_Exit(126);
+      ::execl(CHRONOSD_ENTROPY_FAILURE_PATH, CHRONOSD_ENTROPY_FAILURE_PATH, "--port", "0",
+              "--data-dir", data_directory.c_str(), nullptr);
+      std::_Exit(127);
+    }
+    ::close(output[1]);
+    if (pid_ < 0) {
+      ::close(output[0]);
+      return false;
+    }
+    output_ = output[0];
+    return true;
+  }
+
   [[nodiscard]] bool start_replicated_transport(const std::string& data_directory,
                                                 const std::string& replicated_groups_file,
                                                 const std::string& replicated_peers_file,
@@ -1027,6 +1058,89 @@ TEST(ChronosdProcessTest, CreatesQueriesAndRecoversAConfiguredDatabase) {
   ASSERT_TRUE(count.has_value()) << count.error().to_string();
   common::ByteReader recovered{count->cell(0U, 0U)->value};
   EXPECT_EQ(recovered.read_i64_le().value(), 0);
+  response = network::decode_frame(receive_frame(client)).value();
+  EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
+  ::close(client);
+  EXPECT_EQ(child.stop(), 0);
+}
+
+TEST(ChronosdProcessTest, RejectsCreateEntropyFailureWithoutDurableMetadata) {
+  constexpr std::string_view create_sql =
+      "CREATE TABLE trades (ts TIMESTAMP_NS NOT NULL, symbol SYMBOL NOT NULL, price "
+      "DECIMAL(20, 8) NOT NULL, note STRING) EVENT TIME ts ORDER KEY (symbol, ts) "
+      "PARTITION BY time_bucket(INTERVAL '1 day', ts) SHARD KEY (symbol) DEDUP KEY "
+      "(symbol, ts) RETENTION INTERVAL '30 days' SYSTEM HISTORY RETENTION INTERVAL "
+      "'7 days' ALLOWED LATENESS INTERVAL '0 seconds'";
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::string trigger = directory.path() + "/fail-create-entropy";
+
+  ChildProcess child;
+  ASSERT_TRUE(child.start_with_entropy_failure(directory.path(), trigger));
+  const std::string injected_startup = child.read_startup_line();
+  EXPECT_NE(injected_startup.find("data_plane=configured"), std::string::npos);
+  std::uint16_t port = parse_port(injected_startup);
+  ASSERT_NE(port, 0U);
+  int client = connect_client(port);
+  ASSERT_GE(client, 0);
+  handshake(client);
+
+  const int trigger_file = ::open(trigger.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  ASSERT_GE(trigger_file, 0);
+  ASSERT_EQ(::close(trigger_file), 0);
+  auto response = send_query(client, 1U, create_sql);
+  ASSERT_EQ(response.header.message_type, network::MessageType::kError);
+  auto error = network::decode_error_message(response.payload);
+  ASSERT_TRUE(error.has_value()) << error.error().to_string();
+  EXPECT_EQ(error->code, network::ProtocolErrorCode::kExecutionFailure);
+  const std::string entropy_error = byte_string(error->message);
+  EXPECT_NE(entropy_error.find("system entropy read failed"), std::string::npos);
+  EXPECT_NE(entropy_error.find("(errno " + std::to_string(EIO) + ")"), std::string::npos);
+  ::close(client);
+  EXPECT_EQ(child.stop(), 0);
+
+  std::error_code remove_error;
+  EXPECT_TRUE(std::filesystem::remove(trigger, remove_error));
+  EXPECT_FALSE(remove_error);
+  ASSERT_TRUE(child.start(directory.path()));
+  port = parse_port(child.read_startup_line());
+  ASSERT_NE(port, 0U);
+  client = connect_client(port);
+  ASSERT_GE(client, 0);
+  handshake(client);
+
+  response = send_query(client, 2U, "SELECT count(*) AS rows FROM trades");
+  ASSERT_EQ(response.header.message_type, network::MessageType::kError);
+  error = network::decode_error_message(response.payload);
+  ASSERT_TRUE(error.has_value()) << error.error().to_string();
+  EXPECT_EQ(error->code, network::ProtocolErrorCode::kInvalidRequest);
+
+  response = send_query(client, 3U, create_sql);
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
+  const auto ddl = network::decode_query_result_batch(response.payload);
+  ASSERT_TRUE(ddl.has_value()) << ddl.error().to_string();
+  ASSERT_EQ(ddl->row_count(), 1U);
+  ASSERT_NE(ddl->cell(0U, 4U), nullptr);
+  ASSERT_EQ(ddl->cell(0U, 4U)->value.size(), 1U);
+  EXPECT_EQ(ddl->cell(0U, 4U)->value.front(), std::byte{0U});
+  response = network::decode_frame(receive_frame(client)).value();
+  EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
+  ::close(client);
+  EXPECT_EQ(child.stop(), 0);
+
+  ASSERT_TRUE(child.start(directory.path()));
+  port = parse_port(child.read_startup_line());
+  ASSERT_NE(port, 0U);
+  client = connect_client(port);
+  ASSERT_GE(client, 0);
+  handshake(client);
+  response = send_query(client, 4U, "SELECT count(*) AS rows FROM trades");
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
+  const auto count = network::decode_query_result_batch(response.payload);
+  ASSERT_TRUE(count.has_value()) << count.error().to_string();
+  ASSERT_NE(count->cell(0U, 0U), nullptr);
+  common::ByteReader rows{count->cell(0U, 0U)->value};
+  EXPECT_EQ(rows.read_i64_le().value(), 0);
   response = network::decode_frame(receive_frame(client)).value();
   EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
   ::close(client);

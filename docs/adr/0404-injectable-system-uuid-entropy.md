@@ -70,6 +70,9 @@ provider contract executable.
 - Provider tests prove exact remaining-length requests after partial progress, `EINTR` retry without
   losing that progress, zero-progress rejection as `EIO`, exact terminal-errno reporting, and
   oversized-provider-result rejection. The Linux `getrandom` adapter delegates to this exact loop.
+- Native CREATE composition fails the fifth generated candidate through both an injected entropy
+  source and a Linux test-only link wrapper. It returns one execution failure before durable table
+  creation; a clean restart observes no table or metadata prefix and a fresh CREATE is non-resumed.
 - Header self-containment, installed-consumer, static-analysis, sanitizer, and full-suite gates cover
   the refactored public boundary and unchanged service/WAL consumers.
 

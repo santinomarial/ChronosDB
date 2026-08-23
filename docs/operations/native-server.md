@@ -21,11 +21,14 @@ Without `--data-dir` it reports `data_plane=unconfigured` and explicitly rejects
 `--data-dir PATH` it initializes or reopens an existing directory as a durable single-node root and
 reports `data_plane=configured`; native CREATE TABLE, single-local-tablet SQL INSERT VALUES,
 canonical ingest, and supported vector SELECT execute. Without subscription options, subscriptions
-fail explicitly. To serve one durable row-preserving plan, add both `--subscription-sql SQL` and
-`--subscription-key-file PATH`. The table must already exist. The key file must contain exactly 32
-nonzero bytes and be inaccessible to group/other; preserve the same secret across restarts or old
-resume tokens will fail authentication. The daemon reports `subscriptions=configured` only after
-the plan, coordinator, snapshot context, internal queues, and applied-append observer are ready. SQL
+fail explicitly. CREATE obtains its complete nonnil, unique identity set before the first metadata
+proposal. Operating-system entropy failure returns an execution error and leaves no partial durable
+table prefix; retry is a new operation. To serve one durable row-preserving plan, supply the paired
+`--subscription-sql SQL` and `--subscription-key-file PATH` options. The table must already exist.
+The key file must contain exactly 32 nonzero bytes and be inaccessible to group/other; preserve the
+same secret across restarts or old resume tokens will fail authentication. The daemon reports
+`subscriptions=configured` only after the plan, coordinator, snapshot context, internal queues, and
+applied-append observer are ready. SQL
 INSERT acknowledges only after `LOCAL_SYNC`, but its query envelope has no durable client retry key;
 use canonical ingest when an ambiguous response must be retried without duplicating rows. `SIGINT`
 and `SIGTERM` request orderly worker join, reactor shutdown, WAL drain, Raft close, and root-lock

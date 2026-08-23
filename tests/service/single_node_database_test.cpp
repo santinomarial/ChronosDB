@@ -1,4 +1,5 @@
 #include "chronos/common/byte_reader.hpp"
+#include "chronos/common/uuid_generator.hpp"
 #include "chronos/ingest/columnar_append_executor.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/storage.hpp"
@@ -66,6 +67,22 @@ public:
 
 private:
   std::uint8_t next_;
+};
+
+class FifthCallFailingEntropySource final : public common::UuidEntropySource {
+public:
+  [[nodiscard]] common::Result<common::Uuid::Bytes> read() override {
+    ++calls;
+    if (calls == 5U) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kIoError, "injected system entropy failure"});
+    }
+    common::Uuid::Bytes bytes{};
+    bytes.front() = static_cast<std::byte>(calls);
+    return bytes;
+  }
+
+  std::size_t calls{};
 };
 
 class RecordingCommittedAppendObserver final : public SingleNodeCommittedAppendObserver {
@@ -671,6 +688,47 @@ TEST(NativeProtocolServiceTest, CreatesTableWithDefaultSystemIdentities) {
     EXPECT_TRUE(std::ranges::any_of(identity->value,
                                     [](const std::byte value) { return value != std::byte{0U}; }));
   }
+  EXPECT_TRUE(database->shutdown().is_ok());
+}
+
+TEST(NativeProtocolServiceTest, RejectsSystemEntropyFailureBeforeTableCreation) {
+  TemporaryDirectory directory;
+  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  FifthCallFailingEntropySource entropy;
+  common::SystemUuidGenerator identities{entropy};
+  NativeProtocolService service{*database, identities};
+
+  auto failed = service.execute_query(query_task(46U, kCreateSql));
+  ASSERT_TRUE(failed.has_value()) << failed.error().to_string();
+  ASSERT_EQ(failed->responses.size(), 1U);
+  ASSERT_EQ(failed->responses[0].frame.header.message_type, network::MessageType::kError);
+  const auto failure = network::decode_error_message(failed->responses[0].frame.payload);
+  ASSERT_TRUE(failure.has_value()) << failure.error().to_string();
+  EXPECT_EQ(failure->code, network::ProtocolErrorCode::kExecutionFailure);
+  constexpr std::string_view kFailure = "injected system entropy failure";
+  EXPECT_TRUE(std::ranges::equal(failure->message,
+                                 std::as_bytes(std::span{kFailure.data(), kFailure.size()})));
+
+  auto missing = service.execute_query(query_task(47U, "SELECT count(*) FROM trades"));
+  ASSERT_TRUE(missing.has_value()) << missing.error().to_string();
+  ASSERT_EQ(missing->responses.size(), 1U);
+  ASSERT_EQ(missing->responses[0].frame.header.message_type, network::MessageType::kError);
+  const auto missing_error = network::decode_error_message(missing->responses[0].frame.payload);
+  ASSERT_TRUE(missing_error.has_value()) << missing_error.error().to_string();
+  EXPECT_EQ(missing_error->code, network::ProtocolErrorCode::kInvalidRequest);
+
+  auto retried = service.execute_query(query_task(48U, kCreateSql));
+  ASSERT_TRUE(retried.has_value()) << retried.error().to_string();
+  ASSERT_EQ(retried->responses.size(), 2U);
+  ASSERT_EQ(retried->responses[0].frame.header.message_type, network::MessageType::kQueryResult);
+  const auto result = network::decode_query_result_batch(retried->responses[0].frame.payload);
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  ASSERT_NE(result->cell(0U, 4U), nullptr);
+  ASSERT_EQ(result->cell(0U, 4U)->value.size(), 1U);
+  EXPECT_EQ(result->cell(0U, 4U)->value.front(), std::byte{0U});
+  EXPECT_EQ(retried->responses[1].frame.header.message_type, network::MessageType::kQueryEnd);
+  EXPECT_EQ(entropy.calls, 12U);
   EXPECT_TRUE(database->shutdown().is_ok());
 }
 

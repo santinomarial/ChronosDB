@@ -1532,6 +1532,23 @@ if(CHRONOS_BUILD_TESTS)
   gtest_discover_tests(chronos_feature_smoke_tests DISCOVERY_TIMEOUT 30)
 
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(
+      chronosd_entropy_failure_test_child
+      EXCLUDE_FROM_ALL
+      tools/chronosd/main.cpp
+      tests/integration/getrandom_failure_wrapper.cpp
+    )
+    set_target_properties(chronosd_entropy_failure_test_child PROPERTIES CXX_EXTENSIONS OFF)
+    target_compile_features(chronosd_entropy_failure_test_child PRIVATE cxx_std_23)
+    target_link_libraries(
+      chronosd_entropy_failure_test_child
+      PRIVATE chronos::service OpenSSL::Crypto Threads::Threads
+    )
+    target_link_options(chronosd_entropy_failure_test_child PRIVATE "LINKER:--wrap=getrandom")
+    chronos_set_project_warnings(chronosd_entropy_failure_test_child)
+    chronos_enable_sanitizers(chronosd_entropy_failure_test_child)
+    chronos_enable_static_analysis(chronosd_entropy_failure_test_child)
+
     add_executable(chronosd_process_tests tests/integration/chronosd_process_test.cpp)
     set_target_properties(chronosd_process_tests PROPERTIES CXX_EXTENSIONS OFF)
     target_compile_features(chronosd_process_tests PRIVATE cxx_std_23)
@@ -1541,10 +1558,16 @@ if(CHRONOS_BUILD_TESTS)
       chronosd_process_tests
       PRIVATE
         CHRONOSD_PATH="$<TARGET_FILE:chronosd>"
+        CHRONOSD_ENTROPY_FAILURE_PATH="$<TARGET_FILE:chronosd_entropy_failure_test_child>"
         CHRONOSCTL_PATH="$<TARGET_FILE:chronosctl>"
         CHRONOS_TEST_TLS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network/tls"
     )
-    add_dependencies(chronosd_process_tests chronosd chronosctl)
+    add_dependencies(
+      chronosd_process_tests
+      chronosd
+      chronosctl
+      chronosd_entropy_failure_test_child
+    )
     chronos_set_project_warnings(chronosd_process_tests)
     chronos_enable_sanitizers(chronosd_process_tests)
     chronos_enable_static_analysis(chronosd_process_tests)

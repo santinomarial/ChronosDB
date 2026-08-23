@@ -45,7 +45,10 @@ serialization are not added here.
 
 Focused tests inject deterministic unique identities, decode all durable result fields, verify a
 nonzero applied metadata index and non-resumed completion, then execute a vector count against the
-new table. Existing direct DDL recovery tests and native ingest/query tests remain passing.
+new table. A `SystemUuidGenerator` backed by an injected entropy source now fails on the fifth
+candidate: the adapter returns one execution error, the table remains absent, and the next complete
+identity set creates it with `resumed_incomplete_creation=false`. Existing direct DDL recovery tests
+and native ingest/query tests remain passing.
 
 ## References
 

@@ -50,7 +50,9 @@ generator. The adapter rejects nil or duplicate UUIDs before handing explicit ta
 and per-column identities to the owner's restartable creation path. Completion is one described row
 containing those durable identities, the applied metadata index, and whether an incomplete prefix
 was resumed. The reusable service does not choose entropy policy; its process owner must inject a
-secure generator.
+secure generator. The complete identity vector is generated and validated before the database owner
+receives the operation. An entropy error after any generated prefix therefore emits no metadata
+proposal and cannot create an incomplete durable table prefix.
 
 For INSERT VALUES, token dispatch selects the INSERT parser/binder, evaluates source-free constant
 rows, and transposes them into canonical immutable columnar ownership. The adapter currently

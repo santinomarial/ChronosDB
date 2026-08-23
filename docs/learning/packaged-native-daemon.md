@@ -92,7 +92,11 @@ the same finite ownership contract.
 The Linux subprocess test starts the actual binary on an ephemeral port, negotiates Protocol v1,
 checks PING/PONG and explicit unconfigured rejection, then starts a configured root, creates and
 queries a table, sends `SIGTERM`, and verifies queryability after restart. Install-layout validation
-checks that the binary is packaged and its help path runs. Its replicated case negotiates Protocol
+checks that the binary is packaged and its help path runs. A Linux-only fault child built from the
+same daemon source wraps its exact 16-byte `getrandom` calls without changing the shipped binary.
+After normal startup, its trigger fails the fifth CREATE identity candidate. The socket receives one
+execution error; a normal restart observes no table, the next CREATE reports non-resumed completion,
+and a second restart queries that cleanly installed table. Its replicated case negotiates Protocol
 2, applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact retry, and queries the
 same recovered row count. A separate replicated gate provisions three retained roots and distinct
 mutual-TLS identities, starts three actual daemon processes, obtains an applied quorum
