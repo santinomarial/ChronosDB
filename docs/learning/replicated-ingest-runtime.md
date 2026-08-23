@@ -42,6 +42,13 @@ Steady-state cost remains in the coordinator and underlying Raft/application own
 object adds no per-request synchronization. It intentionally does not own elections, transport,
 metadata provisioning, or native-protocol advertisement.
 
+The database-root composition reconstructs each tablet from committed catalog authority. It creates
+the fresh tablet at the retained lineage root, registers every consecutive successor with a
+schema-specific mutable-head capacity, and only then replays retained Raft commands. A restart after
+catalog activation can therefore rebuild predecessor rows and retries before a later successor
+command rotates the active generation. A second reopen must reproduce both schema-bound generations
+and keep an exact successor retry row-neutral.
+
 The separate `ReplicatedIngestService` borrows the coordinator and queue pair. It must be destroyed
 or drained before this owner shuts down; the eventual packaged lifecycle owns that ordering.
 

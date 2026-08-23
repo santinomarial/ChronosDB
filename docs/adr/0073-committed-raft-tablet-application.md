@@ -3,7 +3,11 @@
 - **Status:** accepted
 - **Date:** 2026-08-08
 - **Owners:** ChronosDB ingestion and distributed-systems maintainers
-- **Extended by:** [ADR 0085](0085-raft-tablet-application-snapshot-v1.md)
+- **Extended by:** [ADR 0074](0074-quorum-sync-proof-boundary.md),
+  [ADR 0085](0085-raft-tablet-application-snapshot-v1.md),
+  [ADR 0272](0272-worker-affine-raft-application-extension.md),
+  [ADR 0273](0273-bounded-term-bound-applied-quorum-completions.md), and
+  [ADR 0284](0284-committed-metadata-replicated-database-recovery.md)
 
 ## Context
 
@@ -69,7 +73,10 @@ same application state and converge identically. The five faults are crossed wit
 three distinct commands, an in-range matching retry, and an internal no-op plus retry for 20
 single-batch persistence schedules. Each reconstructs the exact row count, retry identities, and
 last log index across two reopens. Application snapshots and log reclamation are implemented by
-extending ADRs. Schema catalog recovery, multi-group scheduling, and true quorum acknowledgment
-remain required. A deterministic allocation sweep fails every post-apply state copy, requires the
-full committed-unapplied range and persistent state to remain exact, and then advances identically
-on retry.
+extending ADRs. Later worker-affine composition recovers and applies a bounded unique set of tablet
+groups, while exact term-bound completions expose the applied quorum proof to the replicated ingest
+response path. Committed-metadata database recovery projects each resident tablet's consecutive
+schema lineage; restart tests rebuild a predecessor-schema generation after catalog evolution,
+accept the active successor, and repeat recovery and retry exactly. A deterministic allocation sweep
+fails every post-apply state copy, requires the full committed-unapplied range and persistent state
+to remain exact, and then advances identically on retry.

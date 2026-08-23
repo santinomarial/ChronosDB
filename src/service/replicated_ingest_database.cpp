@@ -138,6 +138,21 @@ retained_lineage(const raft::MetadataCatalogSnapshot& catalog, const schema::Tab
   return lineage;
 }
 
+[[nodiscard]] head::MutableHeadCapacity
+head_capacity(const schema::TableSchema& schema,
+              const runtime::DatabaseBootstrapDescriptor& bootstrap) {
+  head::MutableHeadCapacity capacity;
+  capacity.row_capacity = bootstrap.mutable_head_rows;
+  capacity.variable_value_bytes.reserve(schema.columns().size());
+  for (const schema::ColumnDefinition& column : schema.columns()) {
+    capacity.variable_value_bytes.push_back(
+        column.type().is_variable_width()
+            ? static_cast<std::size_t>(bootstrap.variable_column_bytes)
+            : 0U);
+  }
+  return capacity;
+}
+
 [[nodiscard]] common::Result<std::vector<ingest::AsyncRaftTabletApplicationConfig>>
 build_tablets(const ReplicatedIngestDatabaseConfig& config,
               const runtime::DatabaseBootstrapDescriptor& bootstrap,
@@ -187,20 +202,11 @@ build_tablets(const ReplicatedIngestDatabaseConfig& config,
         return common::make_unexpected(
             schemas.has_value() ? corruption("active schema is not the retained lineage tail")
                                 : schemas.error());
-      head::MutableHeadCapacity capacity;
-      capacity.row_capacity = bootstrap.mutable_head_rows;
-      capacity.variable_value_bytes.reserve(definition->schema->columns().size());
-      for (const schema::ColumnDefinition& column : definition->schema->columns()) {
-        capacity.variable_value_bytes.push_back(
-            column.type().is_variable_width()
-                ? static_cast<std::size_t>(bootstrap.variable_column_bytes)
-                : 0U);
-      }
       const std::size_t retry_limit = static_cast<std::size_t>(
           std::min(policy->retry_retention_positions, bootstrap.maximum_retry_entries));
       auto tablet = ingest::TabletState::create(
-          definition->schema, binding.tablet_id,
-          {.head_capacity = std::move(capacity),
+          schemas->front(), binding.tablet_id,
+          {.head_capacity = head_capacity(**schemas->begin(), bootstrap),
            .maximum_schema_versions = schemas->size(),
            .maximum_sealed_generations = bootstrap.maximum_sealed_generations,
            .maximum_retry_entries = retry_limit});
@@ -209,6 +215,12 @@ build_tablets(const ReplicatedIngestDatabaseConfig& config,
         return common::make_unexpected(tablet.error());
       if (!retries.has_value())
         return common::make_unexpected(retries.error());
+      for (std::size_t index = 1U; index < schemas->size(); ++index) {
+        common::Status registered = tablet->register_schema(
+            (*schemas)[index], head_capacity(*(*schemas)[index], bootstrap));
+        if (!registered.is_ok())
+          return common::make_unexpected(std::move(registered));
+      }
       std::optional<ingest::RaftTabletSnapshotStorage> snapshot_storage;
       const auto snapshot = std::ranges::find(config.tablet_snapshots, binding.group_id,
                                               &ingest::RaftTabletSnapshotStorageConfig::group_id);

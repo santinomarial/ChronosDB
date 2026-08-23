@@ -48,7 +48,10 @@ queries, and native daemon advertisement remain higher lifecycle stages.
 No durable or network bytes change. Focused tests provision a root, commit global metadata with one
 local and one remote tablet, apply a local QUORUM_SYNC append, close everything, reconstruct only the
 resident tablet under the root lock, recover its rows, and return a matching retry after a new term.
-An omitted recovered resident group fails closed. Snapshot/crash/syscall matrices, schema evolution,
+Schema-evolution recovery additionally commits a predecessor-schema write, activates its direct
+successor, reconstructs the complete lineage on reopen, preserves the predecessor generation, then
+applies the successor and proves both generations plus the exact retry across another reopen. An
+omitted recovered resident group fails closed. Snapshot/crash/syscall matrices,
 joint-reconfiguration restart, multi-tablet scale, and TSan remain deferred.
 
 ## Affected invariants

@@ -521,12 +521,13 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   create/reopen/shutdown ordering. A bounded queue-facing service now preserves negotiated tasks,
   exact cancellation, one retained response, response-wakeup reporting, and admission-close/drain;
   a database-root owner now reconstructs resident tablet applications from committed global
-  metadata and explicit group membership before reopening the asynchronous runtime. A strict
-  bounded group/voter deployment parser and secure packaged daemon loading/routing now exist. A
-  strict authenticated peer route/identity parser and exact certificate/address/node authority also
-  exist, and an owning transport runtime plus packaged daemon poll thread composes them with TLS
-  contexts and randomized timers; add in-memory credential loading, remote leader redirection,
-  metadata/tablet snapshot process recovery,
+  metadata and explicit group membership before reopening the asynchronous runtime, including
+  predecessor and active-successor generations across committed schema evolution and repeated
+  reopen. A strict bounded group/voter deployment parser and secure packaged daemon loading/routing
+  now exist. A strict authenticated peer route/identity parser and exact
+  certificate/address/node authority also exist, and an owning transport runtime plus packaged
+  daemon poll thread composes them with TLS contexts and randomized timers; add in-memory credential
+  loading, remote leader redirection, metadata/tablet snapshot process recovery,
   joint-reconfiguration restart matrices, broader queue/disconnect failure matrices, and TSan
   scheduling coverage.
 - Carry the implemented group-scoped read-barrier operation through authenticated production

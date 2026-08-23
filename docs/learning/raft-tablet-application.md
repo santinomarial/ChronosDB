@@ -198,9 +198,10 @@ after committed application begins fails the owned tablet closed; restart rebuil
 log.
 
 `prove_applied_quorum_sync` composes the leader's committed/joint-membership durability receipt with
-the Raft applied index and tablet group/index publication frontier. Client protocol exposure,
-transport of completed snapshot responses, and automatic scheduling of the implemented node-wide
-physical-log reclamation remain absent.
+the Raft applied index and tablet group/index publication frontier. The later worker-affine
+application and term-bound completion owners carry that exact proof through Protocol 2.0 replicated
+ingest acknowledgement. Transport of completed snapshot responses and automatic scheduling of the
+implemented node-wide physical-log reclamation remain absent.
 
 Application snapshot-file reclamation is explicit and Raft-authoritative. The tablet owner first
 requires its adopted application snapshot to equal durable Raft metadata, exact-loads that file,

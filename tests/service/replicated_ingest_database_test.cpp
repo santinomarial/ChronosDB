@@ -16,6 +16,7 @@
 
 #include <filesystem>
 #include <gtest/gtest.h>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -86,27 +87,38 @@ private:
   return {{metadata_group(), {1U}}, {tablet_group(), {1U}}};
 }
 
-[[nodiscard]] std::vector<std::byte> command() {
-  auto batch = columnar::OwnedColumnarBatch::create(columnar::test::batch_schema(),
-                                                    columnar::test::batch_columns())
-                   .value();
+[[nodiscard]] std::vector<std::byte> command(std::shared_ptr<const schema::TableSchema> schema,
+                                             std::vector<columnar::OwnedColumnVector> columns,
+                                             const std::uint8_t request_seed) {
+  auto batch = columnar::OwnedColumnarBatch::create(std::move(schema), std::move(columns)).value();
   const auto batch_bytes = columnar::encode_columnar_batch_v1(batch).value();
-  const auto append = ingest::encode_columnar_append_v1(
-                          {.client_id = ingest::test::request_id<ingest::ClientId>(3U),
-                           .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(35U),
-                           .tablet_id = tablet_id()},
-                          batch_bytes)
-                          .value();
+  const auto append =
+      ingest::encode_columnar_append_v1(
+          {.client_id = ingest::test::request_id<ingest::ClientId>(request_seed),
+           .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(request_seed + 32U),
+           .tablet_id = tablet_id()},
+          batch_bytes)
+          .value();
   return {append.bytes().begin(), append.bytes().end()};
 }
 
-[[nodiscard]] network::NetworkTask request() {
+[[nodiscard]] std::vector<std::byte> command() {
+  return command(columnar::test::batch_schema(), columnar::test::batch_columns(), 3U);
+}
+
+[[nodiscard]] std::vector<std::byte> successor_command() {
+  return command(columnar::test::successor_batch_schema(),
+                 columnar::test::successor_batch_columns(), 4U);
+}
+
+[[nodiscard]] network::NetworkTask request(std::vector<std::byte> command_bytes = command(),
+                                           const std::uint64_t request_id = 1U) {
   const network::IngestProtocolContext context{.protocol_major = network::kProtocolV2Major,
                                                .protocol_minor = network::kProtocolV2LatestMinor,
                                                .feature_bits =
                                                    network::kProtocolV2QuorumSyncFeature};
   auto payload =
-      network::encode_ingest_request(network::DurabilityMode::kQuorumSync, command(), context)
+      network::encode_ingest_request(network::DurabilityMode::kQuorumSync, command_bytes, context)
           .value();
   return {.connection_id = 20U,
           .principal_id = 19U,
@@ -117,7 +129,7 @@ private:
           .frame = {.header = {.protocol_major = context.protocol_major,
                                .protocol_minor = context.protocol_minor,
                                .message_type = network::MessageType::kIngestRequest,
-                               .request_id = 1U,
+                               .request_id = request_id,
                                .payload_size = static_cast<std::uint32_t>(payload.size())},
                     .payload = std::move(payload)}};
 }
@@ -272,6 +284,100 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsTabletOwnersFromCommittedMetadataUnde
   EXPECT_TRUE(database->shutdown().is_ok());
   EXPECT_FALSE(database->is_running());
   EXPECT_EQ(database->ingest_runtime(), nullptr);
+}
+
+TEST(ReplicatedIngestDatabaseTest, RebuildsRetainedSchemaLineageAfterCommittedCatalogEvolution) {
+  TemporaryDirectory directory;
+  runtime::DatabaseBootstrapConfig bootstrap_config{.database_root = directory.path().string(),
+                                                    .new_database = descriptor()};
+  auto bootstrap = runtime::DatabaseBootstrap::open_or_create(bootstrap_config);
+  ASSERT_TRUE(bootstrap.has_value()) << bootstrap.error().to_string();
+  auto initial = ReplicatedIngestRuntime::create_new(initial_runtime_config(*bootstrap));
+  ASSERT_TRUE(initial.has_value()) << initial.error().to_string();
+  elect_and_provision(*initial, false);
+  ASSERT_TRUE(initial->coordinator()->admit(request()).is_ok());
+  auto base_response = await_response(*initial);
+  auto base_acknowledgement =
+      network::decode_quorum_sync_ingest_acknowledgement(base_response.frame.payload);
+  ASSERT_TRUE(base_acknowledgement.has_value());
+  EXPECT_EQ(base_acknowledgement->outcome, network::IngestOutcome::kApplied);
+  EXPECT_EQ(base_acknowledgement->log_index, 1U);
+
+  const raft::ProposeOperation successor{
+      raft::kRaftSchemaDefinitionEntryType,
+      raft::encode_schema_definition_v1(
+          {.name = "events", .quoted = false, .schema = columnar::test::successor_batch_schema()})
+          .value()};
+  auto evolved = initial->runtime()->try_submit({{metadata_group(), successor}});
+  ASSERT_TRUE(evolved.has_value()) << evolved.error().to_string();
+  ASSERT_TRUE(evolved->wait().has_value());
+  auto evolved_catalog = initial->metadata_application()->catalog_snapshot();
+  ASSERT_TRUE(evolved_catalog.has_value());
+  ASSERT_EQ((*evolved_catalog)->schema_definitions.size(), 2U);
+  ASSERT_EQ((*evolved_catalog)->active_schemas.size(), 1U);
+  EXPECT_EQ((*evolved_catalog)->active_schemas.front().schema_id,
+            columnar::test::successor_batch_schema()->schema_id());
+  ASSERT_TRUE(initial->shutdown().is_ok());
+  ASSERT_TRUE(bootstrap->close().is_ok());
+
+  auto database =
+      ReplicatedIngestDatabase::open_existing({.bootstrap = bootstrap_config, .groups = groups()});
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  auto recovered_catalog = database->ingest_runtime()->metadata_application()->catalog_snapshot();
+  ASSERT_TRUE(recovered_catalog.has_value());
+  ASSERT_EQ((*recovered_catalog)->schema_definitions.size(), 2U);
+  auto recovered = database->ingest_runtime()->tablet_application()->snapshot(tablet_group());
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  EXPECT_EQ(recovered->visible_row_count(), 2U);
+  EXPECT_EQ(recovered->retry_entry_count(), 1U);
+  EXPECT_EQ(recovered->schema_ptr()->schema_id(), columnar::test::batch_schema()->schema_id());
+
+  auto election = database->ingest_runtime()->runtime()->try_submit(
+      {{tablet_group(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  ASSERT_TRUE(election->wait().has_value());
+  ASSERT_TRUE(
+      database->ingest_runtime()->coordinator()->admit(request(successor_command(), 2U)).is_ok());
+  auto successor_response = await_response(*database->ingest_runtime());
+  auto successor_acknowledgement =
+      network::decode_quorum_sync_ingest_acknowledgement(successor_response.frame.payload);
+  ASSERT_TRUE(successor_acknowledgement.has_value());
+  EXPECT_EQ(successor_acknowledgement->outcome, network::IngestOutcome::kApplied);
+  EXPECT_EQ(successor_acknowledgement->log_index, 2U);
+  recovered = database->ingest_runtime()->tablet_application()->snapshot(tablet_group());
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  EXPECT_EQ(recovered->visible_row_count(), 4U);
+  EXPECT_EQ(recovered->retry_entry_count(), 2U);
+  EXPECT_EQ(recovered->schema_ptr()->schema_id(),
+            columnar::test::successor_batch_schema()->schema_id());
+  ASSERT_EQ(recovered->sealed_generations().size(), 1U);
+  EXPECT_EQ(recovered->sealed_generations().front().schema_ptr()->schema_id(),
+            columnar::test::batch_schema()->schema_id());
+  ASSERT_TRUE(database->shutdown().is_ok());
+
+  auto repeated =
+      ReplicatedIngestDatabase::open_existing({.bootstrap = bootstrap_config, .groups = groups()});
+  ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
+  auto repeated_snapshot =
+      repeated->ingest_runtime()->tablet_application()->snapshot(tablet_group());
+  ASSERT_TRUE(repeated_snapshot.has_value()) << repeated_snapshot.error().to_string();
+  EXPECT_EQ(repeated_snapshot->visible_row_count(), 4U);
+  EXPECT_EQ(repeated_snapshot->retry_entry_count(), 2U);
+  EXPECT_EQ(repeated_snapshot->schema_ptr()->schema_id(),
+            columnar::test::successor_batch_schema()->schema_id());
+  election = repeated->ingest_runtime()->runtime()->try_submit(
+      {{tablet_group(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  ASSERT_TRUE(election->wait().has_value());
+  ASSERT_TRUE(
+      repeated->ingest_runtime()->coordinator()->admit(request(successor_command(), 3U)).is_ok());
+  auto retry_response = await_response(*repeated->ingest_runtime());
+  auto retry_acknowledgement =
+      network::decode_quorum_sync_ingest_acknowledgement(retry_response.frame.payload);
+  ASSERT_TRUE(retry_acknowledgement.has_value());
+  EXPECT_EQ(retry_acknowledgement->outcome, network::IngestOutcome::kMatchingRetry);
+  EXPECT_EQ(retry_acknowledgement->log_index, 3U);
+  ASSERT_TRUE(repeated->shutdown().is_ok());
 }
 
 TEST(ReplicatedIngestDatabaseTest, PinsCommittedWholeTableQueryStateBeyondOwnerShutdown) {
