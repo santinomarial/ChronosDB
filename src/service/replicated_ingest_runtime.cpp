@@ -185,11 +185,23 @@ bool ReplicatedIngestRuntime::is_running() const noexcept {
 }
 
 common::Status ReplicatedIngestRuntime::shutdown() {
+  return shutdown_with(nullptr);
+}
+
+common::Status
+ReplicatedIngestRuntime::shutdown(ReplicatedIngestRuntimeShutdownObserver& observer) {
+  return shutdown_with(std::addressof(observer));
+}
+
+common::Status
+ReplicatedIngestRuntime::shutdown_with(ReplicatedIngestRuntimeShutdownObserver* const observer) {
   if (impl_ == nullptr)
     return invalid("replicated ingest runtime was moved from");
   if (impl_->shutdown_complete)
     return impl_->shutdown_status;
   impl_->coordinator.reset();
+  if (observer != nullptr)
+    observer->on_shutdown_stage(ReplicatedIngestRuntimeShutdownStage::kCoordinatorReleased);
   auto& runtime = impl_->runtime;
   if (runtime.has_value()) {
     impl_->shutdown_status = runtime->shutdown();
@@ -197,6 +209,8 @@ common::Status ReplicatedIngestRuntime::shutdown() {
   } else {
     impl_->shutdown_status = invalid("replicated ingest runtime owner is absent");
   }
+  if (observer != nullptr)
+    observer->on_shutdown_stage(ReplicatedIngestRuntimeShutdownStage::kWorkerStopped);
   impl_->shutdown_complete = true;
   return impl_->shutdown_status;
 }

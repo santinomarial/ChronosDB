@@ -37,6 +37,7 @@ public:
 };
 
 enum class ReplicatedIngestDatabaseShutdownStage : std::uint8_t {
+  kCoordinatorReleased,
   kRuntimeStopped,
   kRootReleased,
 };

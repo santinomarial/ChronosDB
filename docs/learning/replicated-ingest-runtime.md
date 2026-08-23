@@ -32,6 +32,13 @@ The worker drains the proposal through tablet and metadata callbacks before reve
 physical-log teardown. Reopen recovers the exact metadata route and applied rows, and resubmitting
 the same identity in a new leader term returns a matching retry rather than adding rows.
 
+Shutdown can borrow an observer for the synchronous call. `kCoordinatorReleased` is emitted after
+the coordinator is destroyed but before worker drain begins; `kWorkerStopped` follows reverse
+application shutdown and physical-log close. The packaged database maps those stages into its own
+observer before releasing the root. A real-process crash at the first boundary with an admitted
+proposal proves that losing response ownership cannot create partial rows or separate a mutation
+from its retry identity.
+
 The asynchronous runtime object must not move after coordinator construction because the
 coordinator borrows it directly. Startup therefore allocates the final implementation and moves the
 runtime there first. Application objects are shared heap owners, so moving their `shared_ptr`

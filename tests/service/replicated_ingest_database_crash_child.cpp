@@ -91,9 +91,15 @@ public:
   void on_shutdown_stage(const ReplicatedIngestDatabaseShutdownStage stage) noexcept override {
     if (stage != desired_)
       return;
-    pause_with_event(stage == ReplicatedIngestDatabaseShutdownStage::kRuntimeStopped
-                         ? "SHUTDOWN_RUNTIME_STOPPED\n"
-                         : "SHUTDOWN_ROOT_RELEASED\n");
+    switch (stage) {
+    case ReplicatedIngestDatabaseShutdownStage::kCoordinatorReleased:
+      pause_with_event("SHUTDOWN_COORDINATOR_RELEASED\n");
+    case ReplicatedIngestDatabaseShutdownStage::kRuntimeStopped:
+      pause_with_event("SHUTDOWN_RUNTIME_STOPPED\n");
+    case ReplicatedIngestDatabaseShutdownStage::kRootReleased:
+      pause_with_event("SHUTDOWN_ROOT_RELEASED\n");
+    }
+    ::_exit(7);
   }
 
 private:
@@ -266,6 +272,35 @@ struct ChildConfig {
   return status.is_ok() ? bootstrap_close : status;
 }
 
+[[nodiscard]] common::Status admit_suffix_without_response(ReplicatedIngestDatabase& database) {
+  auto election = database.ingest_runtime()->runtime()->try_submit(
+      {{crash_tablet_group(), raft::StartElectionOperation{}}});
+  if (!election.has_value())
+    return election.error();
+  auto elected = election->wait();
+  if (!elected.has_value())
+    return elected.error();
+  raft::AsyncDurableMultiRaftRuntime* const runtime = database.ingest_runtime()->runtime();
+  ReplicatedIngestCoordinator* const coordinator = database.ingest_runtime()->coordinator();
+  const std::uint64_t admitted_before = runtime->metrics().admitted_batches;
+  common::Status admitted = coordinator->admit(crash_request(crash_suffix_command(), 2U));
+  if (!admitted.is_ok())
+    return admitted;
+  for (std::size_t attempt = 0U; attempt < 10'000U; ++attempt) {
+    auto response = coordinator->poll();
+    if (!response.has_value())
+      return response.error();
+    if (response->has_value())
+      return {common::StatusCode::kInternal,
+              "crash child observed an ingest response before its admission boundary"};
+    if (runtime->metrics().admitted_batches >= admitted_before + 2U)
+      return common::Status::ok();
+    std::this_thread::yield();
+  }
+  return {common::StatusCode::kUnavailable,
+          "crash child timed out waiting for ingest proposal admission"};
+}
+
 [[nodiscard]] common::Status prepare_and_reopen(const ChildConfig& config) {
   common::Status prepared = config.use_snapshots ? prepare_snapshot_history(config.root)
                                                  : prepare_retained_history(config.root);
@@ -303,9 +338,17 @@ struct ChildConfig {
             "crash child packaged tablet publication disagrees with durable state"};
   }
 
-  if (config.pause_after == "after_shutdown_runtime_stopped" ||
+  if (config.pause_after == "after_shutdown_coordinator_released" ||
+      config.pause_after == "after_shutdown_runtime_stopped" ||
       config.pause_after == "after_shutdown_root_released") {
-    const auto stage = config.pause_after == "after_shutdown_runtime_stopped"
+    if (config.pause_after == "after_shutdown_coordinator_released") {
+      const common::Status admitted = admit_suffix_without_response(*database);
+      if (!admitted.is_ok())
+        return admitted;
+    }
+    const auto stage = config.pause_after == "after_shutdown_coordinator_released"
+                           ? ReplicatedIngestDatabaseShutdownStage::kCoordinatorReleased
+                       : config.pause_after == "after_shutdown_runtime_stopped"
                            ? ReplicatedIngestDatabaseShutdownStage::kRuntimeStopped
                            : ReplicatedIngestDatabaseShutdownStage::kRootReleased;
     ShutdownPauseObserver observer{stage};
@@ -313,35 +356,10 @@ struct ChildConfig {
   }
 
   if (config.pause_after == "after_ingest_admission") {
-    auto election = database->ingest_runtime()->runtime()->try_submit(
-        {{crash_tablet_group(), raft::StartElectionOperation{}}});
-    if (!election.has_value())
-      return election.error();
-    auto elected = election->wait();
-    if (!elected.has_value())
-      return elected.error();
-    raft::AsyncDurableMultiRaftRuntime* const runtime = database->ingest_runtime()->runtime();
-    ReplicatedIngestCoordinator* const coordinator = database->ingest_runtime()->coordinator();
-    const std::uint64_t admitted_before = runtime->metrics().admitted_batches;
-    common::Status admitted = coordinator->admit(crash_request(crash_suffix_command(), 2U));
+    const common::Status admitted = admit_suffix_without_response(*database);
     if (!admitted.is_ok())
       return admitted;
-    for (std::size_t attempt = 0U; attempt < 10'000U; ++attempt) {
-      auto response = coordinator->poll();
-      if (!response.has_value())
-        return response.error();
-      if (response->has_value())
-        return {common::StatusCode::kInternal,
-                "crash child observed an ingest response before its admission boundary"};
-      if (runtime->metrics().admitted_batches >= admitted_before + 2U) {
-        std::cout << "ADMITTED 2\n" << std::flush;
-        for (;;)
-          static_cast<void>(::pause());
-      }
-      std::this_thread::yield();
-    }
-    return {common::StatusCode::kUnavailable,
-            "crash child timed out waiting for ingest proposal admission"};
+    pause_with_event("ADMITTED 2\n");
   }
 
   std::cout << "READY " << recovered->visible_row_count() << ' ' << recovered->retry_entry_count()

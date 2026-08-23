@@ -283,6 +283,7 @@ struct PackagedShutdownCrashCase {
   std::string_view name;
   std::string_view pause_after;
   std::string_view event;
+  bool admitted_write{};
 };
 
 class ReplicatedIngestDatabaseShutdownCrashTest
@@ -304,23 +305,47 @@ TEST_P(ReplicatedIngestDatabaseShutdownCrashTest,
   auto database =
       ReplicatedIngestDatabase::open_existing(test::crash_database_config(directory.path(), false));
   ASSERT_TRUE(database.has_value()) << database.error().to_string();
-  expect_recovered_publication(*database, {.rows = 2U, .retries = 1U, .applied_index = 1U});
+  raft::LogIndex recovered_index = 1U;
+  if (test_case.admitted_write) {
+    auto publication =
+        database->ingest_runtime()->tablet_application()->snapshot(test::crash_tablet_group());
+    ASSERT_TRUE(publication.has_value()) << publication.error().to_string();
+    const bool absent = publication->visible_row_count() == 2U &&
+                        publication->retry_entry_count() == 1U &&
+                        publication->applied_position() ==
+                            head::HeadCommitPosition::raft(test::crash_tablet_group(), 1U);
+    const bool committed = publication->visible_row_count() == 4U &&
+                           publication->retry_entry_count() == 2U &&
+                           publication->applied_position() ==
+                               head::HeadCommitPosition::raft(test::crash_tablet_group(), 2U);
+    ASSERT_TRUE(absent || committed);
+    recovered_index = committed ? 2U : 1U;
+  } else {
+    expect_recovered_publication(*database, {.rows = 2U, .retries = 1U, .applied_index = 1U});
+  }
   auto election = database->ingest_runtime()->runtime()->try_submit(
       {{test::crash_tablet_group(), raft::StartElectionOperation{}}});
   ASSERT_TRUE(election.has_value()) << election.error().to_string();
   ASSERT_TRUE(election->wait().has_value());
   auto retry = database->ingest_runtime()->runtime()->try_submit(
       {{test::crash_tablet_group(),
-        raft::ProposeOperation{ingest::kRaftColumnarAppendEntryType, test::crash_command()}}});
+        raft::ProposeOperation{ingest::kRaftColumnarAppendEntryType,
+                               test_case.admitted_write ? test::crash_suffix_command()
+                                                        : test::crash_command()}}});
   ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
   ASSERT_TRUE(retry->wait().has_value());
-  expect_recovered_publication(*database, {.rows = 2U, .retries = 1U, .applied_index = 2U});
+  expect_recovered_publication(*database, {.rows = test_case.admitted_write ? 4U : 2U,
+                                           .retries = test_case.admitted_write ? 2U : 1U,
+                                           .applied_index = recovered_index + 1U});
   ASSERT_TRUE(database->shutdown().is_ok());
 }
 
 INSTANTIATE_TEST_SUITE_P(
     ShutdownStages, ReplicatedIngestDatabaseShutdownCrashTest,
-    ::testing::Values(PackagedShutdownCrashCase{"RuntimeStopped", "after_shutdown_runtime_stopped",
+    ::testing::Values(PackagedShutdownCrashCase{"CoordinatorReleased",
+                                                "after_shutdown_coordinator_released",
+                                                "SHUTDOWN_COORDINATOR_RELEASED", true},
+                      PackagedShutdownCrashCase{"RuntimeStopped", "after_shutdown_runtime_stopped",
                                                 "SHUTDOWN_RUNTIME_STOPPED"},
                       PackagedShutdownCrashCase{"RootReleased", "after_shutdown_root_released",
                                                 "SHUTDOWN_ROOT_RELEASED"}),

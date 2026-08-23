@@ -41,6 +41,27 @@ void observe_startup(const ReplicatedIngestDatabaseConfig& config,
     config.startup_observer->on_startup_stage(stage);
 }
 
+class DatabaseRuntimeShutdownObserver final : public ReplicatedIngestRuntimeShutdownObserver {
+public:
+  explicit DatabaseRuntimeShutdownObserver(
+      ReplicatedIngestDatabaseShutdownObserver& configured) noexcept
+      : observer_(configured) {}
+
+  void on_shutdown_stage(const ReplicatedIngestRuntimeShutdownStage stage) noexcept override {
+    switch (stage) {
+    case ReplicatedIngestRuntimeShutdownStage::kCoordinatorReleased:
+      observer_.on_shutdown_stage(ReplicatedIngestDatabaseShutdownStage::kCoordinatorReleased);
+      return;
+    case ReplicatedIngestRuntimeShutdownStage::kWorkerStopped:
+      observer_.on_shutdown_stage(ReplicatedIngestDatabaseShutdownStage::kRuntimeStopped);
+      return;
+    }
+  }
+
+private:
+  ReplicatedIngestDatabaseShutdownObserver& observer_;
+};
+
 [[nodiscard]] const raft::GroupReadBarrier*
 find_barrier(const std::span<const raft::GroupReadBarrier> barriers,
              const raft::GroupId& group_id) noexcept {
@@ -564,9 +585,12 @@ ReplicatedIngestDatabase::shutdown_with(ReplicatedIngestDatabaseShutdownObserver
     return invalid("replicated database was moved from");
   if (impl_->shutdown_complete)
     return impl_->shutdown_status;
-  impl_->shutdown_status = impl_->runtime.shutdown();
-  if (observer != nullptr)
-    observer->on_shutdown_stage(ReplicatedIngestDatabaseShutdownStage::kRuntimeStopped);
+  if (observer != nullptr) {
+    DatabaseRuntimeShutdownObserver runtime_observer{*observer};
+    impl_->shutdown_status = impl_->runtime.shutdown(runtime_observer);
+  } else {
+    impl_->shutdown_status = impl_->runtime.shutdown();
+  }
   const common::Status closed = impl_->bootstrap_owner.close();
   if (impl_->shutdown_status.is_ok())
     impl_->shutdown_status = closed;

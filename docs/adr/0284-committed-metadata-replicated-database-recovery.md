@@ -39,8 +39,9 @@ Shutdown first drains and closes the replicated-ingest runtime and then releases
 first failure is retained across repeated shutdown calls.
 
 An optional shutdown observer is borrowed only for one synchronous `shutdown(observer)` call. It
-receives non-throwing callbacks after the runtime is stopped and after the root is released; repeated
-shutdown emits neither stage again and preserves the original status.
+receives non-throwing callbacks after the coordinator is released, after the runtime worker is
+stopped, and after the root is released; repeated shutdown emits no stage again and preserves the
+original status.
 
 An optional borrowed startup observer receives four synchronous, non-throwing callbacks on the
 opening thread after root ownership, catalog recovery, tablet-owner preparation, and asynchronous
@@ -89,8 +90,10 @@ four-case child matrix pauses after each of validated root ownership, catalog re
 preparation, and asynchronous runtime readiness. Every child dies by `SIGKILL`; the parent proves
 exact recovery, retry, and repeated reopen. Syscall-level startup cuts, remaining write stages,
 snapshot-install/compaction, and internal shutdown crash/syscall matrices, larger resident-set
-profiles, and broader TSan coverage remain deferred. A two-case shutdown matrix kills the process
-at each outer callback and proves exact reopen and retry.
+profiles, and broader TSan coverage remain deferred. A three-case shutdown matrix kills the process
+at each callback and proves exact reopen and retry. Its coordinator-release case first admits a real
+QUORUM_SYNC proposal without observing a response, then proves recovery is atomically pre-write or
+committed and the exact retry never duplicates rows.
 
 ## Affected invariants
 

@@ -58,9 +58,12 @@ pre-write or committed state, and an exact protocol retry converges without dupl
 identity. The outer replicated-database owner now exposes ordered synchronous, non-throwing startup
 observations for root ownership, catalog recovery, tablet preparation, and runtime readiness; the
 complete four-stage sequence has a real-process kill/reopen matrix. Syscall-level startup cuts,
-additional write stages, snapshot operations, and internal shutdown crash cuts remain deferred. The
-outer database's runtime-stopped and root-released shutdown stages have real-process kill/reopen
-coverage.
+additional write stages, and snapshot operations remain deferred. The runtime now reports
+synchronous coordinator-released and worker-stopped shutdown stages. The outer database maps both
+before reporting root release, and all three stages have real-process kill/reopen coverage. The
+coordinator-stage case drops an admitted proposal response owner before the kill and proves
+recovery permits only the atomic pre-write or committed state before exact retry. Worker-drain,
+extension-shutdown, and log-close syscall cuts remain deferred.
 
 ## Affected invariants
 

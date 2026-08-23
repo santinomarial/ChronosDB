@@ -57,7 +57,7 @@ public:
     ++count;
   }
 
-  std::array<ReplicatedIngestDatabaseShutdownStage, 2U> stages{};
+  std::array<ReplicatedIngestDatabaseShutdownStage, 3U> stages{};
   std::size_t count{};
   bool overflow{};
 };
@@ -391,7 +391,8 @@ TEST(ReplicatedIngestDatabaseTest, ReportsPackagedLifecycleStagesInOwnershipOrde
   EXPECT_EQ(shutdown_observer.count, shutdown_observer.stages.size());
   EXPECT_FALSE(shutdown_observer.overflow);
   EXPECT_EQ(shutdown_observer.stages,
-            (std::array{ReplicatedIngestDatabaseShutdownStage::kRuntimeStopped,
+            (std::array{ReplicatedIngestDatabaseShutdownStage::kCoordinatorReleased,
+                        ReplicatedIngestDatabaseShutdownStage::kRuntimeStopped,
                         ReplicatedIngestDatabaseShutdownStage::kRootReleased}));
   ASSERT_TRUE(database->shutdown(shutdown_observer).is_ok());
   EXPECT_EQ(shutdown_observer.count, shutdown_observer.stages.size());

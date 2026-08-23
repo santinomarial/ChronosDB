@@ -8,6 +8,7 @@
 #include "columnar/columnar_test_support.hpp"
 #include "ingest/ingest_test_support.hpp"
 
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <gtest/gtest.h>
@@ -21,6 +22,18 @@
 
 namespace chronos::service {
 namespace {
+
+class RecordingRuntimeShutdownObserver final : public ReplicatedIngestRuntimeShutdownObserver {
+public:
+  void on_shutdown_stage(const ReplicatedIngestRuntimeShutdownStage stage) noexcept override {
+    if (count < stages.size())
+      stages[count] = stage;
+    ++count;
+  }
+
+  std::array<ReplicatedIngestRuntimeShutdownStage, 2U> stages{};
+  std::size_t count{};
+};
 
 class TemporaryDirectory {
 public:
@@ -193,8 +206,14 @@ TEST(ReplicatedIngestRuntimeTest, OwnsCreateShutdownAndExactRecoveryComposition)
     ASSERT_TRUE(acknowledgement.has_value());
     EXPECT_EQ(acknowledgement->outcome, network::IngestOutcome::kApplied);
     EXPECT_EQ(acknowledgement->log_index, 1U);
-    EXPECT_TRUE(moved_owner.shutdown().is_ok());
-    EXPECT_TRUE(moved_owner.shutdown().is_ok());
+    RecordingRuntimeShutdownObserver observer;
+    EXPECT_TRUE(moved_owner.shutdown(observer).is_ok());
+    EXPECT_EQ(observer.count, observer.stages.size());
+    EXPECT_EQ(observer.stages,
+              (std::array{ReplicatedIngestRuntimeShutdownStage::kCoordinatorReleased,
+                          ReplicatedIngestRuntimeShutdownStage::kWorkerStopped}));
+    EXPECT_TRUE(moved_owner.shutdown(observer).is_ok());
+    EXPECT_EQ(observer.count, observer.stages.size());
     EXPECT_FALSE(moved_owner.is_running());
     EXPECT_EQ(moved_owner.runtime(), nullptr);
     EXPECT_EQ(moved_owner.coordinator(), nullptr);

@@ -7,11 +7,25 @@
 #include "chronos/raft/async_metadata_application.hpp"
 #include "chronos/service/replicated_ingest_coordinator.hpp"
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
 
 namespace chronos::service {
+
+enum class ReplicatedIngestRuntimeShutdownStage : std::uint8_t {
+  kCoordinatorReleased,
+  kWorkerStopped,
+};
+
+// Borrowed only for one synchronous shutdown(observer) call. The coordinator-release callback
+// precedes durable-worker drain; the worker-stopped callback follows log and extension shutdown.
+class ReplicatedIngestRuntimeShutdownObserver {
+public:
+  virtual ~ReplicatedIngestRuntimeShutdownObserver() = default;
+  virtual void on_shutdown_stage(ReplicatedIngestRuntimeShutdownStage stage) noexcept = 0;
+};
 
 struct ReplicatedIngestRuntimeConfig {
   raft::NodeId local_node_id{};
@@ -49,8 +63,10 @@ public:
   [[nodiscard]] ReplicatedIngestCoordinator* coordinator() noexcept;
   [[nodiscard]] bool is_running() const noexcept;
   [[nodiscard]] common::Status shutdown();
+  [[nodiscard]] common::Status shutdown(ReplicatedIngestRuntimeShutdownObserver& observer);
 
 private:
+  [[nodiscard]] common::Status shutdown_with(ReplicatedIngestRuntimeShutdownObserver* observer);
   class Impl;
   explicit ReplicatedIngestRuntime(std::unique_ptr<Impl> impl) noexcept;
   [[nodiscard]] static common::Result<ReplicatedIngestRuntime>
