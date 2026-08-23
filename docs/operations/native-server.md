@@ -31,6 +31,8 @@ use canonical ingest when an ambiguous response must be retried without duplicat
 and `SIGTERM` request orderly worker join, reactor shutdown, WAL drain, Raft close, and root-lock
 release. With native mutual TLS configured, `SIGHUP` transactionally reloads only its complete
 certificate, key, trust store, and principal authority; without that bundle it is a logged no-op.
+Successful reload diagnostics name the installed `generation`; failures name the unchanged
+`retained_generation`.
 Active configured subscriptions receive resumable server-shutdown termination while the reactor is
 still draining responses.
 

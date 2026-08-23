@@ -164,6 +164,19 @@ private:
   LogFormat format_;
 };
 
+void log_native_security_reload_failure(const DaemonLogger& logger,
+                                        const std::uint64_t retained_generation,
+                                        const std::string_view reason) {
+  const std::string retained = std::to_string(retained_generation);
+  const std::array fields{chronos::common::LogField{"retained_generation", retained},
+                          chronos::common::LogField{"native_transport", "tls"}};
+  std::string message{"native security reload failed retained_generation="};
+  message.append(retained);
+  message.append(": ");
+  message.append(reason);
+  logger.error("native_security_reload_failed", message, fields);
+}
+
 struct Options {
   ReactorBackend backend{ReactorBackend::kEpoll};
   std::array<std::uint8_t, 4> listen_address{127U, 0U, 0U, 1U};
@@ -1623,13 +1636,13 @@ int run_daemon(const int argc, const char* const argv[]) {
         logger.info("native_security_reload_ignored",
                     "native security reload ignored: mutual TLS is not configured");
       } else if (native_security_generation == std::numeric_limits<std::uint64_t>::max()) {
-        logger.error("native_security_reload_failed",
-                     "native security reload failed: generation is exhausted");
+        log_native_security_reload_failure(logger, native_security_generation,
+                                           "generation is exhausted");
       } else {
         auto replacement = load_native_server_security(*options);
         if (!replacement.has_value()) {
-          logger.error("native_security_reload_failed",
-                       "native security reload failed: " + replacement.error().to_string());
+          log_native_security_reload_failure(logger, native_security_generation,
+                                             replacement.error().to_string());
         } else {
           const std::uint64_t next_generation = native_security_generation + 1U;
           const std::string generation = std::to_string(next_generation);
@@ -1642,8 +1655,8 @@ int run_daemon(const int argc, const char* const argv[]) {
           const chronos::common::Status reloaded =
               reactor->reload_tls_security(std::move(replacement_config));
           if (!reloaded.is_ok()) {
-            logger.error("native_security_reload_failed",
-                         "native security reload failed: " + reloaded.to_string());
+            log_native_security_reload_failure(logger, native_security_generation,
+                                               reloaded.to_string());
           } else {
             native_principal_authority = std::move(replacement->authority);
             native_tls_credentials = std::move(replacement->credentials);

@@ -149,6 +149,7 @@ public:
     pid_ = ::fork();
     if (pid_ == 0) {
       static_cast<void>(::dup2(output[1], STDOUT_FILENO));
+      static_cast<void>(::dup2(output[1], STDERR_FILENO));
       ::close(output[0]);
       ::close(output[1]);
       ::execl(CHRONOSD_PATH, CHRONOSD_PATH, "--port", "0", "--data-dir", data_directory.c_str(),
@@ -719,14 +720,19 @@ struct CommandResult {
   std::string standard_error;
 };
 
-[[nodiscard]] CommandResult run_quorum_sync(const std::string& directory, const std::string& routes,
-                                            const std::string& certificate,
-                                            const std::string& private_key,
-                                            const std::string& trust_store,
-                                            const std::string& append_file,
-                                            const std::string_view suffix) {
-  const std::string stdout_path = directory + "/chronosctl-" + std::string{suffix} + ".out";
-  const std::string stderr_path = directory + "/chronosctl-" + std::string{suffix} + ".err";
+struct QuorumSyncInvocation {
+  std::string routes;
+  std::string certificate;
+  std::string private_key;
+  std::string trust_store;
+  std::string append_file;
+  std::string suffix;
+};
+
+[[nodiscard]] CommandResult run_quorum_sync(const std::string& directory,
+                                            const QuorumSyncInvocation& invocation) {
+  const std::string stdout_path = directory + "/chronosctl-" + invocation.suffix + ".out";
+  const std::string stderr_path = directory + "/chronosctl-" + invocation.suffix + ".err";
   const int standard_output =
       ::open(stdout_path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
   const int standard_error =
@@ -746,9 +752,10 @@ struct CommandResult {
     ::close(standard_error);
     ::execl(CHRONOSCTL_PATH, CHRONOSCTL_PATH, "quorum-sync", "--json", "--group",
             "91919191-9191-9191-9191-919191919191", "--initial-node", "1",
-            "--minimum-placement-epoch", "1", "--routes", routes.c_str(), "--tls-cert",
-            certificate.c_str(), "--tls-key", private_key.c_str(), "--tls-ca", trust_store.c_str(),
-            "--append-file", append_file.c_str(), "--timeout-ms", "5000", nullptr);
+            "--minimum-placement-epoch", "1", "--routes", invocation.routes.c_str(), "--tls-cert",
+            invocation.certificate.c_str(), "--tls-key", invocation.private_key.c_str(), "--tls-ca",
+            invocation.trust_store.c_str(), "--append-file", invocation.append_file.c_str(),
+            "--timeout-ms", "5000", nullptr);
     std::_Exit(127);
   }
   ::close(standard_output);
@@ -1132,20 +1139,48 @@ TEST(ChronosdProcessTest, PackagesMutualTlsQuorumSyncAndRotatesNativeSecurity) {
   ASSERT_FALSE(append_file.empty());
 
   const CommandResult applied =
-      run_quorum_sync(directory.path(), routes, fixture_directory + "/client.pem", client_key,
-                      trust_store, append_file, "applied");
+      run_quorum_sync(directory.path(), {.routes = routes,
+                                         .certificate = fixture_directory + "/client.pem",
+                                         .private_key = client_key,
+                                         .trust_store = trust_store,
+                                         .append_file = append_file,
+                                         .suffix = "applied"});
   EXPECT_EQ(applied.exit_code, 0) << applied.standard_error;
   EXPECT_TRUE(applied.standard_error.empty()) << applied.standard_error;
   EXPECT_NE(applied.standard_output.find("\"outcome\":\"APPLIED\""), std::string::npos)
       << applied.standard_output;
 
   const CommandResult retried =
-      run_quorum_sync(directory.path(), routes, fixture_directory + "/client.pem", client_key,
-                      trust_store, append_file, "retried");
+      run_quorum_sync(directory.path(), {.routes = routes,
+                                         .certificate = fixture_directory + "/client.pem",
+                                         .private_key = client_key,
+                                         .trust_store = trust_store,
+                                         .append_file = append_file,
+                                         .suffix = "retried"});
   EXPECT_EQ(retried.exit_code, 0) << retried.standard_error;
   EXPECT_TRUE(retried.standard_error.empty()) << retried.standard_error;
   EXPECT_NE(retried.standard_output.find("\"outcome\":\"MATCHING_RETRY\""), std::string::npos)
       << retried.standard_output;
+
+  ASSERT_TRUE(replace_exclusive_file(principals, "not a native principal configuration\n"));
+  ASSERT_TRUE(child.request_native_security_reload());
+  const std::string failed_reload = child.read_startup_line();
+  EXPECT_TRUE(
+      failed_reload.starts_with("chronosd: native security reload failed retained_generation=1:"))
+      << failed_reload;
+
+  const CommandResult retained_initial =
+      run_quorum_sync(directory.path(), {.routes = routes,
+                                         .certificate = fixture_directory + "/client.pem",
+                                         .private_key = client_key,
+                                         .trust_store = trust_store,
+                                         .append_file = append_file,
+                                         .suffix = "failed-reload-retained-initial"});
+  EXPECT_EQ(retained_initial.exit_code, 0) << retained_initial.standard_error;
+  EXPECT_TRUE(retained_initial.standard_error.empty()) << retained_initial.standard_error;
+  EXPECT_NE(retained_initial.standard_output.find("\"outcome\":\"MATCHING_RETRY\""),
+            std::string::npos)
+      << retained_initial.standard_output;
 
   ASSERT_TRUE(replace_exclusive_file(
       principals, "CHRONOSDB_NATIVE_SERVER_PRINCIPALS_V1\n"
@@ -1161,8 +1196,12 @@ TEST(ChronosdProcessTest, PackagesMutualTlsQuorumSyncAndRotatesNativeSecurity) {
   EXPECT_EQ(reload, "native security reloaded generation=2") << reload;
 
   const CommandResult rejected_old_generation =
-      run_quorum_sync(directory.path(), routes, fixture_directory + "/client.pem", client_key,
-                      fixture_directory + "/ca.pem", append_file, "old-generation-rejected");
+      run_quorum_sync(directory.path(), {.routes = routes,
+                                         .certificate = fixture_directory + "/client.pem",
+                                         .private_key = client_key,
+                                         .trust_store = fixture_directory + "/ca.pem",
+                                         .append_file = append_file,
+                                         .suffix = "old-generation-rejected"});
   EXPECT_NE(rejected_old_generation.exit_code, 0);
 
   const std::string rotated_routes = write_exclusive_file(
@@ -1173,13 +1212,50 @@ TEST(ChronosdProcessTest, PackagesMutualTlsQuorumSyncAndRotatesNativeSecurity) {
       fixture_directory + "/node2-key.pem", directory.path() + "/rotated-native-client-key.pem");
   ASSERT_FALSE(rotated_routes.empty());
   ASSERT_FALSE(rotated_client_key.empty());
-  const CommandResult rotated = run_quorum_sync(
-      directory.path(), rotated_routes, fixture_directory + "/node2.pem", rotated_client_key,
-      fixture_directory + "/cluster-ca.pem", append_file, "rotated");
+  const CommandResult rotated =
+      run_quorum_sync(directory.path(), {.routes = rotated_routes,
+                                         .certificate = fixture_directory + "/node2.pem",
+                                         .private_key = rotated_client_key,
+                                         .trust_store = fixture_directory + "/cluster-ca.pem",
+                                         .append_file = append_file,
+                                         .suffix = "rotated"});
   EXPECT_EQ(rotated.exit_code, 0) << rotated.standard_error;
   EXPECT_TRUE(rotated.standard_error.empty()) << rotated.standard_error;
   EXPECT_NE(rotated.standard_output.find("\"outcome\":\"MATCHING_RETRY\""), std::string::npos)
       << rotated.standard_output;
+
+  ASSERT_TRUE(replace_exclusive_file(
+      principals, "CHRONOSDB_NATIVE_SERVER_PRINCIPALS_V1\n"
+                  "7=30aa529b935af809084e419d00f39bce2bf5641da93d7bd9ad71e67bc21de368\n"));
+  ASSERT_TRUE(replace_exclusive_file(server_certificate,
+                                     read_text_file(fixture_directory + "/server.pem")));
+  ASSERT_TRUE(
+      replace_exclusive_file(server_key, read_text_file(fixture_directory + "/server-key.pem")));
+  ASSERT_TRUE(replace_exclusive_file(trust_store, read_text_file(fixture_directory + "/ca.pem")));
+  ASSERT_TRUE(child.request_native_security_reload());
+  const std::string repeated_reload = child.read_startup_line();
+  EXPECT_EQ(repeated_reload, "native security reloaded generation=3") << repeated_reload;
+
+  const CommandResult rejected_rotated_generation =
+      run_quorum_sync(directory.path(), {.routes = rotated_routes,
+                                         .certificate = fixture_directory + "/node2.pem",
+                                         .private_key = rotated_client_key,
+                                         .trust_store = fixture_directory + "/cluster-ca.pem",
+                                         .append_file = append_file,
+                                         .suffix = "rotated-generation-rejected"});
+  EXPECT_NE(rejected_rotated_generation.exit_code, 0);
+
+  const CommandResult restored =
+      run_quorum_sync(directory.path(), {.routes = routes,
+                                         .certificate = fixture_directory + "/client.pem",
+                                         .private_key = client_key,
+                                         .trust_store = fixture_directory + "/ca.pem",
+                                         .append_file = append_file,
+                                         .suffix = "restored-generation"});
+  EXPECT_EQ(restored.exit_code, 0) << restored.standard_error;
+  EXPECT_TRUE(restored.standard_error.empty()) << restored.standard_error;
+  EXPECT_NE(restored.standard_output.find("\"outcome\":\"MATCHING_RETRY\""), std::string::npos)
+      << restored.standard_output;
   EXPECT_EQ(child.stop(), 0);
 }
 

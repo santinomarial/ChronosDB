@@ -70,7 +70,8 @@ trust-store, and client-principal bundle on epoll; empty or partial bundles, uns
 certificates, and TLS on io_uring fail closed. Invalid options and unavailable reactor backends fail
 before the startup banner. Worker publication or reactor failures terminate the process with a
 nonzero status. A native reload failure is observable but nonterminal because the complete previous
-generation remains installed; a successful reload reports its monotonic process-local generation.
+generation remains installed; its diagnostic names that `retained_generation`. A successful reload
+reports its monotonic process-local generation.
 
 The startup banner reports `data_plane=configured` or `data_plane=replicated` only after the
 corresponding database path and reactor both start; otherwise the explicit unconfigured mode
@@ -100,12 +101,14 @@ requires an exact matching retry. Reopening each root then proves that all three
 recover the same two visible rows and one retry entry. A packaged-client gate starts `chronosd`
 with mutual TLS and a strict client-principal allowlist, invokes the actual `chronosctl` binary, and
 requires APPLIED followed by MATCHING_RETRY for the same canonical append. It then rotates the
-server certificate/key, trust store, and allowlist through `SIGHUP`, rejects the old client
-generation, and requires the new generation to receive the same MATCHING_RETRY. Reactor coverage
-separately proves failed reload rollback, incomplete-handshake closure, and established-session
-continuity. It deliberately does not claim native multi-group query failover: SELECT still needs one
-daemon to lead every barrier group because client leader routing and remote fragments are not
-packaged. On non-Linux hosts,
+server certificate/key, trust store, and allowlist through `SIGHUP`. The process matrix rejects a
+malformed generation while the old client still receives MATCHING_RETRY, installs generation two,
+then restores the original bundle as generation three. It rejects each superseded client and
+requires each installed generation to receive the same MATCHING_RETRY. Reactor coverage separately
+proves failed reload rollback, incomplete-handshake closure, and established-session continuity. It
+deliberately does not claim native multi-group query failover: SELECT still needs one daemon to lead
+every barrier group because client leader routing and remote fragments are not packaged. On non-
+Linux hosts,
 daemon/service build and durable-root initialization run, but the socket subprocess is not
 registered because the server reactor is Linux-only.
 

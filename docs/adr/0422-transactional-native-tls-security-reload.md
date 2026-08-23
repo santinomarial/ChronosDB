@@ -41,8 +41,10 @@ flag. The main reactor owner consumes that flag, rereads the complete native pri
 bundle through the descriptor-bound ADR 0421 path, and invokes the transactional replacement. It
 publishes `native_security_reloaded` with a monotonic process-local generation only after success.
 A failed read, parse, context construction, or swap logs `native_security_reload_failed` and keeps
-the prior generation serving. `SIGHUP` without configured native mutual TLS is an explicit logged
-no-op. `SIGINT` and `SIGTERM` retain their existing shutdown meaning.
+the prior generation serving. The failure event reports `retained_generation`, never the rejected
+candidate number, so automation can distinguish rollback from publication. `SIGHUP` without
+configured native mutual TLS is an explicit logged no-op. `SIGINT` and `SIGTERM` retain their
+existing shutdown meaning.
 
 The daemon transfers ownership of the replacement authority only after the reactor accepts its
 borrow. The successful reactor operation has already closed every incomplete handshake, so the old
@@ -78,9 +80,12 @@ The Linux reactor test establishes one authenticated session, admits an incomple
 rejects a malformed replacement without changing either connection, then installs a new authority.
 It proves the incomplete handshake closes, the established session still dispatches with its old
 principal, and a new session dispatches with the replacement principal while exact reload metrics
-advance. The Linux packaged-process gate rotates server certificate/key, trust store, and principal
-authority on `SIGHUP`, rejects the old client generation, and completes an exact matching retry
-through the new generation. Portable builds retain the explicit non-epoll boundary.
+advance. The Linux packaged-process gate first stages a malformed authority, observes a failure
+naming the retained generation, and proves that generation still completes an exact matching
+retry. It then rotates server certificate/key, trust store, and principal authority twice, requires
+monotonic generations two and three, rejects each superseded client generation, and completes an
+exact matching retry through each installed generation. Portable builds retain the explicit non-
+epoll boundary.
 
 ## References
 
