@@ -1177,6 +1177,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/raft/multi_raft_header_self_contained.cpp
     tests/raft/multi_raft_test.cpp
     tests/raft/metadata_header_self_contained.cpp
+    tests/raft/metadata_policy_transition_test.cpp
     tests/raft/metadata_test.cpp
     tests/raft/metadata_codec_header_self_contained.cpp
     tests/raft/metadata_codec_test.cpp

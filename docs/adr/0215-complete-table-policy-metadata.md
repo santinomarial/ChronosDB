@@ -61,8 +61,13 @@ partial state from becoming visible after restart.
 Focused codec tests round-trip every command kind deterministically. State tests require schema
 precedence, derived legacy retention, consecutive indexes, and rejection of divergent partial
 updates. Durable-runtime tests close and reopen the physical Raft log and compare recovered policy
-fields. Golden fixtures, fuzzing, allocation/crash injection, and large-catalog qualification remain
-in the Phase 18 ledger.
+fields. A twelve-case real-filesystem matrix now places legacy-before-schema migration, first
+complete policy, complete-policy replacement, and matching legacy projection on either side of a
+Metadata Application Snapshot boundary, then commits each divergent legacy field in the retained
+suffix. Accepted schedules reconstruct the exact complete and derived legacy authorities after
+reopen; divergent suffixes poison live application and fail restart recovery closed. Golden
+fixtures, fuzzing, allocation/crash injection, and large-catalog qualification remain in the Phase
+18 ledger.
 
 ## Migration or rollback considerations
 

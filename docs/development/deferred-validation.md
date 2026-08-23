@@ -548,8 +548,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   generated canonical minors with valid nested payloads, lowered caller limits, checksum-repaired
   mutations, truncation, and stable semantic re-encoding; the standard deterministic smoke runs it
   in CI. Add sustained fuzz campaigns, repeated and broader cross-stage injected-I/O combinations,
-  policy-transition matrices, cleanup metrics, and physical power-loss qualification. The structural
-  codec now exact-round-trips its 65,536-entry maximum, rejects entry 65,537 and lowered limits, and
+  cleanup metrics, and physical power-loss qualification. A twelve-case real-filesystem policy
+  matrix now crosses legacy migration, complete replacement, matching projections, and divergent
+  suffixes over the application-snapshot boundary. The structural codec now exact-round-trips its
+  65,536-entry maximum, rejects entry 65,537 and lowered limits, and
   has local-only encode/decode measurement shapes through that maximum. The same maximum now crosses
   exact real-filesystem install, retry, teardown, reopen, and recovery, with local-only synchronized
   install and checked restart-recovery benchmark shapes at three catalog sizes. Device-qualified

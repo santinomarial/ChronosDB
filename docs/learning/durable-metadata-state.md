@@ -118,6 +118,14 @@ recovery including lock acquisition, discovery, and decode, at the same three en
 shapes characterize one host and filesystem only; they do not claim device-qualified durability or
 production throughput.
 
+Table-policy recovery preserves command order rather than retaining only the last map value. A
+twelve-case filesystem matrix moves legacy partial retention, schema installation, first and
+replacement complete policies, and matching legacy projections across the application-snapshot
+boundary. It also commits suffix records that diverge independently in system-history or retry
+retention. Valid schedules reopen to the exact latest complete policy and its derived legacy view;
+invalid suffixes poison the live application owner, leave its applied index at the snapshot
+boundary, and fail a fresh snapshot-plus-suffix recovery closed.
+
 Obsolete application snapshots are reclaimed only against the current durable Raft boundary. The
 owner exact-matches its adopted snapshot, revalidates that file, removes every older or future
 canonical final, and synchronizes the directory. With a zero Raft snapshot it can remove all

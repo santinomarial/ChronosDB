@@ -59,6 +59,9 @@ new command kind/version; existing bytes are never reinterpreted.
 
 Only committed entries apply, strictly by Raft log index. The metadata state machine pre-decodes the
 available committed batch, applies it, and only afterward durably advances the group's applied index.
-Until a metadata application snapshot is defined, recovery starts from empty state and replays the
-complete retained committed log, including Schema Definition v1 entries; a compacted prefix is
-rejected.
+Recovery starts from an exact installed Metadata Application Snapshot when Raft names a compacted
+boundary, then replays only the committed retained suffix; without a snapshot it starts from empty
+state and replays the complete retained committed log. A real-filesystem transition matrix crosses
+legacy-before-schema migration, complete-policy replacement, and matching or divergent legacy
+projections over that boundary. Divergent committed suffixes fail both live application and restart
+recovery closed without replacing the complete policy authority.
