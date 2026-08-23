@@ -81,3 +81,9 @@ Dedicated test-only allocator sweeps fail every observed encoder allocation and 
 entry-container, and payload allocation owned by both minor-version decoders. Each failure must
 return `RESOURCE_EXHAUSTED`; the first non-failing retry must reproduce the canonical bytes or exact
 decoded snapshot, respectively.
+
+The structure-aware ASan/UBSan libFuzzer target feeds the decoder raw caller-bounded bytes and both
+generated canonical minors, then exercises exact round trips, lower caller limits, single-byte
+mutations with independently refreshed entry/header/file CRC32C layers, and truncation. Successful
+hostile decodes must stabilize after semantic re-encoding; the bounded CI smoke is not a sustained
+fuzz campaign.

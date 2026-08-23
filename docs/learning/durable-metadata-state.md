@@ -99,6 +99,13 @@ select every allocation made while encoding each minor and while decoding its vo
 container, and owned payloads. Every selected failure is `RESOURCE_EXHAUSTED`; a retry without that
 failure reconstructs the exact snapshot, so no partially decoded state escapes.
 
+Structure-aware fuzzing crosses the checksum gates rather than relying only on random bytes to do
+so. It generates valid minor-0 and minor-1 snapshots with decodable nested commands and bindings,
+mutates any byte, optionally refreshes entry/header/file checksums, truncates at input-selected
+boundaries, and checks lowered caller limits. Any hostile input that decodes must converge to stable
+canonical bytes after semantic re-encoding. CI runs a deterministic sanitizer-backed smoke; longer
+campaigns remain a separate qualification record.
+
 Obsolete application snapshots are reclaimed only against the current durable Raft boundary. The
 owner exact-matches its adopted snapshot, revalidates that file, removes every older or future
 canonical final, and synchronizes the directory. With a zero Raft snapshot it can remove all

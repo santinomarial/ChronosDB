@@ -544,9 +544,12 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   authorized repair, exact orphan adoption, and a second reopen. Compiler-independent minor-0 and
   minor-1 golden fixtures now pin complete format bytes in both directions. Exhaustive codec
   allocator sweeps cover every observed encode/decode allocation for both minors and require exact
-  retry after `RESOURCE_EXHAUSTED`. Add fuzzing, repeated and broader cross-stage injected-I/O
-  combinations, policy-transition matrices, cleanup metrics, physical power-loss qualification, and
-  large-catalog limits/measurements.
+  retry after `RESOURCE_EXHAUSTED`. A structure-aware ASan/UBSan libFuzzer target combines raw bytes,
+  generated canonical minors with valid nested payloads, lowered caller limits, checksum-repaired
+  mutations, truncation, and stable semantic re-encoding; the standard deterministic smoke runs it
+  in CI. Add sustained fuzz campaigns, repeated and broader cross-stage injected-I/O combinations,
+  policy-transition matrices, cleanup metrics, physical power-loss qualification, and large-catalog
+  limits/measurements.
 - Extend the implemented committed-only tablet command application and full retained-log rebuild
   with crash injection around publication/applied-index persistence. Extend the implemented durable
   application-snapshot creation/compaction plus prefix/suffix recovery with mismatch/fault matrices,

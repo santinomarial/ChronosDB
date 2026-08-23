@@ -48,9 +48,12 @@ complete minor-0 and minor-1 bytes, including membership, application SHA-256 id
 alignment, nested-payload CRC32C, header CRC32C, and whole-file CRC32C; production encoding and
 decoding must match both. Exhaustive test-only allocator sweeps fail every observed minor-0 and
 minor-1 encode/decode allocation, require `RESOURCE_EXHAUSTED`, and reach an exact successful retry.
-ADRs 0267–0270 now cover durable installation, process crash points, owned recovery/compaction,
-physical-log reclamation, and obsolete snapshot reclamation. Fuzzing and large-catalog
-qualification remain follow-up work.
+A structure-aware ASan/UBSan libFuzzer target covers raw hostile bytes, generated canonical minors,
+valid nested commands/bindings, caller-limit rejection, checksum-repaired mutation, truncation, and
+stable semantic re-encoding; the deterministic bounded smoke runs in CI. ADRs 0267–0270 now cover
+durable installation, process crash points, owned recovery/compaction, physical-log reclamation, and
+obsolete snapshot reclamation. Sustained fuzz campaigns and large-catalog qualification remain
+follow-up work.
 
 Invariants 1, 4–6, 8, 10, 11, 14, and 18 apply.
 

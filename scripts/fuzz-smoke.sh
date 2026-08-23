@@ -30,6 +30,7 @@ targets=(
   chronos_byte_reader_fuzz
   chronos_wal_codec_fuzz
   chronos_raft_transport_fuzz
+  chronos_metadata_snapshot_fuzz
   chronos_network_protocol_fuzz
   chronos_resume_token_fuzz
   chronos_multi_tablet_subscription_checkpoint_fuzz
