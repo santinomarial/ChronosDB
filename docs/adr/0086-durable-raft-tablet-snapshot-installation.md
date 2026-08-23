@@ -76,4 +76,6 @@ The storage owner now exposes process-local saturating cleanup metrics for synch
 removal and Raft-authoritative reclamation, and the composed tablet state machine forwards them only
 while it owns snapshot storage. A thirteen-case reclamation fault matrix covers every authoritative
 preflight, directory enumeration, ordered obsolete-file unlink, and final directory sync under both
-nonzero and zero authority; exact retry and reopen converge from every partial namespace change.
+nonzero and zero authority; exact retry and reopen converge from every partial namespace change. An
+eleven-schedule `SIGKILL` matrix stops after enumeration, each unlink, directory sync, and success
+release, then proves exact retry and repeated-reopen convergence from the completed deletion prefix.

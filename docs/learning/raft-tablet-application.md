@@ -154,6 +154,12 @@ zero-authority cases expose only the deletion prefix already completed. Every fa
 usable, its failure-only metrics do not claim unsynchronized removals, and retry plus reopen
 converges from the observed namespace.
 
+A separate eleven-schedule process matrix stops reclamation after enumeration, each completed
+unlink, the directory durability boundary, and success release for both middle and zero authority.
+Public reopen sees exactly that deletion prefix; retry and a second reopen converge without deleting
+the middle authority or retaining an orphan when no authority exists. This establishes process-
+restart behavior while leaving power-loss and storage-device qualification separate.
+
 ## Complexity and likely interview questions
 
 Application is linear in committed commands plus decoded column bytes. Retry lookup is `O(log N)`

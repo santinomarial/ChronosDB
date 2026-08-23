@@ -1760,6 +1760,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/ingest/tablet_movement_snapshot_handoff_header_self_contained.cpp
     tests/ingest/tablet_movement_snapshot_handoff_test.cpp
     tests/ingest/tablet_snapshot_install_crash_matrix_test.cpp
+    tests/ingest/tablet_snapshot_reclamation_crash_matrix_test.cpp
     tests/ingest/tablet_state_header_self_contained.cpp
     tests/ingest/tablet_state_test.cpp
   )

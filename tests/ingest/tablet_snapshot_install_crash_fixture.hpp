@@ -36,10 +36,11 @@ template <typename Identifier> [[nodiscard]] inline Identifier crash_id(const st
   return crash_id<schema::TabletId>(std::byte{5U});
 }
 
-[[nodiscard]] inline RaftTabletApplicationSnapshot crash_application_snapshot() {
-  raft::SnapshotMetadata metadata{.last_included_index = 9U,
-                                  .last_included_term = 4U,
-                                  .manifest_generation = 7U,
+[[nodiscard]] inline RaftTabletApplicationSnapshot
+crash_application_snapshot(const raft::LogIndex included = 9U) {
+  raft::SnapshotMetadata metadata{.last_included_index = included,
+                                  .last_included_term = included == 9U ? 4U : 5U,
+                                  .manifest_generation = included == 9U ? 7U : included,
                                   .part_set_checksum = {},
                                   .configuration_index = 6U,
                                   .voters = {1U, 2U, 3U}};

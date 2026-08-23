@@ -18,6 +18,22 @@ inline constexpr std::string_view kAfterApplicationDirectorySync =
 inline constexpr std::string_view kAfterRaftStateWrite = "after_raft_state_write";
 inline constexpr std::string_view kAfterRaftStateSync = "after_raft_state_sync";
 inline constexpr std::string_view kAfterSuccessRelease = "after_success_release";
+inline constexpr std::string_view kAfterApplicationAuthoritativeReclamationList =
+    "after_application_authoritative_reclamation_list";
+inline constexpr std::string_view kAfterApplicationAuthoritativeReclamationUnlink =
+    "after_application_authoritative_reclamation_unlink";
+inline constexpr std::string_view kAfterApplicationAuthoritativeReclamationDirectorySync =
+    "after_application_authoritative_reclamation_directory_sync";
+inline constexpr std::string_view kAfterApplicationAuthoritativeReclamationSuccess =
+    "after_application_authoritative_reclamation_success";
+inline constexpr std::string_view kAfterApplicationOrphanReclamationList =
+    "after_application_orphan_reclamation_list";
+inline constexpr std::string_view kAfterApplicationOrphanReclamationUnlink =
+    "after_application_orphan_reclamation_unlink";
+inline constexpr std::string_view kAfterApplicationOrphanReclamationDirectorySync =
+    "after_application_orphan_reclamation_directory_sync";
+inline constexpr std::string_view kAfterApplicationOrphanReclamationSuccess =
+    "after_application_orphan_reclamation_success";
 
 } // namespace chronos::ingest::test
 
