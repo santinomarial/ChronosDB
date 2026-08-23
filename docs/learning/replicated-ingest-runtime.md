@@ -49,6 +49,12 @@ catalog activation can therefore rebuild predecessor rows and retries before a l
 command rotates the active generation. A second reopen must reproduce both schema-bound generations
 and keep an exact successor retry row-neutral.
 
+Startup also treats external group voters as the base configuration, not as permission to overwrite
+retained consensus history. A committed joint entry is re-derived before application admission. The
+owner can therefore reopen with both old and new majorities active, preserve tablet publication,
+finish the final membership entry after a new joint election, align committed placement, and reopen
+again under the derived stable voters.
+
 The separate `ReplicatedIngestService` borrows the coordinator and queue pair. It must be destroyed
 or drained before this owner shuts down; the eventual packaged lifecycle owns that ordering.
 

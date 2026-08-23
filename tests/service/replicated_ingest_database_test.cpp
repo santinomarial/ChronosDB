@@ -87,6 +87,10 @@ private:
   return {{metadata_group(), {1U}}, {tablet_group(), {1U}}};
 }
 
+[[nodiscard]] std::vector<raft::RaftGroupConfiguration> joint_groups() {
+  return {{metadata_group(), {1U}}, {tablet_group(), {1U, 2U}}};
+}
+
 [[nodiscard]] std::vector<std::byte> command(std::shared_ptr<const schema::TableSchema> schema,
                                              std::vector<columnar::OwnedColumnVector> columns,
                                              const std::uint8_t request_seed) {
@@ -377,6 +381,171 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsRetainedSchemaLineageAfterCommittedCa
   ASSERT_TRUE(retry_acknowledgement.has_value());
   EXPECT_EQ(retry_acknowledgement->outcome, network::IngestOutcome::kMatchingRetry);
   EXPECT_EQ(retry_acknowledgement->log_index, 3U);
+  ASSERT_TRUE(repeated->shutdown().is_ok());
+}
+
+TEST(ReplicatedIngestDatabaseTest, ReopensAndCompletesACommittedJointReconfiguration) {
+  TemporaryDirectory directory;
+  runtime::DatabaseBootstrapConfig bootstrap_config{.database_root = directory.path().string(),
+                                                    .new_database = descriptor()};
+  auto bootstrap = runtime::DatabaseBootstrap::open_or_create(bootstrap_config);
+  ASSERT_TRUE(bootstrap.has_value()) << bootstrap.error().to_string();
+  auto configured = initial_runtime_config(*bootstrap);
+  configured.groups = joint_groups();
+  auto initial = ReplicatedIngestRuntime::create_new(std::move(configured));
+  ASSERT_TRUE(initial.has_value()) << initial.error().to_string();
+
+  auto metadata_election =
+      initial->runtime()->try_submit({{metadata_group(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(metadata_election.has_value()) << metadata_election.error().to_string();
+  ASSERT_TRUE(metadata_election->wait().has_value());
+  const raft::ProposeOperation schema{
+      raft::kRaftSchemaDefinitionEntryType,
+      raft::encode_schema_definition_v1(
+          {.name = "events", .quoted = false, .schema = columnar::test::batch_schema()})
+          .value()};
+  const raft::ProposeOperation policy{
+      raft::kRaftMetadataCommandEntryType,
+      raft::encode_metadata_command_v1(
+          raft::TablePolicyMetadata{columnar::test::batch_schema()->table_id(), 1'000'000'000LL,
+                                    86'400'000'000'000LL, 86'400'000'000'000LL, 0LL, 8U})
+          .value()};
+  const raft::ProposeOperation placement{
+      raft::kRaftMetadataCommandEntryType,
+      raft::encode_metadata_command_v1(
+          raft::TabletPlacementMetadata{
+              columnar::test::batch_schema()->table_id(), tablet_id(), 1U, {1U, 2U}, 1U})
+          .value()};
+  const raft::ProposeOperation binding{
+      raft::kRaftTabletGroupBindingEntryType,
+      raft::encode_tablet_group_binding_v1({tablet_id(), tablet_group()}).value()};
+  auto metadata = initial->runtime()->try_submit({{metadata_group(), schema},
+                                                  {metadata_group(), policy},
+                                                  {metadata_group(), placement},
+                                                  {metadata_group(), binding}});
+  ASSERT_TRUE(metadata.has_value()) << metadata.error().to_string();
+  ASSERT_TRUE(metadata->wait().has_value());
+
+  auto tablet_election =
+      initial->runtime()->try_submit({{tablet_group(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(tablet_election.has_value()) << tablet_election.error().to_string();
+  ASSERT_TRUE(tablet_election->wait().has_value());
+  auto vote = initial->runtime()->try_submit(
+      {{tablet_group(), raft::ReceiveOperation{2U, raft::RequestVoteResponse{1U, true}}}});
+  ASSERT_TRUE(vote.has_value()) << vote.error().to_string();
+  ASSERT_TRUE(vote->wait().has_value());
+  auto proposed = initial->runtime()->try_submit(
+      {{tablet_group(), raft::ProposeOperation{ingest::kRaftColumnarAppendEntryType, command()}}});
+  ASSERT_TRUE(proposed.has_value()) << proposed.error().to_string();
+  ASSERT_TRUE(proposed->wait().has_value());
+  auto replicated = initial->runtime()->try_submit(
+      {{tablet_group(),
+        raft::ReceiveOperation{
+            2U, raft::AppendEntriesResponse{.term = 1U, .success = true, .match_index = 1U}}}});
+  ASSERT_TRUE(replicated.has_value()) << replicated.error().to_string();
+  ASSERT_TRUE(replicated->wait().has_value());
+  auto before_joint = initial->tablet_application()->snapshot(tablet_group());
+  ASSERT_TRUE(before_joint.has_value()) << before_joint.error().to_string();
+  EXPECT_EQ(before_joint->visible_row_count(), 2U);
+
+  auto joint = initial->runtime()->try_submit(
+      {{tablet_group(), raft::BeginMembershipChangeOperation{{1U}}}});
+  ASSERT_TRUE(joint.has_value()) << joint.error().to_string();
+  ASSERT_TRUE(joint->wait().has_value());
+  replicated = initial->runtime()->try_submit(
+      {{tablet_group(),
+        raft::ReceiveOperation{
+            2U, raft::AppendEntriesResponse{.term = 1U, .success = true, .match_index = 2U}}}});
+  ASSERT_TRUE(replicated.has_value()) << replicated.error().to_string();
+  ASSERT_TRUE(replicated->wait().has_value());
+  ASSERT_TRUE(initial->shutdown().is_ok());
+  ASSERT_TRUE(bootstrap->close().is_ok());
+
+  auto database = ReplicatedIngestDatabase::open_existing(
+      {.bootstrap = bootstrap_config, .groups = joint_groups()});
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  auto recovered = database->ingest_runtime()->tablet_application()->snapshot(tablet_group());
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  EXPECT_EQ(recovered->visible_row_count(), 2U);
+  EXPECT_EQ(recovered->retry_entry_count(), 1U);
+  auto observed = database->ingest_runtime()->runtime()->try_submit(
+      {{tablet_group(), raft::ObserveGroupOperation{}}});
+  ASSERT_TRUE(observed.has_value()) << observed.error().to_string();
+  auto observation = observed->wait();
+  ASSERT_TRUE(observation.has_value()) << observation.error().to_string();
+  ASSERT_EQ(observation->size(), 1U);
+  const auto& joint_observation = observation->front().observation;
+  if (!joint_observation.has_value()) {
+    ADD_FAILURE() << "expected recovered joint-group observation";
+    return;
+  }
+  EXPECT_TRUE(joint_observation->joint_membership_active);
+  EXPECT_TRUE(joint_observation->joint_membership_can_finalize);
+  EXPECT_EQ(joint_observation->joint_old_voters, (std::vector<raft::NodeId>{1U, 2U}));
+  EXPECT_EQ(joint_observation->joint_new_voters, (std::vector<raft::NodeId>{1U}));
+
+  tablet_election = database->ingest_runtime()->runtime()->try_submit(
+      {{tablet_group(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(tablet_election.has_value()) << tablet_election.error().to_string();
+  ASSERT_TRUE(tablet_election->wait().has_value());
+  vote = database->ingest_runtime()->runtime()->try_submit(
+      {{tablet_group(), raft::ReceiveOperation{2U, raft::RequestVoteResponse{2U, true}}}});
+  ASSERT_TRUE(vote.has_value()) << vote.error().to_string();
+  ASSERT_TRUE(vote->wait().has_value());
+  auto finalized = database->ingest_runtime()->runtime()->try_submit(
+      {{tablet_group(), raft::FinalizeMembershipChangeOperation{}}});
+  ASSERT_TRUE(finalized.has_value()) << finalized.error().to_string();
+  ASSERT_TRUE(finalized->wait().has_value());
+  replicated = database->ingest_runtime()->runtime()->try_submit(
+      {{tablet_group(),
+        raft::ReceiveOperation{
+            2U, raft::AppendEntriesResponse{.term = 2U, .success = true, .match_index = 3U}}}});
+  ASSERT_TRUE(replicated.has_value()) << replicated.error().to_string();
+  ASSERT_TRUE(replicated->wait().has_value());
+
+  metadata_election = database->ingest_runtime()->runtime()->try_submit(
+      {{metadata_group(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(metadata_election.has_value()) << metadata_election.error().to_string();
+  ASSERT_TRUE(metadata_election->wait().has_value());
+  const raft::ProposeOperation final_placement{
+      raft::kRaftMetadataCommandEntryType,
+      raft::encode_metadata_command_v1(
+          raft::TabletPlacementMetadata{
+              columnar::test::batch_schema()->table_id(), tablet_id(), 2U, {1U}, 1U})
+          .value()};
+  metadata =
+      database->ingest_runtime()->runtime()->try_submit({{metadata_group(), final_placement}});
+  ASSERT_TRUE(metadata.has_value()) << metadata.error().to_string();
+  ASSERT_TRUE(metadata->wait().has_value());
+  ASSERT_TRUE(database->ingest_runtime()->coordinator()->admit(request()).is_ok());
+  auto retry_response = await_response(*database->ingest_runtime());
+  auto acknowledgement =
+      network::decode_quorum_sync_ingest_acknowledgement(retry_response.frame.payload);
+  ASSERT_TRUE(acknowledgement.has_value());
+  EXPECT_EQ(acknowledgement->outcome, network::IngestOutcome::kMatchingRetry);
+  EXPECT_EQ(acknowledgement->log_index, 4U);
+  ASSERT_TRUE(database->shutdown().is_ok());
+
+  auto repeated = ReplicatedIngestDatabase::open_existing(
+      {.bootstrap = bootstrap_config, .groups = joint_groups()});
+  ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
+  observed = repeated->ingest_runtime()->runtime()->try_submit(
+      {{tablet_group(), raft::ObserveGroupOperation{}}});
+  ASSERT_TRUE(observed.has_value()) << observed.error().to_string();
+  observation = observed->wait();
+  ASSERT_TRUE(observation.has_value()) << observation.error().to_string();
+  ASSERT_EQ(observation->size(), 1U);
+  const auto& stable_observation = observation->front().observation;
+  if (!stable_observation.has_value()) {
+    ADD_FAILURE() << "expected recovered stable-group observation";
+    return;
+  }
+  EXPECT_FALSE(stable_observation->joint_membership_active);
+  EXPECT_EQ(stable_observation->committed_voters, (std::vector<raft::NodeId>{1U}));
+  recovered = repeated->ingest_runtime()->tablet_application()->snapshot(tablet_group());
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  EXPECT_EQ(recovered->visible_row_count(), 2U);
+  EXPECT_EQ(recovered->retry_entry_count(), 1U);
   ASSERT_TRUE(repeated->shutdown().is_ok());
 }
 

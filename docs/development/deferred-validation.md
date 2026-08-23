@@ -527,9 +527,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   now exist. A strict authenticated peer route/identity parser and exact
   certificate/address/node authority also exist, and an owning transport runtime plus packaged
   daemon poll thread composes them with TLS contexts and randomized timers; add in-memory credential
-  loading, remote leader redirection, metadata/tablet snapshot process recovery,
-  joint-reconfiguration restart matrices, broader queue/disconnect failure matrices, and TSan
-  scheduling coverage.
+  loading, remote leader redirection, metadata/tablet snapshot process recovery, broader
+  reconfiguration matrices beyond the completed committed-joint removal restart, broader
+  queue/disconnect failure matrices, and TSan scheduling coverage.
 - Carry the implemented group-scoped read-barrier operation through authenticated production
   transport, request deadlines/coalescing, apply waiting, and exact tablet snapshot acquisition.
 - Extend the implemented metadata Raft codec/application/reopen path and complete-schema-definition

@@ -51,8 +51,12 @@ resident tablet under the root lock, recover its rows, and return a matching ret
 Schema-evolution recovery additionally commits a predecessor-schema write, activates its direct
 successor, reconstructs the complete lineage on reopen, preserves the predecessor generation, then
 applies the successor and proves both generations plus the exact retry across another reopen. An
-omitted recovered resident group fails closed. Snapshot/crash/syscall matrices,
-joint-reconfiguration restart, multi-tablet scale, and TSan remain deferred.
+additional lifecycle commits one write under voters `{1,2}`, commits the joint removal `{1,2} ->
+{1}`, and restarts before finalization. Reopen reconstructs the rows, retry, old/new voter sets, and
+finalization eligibility; a new joint election finishes membership, committed placement advances to
+`{1}`, exact retry succeeds, and another reopen observes stable voter `{1}`. An omitted recovered
+resident group fails closed. Snapshot/crash/syscall matrices, multi-tablet scale, and broader TSan
+coverage remain deferred.
 
 ## Affected invariants
 
