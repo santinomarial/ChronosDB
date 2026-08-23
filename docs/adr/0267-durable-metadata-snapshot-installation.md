@@ -52,8 +52,8 @@ through exact install, owned load, idempotent retry, owner teardown, reopen, and
 recovery. Local-only real-time benchmark shapes measure fresh durable installation and checked
 restart recovery at 1,024, 16,384, and 65,536 entries without weakening synchronization; they are
 not device or production-throughput claims. ADR 0268 now composes application partial-write and
-post-rename directory-sync faults with later Raft write failures. Metadata snapshot reclamation
-fault injection is covered separately by ADR 0270.
+post-rename directory-sync faults with every later Raft record-write and data-sync failure shape.
+Metadata snapshot reclamation fault injection is covered separately by ADR 0270.
 
 Invariants 1, 2, 4–6, 8, 10, 11, 14, and 18 apply.
 

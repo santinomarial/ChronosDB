@@ -133,6 +133,9 @@ private:
 enum class MetadataCompactionRaftFault : std::uint8_t {
   kWriteBefore,
   kWritePrefixThenError,
+  kWriteAfter,
+  kDataSyncBefore,
+  kDataSyncAfter,
 };
 
 class MetadataCompactionRaftFaultSyscalls final : public io::detail::PosixSyscalls {
@@ -177,7 +180,12 @@ public:
       }
       return fail_ssize();
     }
-    return delegate_.pwrite(request);
+    const ssize_t result = delegate_.pwrite(request);
+    if (armed_ && fault_ == MetadataCompactionRaftFault::kWriteAfter && result >= 0 &&
+        static_cast<std::size_t>(result) == request.size) {
+      return fail_ssize();
+    }
+    return result;
   }
 
   int fstat(const int descriptor, struct stat* metadata) override {
@@ -189,7 +197,12 @@ public:
   }
 
   int fdatasync(const int descriptor) override {
-    return delegate_.fdatasync(descriptor);
+    if (armed_ && fault_ == MetadataCompactionRaftFault::kDataSyncBefore)
+      return fail();
+    const int result = delegate_.fdatasync(descriptor);
+    if (armed_ && fault_ == MetadataCompactionRaftFault::kDataSyncAfter && result == 0)
+      return fail();
+    return result;
   }
 
   int fsync(const int descriptor) override {

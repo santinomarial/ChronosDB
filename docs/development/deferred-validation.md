@@ -538,16 +538,17 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   and repeated-reopen convergence. Owned metadata compaction now has a ten-cut real-process matrix
   across all seven application-install transitions, the Raft record write/sync, and success release;
   it proves retained-log recovery before Raft authority, exact orphan adoption, required snapshot
-  recovery afterward, catalog reconstruction, and repeated-reopen convergence. A four-schedule
+  recovery afterward, catalog reconstruction, and repeated-reopen convergence. A ten-schedule
   cross-owner matrix also crosses application partial-write and post-rename directory-sync failures
-  with a pre-write or partial Raft record on retry, including strict partial-tail rejection,
-  authorized repair, exact orphan adoption, and a second reopen. Compiler-independent minor-0 and
-  minor-1 golden fixtures now pin complete format bytes in both directions. Exhaustive codec
+  with Raft pre-write, partial-write, ambiguous complete-write, and pre/post-data-sync errors. It
+  withholds both failed attempts, strictly repairs only the partial tail, adopts exact absent or
+  complete authority, and survives a second reopen. Compiler-independent minor-0 and minor-1 golden
+  fixtures now pin complete format bytes in both directions. Exhaustive codec
   allocator sweeps cover every observed encode/decode allocation for both minors and require exact
   retry after `RESOURCE_EXHAUSTED`. A structure-aware ASan/UBSan libFuzzer target combines raw bytes,
   generated canonical minors with valid nested payloads, lowered caller limits, checksum-repaired
   mutations, truncation, and stable semantic re-encoding; the standard deterministic smoke runs it
-  in CI. Add sustained fuzz campaigns, simultaneous and other non-cleanup cross-stage injected-I/O
+  in CI. Add sustained fuzz campaigns, simultaneous and other application-stage cross-owner
   combinations, cleanup metrics, and physical power-loss qualification. Repeated failure coverage
   now interrupts and cleans two consecutive application temporaries, then strictly rejects and
   explicitly repairs two consecutive partial Raft compaction records before exact orphan adoption

@@ -58,15 +58,18 @@ write, Raft sync, and successful return. Pre-Raft-authority images replay the re
 exact retry either installs the snapshot or adopts the immutable orphan left after rename;
 post-Raft-record images require and exact-match that application snapshot. Every schedule proves
 catalog reconstruction, retry convergence, and a second reopen. This is process-restart evidence,
-not physical power-loss qualification. A separate four-schedule injected-I/O matrix arms both
-owners, crosses application partial-write and post-rename directory-sync failures with either a
-pre-write or partial Raft record on the next attempt, and proves that the first owner failure
-prevents the second mutation. Reopen removes or adopts the exact application state; strict Raft
-recovery rejects a partial record, explicitly authorized tail repair restores the retained log, and
-an exact retry plus second reopen converge. Snapshot transfer, fuzzing, and large catalogs remain
-deferred. A repeated-failure test now interrupts two consecutive application temporaries and proves
-each following open removes the exact partial file, then interrupts two consecutive Raft compaction
-records and requires strict rejection plus explicit tail repair after each. The final retry adopts
+not physical power-loss qualification. A separate ten-schedule injected-I/O matrix arms both
+owners and crosses application partial-write and post-rename directory-sync failures with all five
+Raft persistence outcomes on the next attempt: pre-write error, partial record, complete write that
+reports `EIO`, and data-sync errors before or after the real sync. The first owner failure always
+prevents the second mutation. Reopen removes or adopts the exact application state; a clean retained
+log retries compaction, a partial record requires strict rejection and explicit repair, and every
+complete record reconstructs the matching compacted catalog without claiming that the failed call
+was acknowledged. Each schedule survives a second reopen. Snapshot transfer, fuzzing, and large
+catalogs remain deferred. A repeated-failure test now interrupts two consecutive application
+temporaries and proves each following open removes the exact partial file, then interrupts two
+consecutive Raft compaction records and requires strict rejection plus explicit tail repair after
+each. The final retry adopts
 the immutable application orphan, compacts Raft, reconstructs the catalog, and survives another
 reopen. An eight-schedule owner-reopen matrix now leaves an interrupted application temporary,
 fails cleanup before unlink or after unlink at directory sync, then leaves a partial Raft compaction

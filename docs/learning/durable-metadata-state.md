@@ -82,9 +82,13 @@ the same compaction call returns failure without touching Raft. Recovery cleans 
 adopts the exact final, reconstructs the catalog from the retained log, and retries while the Raft
 fault remains armed. A pre-write Raft error leaves a clean retained log; a prefix write followed by
 error leaves an incomplete final record that strict recovery rejects and explicit tail repair
-removes. Both paths retain the installed application orphan, withhold compaction success twice, and
-converge only when a later retry durably selects those exact bytes. This ordering is why the two
-owners can be recovered independently without allowing Raft to reference missing catalog state.
+removes. A complete write that reports `EIO`, plus data-sync errors before and after the real sync,
+withhold success but may leave a complete compacted record in the immediate restart image. Recovery
+accepts that record only after full validation and requires its exact application snapshot before
+reconstructing the catalog. The complete 2-by-5 matrix converges from each observed image and
+survives another reopen; it does not reinterpret a failed compaction as acknowledged durability or
+qualify power loss. This ordering is why the two owners can be recovered independently without
+allowing Raft to reference missing catalog state.
 
 Repeated failure does not weaken that convergence argument. A real-filesystem test performs two
 separate partial application-snapshot writes, reopening each time to remove the prior temporary,

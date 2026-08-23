@@ -64,25 +64,50 @@ struct MetadataCompactionMixedFailureCase {
   std::string_view name;
   bool application_snapshot_visible_after_first_failure;
   bool raft_tail_repair_required;
+  bool raft_authority_recovered;
 };
 
-constexpr std::array<MetadataCompactionMixedFailureCase, 4U> kMixedFailures{
+constexpr std::array<MetadataCompactionMixedFailureCase, 10U> kMixedFailures{
     MetadataCompactionMixedFailureCase{
         test::MetadataCompactionApplicationFault::kTemporaryPartialWrite,
         test::MetadataCompactionRaftFault::kWriteBefore, "temporary_partial_then_raft_write_before",
-        false, false},
+        false, false, false},
     MetadataCompactionMixedFailureCase{
         test::MetadataCompactionApplicationFault::kTemporaryPartialWrite,
         test::MetadataCompactionRaftFault::kWritePrefixThenError,
-        "temporary_partial_then_raft_partial", false, true},
+        "temporary_partial_then_raft_partial", false, true, false},
+    MetadataCompactionMixedFailureCase{
+        test::MetadataCompactionApplicationFault::kTemporaryPartialWrite,
+        test::MetadataCompactionRaftFault::kWriteAfter, "temporary_partial_then_raft_write_after",
+        false, false, true},
+    MetadataCompactionMixedFailureCase{
+        test::MetadataCompactionApplicationFault::kTemporaryPartialWrite,
+        test::MetadataCompactionRaftFault::kDataSyncBefore,
+        "temporary_partial_then_raft_data_sync_before", false, false, true},
+    MetadataCompactionMixedFailureCase{
+        test::MetadataCompactionApplicationFault::kTemporaryPartialWrite,
+        test::MetadataCompactionRaftFault::kDataSyncAfter,
+        "temporary_partial_then_raft_data_sync_after", false, false, true},
     MetadataCompactionMixedFailureCase{
         test::MetadataCompactionApplicationFault::kFinalDirectorySync,
         test::MetadataCompactionRaftFault::kWriteBefore, "directory_sync_then_raft_write_before",
-        true, false},
+        true, false, false},
     MetadataCompactionMixedFailureCase{
         test::MetadataCompactionApplicationFault::kFinalDirectorySync,
         test::MetadataCompactionRaftFault::kWritePrefixThenError,
-        "directory_sync_then_raft_partial", true, true},
+        "directory_sync_then_raft_partial", true, true, false},
+    MetadataCompactionMixedFailureCase{
+        test::MetadataCompactionApplicationFault::kFinalDirectorySync,
+        test::MetadataCompactionRaftFault::kWriteAfter, "directory_sync_then_raft_write_after",
+        true, false, true},
+    MetadataCompactionMixedFailureCase{
+        test::MetadataCompactionApplicationFault::kFinalDirectorySync,
+        test::MetadataCompactionRaftFault::kDataSyncBefore,
+        "directory_sync_then_raft_data_sync_before", true, false, true},
+    MetadataCompactionMixedFailureCase{
+        test::MetadataCompactionApplicationFault::kFinalDirectorySync,
+        test::MetadataCompactionRaftFault::kDataSyncAfter,
+        "directory_sync_then_raft_data_sync_after", true, false, true},
 };
 
 struct MetadataCompactionReopenFailureCase {
@@ -258,7 +283,10 @@ TEST_P(MetadataSnapshotCompactionMixedFailureTest,
   ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
   const RaftNode* recovered_node = runtime->find_group(test::metadata_crash_group_id());
   ASSERT_NE(recovered_node, nullptr);
-  EXPECT_EQ(recovered_node->persistent_state().snapshot.last_included_index, 0U);
+  EXPECT_EQ(recovered_node->persistent_state().snapshot.last_included_index,
+            failure.raft_authority_recovered ? 1U : 0U);
+  EXPECT_EQ(recovered_node->persistent_state().log.size(),
+            failure.raft_authority_recovered ? 0U : 1U);
   auto storage = MetadataSnapshotStorage::open_existing(
       test::metadata_compaction_storage_config(directory.path()));
   ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
@@ -271,13 +299,15 @@ TEST_P(MetadataSnapshotCompactionMixedFailureTest,
   std::optional<DurableMetadataStateMachine> metadata{std::move(*recovered)};
   expect_catalog(*metadata);
 
-  auto compacted = metadata->compact_applied_prefix(1U);
+  if (!failure.raft_authority_recovered) {
+    auto compacted = metadata->compact_applied_prefix(1U);
 
-  ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
-  EXPECT_TRUE(compacted->application_snapshot_already_present);
-  EXPECT_EQ(compacted->application_entries, 1U);
-  recovered_node = runtime->find_group(test::metadata_crash_group_id());
-  ASSERT_NE(recovered_node, nullptr);
+    ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
+    EXPECT_TRUE(compacted->application_snapshot_already_present);
+    EXPECT_EQ(compacted->application_entries, 1U);
+    recovered_node = runtime->find_group(test::metadata_crash_group_id());
+    ASSERT_NE(recovered_node, nullptr);
+  }
   EXPECT_EQ(recovered_node->persistent_state().snapshot, orphan->snapshot.raft_snapshot);
   auto reclaimed = metadata->reclaim_obsolete_snapshots();
   ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
