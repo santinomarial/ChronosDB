@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 #include <sys/stat.h>
 #include <vector>
 
@@ -14,6 +15,7 @@ namespace chronos::raft::test {
 inline constexpr std::size_t kMetadataCompactionPartialRecordBytes = 16U;
 
 enum class MetadataCompactionApplicationFault : std::uint8_t {
+  kPriorTemporaryUnlink,
   kTemporaryPartialWrite,
   kFinalDirectorySync,
 };
@@ -97,6 +99,10 @@ public:
   }
 
   int unlink_at(const int directory_descriptor, const char* name) override {
+    if (armed_ && fault_ == MetadataCompactionApplicationFault::kPriorTemporaryUnlink &&
+        std::string_view{name}.ends_with(".rmas.tmp")) {
+      return fail();
+    }
     return delegate_.unlink_at(directory_descriptor, name);
   }
 

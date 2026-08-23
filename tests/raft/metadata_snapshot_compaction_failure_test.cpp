@@ -7,6 +7,7 @@
 #include "raft/metadata_snapshot_compaction_fault.hpp"
 #include "raft/metadata_snapshot_install_crash_fixture.hpp"
 #include "raft/metadata_snapshot_storage_internal.hpp"
+#include "raft/raft_test_posix.hpp"
 
 #include <array>
 #include <cstddef>
@@ -84,6 +85,50 @@ constexpr std::array<MetadataCompactionMixedFailureCase, 4U> kMixedFailures{
         "directory_sync_then_raft_partial", true, true},
 };
 
+struct MetadataCompactionReopenFailureCase {
+  test::MetadataCompactionApplicationFault application_reopen_fault;
+  test::DurableIoFault raft_reopen_fault;
+  std::size_t raft_matching_calls_to_skip;
+  std::string_view name;
+  std::string_view expected_raft_operation;
+  bool application_temporary_removed;
+  bool raft_tail_removed;
+};
+
+constexpr std::array<MetadataCompactionReopenFailureCase, 8U> kReopenFailures{
+    MetadataCompactionReopenFailureCase{
+        test::MetadataCompactionApplicationFault::kPriorTemporaryUnlink,
+        test::DurableIoFault::kStat, 4U, "cleanup_unlink_then_repair_size_stat", "fstat file size",
+        false, false},
+    MetadataCompactionReopenFailureCase{
+        test::MetadataCompactionApplicationFault::kPriorTemporaryUnlink,
+        test::DurableIoFault::kTruncate, 0U, "cleanup_unlink_then_repair_truncate", "ftruncate",
+        false, true},
+    MetadataCompactionReopenFailureCase{
+        test::MetadataCompactionApplicationFault::kPriorTemporaryUnlink,
+        test::DurableIoFault::kFullSync, 0U, "cleanup_unlink_then_repair_file_sync",
+        "fsync regular file", false, true},
+    MetadataCompactionReopenFailureCase{
+        test::MetadataCompactionApplicationFault::kPriorTemporaryUnlink,
+        test::DurableIoFault::kDirectorySync, 0U, "cleanup_unlink_then_repair_directory_sync",
+        "fsync directory", false, true},
+    MetadataCompactionReopenFailureCase{
+        test::MetadataCompactionApplicationFault::kFinalDirectorySync, test::DurableIoFault::kStat,
+        4U, "cleanup_sync_then_repair_size_stat", "fstat file size", true, false},
+    MetadataCompactionReopenFailureCase{
+        test::MetadataCompactionApplicationFault::kFinalDirectorySync,
+        test::DurableIoFault::kTruncate, 0U, "cleanup_sync_then_repair_truncate", "ftruncate", true,
+        true},
+    MetadataCompactionReopenFailureCase{
+        test::MetadataCompactionApplicationFault::kFinalDirectorySync,
+        test::DurableIoFault::kFullSync, 0U, "cleanup_sync_then_repair_file_sync",
+        "fsync regular file", true, true},
+    MetadataCompactionReopenFailureCase{
+        test::MetadataCompactionApplicationFault::kFinalDirectorySync,
+        test::DurableIoFault::kDirectorySync, 0U, "cleanup_sync_then_repair_directory_sync",
+        "fsync directory", true, true},
+};
+
 void expect_catalog(const DurableMetadataStateMachine& metadata) {
   EXPECT_EQ(metadata.state().applied_index(), 1U);
   const ClusterNodeMetadata* const node = metadata.state().find_node(1U);
@@ -107,6 +152,9 @@ void expect_application_snapshot(const MetadataApplicationSnapshot& snapshot) {
 
 class MetadataSnapshotCompactionMixedFailureTest
     : public ::testing::TestWithParam<MetadataCompactionMixedFailureCase> {};
+
+class MetadataSnapshotCompactionReopenFailureTest
+    : public ::testing::TestWithParam<MetadataCompactionReopenFailureCase> {};
 
 TEST_P(MetadataSnapshotCompactionMixedFailureTest,
        WithholdsBothAttemptsAndConvergesFromRecoveredOwners) {
@@ -449,6 +497,186 @@ TEST(MetadataSnapshotCompactionRepeatedFailureTest,
   EXPECT_EQ(repeated_node->persistent_state().snapshot, final_snapshot->snapshot.raft_snapshot);
   ASSERT_TRUE(repeated_runtime->close().is_ok());
 }
+
+TEST_P(MetadataSnapshotCompactionReopenFailureTest,
+       ReleasesBothFailedReopensAndConvergesFromObservedBytes) {
+  CompactionFailureDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const MetadataCompactionReopenFailureCase failure = GetParam();
+  const RaftPersistentLogConfig log_config = test::metadata_compaction_log_config(directory.path());
+  const std::vector<RaftGroupConfiguration> groups = test::metadata_crash_groups();
+  const std::filesystem::path snapshot_temporary =
+      directory.path() / "metadata-snapshots" / "metadata-snapshot-00000000000000000001.rmas.tmp";
+
+  {
+    test::MetadataCompactionApplicationFaultSyscalls application_syscalls{
+        test::MetadataCompactionApplicationFault::kTemporaryPartialWrite};
+    auto runtime = DurableMultiRaftRuntime::create_new(1U, log_config, groups);
+    ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+    auto election =
+        runtime->execute_batch({{test::metadata_crash_group_id(), StartElectionOperation{}}});
+    ASSERT_TRUE(election.has_value()) << election.error().to_string();
+    ASSERT_EQ(election->size(), 1U);
+    ASSERT_TRUE(election->front().status.is_ok()) << election->front().status.to_string();
+    auto storage = detail::MetadataSnapshotStorageTestAccess::create(
+        test::metadata_compaction_storage_config(directory.path()), application_syscalls);
+    ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+    auto recovered = DurableMetadataStateMachine::recover(test::metadata_crash_group_id(), *runtime,
+                                                          std::move(*storage));
+    ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+    std::optional<DurableMetadataStateMachine> metadata{std::move(*recovered)};
+    auto proposed = runtime->execute_batch(
+        {{test::metadata_crash_group_id(), test::metadata_compaction_proposal()}});
+    ASSERT_TRUE(proposed.has_value()) << proposed.error().to_string();
+    ASSERT_EQ(proposed->size(), 1U);
+    ASSERT_TRUE(proposed->front().status.is_ok()) << proposed->front().status.to_string();
+    auto applied = metadata->apply_committed();
+    ASSERT_TRUE(applied.has_value()) << applied.error().to_string();
+    ASSERT_EQ(applied->last_applied_index, 1U);
+    expect_catalog(*metadata);
+    application_syscalls.arm();
+
+    auto compacted = metadata->compact_applied_prefix(1U);
+
+    ASSERT_FALSE(compacted.has_value());
+    EXPECT_EQ(compacted.error().code(), common::StatusCode::kIoError);
+    EXPECT_TRUE(application_syscalls.fired());
+    EXPECT_TRUE(std::filesystem::exists(snapshot_temporary));
+    EXPECT_FALSE(runtime->failed());
+    metadata.reset();
+    ASSERT_TRUE(runtime->close().is_ok());
+  }
+
+  test::MetadataCompactionApplicationFaultSyscalls application_reopen_syscalls{
+      failure.application_reopen_fault};
+  application_reopen_syscalls.arm();
+  auto failed_storage = detail::MetadataSnapshotStorageTestAccess::open_existing(
+      test::metadata_compaction_storage_config(directory.path()), application_reopen_syscalls);
+  ASSERT_FALSE(failed_storage.has_value());
+  EXPECT_EQ(failed_storage.error().code(), common::StatusCode::kIoError);
+  EXPECT_TRUE(application_reopen_syscalls.fired());
+  EXPECT_EQ(std::filesystem::exists(snapshot_temporary), !failure.application_temporary_removed);
+
+  auto storage = MetadataSnapshotStorage::open_existing(
+      test::metadata_compaction_storage_config(directory.path()));
+  ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+  EXPECT_FALSE(std::filesystem::exists(snapshot_temporary));
+  auto before_raft_failure = storage->load(1U);
+  ASSERT_FALSE(before_raft_failure.has_value());
+  EXPECT_EQ(before_raft_failure.error().code(), common::StatusCode::kNotFound);
+
+  test::MetadataCompactionRaftFaultSyscalls raft_compaction_syscalls{
+      test::MetadataCompactionRaftFault::kWritePrefixThenError};
+  {
+    auto runtime = detail::DurableMultiRaftRuntimeTestAccess::open_existing(
+        1U, log_config, {}, groups, {}, raft_compaction_syscalls);
+    ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+    auto recovered = DurableMetadataStateMachine::recover(test::metadata_crash_group_id(), *runtime,
+                                                          std::move(*storage));
+    ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+    std::optional<DurableMetadataStateMachine> metadata{std::move(*recovered)};
+    expect_catalog(*metadata);
+    raft_compaction_syscalls.arm();
+
+    auto compacted = metadata->compact_applied_prefix(1U);
+
+    ASSERT_FALSE(compacted.has_value());
+    EXPECT_EQ(compacted.error().code(), common::StatusCode::kIoError);
+    EXPECT_TRUE(raft_compaction_syscalls.fired());
+    EXPECT_TRUE(runtime->failed());
+    metadata.reset();
+    ASSERT_TRUE(runtime->close().is_ok());
+  }
+
+  auto installed_storage = MetadataSnapshotStorage::open_existing(
+      test::metadata_compaction_storage_config(directory.path()));
+  ASSERT_TRUE(installed_storage.has_value()) << installed_storage.error().to_string();
+  auto installed = installed_storage->load(1U);
+  ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+  expect_application_snapshot(installed->snapshot);
+
+  std::filesystem::path active_segment;
+  for (const std::filesystem::directory_entry& entry :
+       std::filesystem::directory_iterator(directory.path() / "raft")) {
+    if (entry.path().extension() == ".rlog")
+      active_segment = entry.path();
+  }
+  ASSERT_FALSE(active_segment.empty());
+  const std::uintmax_t incomplete_size = std::filesystem::file_size(active_segment);
+  auto strict = DurableMultiRaftRuntime::open_existing(1U, log_config, {}, groups);
+  ASSERT_FALSE(strict.has_value());
+  EXPECT_EQ(strict.error().code(), common::StatusCode::kCorruption);
+  EXPECT_EQ(std::filesystem::file_size(active_segment), incomplete_size);
+
+  test::DurableIoFaultPosixSyscalls raft_reopen_syscalls;
+  raft_reopen_syscalls.arm(failure.raft_reopen_fault, failure.raft_matching_calls_to_skip);
+  auto failed_runtime = detail::DurableMultiRaftRuntimeTestAccess::open_existing(
+      1U, log_config, RaftPersistentLogOpenOptions{.repair_incomplete_final_tail = true}, groups,
+      {}, raft_reopen_syscalls);
+  ASSERT_FALSE(failed_runtime.has_value());
+  EXPECT_EQ(failed_runtime.error().code(), common::StatusCode::kIoError);
+  EXPECT_NE(failed_runtime.error().to_string().find(failure.expected_raft_operation),
+            std::string::npos);
+  EXPECT_EQ(raft_reopen_syscalls.injected_faults(), 1U);
+  EXPECT_EQ(std::filesystem::file_size(active_segment),
+            failure.raft_tail_removed
+                ? incomplete_size - test::kMetadataCompactionPartialRecordBytes
+                : incomplete_size);
+
+  auto runtime = DurableMultiRaftRuntime::open_existing(
+      1U, log_config, RaftPersistentLogOpenOptions{.repair_incomplete_final_tail = true}, groups);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  EXPECT_EQ(std::filesystem::file_size(active_segment) +
+                test::kMetadataCompactionPartialRecordBytes,
+            incomplete_size);
+  const RaftNode* recovered_node = runtime->find_group(test::metadata_crash_group_id());
+  ASSERT_NE(recovered_node, nullptr);
+  EXPECT_EQ(recovered_node->persistent_state().snapshot.last_included_index, 0U);
+  ASSERT_EQ(recovered_node->persistent_state().log.size(), 1U);
+  auto orphan = installed_storage->load(1U);
+  ASSERT_TRUE(orphan.has_value()) << orphan.error().to_string();
+  expect_application_snapshot(orphan->snapshot);
+  auto recovered = DurableMetadataStateMachine::recover(test::metadata_crash_group_id(), *runtime,
+                                                        std::move(*installed_storage));
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  std::optional<DurableMetadataStateMachine> metadata{std::move(*recovered)};
+  expect_catalog(*metadata);
+
+  auto compacted = metadata->compact_applied_prefix(1U);
+
+  ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
+  EXPECT_TRUE(compacted->application_snapshot_already_present);
+  EXPECT_EQ(compacted->application_entries, 1U);
+  recovered_node = runtime->find_group(test::metadata_crash_group_id());
+  ASSERT_NE(recovered_node, nullptr);
+  EXPECT_EQ(recovered_node->persistent_state().snapshot, orphan->snapshot.raft_snapshot);
+  metadata.reset();
+  ASSERT_TRUE(runtime->close().is_ok());
+
+  auto repeated_runtime = DurableMultiRaftRuntime::open_existing(1U, log_config, {}, groups);
+  ASSERT_TRUE(repeated_runtime.has_value()) << repeated_runtime.error().to_string();
+  auto repeated_storage = MetadataSnapshotStorage::open_existing(
+      test::metadata_compaction_storage_config(directory.path()));
+  ASSERT_TRUE(repeated_storage.has_value()) << repeated_storage.error().to_string();
+  auto final_snapshot = repeated_storage->load(1U);
+  ASSERT_TRUE(final_snapshot.has_value()) << final_snapshot.error().to_string();
+  expect_application_snapshot(final_snapshot->snapshot);
+  auto repeated = DurableMetadataStateMachine::recover(
+      test::metadata_crash_group_id(), *repeated_runtime, std::move(*repeated_storage));
+  ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
+  expect_catalog(*repeated);
+  const RaftNode* repeated_node = repeated_runtime->find_group(test::metadata_crash_group_id());
+  ASSERT_NE(repeated_node, nullptr);
+  EXPECT_EQ(repeated_node->persistent_state().snapshot, final_snapshot->snapshot.raft_snapshot);
+  ASSERT_TRUE(repeated_runtime->close().is_ok());
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    EveryOwnerReopenFailure, MetadataSnapshotCompactionReopenFailureTest,
+    ::testing::ValuesIn(kReopenFailures),
+    [](const ::testing::TestParamInfo<MetadataCompactionReopenFailureCase>& parameter) {
+      return std::string{parameter.param.name};
+    });
 
 } // namespace
 } // namespace chronos::raft

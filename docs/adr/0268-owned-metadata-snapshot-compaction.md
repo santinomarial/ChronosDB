@@ -68,9 +68,15 @@ deferred. A repeated-failure test now interrupts two consecutive application tem
 each following open removes the exact partial file, then interrupts two consecutive Raft compaction
 records and requires strict rejection plus explicit tail repair after each. The final retry adopts
 the immutable application orphan, compacts Raft, reconstructs the catalog, and survives another
-reopen. Broader cross-stage fault combinations remain deferred. A membership-boundary filesystem
-test compacts an application entry before retained joint/final commands, requires the installed
-metadata snapshot to carry the older voter set, and keeps the live group on the newer stable set.
+reopen. An eight-schedule owner-reopen matrix now leaves an interrupted application temporary,
+fails cleanup before unlink or after unlink at directory sync, then leaves a partial Raft compaction
+record and fails each authorized repair stage: size inspection, truncation, repaired-file sync, and
+repair-directory sync. Every failed open releases its lock; the next open accepts the observed
+temporary and tail state, adopts the exact application orphan, finishes compaction, and survives a
+second reopen. Simultaneous faults and other non-cleanup cross-stage combinations remain deferred.
+A membership-boundary filesystem test compacts an application entry before retained joint/final
+commands, requires the installed metadata snapshot to carry the older voter set, and keeps the live
+group on the newer stable set.
 
 Invariants 1–6, 8, 10, 11, 14, and 18 apply.
 

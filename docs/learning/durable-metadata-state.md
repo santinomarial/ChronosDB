@@ -93,6 +93,14 @@ incomplete Raft tail without mutation; explicitly authorized repair removes exac
 prefix and preserves the installed application orphan. A final unfaulted retry adopts that orphan,
 installs matching Raft authority, reconstructs the catalog, and survives a second reopen.
 
+Recovery failures in both owners also compose without hidden in-memory continuation. An eight-case
+matrix first leaves a partial application temporary and fails its next cleanup either before unlink
+or after unlink at directory sync. After a clean application reopen, it installs the exact orphan,
+leaves a partial Raft compaction record, and fails repair during size inspection, truncation,
+repaired-file sync, or repair-directory sync. Depending on the ambiguous operation, the next owner
+observes the temporary present or absent and the Raft prefix present or already removed. It restarts
+validation from those bytes, finishes compaction, reconstructs the catalog, and reopens again.
+
 The structural format is pinned independently for compatibility. One minor-0 fixture retains a
 valid Metadata Command v1 cluster-node payload; one minor-1 fixture adds a valid Tablet Group
 Binding v1 payload. Their nested envelopes and outer bytes were packed from the specifications with
