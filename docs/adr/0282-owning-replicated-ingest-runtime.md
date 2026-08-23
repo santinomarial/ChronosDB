@@ -48,8 +48,10 @@ A production-lifecycle case advances a request through authoritative routing unt
 proposal is admitted, then shuts down without coordinator result pickup. Coordinator destruction
 drops only the response owner; the durable worker drains application, closes in lifecycle order,
 and reopens the exact catalog, rows, and retry identity. Worker-start and allocation fault
-injection, partial shutdown faults, TSan, multi-node transport, and process crash cuts remain
-hardening work.
+injection, partial shutdown faults, TSan, and multi-node transport remain hardening work. A packaged
+steady-state subprocess test now kills the fully recovered outer database owner and proves the next
+owner reacquires every lock and rebuilds exact rows, retry identity, and application frontier;
+startup, in-flight-write, and shutdown crash cuts remain deferred.
 
 ## Affected invariants
 

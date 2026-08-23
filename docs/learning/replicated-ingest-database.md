@@ -47,6 +47,13 @@ the asynchronous owner before releasing the root lock. Likely review questions i
 membership remains external, why the log is reopened, why remote catalog entries are not local
 owners, and why placement equality is checked at admission rather than recovery.
 
+A process crash does not run that shutdown sequence, so correctness depends on already synchronized
+Raft state and kernel release of advisory locks and file descriptors. The bounded subprocess test
+kills a packaged owner only after a committed publication is recovered and observable. The next
+owner must reacquire the root and Raft locks, rebuild the same rows and retry directory, accept an
+exact retry without duplication, and survive a second reopen. This evidence does not cover a crash
+inside startup, persistence, application, snapshot work, or shutdown.
+
 ## Query snapshot boundary
 
 `acquire_query_snapshot` pins one immutable applied metadata projection and reconstructs each active

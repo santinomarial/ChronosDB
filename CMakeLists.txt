@@ -950,6 +950,27 @@ if(CHRONOS_BUILD_TESTS)
   gtest_discover_tests(chronos_runtime_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
+    chronos_service_replicated_database_crash_child
+    tests/service/replicated_ingest_database_crash_child.cpp
+  )
+  set_target_properties(
+    chronos_service_replicated_database_crash_child PROPERTIES CXX_EXTENSIONS OFF
+  )
+  target_compile_features(
+    chronos_service_replicated_database_crash_child PRIVATE cxx_std_23
+  )
+  target_include_directories(
+    chronos_service_replicated_database_crash_child
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
+  target_link_libraries(
+    chronos_service_replicated_database_crash_child PRIVATE chronos::service
+  )
+  chronos_set_project_warnings(chronos_service_replicated_database_crash_child)
+  chronos_enable_sanitizers(chronos_service_replicated_database_crash_child)
+  chronos_enable_static_analysis(chronos_service_replicated_database_crash_child)
+
+  add_executable(
     chronos_service_tests
     tests/service/native_protocol_service_header_self_contained.cpp
     tests/service/replicated_distributed_grouped_query_tcp_server_header_self_contained.cpp
@@ -962,6 +983,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/service/replicated_distributed_vector_query_tcp_server_v2_header_self_contained.cpp
     tests/service/replicated_ingest_coordinator_header_self_contained.cpp
     tests/service/replicated_ingest_database_header_self_contained.cpp
+    tests/service/replicated_ingest_database_crash_test.cpp
     tests/service/replicated_ingest_database_test.cpp
     tests/service/replicated_ingest_operation_header_self_contained.cpp
     tests/service/replicated_ingest_operation_test.cpp
@@ -993,8 +1015,11 @@ if(CHRONOS_BUILD_TESTS)
   target_include_directories(chronos_service_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
   target_compile_definitions(
     chronos_service_tests
-    PRIVATE CHRONOS_NETWORK_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network"
+    PRIVATE
+      CHRONOS_NETWORK_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network"
+      CHRONOS_TEST_CRASH_CHILD_PATH="$<TARGET_FILE:chronos_service_replicated_database_crash_child>"
   )
+  add_dependencies(chronos_service_tests chronos_service_replicated_database_crash_child)
   target_link_libraries(chronos_service_tests PRIVATE chronos::service GTest::gtest_main)
   chronos_set_project_warnings(chronos_service_tests)
   chronos_enable_sanitizers(chronos_service_tests)

@@ -62,7 +62,12 @@ append, commits one unapplied suffix in each group, and closes both owners. Pack
 the authoritative snapshot configuration fails closed; configured startup reconstructs the catalog,
 four rows, and two retry identities from both snapshots plus suffixes, returns an exact suffix retry,
 and reproduces that state on another reopen. An omitted recovered resident group fails closed.
-Packaged crash/syscall matrices, larger resident-set profiles, and broader TSan coverage remain
+A real subprocess additionally provisions and cleanly reopens one packaged owner, reports readiness
+only after its exact two-row/one-retry publication is visible, and is then stopped with `SIGKILL`.
+The parent reacquires the database-root and subsystem locks, reconstructs the committed state,
+applies an exact retry without adding rows, and reproduces the advanced application frontier on a
+second reopen. This is one steady-state owner-death boundary; packaged startup, write, snapshot, and
+shutdown crash/syscall matrices, larger resident-set profiles, and broader TSan coverage remain
 deferred.
 
 ## Affected invariants
