@@ -923,11 +923,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   sync; concurrent multi-process creation; large-root scaling; Linux filesystem/power-loss and macOS
   persistence qualification; install/export and public API review.
 - Extend the packaged `chronosd` authenticated Raft peer lifecycle beyond the implemented
-  three-process quorum-ingest/failover/recovery gate with the native redirect TCP/TLS carrier above
-  the implemented bounded authenticated-route and exact session-replay owners, remote
-  mutable-tablet fragments, and a globally atomic cross-group policy beyond the implemented applied
-  read-barrier vector, live delivery, flush/CSEG/Manifest, failover query, movement, and object
-  storage.
+  three-process quorum-ingest/failover/recovery gate with process/event-loop integration of the
+  implemented native redirect TCP/TLS client above the bounded authenticated-route and exact
+  session-replay owners, remote mutable-tablet fragments, and a globally atomic cross-group policy
+  beyond the implemented applied read-barrier vector, live delivery, flush/CSEG/Manifest, failover
+  query, movement, and object storage.
 - Configured `chronosd` Linux subprocess execution in CI, daemon ingest over real sockets, corrupt
   root/WAL/Raft startup cases, signals during ingest/query, queue saturation with multi-frame
   responses, cancellation, concurrent clients, TLS/auth configuration, secure UUID entropy-failure

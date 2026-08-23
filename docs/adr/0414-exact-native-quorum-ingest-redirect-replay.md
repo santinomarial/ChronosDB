@@ -44,8 +44,10 @@ session/buffer construction. One caller thread serializes every method, so no in
 memory-ordering argument applies. No durable or protocol bytes change.
 
 The owner deliberately has no descriptor, TCP connect policy, TLS handshake driver, readiness
-poller, deadline, transport retry, deployment parser, or process integration. Those remain the next
-carrier boundary; a generic transport error is not silently treated as permission to replay.
+poller, deadline, transport retry, deployment parser, or process integration. ADR 0415 subsequently
+composes it with one deadline-bound nonblocking TCP/mutual-TLS carrier while retaining the rule that
+a generic transport error is not permission to replay. Event-loop, deployment-parser, and process
+integration remain separate.
 
 ## Affected invariants
 
@@ -80,5 +82,6 @@ state.
 
 - [Bounded native client session](0067-bounded-native-client-session.md)
 - [Bounded native leader-redirect routing](0413-bounded-native-leader-redirect-routing.md)
+- [Deadline-bound native QUORUM_SYNC TCP client](0415-deadline-bound-native-quorum-ingest-tcp-client.md)
 - [Native Protocol v2](../protocol/native-v2.md)
 - [Native client session](../learning/native-client-session.md)

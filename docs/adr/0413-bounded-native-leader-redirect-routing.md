@@ -30,8 +30,8 @@ the complete observed authority, and its one-based retry number, then atomically
 current node and authority floor.
 
 The redirect remains an observation rather than a lease. This owner opens no socket, retries no
-bytes, and grants no request authority; a later carrier must repeat the normal Protocol 2 handshake,
-authentication, request correlation, and consistency proof at the selected destination.
+bytes, and grants no request authority; a composing carrier must repeat the normal Protocol 2
+handshake, authentication, request correlation, and consistency proof at the selected destination.
 
 ## Consequences
 
@@ -43,9 +43,9 @@ thread serializes mutation, so no inter-thread memory-ordering argument applies.
 network bytes change.
 
 ADR 0414 subsequently supplies exact transport-independent QUORUM_SYNC body retention and fresh
-Protocol 2 session replay. The native TCP/TLS retry carrier, deployment-text native endpoint
-configuration, reconnect deadlines, process composition, and multi-group SELECT routing remain
-separate work.
+Protocol 2 session replay, and ADR 0415 supplies its deadline-bound authenticated TCP/TLS carrier.
+Deployment-text native endpoint configuration, event-loop/process composition, and multi-group
+SELECT routing remain separate work.
 
 ## Affected invariants
 

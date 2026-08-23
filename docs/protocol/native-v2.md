@@ -1,8 +1,8 @@
 # ChronosDB Native Protocol v2
 
 > **Status: Protocol 2.0 framing, negotiation, QUORUM_SYNC request/receipt, and negotiated leader
-> redirect are implemented. Packaged replicated QUORUM_SYNC, exact ingest leader redirect, and
-> applied-barrier SELECT execute.**
+> redirect are implemented. Packaged replicated QUORUM_SYNC, exact ingest leader redirect,
+> deadline-bound native TCP/mutual-TLS client replay, and applied-barrier SELECT execute.**
 
 Protocol 2.0 inherits the complete [Native Protocol v1](native-v1.md) framing, limits, type
 assignments, request lifecycle, security boundary, and Protocol 1.1 subscription payloads except
@@ -79,8 +79,11 @@ canonical node-to-native-endpoint/TLS map, rejects stale placement or term autho
 same-term leaders, self redirects, and unknown nodes, and stops after a configured redirect count.
 The QUORUM_SYNC replay owner above it retains one exact append, creates a fresh Protocol 2 session
 and connection-local request ID for every accepted destination, and publishes only a receipt that
-matches the bound group/current route and does not regress the redirect term. Neither owner opens a
-socket; TCP/TLS readiness, deadlines, and generic transport failures remain carrier policy.
+matches the bound group/current route and does not regress the redirect term. Those policy owners
+remain transport-independent. `NativeQuorumIngestTcpClient` composes them with nonblocking TCP,
+mutual TLS, certificate-principal-to-node authorization, bounded partial I/O, and separate connect,
+handshake, and exchange deadlines. It reconnects only for a validated redirect; an ambiguous
+transport failure is terminal.
 
 ## Compatibility and rejection
 

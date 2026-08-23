@@ -49,8 +49,11 @@ reconfiguration returns an error. The node ID is not a network address: clients 
 authenticated native-endpoint map. The client library's bounded redirect router joins that map,
 rejects regressing or contradictory authority, and caps retry selection. Its portable QUORUM_SYNC
 owner retains the exact append and creates a fresh Protocol 2 session/request ID for each selected
-route. A TCP/TLS carrier and deployment parser must still connect, drive readiness/deadlines, and
-handle reconnect events. Multi-group SELECT is not redirected to one arbitrary group leader.
+route. The TCP client carrier now drives nonblocking connect, mutual TLS, principal-to-node
+authorization, bounded partial I/O, per-phase deadlines, and redirect reconnect. Deployments must
+still build the explicit route/TLS/authorization map, schedule the exposed descriptor and deadline,
+and integrate the client workflow into a process. Multi-group SELECT is not redirected to one
+arbitrary group leader.
 
 For multi-voter groups, configure the complete transport bundle:
 
