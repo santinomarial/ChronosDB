@@ -38,4 +38,34 @@ route pointers only after the complete bundle succeeds.
 The current OpenSSL path API reopens qualified credential paths during context creation. Protect
 parent directories and replace credentials atomically so a path cannot be swapped between those
 steps. Existing contexts retain loaded credential state; credential rotation, DNS endpoint
-resolution, live reload, and a packaged client command are not implemented.
+resolution, and live reload are not implemented.
+
+## Packaged QUORUM_SYNC command
+
+`chronosctl quorum-sync` sends one already-encoded canonical Columnar Append v1 payload:
+
+```sh
+chronosctl quorum-sync \
+  --group 01234567-89ab-cdef-0123-456789abcdef \
+  --initial-node 1 \
+  --minimum-placement-epoch 4 \
+  --routes /etc/chronosdb/native-client-routes \
+  --tls-cert /etc/chronosdb/client.pem \
+  --tls-key /etc/chronosdb/client-key.pem \
+  --tls-ca /etc/chronosdb/cluster-ca.pem \
+  --append-file ./columnar-append-v1.bin \
+  --timeout-ms 30000 \
+  --json
+```
+
+The destination must expose the native protocol through mutual TLS. The current packaged
+`chronosd` accepts plaintext only on loopback and is not yet a compatible target; the command can
+currently drive a TLS-enabled embedding of the implemented native server stack.
+
+Every argument is explicit: the route file does not supply group or placement authority, and the
+command does not infer native routes from Raft endpoints. It exact-validates the append before
+network activity, follows at most eight authenticated redirects, and returns exit `0` only for a
+validated `APPLIED` or `MATCHING_RETRY` quorum receipt. Option errors return `2`; file, TLS,
+deadline, transport, protocol, and server failures return `1`. The command does not retry ambiguous
+transport failures. Re-running the same canonical append is safe through its embedded client and
+batch identity and request digest.

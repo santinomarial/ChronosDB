@@ -69,6 +69,7 @@ ctest --preset dev
 
 build/dev/chronosctl version
 build/dev/chronosctl version --json
+build/dev/chronosctl quorum-sync --help
 build/dev/chronosd --help
 ```
 

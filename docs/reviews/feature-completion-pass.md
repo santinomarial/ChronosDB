@@ -969,11 +969,11 @@ were deliberately not run.
   current-term quorum read barrier before bounded native SELECT dispatch. Bounded Linux evidence now
   covers three authenticated daemon processes, quorum ingest, tablet-leader loss, a higher-term
   matching retry, and identical retained-root recovery. A globally atomic cross-group instant,
-  remote mutable-tablet fragments, a packaged native-client command, and three-process query
-  failover remain absent. Strict native endpoint/certificate-principal configuration, secure
-  TLS-route/context ownership, redirect selection, exact QUORUM_SYNC body/session replay, the
-  deadline-bound authenticated TCP/TLS reconnect carrier, and single-operation poll scheduling now
-  have bounded, fail-closed owners.
+  remote mutable-tablet fragments, and three-process query failover remain absent. Strict native
+  endpoint/certificate-principal configuration, secure TLS-route/context ownership, redirect
+  selection, exact QUORUM_SYNC body/session replay, the deadline-bound authenticated TCP/TLS
+  reconnect carrier, single-operation poll scheduling, and the packaged `chronosctl quorum-sync`
+  composition now have bounded, fail-closed owners.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

@@ -7,11 +7,11 @@
 > recovery paths implement the physical write, synchronization, verification, repair, and reopen
 > boundaries. The bounded commit coordinator implements `ASYNC` and `LOCAL_SYNC` completion and
 > group commit. The already-routed single-tablet append executor now waits for that physical
-> boundary and completes logical tablet/retry publication. No query service, recovery application,
-> native transport acknowledgment path exists. The Raft runtime can prove stable or joint
-> configuration quorum persistence, and the tablet state machine composes it with application.
-> Protocol 2.0 can negotiate and validate the mode, but no packaged replicated service advertises
-> the capability or drives a request through that proof yet.
+> boundary and completes logical tablet/retry publication. The replicated runtime and packaged
+> daemon compose stable or joint configuration quorum persistence with tablet application and
+> expose the exact receipt through Protocol 2.0. The packaged native client can drive one exact
+> canonical append through bounded authenticated redirects when the server is embedded with mutual
+> TLS; packaged `chronosd` remains plaintext loopback-only and is not yet that target.
 > This document does not strengthen guarantees beyond what a process, operating system, filesystem,
 > device, or future replica protocol can establish.
 
@@ -21,7 +21,7 @@
 | --- | --- | --- | --- | --- |
 | `ASYNC` | The complete WAL v1 record has been accepted successfully through the active WAL file write path after its segment installation boundary; acknowledgment does not wait for data synchronization. | Normal continued process operation; no crash-survival claim. | Process or OS crash, power loss, device loss, and any failure before bytes reach required stable media may lose acknowledged operations. It must never be described as durable. | Requests may share write and later sync work, but acknowledgment does not wait for that sync. |
 | `LOCAL_SYNC` | The complete record has finished the write path and is covered by a successful WAL data synchronization after any required synchronized segment installation. | Process termination and ordinary OS crashes on that local node under the documented filesystem/device assumptions. | Device loss, controller/firmware lies, incomplete power-loss protection, filesystem/kernel defects, operator destruction, or failures excluded by the platform contract. | Multiple requests may share one captured sync frontier; each acknowledgment waits for the successful sync covering its record end. |
-| `QUORUM_SYNC` | Internal proof and Protocol 2.0 capability/receipt bytes are implemented, but packaged service execution remains unavailable. A stable majority, or majorities of both old and new configurations during a transition, synchronize persistent state containing the entry; the leader synchronizes the derived commit and tablet application covers the index before acknowledgment. | Loss tolerated by the active stable or joint quorums under the stated membership, independence, storage, authenticated transport, and crash-fault Raft assumptions. | Correlated quorum loss, faulty persistence below the stated assumptions, bypassed membership protocol, forged/Byzantine behavior, or disaster beyond the replica topology. | Entries from one or many groups may share physical synchronization, but each request waits for its own group/index proof and application frontier. |
+| `QUORUM_SYNC` | A stable majority, or majorities of both old and new configurations during a transition, synchronize persistent state containing the entry; the leader synchronizes the derived commit and tablet application covers the index before the packaged service emits the Protocol 2.0 acknowledgement. | Loss tolerated by the active stable or joint quorums under the stated membership, independence, storage, authenticated transport, and crash-fault Raft assumptions. | Correlated quorum loss, faulty persistence below the stated assumptions, bypassed membership protocol, forged/Byzantine behavior, or disaster beyond the replica topology. | Entries from one or many groups may share physical synchronization, but each request waits for its own group/index proof and application frontier. |
 
 The server must expose requested and effective mode in the acknowledgment. It must never silently downgrade. Required operational metrics are:
 
@@ -39,16 +39,15 @@ filesystem/device assumptions and macOS limitation. The blocking POSIX operation
 WAL writer implement the complete-write boundary and an explicit data-sync frontier. The commit
 coordinator owns that writer on one worker, bounds unfinished requests and encoded bytes, preserves
 FIFO admission order, completes `ASYNC` after write, and groups `LOCAL_SYNC` requests behind one
-covering frontier subject to configured request, byte, and delay limits. Locked
-recovery verifies the complete physical history, permits only explicit synchronized final-tail
-repair, and reopens at the verified end after a startup synchronization barrier. The server's
-default mode and deployment-specific group-limit tuning remain deferred; the coordinator requires
-an explicit mode per request and never exposes `QUORUM_SYNC`. The joint-consensus Raft runtime now
-produces an internal immutable receipt only after majority-derived commit and local synchronization;
-tablet application supplies the additional visibility proof. Protocol 2.0 negotiates value 3 and
-its exact receipt acknowledgement without changing v1 bytes, but server advertisement stays off
-until the replicated service owns the complete application path. Authenticated request execution,
-explicit receipt configuration identity, and replica crash reconciliation remain deferred. The [subprocess crash
+covering frontier subject to configured request, byte, and delay limits. Locked recovery verifies
+the complete physical history, permits only explicit synchronized final-tail repair, and reopens at
+the verified end after a startup synchronization barrier. The single-node coordinator still never
+exposes `QUORUM_SYNC`. The separate joint-consensus runtime produces its immutable receipt only
+after majority-derived persistence and local synchronization, and tablet application supplies the
+additional visibility proof. The packaged replicated daemon advertises Protocol 2.0 value 3 only
+when that complete path is owned; authenticated multi-node execution and exact receipt bytes are
+implemented. Wider crash/power-loss qualification and deployment-specific group-limit tuning
+remain deferred. The [subprocess crash
 harness](../testing/wal-crash-harness.md) reconciles
 parent-received acknowledgments with recovered physical records after controlled process death; it
 does not extend this contract to unqualified power-loss or storage-stack failures. A packaged

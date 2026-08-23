@@ -16,10 +16,11 @@ Google Benchmark. Build-tree aliases and installed exports use the `chronos::` n
 consumers link `chronos::common`, `chronos::io`, or `chronos::wal` while the concrete targets remain
 `chronos_common`, `chronos_io`, and `chronos_wal`.
 
-The current graph is:
+The foundational and current operator-tool edges are:
 
 ```text
-chronosctl ───────────► chronos::common
+chronosctl version ─────────► chronos::common
+chronosctl quorum-sync ─────► chronos::service
 chronos_common_tests ─► chronos::common + GTest::gtest_main
 chronos_common_benchmarks (optional) ─► chronos::common + benchmark::benchmark_main
 chronos_byte_reader_fuzz (optional) ──► chronos::common + Clang libFuzzer

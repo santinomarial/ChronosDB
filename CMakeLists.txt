@@ -805,7 +805,7 @@ chronos_enable_static_analysis(chronos_service)
 add_executable(chronosctl tools/chronosctl/main.cpp)
 set_target_properties(chronosctl PROPERTIES CXX_EXTENSIONS OFF)
 target_compile_features(chronosctl PRIVATE cxx_std_23)
-target_link_libraries(chronosctl PRIVATE chronos::common)
+target_link_libraries(chronosctl PRIVATE chronos::service)
 chronos_set_project_warnings(chronosctl)
 chronos_enable_sanitizers(chronosctl)
 chronos_enable_static_analysis(chronosctl)
@@ -937,12 +937,15 @@ if(CHRONOS_BUILD_TESTS)
   target_compile_features(chronos_network_tests PRIVATE cxx_std_23)
   target_link_libraries(
     chronos_network_tests
-    PRIVATE chronos::network GTest::gtest_main OpenSSL::SSL
+    PRIVATE chronos::ingest chronos::network GTest::gtest_main OpenSSL::SSL
   )
+  target_include_directories(chronos_network_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
   target_compile_definitions(
     chronos_network_tests
-    PRIVATE CHRONOS_NETWORK_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network"
+    PRIVATE CHRONOSCTL_PATH="$<TARGET_FILE:chronosctl>"
+            CHRONOS_NETWORK_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network"
   )
+  add_dependencies(chronos_network_tests chronosctl)
   chronos_set_project_warnings(chronos_network_tests)
   chronos_enable_sanitizers(chronos_network_tests)
   chronos_enable_static_analysis(chronos_network_tests)
@@ -2193,6 +2196,13 @@ if(CHRONOS_BUILD_TESTS)
         "${CMAKE_COMMAND}"
         "-DCHRONOSD=$<TARGET_FILE:chronosd>"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/chronosd_cli_test.cmake"
+    )
+    add_test(
+      NAME ChronosctlCliTest.QuorumSyncContract
+      COMMAND
+        "${CMAKE_COMMAND}"
+        "-DCHRONOSCTL=$<TARGET_FILE:chronosctl>"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/chronosctl_cli_test.cmake"
     )
   endif()
 

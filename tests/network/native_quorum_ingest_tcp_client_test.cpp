@@ -1,19 +1,30 @@
+#include "chronos/columnar/columnar_batch_codec.hpp"
+#include "chronos/ingest/columnar_append.hpp"
 #include "chronos/network/connection_buffers.hpp"
 #include "chronos/network/connection_state.hpp"
 #include "chronos/network/native_quorum_ingest_tcp_client.hpp"
 #include "chronos/network/native_quorum_ingest_tcp_execution.hpp"
+#include "columnar/columnar_test_support.hpp"
+#include "ingest/ingest_test_support.hpp"
 
 #include "gtest/gtest.h"
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <csignal>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <initializer_list>
 #include <memory>
 #include <optional>
 #include <poll.h>
+#include <string>
+#include <string_view>
+#include <sys/wait.h>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -31,6 +42,52 @@ template <typename Value>
 
 [[nodiscard]] std::filesystem::path fixture(const char* name) {
   return std::filesystem::path{CHRONOS_NETWORK_FIXTURE_DIR} / "tls" / name;
+}
+
+class TemporaryDirectory {
+public:
+  TemporaryDirectory() {
+    std::string pattern =
+        (std::filesystem::temp_directory_path() / "chronosctl-process-XXXXXX").string();
+    if (char* created = ::mkdtemp(pattern.data()); created != nullptr)
+      path_ = created;
+  }
+  ~TemporaryDirectory() {
+    std::error_code ignored;
+    std::filesystem::remove_all(path_, ignored);
+  }
+  [[nodiscard]] const std::filesystem::path& path() const noexcept {
+    return path_;
+  }
+
+private:
+  std::filesystem::path path_;
+};
+
+[[nodiscard]] bool write_bytes(const std::filesystem::path& path, const common::ByteView bytes) {
+  std::ofstream output{path, std::ios::binary | std::ios::trunc};
+  if (!bytes.empty()) {
+    // Character streams are permitted to access an object's byte representation.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+    output.write(reinterpret_cast<const char*>(bytes.data()),
+                 static_cast<std::streamsize>(bytes.size()));
+  }
+  output.close();
+  return static_cast<bool>(output);
+}
+
+[[nodiscard]] std::vector<std::byte> canonical_append() {
+  auto batch = columnar::OwnedColumnarBatch::create(columnar::test::batch_schema(),
+                                                    columnar::test::batch_columns())
+                   .value();
+  const auto encoded_batch = columnar::encode_columnar_batch_v1(batch).value();
+  const auto append = ingest::encode_columnar_append_v1(
+                          {.client_id = ingest::test::request_id<ingest::ClientId>(9U),
+                           .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(10U),
+                           .tablet_id = columnar::test::id<schema::TabletId>(90U)},
+                          encoded_batch)
+                          .value();
+  return {append.bytes().begin(), append.bytes().end()};
 }
 
 [[nodiscard]] TlsServerConfig tls_server_config() {
@@ -655,6 +712,103 @@ TEST(NativeQuorumIngestTcpExecutionTest, BoundsTheKernelWaitByTheOperationDeadli
   EXPECT_FALSE(execution->next_deadline().has_value());
   EXPECT_LT(NativeQuorumIngestTcpExecution::TimePoint::clock::now(),
             operation_deadline + std::chrono::seconds{1});
+}
+
+TEST(NativeQuorumIngestTcpExecutionTest, PackagedChronosctlObtainsJsonReceiptThroughRealMutualTls) {
+  constexpr std::string_view kServerFingerprint =
+      "e79120b0ee5e55f91ea4cb4a29d3ca20aaa36a4abdbeb74d06f97751e61368d1";
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  auto server = ScriptedNativeServer::create(ServerReply::kAcknowledge);
+  ASSERT_TRUE(server.has_value()) << server.error().to_string();
+
+  const std::filesystem::path route_file = directory.path() / "routes.conf";
+  {
+    std::ofstream output{route_file, std::ios::binary | std::ios::trunc};
+    output << "CHRONOSDB_NATIVE_CLIENT_ROUTES_V1\n2=127.0.0.1:" << server->endpoint().port
+           << ",127.0.0.1," << kServerFingerprint << '\n';
+    output.close();
+    ASSERT_TRUE(output);
+  }
+  const std::filesystem::path private_key = directory.path() / "client-key.pem";
+  std::error_code filesystem_error;
+  std::filesystem::copy_file(fixture("client-key.pem"), private_key,
+                             std::filesystem::copy_options::overwrite_existing, filesystem_error);
+  ASSERT_FALSE(filesystem_error) << filesystem_error.message();
+  std::filesystem::permissions(
+      private_key, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+      std::filesystem::perm_options::replace, filesystem_error);
+  ASSERT_FALSE(filesystem_error) << filesystem_error.message();
+  const std::filesystem::path append_file = directory.path() / "append.bin";
+  const std::vector<std::byte> append = canonical_append();
+  ASSERT_TRUE(write_bytes(append_file, append));
+
+  std::array<int, 2U> output_pipe{-1, -1};
+  ASSERT_EQ(::pipe(output_pipe.data()), 0);
+  const pid_t child = ::fork();
+  ASSERT_GE(child, 0);
+  if (child == 0) {
+    static_cast<void>(::dup2(output_pipe[1], STDOUT_FILENO));
+    static_cast<void>(::dup2(output_pipe[1], STDERR_FILENO));
+    ::close(output_pipe[0]);
+    ::close(output_pipe[1]);
+    const std::string routes = route_file.string();
+    const std::string certificate = fixture("client.pem").string();
+    const std::string key = private_key.string();
+    const std::string trust_store = fixture("ca.pem").string();
+    const std::string append_path = append_file.string();
+    ::execl(CHRONOSCTL_PATH, CHRONOSCTL_PATH, "quorum-sync", "--json", "--group",
+            "09000000-0000-0000-0000-000000000000", "--initial-node", "2",
+            "--minimum-placement-epoch", "1", "--routes", routes.c_str(), "--tls-cert",
+            certificate.c_str(), "--tls-key", key.c_str(), "--tls-ca", trust_store.c_str(),
+            "--append-file", append_path.c_str(), "--timeout-ms", "5000", nullptr);
+    std::_Exit(127);
+  }
+  ::close(output_pipe[1]);
+  output_pipe[1] = -1;
+
+  int child_status{};
+  pid_t waited{};
+  common::Status server_status = common::Status::ok();
+  for (std::size_t iteration = 0U; iteration < 10'000U; ++iteration) {
+    server_status = server->poll_once();
+    if (!server_status.is_ok())
+      break;
+    waited = ::waitpid(child, &child_status, WNOHANG);
+    if (waited < 0 && errno == EINTR) {
+      waited = 0;
+      continue;
+    }
+    if (waited == child || waited < 0)
+      break;
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+  if (waited != child) {
+    static_cast<void>(::kill(child, SIGKILL));
+    waited = ::waitpid(child, &child_status, 0);
+  }
+
+  std::string command_output;
+  std::array<char, 1024U> buffer{};
+  for (;;) {
+    const ssize_t count = ::read(output_pipe[0], buffer.data(), buffer.size());
+    if (count <= 0)
+      break;
+    command_output.append(buffer.data(), static_cast<std::size_t>(count));
+  }
+  ::close(output_pipe[0]);
+
+  ASSERT_TRUE(server_status.is_ok()) << server_status.to_string();
+  ASSERT_EQ(waited, child);
+  ASSERT_TRUE(WIFEXITED(child_status));
+  EXPECT_EQ(WEXITSTATUS(child_status), 0) << command_output;
+  EXPECT_EQ(server->requests(), 1U);
+  EXPECT_EQ(server->commands(), std::vector<std::vector<std::byte>>{append});
+  EXPECT_EQ(command_output,
+            "{\"command\":\"quorum-sync\",\"status\":\"ok\",\"outcome\":\"APPLIED\","
+            "\"group_id\":\"09000000-0000-0000-0000-000000000000\",\"leader_node_id\":2,"
+            "\"leader_term\":8,\"log_index\":10,\"entry_term\":8,"
+            "\"local_durable_physical_sequence\":12,\"attempts\":1,\"redirects\":0}\n");
 }
 
 } // namespace

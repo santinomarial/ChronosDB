@@ -57,8 +57,11 @@ provides explicit cancellation and terminal metrics. The strict
 now build the endpoint/TLS-identity/certificate-principal map without borrowing Raft transport
 configuration. Its address-stable TLS-route owner securely qualifies the file/credentials,
 constructs one client context per route, and publishes the complete borrowed map. Embeddings must
-still supply request-specific group/initial-node/placement authority and integrate the workflow
-into a command or process. Multi-group SELECT is not redirected to one arbitrary group leader.
+still supply request-specific group/initial-node/placement authority. `chronosctl quorum-sync` now
+supplies that command composition for TLS-enabled native-server embeddings. The packaged daemon
+still accepts plaintext only on loopback, so it is not yet a compatible target for this mTLS client;
+packaged native-server TLS is a separate remaining gap. Multi-group SELECT is not redirected to one
+arbitrary group leader.
 
 For multi-voter groups, configure the complete transport bundle:
 
