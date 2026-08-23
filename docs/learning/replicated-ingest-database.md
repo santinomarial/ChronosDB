@@ -51,8 +51,11 @@ A process crash does not run that shutdown sequence, so correctness depends on a
 Raft state and kernel release of advisory locks and file descriptors. The bounded subprocess test
 kills a packaged owner only after a committed publication is recovered and observable. The next
 owner must reacquire the root and Raft locks, rebuild the same rows and retry directory, accept an
-exact retry without duplication, and survive a second reopen. This evidence does not cover a crash
-inside startup, persistence, application, snapshot work, or shutdown.
+exact retry without duplication, and survive a second reopen. The same lifecycle also runs with
+authoritative metadata and tablet application snapshots plus committed retained suffixes, proving
+that all four lock domains are process-scoped and that Raft's exact snapshot boundary—not directory
+recency—still selects recovery state. This evidence does not cover a crash inside startup,
+persistence, application, snapshot installation/compaction, or shutdown.
 
 ## Query snapshot boundary
 

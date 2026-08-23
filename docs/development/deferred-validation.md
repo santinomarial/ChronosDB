@@ -529,9 +529,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   parser and exact certificate/address/node authority also exist, and an owning transport runtime
   plus packaged daemon poll thread composes them with TLS contexts and randomized timers; add
   in-memory credential loading, remote leader redirection, packaged startup/write/snapshot/shutdown
-  crash-cut and syscall matrices beyond the completed steady-state owner `SIGKILL` and
-  snapshot-plus-suffix reopen, broader reconfiguration matrices beyond the completed committed-joint
-  removal restart, broader queue/disconnect failure matrices, and TSan scheduling coverage.
+  crash-cut and syscall matrices beyond the completed retained-log and snapshot-backed steady-state
+  owner `SIGKILL` lifecycles and snapshot-plus-suffix reopen, broader reconfiguration matrices beyond
+  the completed committed-joint removal restart, broader queue/disconnect failure matrices, and TSan
+  scheduling coverage.
 - Carry the implemented group-scoped read-barrier operation through authenticated production
   transport, request deadlines/coalescing, apply waiting, and exact tablet snapshot acquisition.
 - Extend the implemented metadata Raft codec/application/reopen path and complete-schema-definition

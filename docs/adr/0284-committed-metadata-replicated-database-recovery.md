@@ -66,9 +66,13 @@ A real subprocess additionally provisions and cleanly reopens one packaged owner
 only after its exact two-row/one-retry publication is visible, and is then stopped with `SIGKILL`.
 The parent reacquires the database-root and subsystem locks, reconstructs the committed state,
 applies an exact retry without adding rows, and reproduces the advanced application frontier on a
-second reopen. This is one steady-state owner-death boundary; packaged startup, write, snapshot, and
-shutdown crash/syscall matrices, larger resident-set profiles, and broader TSan coverage remain
-deferred.
+second reopen. A second child variant compacts the provisioning catalog and first tablet append,
+commits one retained suffix in each group, opens the packaged owner from both authoritative
+application snapshots, and then reaches the same `SIGKILL` boundary. Parent recovery reacquires both
+snapshot locks, reconstructs four rows and two retry identities, replays the metadata suffix, and
+survives an exact suffix retry plus another reopen. These are steady-state owner-death boundaries;
+packaged startup, write, snapshot-install/compaction, and shutdown crash/syscall matrices, larger
+resident-set profiles, and broader TSan coverage remain deferred.
 
 ## Affected invariants
 

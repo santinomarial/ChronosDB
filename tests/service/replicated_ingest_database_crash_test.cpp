@@ -5,6 +5,7 @@
 #include "service/replicated_ingest_database_crash_fixture.hpp"
 #include "wal/wal_crash_protocol.hpp"
 
+#include <cstddef>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <string>
@@ -39,8 +40,14 @@ private:
   std::filesystem::path path_;
 };
 
+struct ExpectedPublication {
+  std::size_t rows{};
+  std::size_t retries{};
+  raft::LogIndex applied_index{};
+};
+
 void expect_recovered_publication(ReplicatedIngestDatabase& database,
-                                  const raft::LogIndex applied_index) {
+                                  const ExpectedPublication expected) {
   auto catalog = database.ingest_runtime()->metadata_application()->catalog_snapshot();
   ASSERT_TRUE(catalog.has_value()) << catalog.error().to_string();
   ASSERT_EQ((*catalog)->schema_definitions.size(), 1U);
@@ -50,10 +57,10 @@ void expect_recovered_publication(ReplicatedIngestDatabase& database,
   auto publication =
       database.ingest_runtime()->tablet_application()->snapshot(test::crash_tablet_group());
   ASSERT_TRUE(publication.has_value()) << publication.error().to_string();
-  EXPECT_EQ(publication->visible_row_count(), 2U);
-  EXPECT_EQ(publication->retry_entry_count(), 1U);
+  EXPECT_EQ(publication->visible_row_count(), expected.rows);
+  EXPECT_EQ(publication->retry_entry_count(), expected.retries);
   EXPECT_EQ(publication->applied_position(),
-            head::HeadCommitPosition::raft(test::crash_tablet_group(), applied_index));
+            head::HeadCommitPosition::raft(test::crash_tablet_group(), expected.applied_index));
 }
 
 TEST(ReplicatedIngestDatabaseCrashTest,
@@ -70,11 +77,10 @@ TEST(ReplicatedIngestDatabaseCrashTest,
   EXPECT_EQ(ready->fields[1], "1");
   ASSERT_TRUE(child.kill_abruptly().is_ok());
 
-  auto database = ReplicatedIngestDatabase::open_existing(
-      {.bootstrap = test::existing_crash_bootstrap_config(directory.path()),
-       .groups = test::crash_groups()});
+  auto database =
+      ReplicatedIngestDatabase::open_existing(test::crash_database_config(directory.path(), false));
   ASSERT_TRUE(database.has_value()) << database.error().to_string();
-  expect_recovered_publication(*database, 1U);
+  expect_recovered_publication(*database, {.rows = 2U, .retries = 1U, .applied_index = 1U});
 
   auto election = database->ingest_runtime()->runtime()->try_submit(
       {{test::crash_tablet_group(), raft::StartElectionOperation{}}});
@@ -85,14 +91,56 @@ TEST(ReplicatedIngestDatabaseCrashTest,
         raft::ProposeOperation{ingest::kRaftColumnarAppendEntryType, test::crash_command()}}});
   ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
   ASSERT_TRUE(retry->wait().has_value());
-  expect_recovered_publication(*database, 2U);
+  expect_recovered_publication(*database, {.rows = 2U, .retries = 1U, .applied_index = 2U});
   ASSERT_TRUE(database->shutdown().is_ok());
 
-  auto repeated = ReplicatedIngestDatabase::open_existing(
-      {.bootstrap = test::existing_crash_bootstrap_config(directory.path()),
-       .groups = test::crash_groups()});
+  auto repeated =
+      ReplicatedIngestDatabase::open_existing(test::crash_database_config(directory.path(), false));
   ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
-  expect_recovered_publication(*repeated, 2U);
+  expect_recovered_publication(*repeated, {.rows = 2U, .retries = 1U, .applied_index = 2U});
+  ASSERT_TRUE(repeated->shutdown().is_ok());
+}
+
+TEST(ReplicatedIngestDatabaseCrashTest, ReclaimsSnapshotOwnershipAndRetainedSuffixesAfterSigkill) {
+  ReplicatedDatabaseCrashDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  auto spawned =
+      wal::test::CrashChildProcess::spawn({.directory = directory.path(), .compaction = true});
+  ASSERT_TRUE(spawned.has_value()) << spawned.error().to_string();
+  wal::test::CrashChildProcess child = std::move(*spawned);
+  auto ready = child.wait_for("READY");
+  ASSERT_TRUE(ready.has_value()) << ready.error().to_string();
+  ASSERT_EQ(ready->fields.size(), 2U);
+  EXPECT_EQ(ready->fields[0], "4");
+  EXPECT_EQ(ready->fields[1], "2");
+  ASSERT_TRUE(child.kill_abruptly().is_ok());
+
+  auto database =
+      ReplicatedIngestDatabase::open_existing(test::crash_database_config(directory.path(), true));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  expect_recovered_publication(*database, {.rows = 4U, .retries = 2U, .applied_index = 2U});
+  auto catalog = database->ingest_runtime()->metadata_application()->catalog_snapshot();
+  ASSERT_TRUE(catalog.has_value()) << catalog.error().to_string();
+  ASSERT_EQ((*catalog)->cluster_nodes.size(), 1U);
+  EXPECT_EQ((*catalog)->cluster_nodes.front(),
+            (raft::ClusterNodeMetadata{1U, "node-1.example:7000"}));
+
+  auto election = database->ingest_runtime()->runtime()->try_submit(
+      {{test::crash_tablet_group(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  ASSERT_TRUE(election->wait().has_value());
+  auto retry = database->ingest_runtime()->runtime()->try_submit(
+      {{test::crash_tablet_group(), raft::ProposeOperation{ingest::kRaftColumnarAppendEntryType,
+                                                           test::crash_suffix_command()}}});
+  ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+  ASSERT_TRUE(retry->wait().has_value());
+  expect_recovered_publication(*database, {.rows = 4U, .retries = 2U, .applied_index = 3U});
+  ASSERT_TRUE(database->shutdown().is_ok());
+
+  auto repeated =
+      ReplicatedIngestDatabase::open_existing(test::crash_database_config(directory.path(), true));
+  ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
+  expect_recovered_publication(*repeated, {.rows = 4U, .retries = 2U, .applied_index = 3U});
   ASSERT_TRUE(repeated->shutdown().is_ok());
 }
 

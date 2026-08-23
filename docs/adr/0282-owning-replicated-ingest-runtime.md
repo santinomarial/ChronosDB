@@ -50,8 +50,10 @@ drops only the response owner; the durable worker drains application, closes in 
 and reopens the exact catalog, rows, and retry identity. Worker-start and allocation fault
 injection, partial shutdown faults, TSan, and multi-node transport remain hardening work. A packaged
 steady-state subprocess test now kills the fully recovered outer database owner and proves the next
-owner reacquires every lock and rebuilds exact rows, retry identity, and application frontier;
-startup, in-flight-write, and shutdown crash cuts remain deferred.
+owner reacquires every lock and rebuilds exact rows, retry identity, and application frontier. A
+snapshot-backed variant repeats that proof while metadata and tablet application-snapshot locks and
+retained suffixes are all live; startup, in-flight-write, snapshot-operation, and shutdown crash
+cuts remain deferred.
 
 ## Affected invariants
 
