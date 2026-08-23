@@ -248,6 +248,28 @@ TEST(TlsSocketTest, InMemoryPemCredentialsCompleteMutualHandshakeWithoutPaths) {
   EXPECT_TRUE(client->peer_certificate_sha256().has_value());
 }
 
+TEST(TlsSocketTest, SessionsRetainOpenSslContextReferencesAfterFactoryOwnersAreDestroyed) {
+  SocketPair sockets = nonblocking_socket_pair();
+  std::optional<TlsSocket> server;
+  std::optional<TlsSocket> client;
+  {
+    auto server_context = TlsServerContext::create(server_config());
+    auto client_context_owner = TlsClientContext::create(client_config());
+    ASSERT_TRUE(server_context.has_value()) << server_context.error().message();
+    ASSERT_TRUE(client_context_owner.has_value()) << client_context_owner.error().message();
+    auto accepted = TlsSocket::accept(*server_context, sockets.sockets[0]);
+    auto connected = TlsSocket::connect(*client_context_owner, sockets.sockets[1]);
+    ASSERT_TRUE(accepted.has_value()) << accepted.error().message();
+    ASSERT_TRUE(connected.has_value()) << connected.error().message();
+    server.emplace(std::move(*accepted));
+    client.emplace(std::move(*connected));
+  }
+
+  complete_handshake(*server, *client);
+  EXPECT_TRUE(server->peer_certificate_sha256().has_value());
+  EXPECT_TRUE(client->peer_certificate_sha256().has_value());
+}
+
 TEST(TlsSocketTest, ReusesSignalSafeBioMethodAcrossSessionLifetimes) {
   auto server_context = TlsServerContext::create(server_config());
   ASSERT_TRUE(server_context.has_value()) << server_context.error().message();

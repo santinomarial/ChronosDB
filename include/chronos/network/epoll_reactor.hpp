@@ -41,6 +41,9 @@ struct EpollServerMetrics {
   std::uint64_t protocol_errors{};
   std::uint64_t dropped_responses{};
   std::uint64_t authentication_rejections{};
+  std::uint64_t tls_security_reloads{};
+  std::uint64_t tls_security_reload_failures{};
+  std::uint64_t tls_security_reload_closed_handshakes{};
   std::uint64_t response_wakeups{};
   std::uint64_t bytes_read{};
   std::uint64_t bytes_written{};
@@ -64,6 +67,11 @@ public:
   [[nodiscard]] static common::Result<EpollReactor> start(const EpollServerConfig& config,
                                                           const EpollReactorQueues& queues);
   [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait);
+  // Replaces one running TLS-required admission generation on the owner thread. Replacement
+  // validation and context creation complete before mutation. Established authenticated sessions
+  // remain attached to their original TLS context and principal; incomplete handshakes close. The
+  // replacement authenticator must outlive the reactor or its next successful replacement.
+  [[nodiscard]] common::Status reload_tls_security(NetworkSecurityConfig&& replacement);
   // The single response producer may call this while the owner is inside poll_once. It must be
   // joined before shutdown or destruction.
   [[nodiscard]] common::Status notify_response_ready() noexcept;

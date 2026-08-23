@@ -66,9 +66,14 @@ using chronos::service::SingleNodeDatabase;
 using chronos::service::SingleNodeSubscriptionRuntime;
 
 volatile std::sig_atomic_t stop_requested = 0;
+volatile std::sig_atomic_t native_security_reload_requested = 0;
 
 extern "C" void request_stop(const int) {
   stop_requested = 1;
+}
+
+extern "C" void request_native_security_reload(const int) {
+  native_security_reload_requested = 1;
 }
 
 enum class LogFormat : std::uint8_t {
@@ -616,7 +621,7 @@ struct NativeServerSecurity {
 };
 
 [[nodiscard]] chronos::common::Result<NativeServerSecurity>
-load_native_principal_authority(const Options& options) {
+load_native_server_security(const Options& options) {
   auto loaded =
       load_bounded_config(options.native_client_principals_file,
                           chronos::service::NativeServerPrincipalConfigLimits{}.maximum_bytes,
@@ -1251,7 +1256,7 @@ int run_daemon(const int argc, const char* const argv[]) {
   std::unique_ptr<chronos::service::NativeServerPrincipalAuthority> native_principal_authority;
   std::shared_ptr<const chronos::network::TlsPemCredentials> native_tls_credentials;
   if (!options->native_client_principals_file.empty()) {
-    auto security = load_native_principal_authority(*options);
+    auto security = load_native_server_security(*options);
     if (!security.has_value()) {
       logger.error("native_security_setup_failed",
                    "native security setup failed: " + security.error().to_string());
@@ -1546,8 +1551,10 @@ int run_daemon(const int argc, const char* const argv[]) {
   }
 
   stop_requested = 0;
+  native_security_reload_requested = 0;
   if (std::signal(SIGINT, request_stop) == SIG_ERR ||
-      std::signal(SIGTERM, request_stop) == SIG_ERR) {
+      std::signal(SIGTERM, request_stop) == SIG_ERR ||
+      std::signal(SIGHUP, request_native_security_reload) == SIG_ERR) {
     worker.request_stop();
     while (!worker.stopped())
       static_cast<void>(reactor->poll_once(std::chrono::milliseconds{10}));
@@ -1607,8 +1614,47 @@ int run_daemon(const int argc, const char* const argv[]) {
   logger.info("server_listening", startup, startup_fields);
 
   int exit_code = 0;
+  std::uint64_t native_security_generation = native_principal_authority != nullptr ? 1U : 0U;
   while (stop_requested == 0 && !worker.failed() &&
          (raft_worker == nullptr || !raft_worker->failed())) {
+    if (native_security_reload_requested != 0) {
+      native_security_reload_requested = 0;
+      if (native_principal_authority == nullptr) {
+        logger.info("native_security_reload_ignored",
+                    "native security reload ignored: mutual TLS is not configured");
+      } else if (native_security_generation == std::numeric_limits<std::uint64_t>::max()) {
+        logger.error("native_security_reload_failed",
+                     "native security reload failed: generation is exhausted");
+      } else {
+        auto replacement = load_native_server_security(*options);
+        if (!replacement.has_value()) {
+          logger.error("native_security_reload_failed",
+                       "native security reload failed: " + replacement.error().to_string());
+        } else {
+          const std::uint64_t next_generation = native_security_generation + 1U;
+          const std::string generation = std::to_string(next_generation);
+          const std::string message = "native security reloaded generation=" + generation;
+          chronos::network::NetworkSecurityConfig replacement_config{
+              .mode = chronos::network::TransportSecurityMode::kTlsRequired,
+              .authenticator = replacement->authority.get(),
+              .tls = chronos::network::TlsServerConfig{
+                  .require_client_certificate = true, .pem_credentials = replacement->credentials}};
+          const chronos::common::Status reloaded =
+              reactor->reload_tls_security(std::move(replacement_config));
+          if (!reloaded.is_ok()) {
+            logger.error("native_security_reload_failed",
+                         "native security reload failed: " + reloaded.to_string());
+          } else {
+            native_principal_authority = std::move(replacement->authority);
+            native_tls_credentials = std::move(replacement->credentials);
+            native_security_generation = next_generation;
+            const std::array fields{chronos::common::LogField{"generation", generation},
+                                    chronos::common::LogField{"native_transport", "tls"}};
+            logger.info("native_security_reloaded", message, fields);
+          }
+        }
+      }
+    }
     const auto status = reactor->poll_once(std::chrono::milliseconds{10});
     if (!status.is_ok()) {
       logger.error("reactor_failed", "reactor failure: " + status.to_string());

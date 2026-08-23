@@ -33,8 +33,8 @@ The daemon opens final paths with `O_NOFOLLOW`, bounds regular-file size, reject
 to the authority, certificate, and trust store, and requires the key to have no group/other access.
 ADR 0421 subsequently required exact descriptor reads and in-memory OpenSSL loading, so path
 replacement after qualification cannot select different credential bytes. It reports
-`native_transport=tls|plaintext` only after reactor startup. Configuration and credential reload
-remain restart operations.
+`native_transport=tls|plaintext` only after reactor startup. ADR 0422 subsequently adds
+transactional `SIGHUP` reload for this complete native security bundle.
 
 ## Alternatives considered
 
@@ -52,8 +52,8 @@ remain restart operations.
 The packaged `chronosctl quorum-sync` can target packaged `chronosd` through mutual TLS. Operators
 must maintain a distinct native-client allowlist and protect credential parent directories. The
 principal is available to the established connection state but does not yet implement per-table or
-per-operation RBAC. IPv6, DNS bind addresses, live reload, certificate revocation services, and
-io_uring TLS remain outside this decision.
+per-operation RBAC. IPv6, DNS bind addresses, established-session revocation, certificate
+revocation services, and io_uring TLS remain outside this decision.
 
 ## Affected invariants
 
@@ -86,8 +86,9 @@ new bundle and returns packaged remote serving to unavailable; it changes no dur
 
 ## Unresolved questions
 
-Fine-grained authorization needs a separate policy model. IPv6/DNS binding, live credential reload,
-revocation, and io_uring TLS require independent ownership and operational decisions.
+Fine-grained authorization needs a separate policy model. IPv6/DNS binding, established-session
+revocation, automatic file watching, and io_uring TLS require independent ownership and operational
+decisions.
 
 ## References
 
@@ -95,3 +96,4 @@ revocation, and io_uring TLS require independent ownership and operational decis
 - [Native client route configuration](../operations/native-client-route-config.md)
 - [Native server operations baseline](../operations/native-server.md)
 - [Descriptor-bound in-memory TLS credentials](0421-descriptor-bound-in-memory-tls-credentials.md)
+- [Transactional native TLS security reload](0422-transactional-native-tls-security-reload.md)

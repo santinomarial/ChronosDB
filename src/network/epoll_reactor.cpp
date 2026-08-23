@@ -8,6 +8,7 @@
 #include <new>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 #if defined(__linux__)
@@ -94,6 +95,46 @@ public:
       epoll_fd = -1;
     }
     running = false;
+    return common::Status::ok();
+  }
+
+  [[nodiscard]] common::Status reload_tls_security(NetworkSecurityConfig replacement) {
+    const auto reject = [this](common::Status status) {
+      ++stats.tls_security_reload_failures;
+      return status;
+    };
+    if (!running)
+      return reject(invalid("epoll reactor is not running"));
+    if (config.security.mode != TransportSecurityMode::kTlsRequired ||
+        replacement.mode != TransportSecurityMode::kTlsRequired) {
+      return reject(invalid("TLS security reload requires a running TLS-required reactor"));
+    }
+    if (const common::Status status =
+            validate_network_security_config(replacement, config.bind_address);
+        !status.is_ok()) {
+      return reject(status);
+    }
+    auto replacement_context = TlsServerContext::create(*replacement.tls);
+    if (!replacement_context.has_value())
+      return reject(replacement_context.error());
+
+    std::uint64_t closed_handshakes{};
+    for (auto iterator = connections.begin(); iterator != connections.end();) {
+      const int descriptor = iterator->first;
+      const bool authenticated = iterator->second.authenticated;
+      ++iterator;
+      if (authenticated)
+        continue;
+      close_connection(descriptor, false);
+      ++closed_handshakes;
+    }
+
+    static_assert(std::is_nothrow_move_assignable_v<NetworkSecurityConfig>);
+    static_assert(std::is_nothrow_move_assignable_v<decltype(tls_context)>);
+    config.security = std::move(replacement);
+    tls_context = std::move(*replacement_context);
+    ++stats.tls_security_reloads;
+    stats.tls_security_reload_closed_handshakes += closed_handshakes;
     return common::Status::ok();
   }
 
@@ -798,6 +839,18 @@ common::Status EpollReactor::poll_once(const std::chrono::milliseconds maximum_w
   return common::Status::ok();
 #else
   static_cast<void>(maximum_wait);
+  return common::Status{common::StatusCode::kNotSupported, "epoll reactor requires Linux"};
+#endif
+}
+
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+common::Status EpollReactor::reload_tls_security(NetworkSecurityConfig&& replacement) {
+#if defined(__linux__)
+  if (!implementation_)
+    return invalid("epoll reactor is not running");
+  return implementation_->reload_tls_security(std::move(replacement));
+#else
+  static_cast<void>(replacement);
   return common::Status{common::StatusCode::kNotSupported, "epoll reactor requires Linux"};
 #endif
 }

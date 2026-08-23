@@ -29,8 +29,10 @@ the plan, coordinator, snapshot context, internal queues, and applied-append obs
 INSERT acknowledges only after `LOCAL_SYNC`, but its query envelope has no durable client retry key;
 use canonical ingest when an ambiguous response must be retried without duplicating rows. `SIGINT`
 and `SIGTERM` request orderly worker join, reactor shutdown, WAL drain, Raft close, and root-lock
-release. Active configured subscriptions receive resumable server-shutdown termination while the
-reactor is still draining responses.
+release. With native mutual TLS configured, `SIGHUP` transactionally reloads only its complete
+certificate, key, trust store, and principal authority; without that bundle it is a logged no-op.
+Active configured subscriptions receive resumable server-shutdown termination while the reactor is
+still draining responses.
 
 For an already provisioned replicated root, add `--replicated-groups FILE`. The strict file format
 is documented in [Replicated Group Configuration](replicated-group-config.md). This mode reports
@@ -94,9 +96,10 @@ that those broader gates have passed.
 Set finite connection, event, frame, buffered-byte, queued-frame, in-flight request, handshake, and
 idle limits. Defaults are development bounds, not capacity guidance. Monitor accepted, rejected,
 active, closed, and timed-out connections; decoded/dispatched frames; overloads; dropped responses;
-protocol errors; and bytes. Sustained rejects, overloads, or drops indicate inadequate capacity or
-shard latency. Accepted sockets use `TCP_NODELAY`; failure to set it rejects admission. Do not raise
-a bound without measuring retained memory. Plaintext binds only to IPv4
+protocol errors; TLS reload successes/failures and handshake closures; and bytes. Sustained rejects,
+overloads, or drops indicate inadequate capacity or shard latency. Accepted sockets use
+`TCP_NODELAY`; failure to set it rejects admission. Do not raise a bound without measuring retained
+memory. Plaintext binds only to IPv4
 loopback. Remote epoll serving requires `TLS_REQUIRED`, an explicit certificate chain and private
 key, an explicit trust store, mandatory client certificates, and a borrowed authenticator that maps
 each verified certificate SHA-256 fingerprint to a stable nonzero principal. Invalid credentials
@@ -105,5 +108,9 @@ The io_uring backend returns `NOT_SUPPORTED` for TLS rather than downgrading.
 
 Shutdown closes every socket, detaches active work, and clears buffers. Stop shard response
 production before destroying queues. The embedding owns any configured authenticator and must keep
-it alive until reactor shutdown. Credential rotation currently requires replacing the reactor so a
-new immutable TLS context owns all new sessions.
+it alive until reactor shutdown or a successful owner-thread replacement has closed every handshake
+that could still call it. `reload_tls_security` validates and constructs a complete replacement
+before mutation. A failed attempt preserves every connection and the current generation; success
+closes incomplete handshakes, keeps established principals/sessions, and applies the new immutable
+context and authority only to new admissions. The packaged daemon exposes that operation through
+`SIGHUP`. Raft peer and native-client route credential rotation remain separate restart work.

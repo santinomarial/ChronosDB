@@ -18,11 +18,14 @@ that identity to rejection or a stable nonzero principal. The reactor attaches t
 every request and cancellation, so authorization never infers identity from a reused descriptor.
 Anonymous zero exists only for default loopback development.
 
-The callback must outlive the reactor. In plaintext mode rejection precedes protocol handshake. In
-TLS mode untrusted peers consume only the explicitly bounded connection and handshake resources;
-no application frame is decoded first. Only the maintained carrier may set
-`transport_authenticated`, and only after chain verification and peer-certificate capture. Source
-address, CRC, certificate subject text, and proxy assertions are not equivalent evidence.
+The active callback generation must outlive every handshake that can invoke it. A successful native
+security reload closes incomplete handshakes before releasing the previous generation; established
+connections already own their stable principal and do not invoke the callback again. In plaintext
+mode rejection precedes protocol handshake. In TLS mode untrusted peers consume only the explicitly
+bounded connection and handshake resources; no application frame is decoded first. Only the
+maintained carrier may set `transport_authenticated`, and only after chain verification and peer-
+certificate capture. Source address, CRC, certificate subject text, and proxy assertions are not
+equivalent evidence.
 
 Review questions: What proves transport authentication? Can the backend downgrade? Who owns the
 authenticator? Does the principal survive cancellation? When can hostile bytes allocate memory?

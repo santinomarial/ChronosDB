@@ -32,6 +32,7 @@ public:
   [[nodiscard]] static common::Result<Reactor>
   start(ReactorBackend backend, const EpollServerConfig& config, const EpollReactorQueues& queues);
   [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait);
+  [[nodiscard]] common::Status reload_tls_security(NetworkSecurityConfig&& replacement);
   [[nodiscard]] common::Status notify_response_ready() noexcept;
   [[nodiscard]] common::Status shutdown() noexcept;
   [[nodiscard]] std::uint16_t bound_port() const noexcept;

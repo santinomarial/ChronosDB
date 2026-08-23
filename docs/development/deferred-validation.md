@@ -932,11 +932,14 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   flush/CSEG/Manifest, failover query, movement, and object storage remain.
 - Configured `chronosd` Linux subprocess execution in CI, daemon ingest over real sockets, corrupt
   root/WAL/Raft startup cases, signals during ingest/query, queue saturation with multi-frame
-  responses, cancellation, concurrent clients, TLS credential/principal rotation, secure UUID
-  entropy-failure injection, metrics, privilege dropping, service-manager packaging,
+  responses, cancellation, concurrent clients, Raft and native-client route credential rotation,
+  immediate established-session revocation, repeated/failed native reload process matrices, secure
+  UUID entropy-failure injection, metrics, privilege dropping, service-manager packaging,
   ASan/UBSan/TSan, and sustained
   load. Linux-only tests now cover CREATE/query/restart/query, authenticated three-daemon
-  QUORUM_SYNC failover/recovery, and packaged mutual-TLS client/server APPLIED/exact retry. The
+  QUORUM_SYNC failover/recovery, and packaged mutual-TLS client/server APPLIED/exact retry plus one
+  complete SIGHUP certificate/trust/principal rotation. Focused reactor coverage proves malformed
+  reload rollback, straddling-handshake closure, and established-principal continuity. The
   process target remains intentionally unregistered on non-Linux hosts because the server reactor
   is Linux-only.
 - Native ingest service adapter allocation/fault injection, event-time and ancestor-schema retry

@@ -14,9 +14,10 @@ or the rule that unverified bytes cannot enter the native protocol decoder.
 ## Decision
 
 When `TLS_REQUIRED` is selected, `EpollReactor::start` constructs one immutable
-`TlsServerContext` before opening the listener. The context is declared above the connection table
-and therefore outlives every session. Each accepted descriptor receives a `TlsSocket` but remains
-unauthenticated and carries principal zero until the nonblocking mutual-TLS handshake succeeds.
+`TlsServerContext` before opening the listener. Each accepted descriptor receives a `TlsSocket`
+whose OpenSSL session retains the reference-counted context state, but remains unauthenticated and
+carries principal zero until the nonblocking mutual-TLS handshake succeeds. The active Chronos
+context factory creates later sessions and may be transactionally replaced under ADR 0422.
 
 The epoll owner translates OpenSSL `WANT_READ` and `WANT_WRITE` into descriptor interests. Cross-
 direction retries preserve the same scratch or immutable pending-write buffer until the original
@@ -36,6 +37,11 @@ and retain the existing immutable partial-write offset.
 The optional io_uring backend continues to return `NOT_SUPPORTED` for `TLS_REQUIRED`; direct
 `IORING_OP_RECV`/`SEND` cannot safely drive OpenSSL record state without a separately designed
 memory-BIO completion boundary.
+
+ADR 0422 adds one owner-thread TLS-generation replacement operation. It constructs and validates
+the new context before mutation, closes incomplete handshakes at the generation boundary, and
+retains established sessions with their original context and principal. Plaintext transitions and
+io_uring reload remain unsupported.
 
 ## Alternatives considered
 
@@ -72,14 +78,13 @@ and invalid credentials. Full network tests and sanitizer builds cover existing 
 ## Migration or rollback considerations
 
 Selecting loopback plaintext is unchanged. Rolling back this integration must restore explicit
-`NOT_SUPPORTED` for epoll `TLS_REQUIRED`; it must not silently accept raw bytes. Credential rotation
-creates a new reactor/context in the current library API, so production daemon reload orchestration
-remains follow-up work.
+`NOT_SUPPORTED` for epoll `TLS_REQUIRED`; it must not silently accept raw bytes. Rolling back ADR
+0422 removes owner-thread generation replacement and returns credential rotation to process restart.
 
 ## Unresolved questions
 
-Credential reload, certificate revocation policy, dedicated wire-byte metrics, io_uring TLS memory-
-BIO scheduling, and cluster-control request multiplexing remain.
+Established-session revocation, certificate revocation policy, dedicated wire-byte metrics,
+io_uring TLS memory-BIO scheduling, and cluster-control request multiplexing remain.
 
 ## References
 
@@ -87,4 +92,5 @@ BIO scheduling, and cluster-control request multiplexing remain.
 - [ADR 0066](0066-authentication-and-tls-integration-boundary.md)
 - [ADR 0144](0144-maintained-mutual-tls-socket-carrier.md)
 - [Native server operations](../operations/native-server.md)
+- [ADR 0422](0422-transactional-native-tls-security-reload.md)
 - [Architecture invariants](../architecture/invariants.md)

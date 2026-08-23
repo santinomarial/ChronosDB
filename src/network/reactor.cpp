@@ -31,6 +31,13 @@ public:
     std::terminate();
   }
 
+  [[nodiscard]] common::Status reload_tls_security(NetworkSecurityConfig&& replacement) {
+    if (auto* reactor = std::get_if<EpollReactor>(&backend); reactor != nullptr)
+      return reactor->reload_tls_security(std::move(replacement));
+    return common::Status{common::StatusCode::kNotSupported,
+                          "TLS security reload requires the epoll backend"};
+  }
+
   [[nodiscard]] common::Status shutdown() noexcept {
     if (auto* reactor = std::get_if<EpollReactor>(&backend); reactor != nullptr)
       return reactor->shutdown();
@@ -124,6 +131,13 @@ common::Status Reactor::poll_once(const std::chrono::milliseconds maximum_wait) 
     return common::Status{common::StatusCode::kInvalidArgument, "reactor is not running"};
   }
   return impl_->poll_once(maximum_wait);
+}
+
+common::Status Reactor::reload_tls_security(NetworkSecurityConfig&& replacement) {
+  if (!impl_) {
+    return common::Status{common::StatusCode::kInvalidArgument, "reactor is not running"};
+  }
+  return impl_->reload_tls_security(std::move(replacement));
 }
 
 common::Status Reactor::notify_response_ready() noexcept {

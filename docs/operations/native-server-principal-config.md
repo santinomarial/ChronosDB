@@ -38,8 +38,17 @@ The daemon opens final paths without following symlinks and requires bounded non
 files. The principal file, certificate, and trust store must not be writable by group or other;
 the private key must be inaccessible to group and other. It reads each credential completely from
 that qualified descriptor and builds the immutable OpenSSL context from those exact PEM bytes; it
-does not resolve the configured names again. Credential and principal reload are not implemented;
-restart the daemon after rotating the complete bundle.
+does not resolve the configured names again.
+
+To rotate native admission, stage replacements for all four configured names with the same
+permission rules, then send `SIGHUP` to `chronosd`. The daemon rereads and validates the complete
+bundle before publishing it. Success emits `native_security_reloaded` with the new process-local
+generation. Failure emits `native_security_reload_failed` and retains the prior generation. A
+successful reload closes connections still inside mutual-TLS handshake so one context cannot be
+authorized by another principal generation; already authenticated connections retain their old
+certificate decision and principal until disconnect or idle timeout. Revoke those sessions through
+a separate connection policy or restart when immediate eviction is required. File watching and
+cross-file deployment transactions are not inferred, so do not signal until every name is staged.
 
 TLS verifies the client chain against the configured trust store and requires a client
 certificate. Only then does the immutable allowlist compare the verified leaf fingerprint. An

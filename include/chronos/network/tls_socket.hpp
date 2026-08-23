@@ -91,9 +91,11 @@ private:
   friend class TlsSocket;
 };
 
-// A nonblocking TLS session over a borrowed connected socket. The caller owns the socket
-// descriptor and must keep it open until this object is destroyed. One reactor thread must own all
-// calls. Plaintext is available only after a mutually authenticated handshake completes.
+// A nonblocking TLS session over a borrowed connected socket. Creation retains OpenSSL's parsed
+// context state, so the TlsServerContext or TlsClientContext factory need only outlive the
+// synchronous accept/connect call. The caller owns the socket descriptor and must keep it open
+// until this object is destroyed. One reactor thread must own all calls. Plaintext is available
+// only after a mutually authenticated handshake completes.
 class TlsSocket {
 public:
   TlsSocket() noexcept;

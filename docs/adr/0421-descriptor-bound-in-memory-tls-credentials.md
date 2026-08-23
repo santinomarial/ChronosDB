@@ -40,8 +40,9 @@ policy to its certificate and trust files. Packaged Raft retains its established
 The native route owner shares one immutable byte bundle across every route context. Packaged Raft
 shares one bundle across inbound server and per-peer client contexts. Packaged native serving
 passes the same kind of bundle into epoll context construction. Changing, replacing, or unlinking a
-configured name after its descriptor read cannot change the credentials parsed during that startup.
-Credential rotation and reload remain restart operations.
+configured name after its descriptor read cannot change the credentials parsed for that generation.
+ADR 0422 subsequently reuses this exact-read boundary for transactional packaged native reload;
+Raft peer and native-client route rotation remain separate restart work.
 
 ## Consequences
 
@@ -55,7 +56,7 @@ Callers that explicitly use the retained path source still receive its previous 
 own path stability. Migrating that compatibility surface or adding descriptor-native OpenSSL store
 providers would require a separate decision. Parent-directory access control still matters before
 the one qualified open, and revocation, encrypted-key callbacks, hardware keys, and live reload are
-not introduced here.
+not introduced by this decision.
 
 ## Affected invariants
 
@@ -83,3 +84,4 @@ Packaged CLI and Linux process gates continue exercising native and Raft startup
 - [Native client route configuration](../operations/native-client-route-config.md)
 - [Native server principal configuration](../operations/native-server-principal-config.md)
 - [Deferred validation ledger](../development/deferred-validation.md)
+- [Transactional native TLS security reload](0422-transactional-native-tls-security-reload.md)

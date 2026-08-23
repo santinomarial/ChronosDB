@@ -23,8 +23,9 @@ struct PeerAuthenticationResult {
   std::uint64_t principal_id{};
 };
 
-// The authenticator is borrowed by the reactor and must outlive it. The reactor owner thread is
-// its only caller. An authorized custom result must carry a nonzero stable principal identity.
+// The authenticator is borrowed by one active security generation and must outlive every handshake
+// that can call it. The reactor owner thread is its only caller. An authorized custom result must
+// carry a nonzero stable principal identity.
 class ConnectionAuthenticator {
 public:
   virtual ~ConnectionAuthenticator() = default;

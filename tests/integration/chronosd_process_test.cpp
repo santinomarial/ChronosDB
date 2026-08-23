@@ -195,6 +195,10 @@ public:
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
   }
 
+  [[nodiscard]] bool request_native_security_reload() const noexcept {
+    return pid_ > 0 && ::kill(pid_, SIGHUP) == 0;
+  }
+
   [[nodiscard]] bool kill_abruptly() noexcept {
     if (output_ >= 0) {
       ::close(output_);
@@ -655,8 +659,8 @@ void provision_replicated_cluster(const std::array<std::string, 3U>& roots) {
   return path;
 }
 
-[[nodiscard]] std::string copy_private_key(const std::string& source,
-                                           const std::string& destination) {
+[[nodiscard]] std::string copy_exclusive_fixture(const std::string& source,
+                                                 const std::string& destination) {
   std::error_code error;
   const bool copied =
       std::filesystem::copy_file(source, destination, std::filesystem::copy_options::none, error);
@@ -681,6 +685,32 @@ void provision_replicated_cluster(const std::array<std::string, 3U>& roots) {
   }
   ::close(file);
   return text;
+}
+
+[[nodiscard]] bool replace_exclusive_file(const std::string& path, const std::string_view bytes) {
+  const std::string temporary = path + ".replacement";
+  const int file = ::open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  if (file < 0)
+    return false;
+  std::size_t offset{};
+  while (offset < bytes.size()) {
+    const ssize_t count = ::write(file, bytes.data() + offset, bytes.size() - offset);
+    if (count < 0 && errno == EINTR)
+      continue;
+    if (count <= 0) {
+      ::close(file);
+      ::unlink(temporary.c_str());
+      return false;
+    }
+    offset += static_cast<std::size_t>(count);
+  }
+  const bool synchronized = ::fsync(file) == 0;
+  const bool closed = ::close(file) == 0;
+  if (!synchronized || !closed || ::rename(temporary.c_str(), path.c_str()) != 0) {
+    ::unlink(temporary.c_str());
+    return false;
+  }
+  return true;
 }
 
 struct CommandResult {
@@ -1057,7 +1087,7 @@ TEST(ChronosdProcessTest, AppliesAndRecoversQuorumSyncThroughReplicatedDaemonMod
   EXPECT_EQ(child.stop(), 0);
 }
 
-TEST(ChronosdProcessTest, PackagesMutualTlsQuorumSyncFromChronosctlToChronosd) {
+TEST(ChronosdProcessTest, PackagesMutualTlsQuorumSyncAndRotatesNativeSecurity) {
   TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   provision_replicated_database(directory.path());
@@ -1065,14 +1095,18 @@ TEST(ChronosdProcessTest, PackagesMutualTlsQuorumSyncFromChronosctlToChronosd) {
   ASSERT_FALSE(groups.empty());
 
   const std::string fixture_directory = CHRONOS_TEST_TLS_FIXTURE_DIR;
-  const std::string server_certificate = fixture_directory + "/server.pem";
-  const std::string trust_store = fixture_directory + "/ca.pem";
-  const std::string server_key =
-      copy_private_key(fixture_directory + "/server-key.pem", directory.path() + "/server-key.pem");
-  const std::string client_key =
-      copy_private_key(fixture_directory + "/client-key.pem", directory.path() + "/client-key.pem");
+  const std::string server_certificate = copy_exclusive_fixture(
+      fixture_directory + "/server.pem", directory.path() + "/native-server.pem");
+  const std::string trust_store = copy_exclusive_fixture(
+      fixture_directory + "/ca.pem", directory.path() + "/native-trust-store.pem");
+  const std::string server_key = copy_exclusive_fixture(fixture_directory + "/server-key.pem",
+                                                        directory.path() + "/server-key.pem");
+  const std::string client_key = copy_exclusive_fixture(fixture_directory + "/client-key.pem",
+                                                        directory.path() + "/client-key.pem");
   ASSERT_FALSE(server_key.empty());
   ASSERT_FALSE(client_key.empty());
+  ASSERT_FALSE(server_certificate.empty());
+  ASSERT_FALSE(trust_store.empty());
   const std::string principals =
       write_exclusive_file(directory.path() + "/native-principals.conf",
                            "CHRONOSDB_NATIVE_SERVER_PRINCIPALS_V1\n"
@@ -1112,6 +1146,40 @@ TEST(ChronosdProcessTest, PackagesMutualTlsQuorumSyncFromChronosctlToChronosd) {
   EXPECT_TRUE(retried.standard_error.empty()) << retried.standard_error;
   EXPECT_NE(retried.standard_output.find("\"outcome\":\"MATCHING_RETRY\""), std::string::npos)
       << retried.standard_output;
+
+  ASSERT_TRUE(replace_exclusive_file(
+      principals, "CHRONOSDB_NATIVE_SERVER_PRINCIPALS_V1\n"
+                  "9=baf82073b1ad1f131414b65c6b302bd1d09b7f3bbb224916e19f305f201b091f\n"));
+  ASSERT_TRUE(
+      replace_exclusive_file(server_certificate, read_text_file(fixture_directory + "/node1.pem")));
+  ASSERT_TRUE(
+      replace_exclusive_file(server_key, read_text_file(fixture_directory + "/node1-key.pem")));
+  ASSERT_TRUE(
+      replace_exclusive_file(trust_store, read_text_file(fixture_directory + "/cluster-ca.pem")));
+  ASSERT_TRUE(child.request_native_security_reload());
+  const std::string reload = child.read_startup_line();
+  EXPECT_EQ(reload, "native security reloaded generation=2") << reload;
+
+  const CommandResult rejected_old_generation =
+      run_quorum_sync(directory.path(), routes, fixture_directory + "/client.pem", client_key,
+                      fixture_directory + "/ca.pem", append_file, "old-generation-rejected");
+  EXPECT_NE(rejected_old_generation.exit_code, 0);
+
+  const std::string rotated_routes = write_exclusive_file(
+      directory.path() + "/rotated-native-client-routes.conf",
+      "CHRONOSDB_NATIVE_CLIENT_ROUTES_V1\n1=127.0.0.1:" + std::to_string(port) +
+          ",127.0.0.1,7145018d7511b2e2af9e5531e01e9061af0a43e0b193621be717906b20e253a9\n");
+  const std::string rotated_client_key = copy_exclusive_fixture(
+      fixture_directory + "/node2-key.pem", directory.path() + "/rotated-native-client-key.pem");
+  ASSERT_FALSE(rotated_routes.empty());
+  ASSERT_FALSE(rotated_client_key.empty());
+  const CommandResult rotated = run_quorum_sync(
+      directory.path(), rotated_routes, fixture_directory + "/node2.pem", rotated_client_key,
+      fixture_directory + "/cluster-ca.pem", append_file, "rotated");
+  EXPECT_EQ(rotated.exit_code, 0) << rotated.standard_error;
+  EXPECT_TRUE(rotated.standard_error.empty()) << rotated.standard_error;
+  EXPECT_NE(rotated.standard_output.find("\"outcome\":\"MATCHING_RETRY\""), std::string::npos)
+      << rotated.standard_output;
   EXPECT_EQ(child.stop(), 0);
 }
 

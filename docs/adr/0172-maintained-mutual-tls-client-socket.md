@@ -31,9 +31,11 @@ drives both accepted and connected sessions and classifies certificate or identi
 failure as unauthenticated. Plaintext and the peer certificate SHA-256 fingerprint remain
 unavailable until the handshake and verification both succeed.
 
-The context must outlive sessions created from it, the caller retains descriptor ownership, and a
-single reactor owner thread serializes every context/session use. Reconnection, address selection,
-deadlines, retry, and application-principal authorization remain above this carrier.
+Session creation retains OpenSSL's reference-counted `SSL_CTX`, so the Chronos client-context
+factory must outlive synchronous creation but may be replaced or destroyed afterward. The caller
+retains descriptor ownership, and a single reactor owner thread serializes every context/session
+use. Reconnection, address selection, deadlines, retry, and application-principal authorization
+remain above this carrier.
 
 ## Consequences and validation
 
@@ -44,8 +46,9 @@ the replacement chain covers the configured identity and roots in the explicit t
 
 Socket-pair tests drive both maintained endpoints through partial readiness, verify distinct server
 and client certificate fingerprints, exchange plaintext in both directions, reject a mismatched IP
-SAN, reject missing credentials, and retain the server-side missing-client-certificate check. The
-installed consumer references both client context construction and connected-session creation.
+SAN, reject missing credentials, retain the server-side missing-client-certificate check, and prove
+sessions remain valid after both Chronos context factories are destroyed. The installed consumer
+references both client context construction and connected-session creation.
 
 Invariants 1, 5, 14, and 18 apply.
 

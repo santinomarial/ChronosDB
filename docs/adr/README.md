@@ -456,3 +456,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0419](0419-packaged-native-quorum-sync-client.md) | Packaged native QUORUM_SYNC client command | accepted |
 | [0420](0420-packaged-native-mutual-tls-server.md) | Packaged native mutual-TLS server | accepted |
 | [0421](0421-descriptor-bound-in-memory-tls-credentials.md) | Descriptor-bound in-memory TLS credentials | accepted |
+| [0422](0422-transactional-native-tls-security-reload.md) | Transactional native TLS security reload | accepted |

@@ -25,6 +25,14 @@ bundle to context construction. Replacing a configured path after that read cann
 credentials OpenSSL parses. Replicated peer transport uses the same descriptor-to-memory boundary
 for its shared inbound/outbound identity.
 
+On `SIGHUP`, the signal handler writes only a `sig_atomic_t` request flag. The main thread consumes
+it as the existing reactor owner, loads the complete next native bundle, and asks epoll to replace
+TLS admission. Context construction completes before mutation. Failure retains the old authority,
+context, and connections. Success closes incomplete handshakes, swaps admission generations, and
+then releases the old authority owner; established sessions keep their original OpenSSL context and
+stored principal and never borrow that authority again. The worker, queues, listener, database, and
+Raft runtime remain live. Raft peer credentials are not part of this reload.
+
 The configured worker dispatches one task synchronously and may retain a bounded query response
 sequence. It publishes that sequence in order and consumes no next request until completion. The
 worker may retain one owned response when the response ring is full. It retries that same frame
@@ -61,7 +69,8 @@ restricted to IPv4 loopback. Remote serving requires the complete native certifi
 trust-store, and client-principal bundle on epoll; empty or partial bundles, unsafe files, unknown
 certificates, and TLS on io_uring fail closed. Invalid options and unavailable reactor backends fail
 before the startup banner. Worker publication or reactor failures terminate the process with a
-nonzero status.
+nonzero status. A native reload failure is observable but nonterminal because the complete previous
+generation remains installed; a successful reload reports its monotonic process-local generation.
 
 The startup banner reports `data_plane=configured` or `data_plane=replicated` only after the
 corresponding database path and reactor both start; otherwise the explicit unconfigured mode
@@ -90,9 +99,13 @@ acknowledgement, kills the acknowledged tablet leader, observes a higher-term re
 requires an exact matching retry. Reopening each root then proves that all three applications
 recover the same two visible rows and one retry entry. A packaged-client gate starts `chronosd`
 with mutual TLS and a strict client-principal allowlist, invokes the actual `chronosctl` binary, and
-requires APPLIED followed by MATCHING_RETRY for the same canonical append. It deliberately does not
-claim native multi-group query failover: SELECT still needs one daemon to lead every barrier group
-because client leader routing and remote fragments are not packaged. On non-Linux hosts,
+requires APPLIED followed by MATCHING_RETRY for the same canonical append. It then rotates the
+server certificate/key, trust store, and allowlist through `SIGHUP`, rejects the old client
+generation, and requires the new generation to receive the same MATCHING_RETRY. Reactor coverage
+separately proves failed reload rollback, incomplete-handshake closure, and established-session
+continuity. It deliberately does not claim native multi-group query failover: SELECT still needs one
+daemon to lead every barrier group because client leader routing and remote fragments are not
+packaged. On non-Linux hosts,
 daemon/service build and durable-root initialization run, but the socket subprocess is not
 registered because the server reactor is Linux-only.
 

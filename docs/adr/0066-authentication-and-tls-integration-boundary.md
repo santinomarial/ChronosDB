@@ -27,8 +27,9 @@ unsupported for TLS until its separate record-completion design exists.
 
 Authentication rejection closes the descriptor before native-protocol decoding and increments a
 metric. Plaintext loopback authorization runs at accept; TLS authorization runs after the bounded
-cryptographic handshake. The authenticator must outlive the reactor, is called only by its owner
-thread, and must implement any external synchronization itself.
+cryptographic handshake. The authenticator must outlive every handshake that can call it, is called
+only by the reactor owner thread, and must implement any external synchronization itself. ADR 0422
+later defines the owner-thread boundary for safely replacing that borrowed generation.
 
 ## Alternatives considered
 

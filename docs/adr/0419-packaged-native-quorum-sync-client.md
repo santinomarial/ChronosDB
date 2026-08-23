@@ -58,12 +58,14 @@ command from waiting forever, while the existing phase deadlines remain defense 
 
 Operators and automation can invoke the implemented replicated durability path without embedding
 C++ when the target embeds the mutual-TLS native server. They must generate a canonical Columnar
-Append v1 payload and maintain protected route/TLS files. The packaged `chronosd` remains plaintext
-loopback-only and is not yet a compatible target. The command is synchronous and handles one
-operation; packaged native-server TLS, batching, schema lookup, credential reload, cancellation
-output, DNS routes, and query routing remain outside this decision.
+Append v1 payload and maintain protected route/TLS files. At acceptance, packaged `chronosd`
+remained plaintext loopback-only; ADR 0420 subsequently made it a compatible mutual-TLS target.
+The command is synchronous and handles one operation; batching, schema lookup, long-lived client
+route reload, cancellation output, DNS routes, and query routing remain outside this decision.
 
 The packaged-server gap is resolved by [ADR 0420](0420-packaged-native-mutual-tls-server.md).
+Packaged server-side admission reload is resolved by
+[ADR 0422](0422-transactional-native-tls-security-reload.md).
 
 ## Affected invariants
 

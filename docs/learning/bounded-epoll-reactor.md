@@ -8,10 +8,11 @@ returns `NOT_SUPPORTED`.
 
 One thread owns a reactor. It accepts sockets, performs nonblocking I/O, mutates connection state,
 changes readiness interest, drains responses, and expires deadlines. Each connection owns its
-buffers, state, and optional OpenSSL session. The reactor-owned TLS context outlives the connection
-table, and a session is destroyed before its borrowed descriptor closes. Decoded `Frame` ownership
-crosses the request SPSC ring. A shard returns another owned frame; encoding copies it into bounded
-connection output storage.
+buffers, state, and optional OpenSSL session. The active reactor-owned TLS context factory creates
+new sessions; each `SSL` retains its reference-counted OpenSSL context state across a factory
+replacement. A session is destroyed before its borrowed descriptor closes. Decoded `Frame`
+ownership crosses the request SPSC ring. A shard returns another owned frame; encoding copies it
+into bounded connection output storage.
 After publishing a response, the shard signals a coalescing `eventfd`, so an owner blocked in
 `epoll_wait` does not wait for its timeout. The queue release/acquire pair publishes data; eventfd
 publishes only readiness.
