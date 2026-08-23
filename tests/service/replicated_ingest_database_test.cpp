@@ -47,6 +47,21 @@ public:
   bool overflow{};
 };
 
+class RecordingShutdownObserver final : public ReplicatedIngestDatabaseShutdownObserver {
+public:
+  void on_shutdown_stage(const ReplicatedIngestDatabaseShutdownStage stage) noexcept override {
+    if (count < stages.size())
+      stages[count] = stage;
+    else
+      overflow = true;
+    ++count;
+  }
+
+  std::array<ReplicatedIngestDatabaseShutdownStage, 2U> stages{};
+  std::size_t count{};
+  bool overflow{};
+};
+
 class TemporaryDirectory {
 public:
   TemporaryDirectory() {
@@ -347,7 +362,7 @@ void elect_and_provision_multiple_tablets(ReplicatedIngestRuntime& owner) {
   return {};
 }
 
-TEST(ReplicatedIngestDatabaseTest, ReportsPackagedStartupStagesInOwnershipOrder) {
+TEST(ReplicatedIngestDatabaseTest, ReportsPackagedLifecycleStagesInOwnershipOrder) {
   TemporaryDirectory directory;
   runtime::DatabaseBootstrapConfig bootstrap_config{.database_root = directory.path().string(),
                                                     .new_database = descriptor()};
@@ -371,7 +386,15 @@ TEST(ReplicatedIngestDatabaseTest, ReportsPackagedStartupStagesInOwnershipOrder)
                         ReplicatedIngestDatabaseStartupStage::kCatalogRecovered,
                         ReplicatedIngestDatabaseStartupStage::kTabletOwnersPrepared,
                         ReplicatedIngestDatabaseStartupStage::kRuntimeReady}));
-  ASSERT_TRUE(database->shutdown().is_ok());
+  RecordingShutdownObserver shutdown_observer;
+  ASSERT_TRUE(database->shutdown(shutdown_observer).is_ok());
+  EXPECT_EQ(shutdown_observer.count, shutdown_observer.stages.size());
+  EXPECT_FALSE(shutdown_observer.overflow);
+  EXPECT_EQ(shutdown_observer.stages,
+            (std::array{ReplicatedIngestDatabaseShutdownStage::kRuntimeStopped,
+                        ReplicatedIngestDatabaseShutdownStage::kRootReleased}));
+  ASSERT_TRUE(database->shutdown(shutdown_observer).is_ok());
+  EXPECT_EQ(shutdown_observer.count, shutdown_observer.stages.size());
 }
 
 TEST(ReplicatedIngestDatabaseTest, RebuildsTabletOwnersFromCommittedMetadataUnderRootLock) {

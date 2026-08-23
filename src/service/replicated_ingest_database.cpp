@@ -550,14 +550,28 @@ bool ReplicatedIngestDatabase::is_running() const noexcept {
 }
 
 common::Status ReplicatedIngestDatabase::shutdown() {
+  return shutdown_with(nullptr);
+}
+
+common::Status
+ReplicatedIngestDatabase::shutdown(ReplicatedIngestDatabaseShutdownObserver& observer) {
+  return shutdown_with(std::addressof(observer));
+}
+
+common::Status
+ReplicatedIngestDatabase::shutdown_with(ReplicatedIngestDatabaseShutdownObserver* const observer) {
   if (impl_ == nullptr)
     return invalid("replicated database was moved from");
   if (impl_->shutdown_complete)
     return impl_->shutdown_status;
   impl_->shutdown_status = impl_->runtime.shutdown();
+  if (observer != nullptr)
+    observer->on_shutdown_stage(ReplicatedIngestDatabaseShutdownStage::kRuntimeStopped);
   const common::Status closed = impl_->bootstrap_owner.close();
   if (impl_->shutdown_status.is_ok())
     impl_->shutdown_status = closed;
+  if (observer != nullptr)
+    observer->on_shutdown_stage(ReplicatedIngestDatabaseShutdownStage::kRootReleased);
   impl_->shutdown_complete = true;
   return impl_->shutdown_status;
 }

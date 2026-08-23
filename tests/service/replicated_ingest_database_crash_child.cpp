@@ -23,6 +23,23 @@
 namespace chronos::service::test {
 namespace {
 
+[[noreturn]] void pause_with_event(const std::string_view event) noexcept {
+  std::size_t completed = 0U;
+  while (completed < event.size()) {
+    const ssize_t count =
+        ::write(STDOUT_FILENO, event.data() + completed, event.size() - completed);
+    if (count > 0) {
+      completed += static_cast<std::size_t>(count);
+      continue;
+    }
+    if (count < 0 && errno == EINTR)
+      continue;
+    ::_exit(6);
+  }
+  for (;;)
+    static_cast<void>(::pause());
+}
+
 [[nodiscard]] constexpr std::string_view
 startup_event(const ReplicatedIngestDatabaseStartupStage stage) noexcept {
   switch (stage) {
@@ -59,25 +76,28 @@ public:
   void on_startup_stage(const ReplicatedIngestDatabaseStartupStage stage) noexcept override {
     if (stage != desired_)
       return;
-    const std::string_view event = startup_event(stage);
-    std::size_t completed = 0U;
-    while (completed < event.size()) {
-      const ssize_t count =
-          ::write(STDOUT_FILENO, event.data() + completed, event.size() - completed);
-      if (count > 0) {
-        completed += static_cast<std::size_t>(count);
-        continue;
-      }
-      if (count < 0 && errno == EINTR)
-        continue;
-      ::_exit(6);
-    }
-    for (;;)
-      static_cast<void>(::pause());
+    pause_with_event(startup_event(stage));
   }
 
 private:
   ReplicatedIngestDatabaseStartupStage desired_;
+};
+
+class ShutdownPauseObserver final : public ReplicatedIngestDatabaseShutdownObserver {
+public:
+  explicit ShutdownPauseObserver(const ReplicatedIngestDatabaseShutdownStage desired) noexcept
+      : desired_(desired) {}
+
+  void on_shutdown_stage(const ReplicatedIngestDatabaseShutdownStage stage) noexcept override {
+    if (stage != desired_)
+      return;
+    pause_with_event(stage == ReplicatedIngestDatabaseShutdownStage::kRuntimeStopped
+                         ? "SHUTDOWN_RUNTIME_STOPPED\n"
+                         : "SHUTDOWN_ROOT_RELEASED\n");
+  }
+
+private:
+  ReplicatedIngestDatabaseShutdownStage desired_;
 };
 
 struct ChildConfig {
@@ -281,6 +301,15 @@ struct ChildConfig {
           head::HeadCommitPosition::raft(crash_tablet_group(), expected_tablet_index)) {
     return {common::StatusCode::kInternal,
             "crash child packaged tablet publication disagrees with durable state"};
+  }
+
+  if (config.pause_after == "after_shutdown_runtime_stopped" ||
+      config.pause_after == "after_shutdown_root_released") {
+    const auto stage = config.pause_after == "after_shutdown_runtime_stopped"
+                           ? ReplicatedIngestDatabaseShutdownStage::kRuntimeStopped
+                           : ReplicatedIngestDatabaseShutdownStage::kRootReleased;
+    ShutdownPauseObserver observer{stage};
+    return database->shutdown(observer);
   }
 
   if (config.pause_after == "after_ingest_admission") {

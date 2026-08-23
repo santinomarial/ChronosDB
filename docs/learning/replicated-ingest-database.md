@@ -76,6 +76,12 @@ process proves release of its exact partial ownership set. In every case the nex
 reconstructs the exact rows and retry identity, advances only the application frontier for an exact
 retry, and survives another reopen. Syscall-level cuts inside those stages remain separate work.
 
+Shutdown exposes a separate observer borrowed only for the synchronous call. `kRuntimeStopped`
+means the coordinator, worker, applications, and Raft log have drained while the root owner remains;
+`kRootReleased` follows the root close. A two-case `SIGKILL` matrix at those boundaries proves exact
+reopen and retry. Cuts inside worker drain, extension shutdown, log close, and root-close syscalls
+remain separate work.
+
 ## Query snapshot boundary
 
 `acquire_query_snapshot` pins one immutable applied metadata projection and reconstructs each active

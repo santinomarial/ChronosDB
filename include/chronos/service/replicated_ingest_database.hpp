@@ -36,6 +36,19 @@ public:
   virtual void on_startup_stage(ReplicatedIngestDatabaseStartupStage stage) noexcept = 0;
 };
 
+enum class ReplicatedIngestDatabaseShutdownStage : std::uint8_t {
+  kRuntimeStopped,
+  kRootReleased,
+};
+
+// Borrowed only for one synchronous shutdown(observer) call. Callbacks run in order on the calling
+// thread, are emitted at most once, and have no return channel into the retained shutdown status.
+class ReplicatedIngestDatabaseShutdownObserver {
+public:
+  virtual ~ReplicatedIngestDatabaseShutdownObserver() = default;
+  virtual void on_shutdown_stage(ReplicatedIngestDatabaseShutdownStage stage) noexcept = 0;
+};
+
 class ReplicatedQuerySnapshot {
 public:
   ReplicatedQuerySnapshot() = delete;
@@ -109,8 +122,10 @@ public:
   [[nodiscard]] std::span<const raft::GroupId> query_barrier_groups() const noexcept;
   [[nodiscard]] bool is_running() const noexcept;
   [[nodiscard]] common::Status shutdown();
+  [[nodiscard]] common::Status shutdown(ReplicatedIngestDatabaseShutdownObserver& observer);
 
 private:
+  [[nodiscard]] common::Status shutdown_with(ReplicatedIngestDatabaseShutdownObserver* observer);
   class Impl;
   explicit ReplicatedIngestDatabase(std::unique_ptr<Impl> impl) noexcept;
   std::unique_ptr<Impl> impl_;

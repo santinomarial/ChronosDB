@@ -279,5 +279,54 @@ INSTANTIATE_TEST_SUITE_P(
       return std::string{info.param.name};
     });
 
+struct PackagedShutdownCrashCase {
+  std::string_view name;
+  std::string_view pause_after;
+  std::string_view event;
+};
+
+class ReplicatedIngestDatabaseShutdownCrashTest
+    : public ::testing::TestWithParam<PackagedShutdownCrashCase> {};
+
+TEST_P(ReplicatedIngestDatabaseShutdownCrashTest,
+       ReopensExactStateAfterSigkillDuringOrderedShutdown) {
+  const PackagedShutdownCrashCase test_case = GetParam();
+  ReplicatedDatabaseCrashDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  auto spawned = wal::test::CrashChildProcess::spawn(
+      {.directory = directory.path(), .pause_after = std::string{test_case.pause_after}});
+  ASSERT_TRUE(spawned.has_value()) << spawned.error().to_string();
+  wal::test::CrashChildProcess child = std::move(*spawned);
+  auto stage_ready = child.wait_for(test_case.event);
+  ASSERT_TRUE(stage_ready.has_value()) << stage_ready.error().to_string();
+  ASSERT_TRUE(child.kill_abruptly().is_ok());
+
+  auto database =
+      ReplicatedIngestDatabase::open_existing(test::crash_database_config(directory.path(), false));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  expect_recovered_publication(*database, {.rows = 2U, .retries = 1U, .applied_index = 1U});
+  auto election = database->ingest_runtime()->runtime()->try_submit(
+      {{test::crash_tablet_group(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  ASSERT_TRUE(election->wait().has_value());
+  auto retry = database->ingest_runtime()->runtime()->try_submit(
+      {{test::crash_tablet_group(),
+        raft::ProposeOperation{ingest::kRaftColumnarAppendEntryType, test::crash_command()}}});
+  ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+  ASSERT_TRUE(retry->wait().has_value());
+  expect_recovered_publication(*database, {.rows = 2U, .retries = 1U, .applied_index = 2U});
+  ASSERT_TRUE(database->shutdown().is_ok());
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ShutdownStages, ReplicatedIngestDatabaseShutdownCrashTest,
+    ::testing::Values(PackagedShutdownCrashCase{"RuntimeStopped", "after_shutdown_runtime_stopped",
+                                                "SHUTDOWN_RUNTIME_STOPPED"},
+                      PackagedShutdownCrashCase{"RootReleased", "after_shutdown_root_released",
+                                                "SHUTDOWN_ROOT_RELEASED"}),
+    [](const ::testing::TestParamInfo<PackagedShutdownCrashCase>& info) {
+      return std::string{info.param.name};
+    });
+
 } // namespace
 } // namespace chronos::service

@@ -38,6 +38,10 @@ membership against committed placement before admitting a write.
 Shutdown first drains and closes the replicated-ingest runtime and then releases the root lock. The
 first failure is retained across repeated shutdown calls.
 
+An optional shutdown observer is borrowed only for one synchronous `shutdown(observer)` call. It
+receives non-throwing callbacks after the runtime is stopped and after the root is released; repeated
+shutdown emits neither stage again and preserves the original status.
+
 An optional borrowed startup observer receives four synchronous, non-throwing callbacks on the
 opening thread after root ownership, catalog recovery, tablet-owner preparation, and asynchronous
 runtime readiness. The observer receives no partially constructed database and has no return
@@ -84,8 +88,9 @@ accordingly without duplicate rows. The observer's complete success order is tes
 four-case child matrix pauses after each of validated root ownership, catalog recovery, tablet-owner
 preparation, and asynchronous runtime readiness. Every child dies by `SIGKILL`; the parent proves
 exact recovery, retry, and repeated reopen. Syscall-level startup cuts, remaining write stages,
-snapshot-install/compaction, and shutdown crash/syscall matrices, larger resident-set profiles, and
-broader TSan coverage remain deferred.
+snapshot-install/compaction, and internal shutdown crash/syscall matrices, larger resident-set
+profiles, and broader TSan coverage remain deferred. A two-case shutdown matrix kills the process
+at each outer callback and proves exact reopen and retry.
 
 ## Affected invariants
 
