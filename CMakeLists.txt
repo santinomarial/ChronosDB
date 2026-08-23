@@ -1183,6 +1183,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/raft/metadata_snapshot_header_self_contained.cpp
     tests/raft/metadata_snapshot_compaction_failure_test.cpp
     tests/raft/metadata_snapshot_golden_test.cpp
+    tests/raft/metadata_snapshot_scale_test.cpp
     tests/raft/metadata_snapshot_storage_header_self_contained.cpp
     tests/raft/metadata_snapshot_storage_failure_test.cpp
     tests/raft/metadata_snapshot_storage_test.cpp
@@ -2305,6 +2306,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
   add_executable(
     chronos_raft_benchmarks
     benchmarks/raft/deterministic_simulator_benchmark.cpp
+    benchmarks/raft/metadata_snapshot_benchmark.cpp
     benchmarks/raft/transport_codec_benchmark.cpp
   )
   set_target_properties(chronos_raft_benchmarks PROPERTIES CXX_EXTENSIONS OFF)

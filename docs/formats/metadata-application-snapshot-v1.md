@@ -87,3 +87,10 @@ generated canonical minors, then exercises exact round trips, lower caller limit
 mutations with independently refreshed entry/header/file CRC32C layers, and truncation. Successful
 hostile decodes must stabilize after semantic re-encoding; the bounded CI smoke is not a sustained
 fuzz campaign.
+
+The declared 65,536-entry limit is exercised exactly with nine voters and valid nested Metadata
+Command v1 payloads. The maximum catalog must round-trip byte-stably, while entry 65,537 and a caller
+limit of 65,535 must return `RESOURCE_EXHAUSTED`. Local-only benchmarks measure encode and owned
+decode at 1,024, 16,384, and 65,536 entries and report the entry count, payload bytes per entry, and
+complete snapshot bytes; their output is evidence only when retained with the revision, compiler,
+host, command, and full result.

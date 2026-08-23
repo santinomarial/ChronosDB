@@ -548,8 +548,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   generated canonical minors with valid nested payloads, lowered caller limits, checksum-repaired
   mutations, truncation, and stable semantic re-encoding; the standard deterministic smoke runs it
   in CI. Add sustained fuzz campaigns, repeated and broader cross-stage injected-I/O combinations,
-  policy-transition matrices, cleanup metrics, physical power-loss qualification, and large-catalog
-  limits/measurements.
+  policy-transition matrices, cleanup metrics, and physical power-loss qualification. The structural
+  codec now exact-round-trips its 65,536-entry maximum, rejects entry 65,537 and lowered limits, and
+  has local-only encode/decode measurement shapes through that maximum; large-catalog durable
+  install/recovery measurement remains open.
 - Extend the implemented committed-only tablet command application and full retained-log rebuild
   with crash injection around publication/applied-index persistence. Extend the implemented durable
   application-snapshot creation/compaction plus prefix/suffix recovery with mismatch/fault matrices,

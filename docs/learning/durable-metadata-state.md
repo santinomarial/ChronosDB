@@ -106,6 +106,13 @@ boundaries, and checks lowered caller limits. Any hostile input that decodes mus
 canonical bytes after semantic re-encoding. CI runs a deterministic sanitizer-backed smoke; longer
 campaigns remain a separate qualification record.
 
+Scale qualification tests the format's actual entry ceiling rather than a small proxy: 65,536
+retained application entries, nine voters, valid nested command bytes, nondecreasing terms, and an
+exact re-encode. Both a 65,535 caller limit and entry 65,537 fail with `RESOURCE_EXHAUSTED`. Separate
+local-only benchmarks time encode and owned decode at 1,024, 16,384, and 65,536 entries while
+reporting the complete encoded size. Those measurements characterize codec scaling only; they do not
+claim durable install/recovery latency or production throughput.
+
 Obsolete application snapshots are reclaimed only against the current durable Raft boundary. The
 owner exact-matches its adopted snapshot, revalidates that file, removes every older or future
 canonical final, and synchronizes the directory. With a zero Raft snapshot it can remove all
