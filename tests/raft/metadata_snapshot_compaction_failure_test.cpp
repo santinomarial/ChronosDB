@@ -17,6 +17,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <tuple>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -58,57 +59,60 @@ private:
   std::filesystem::path path_;
 };
 
-struct MetadataCompactionMixedFailureCase {
+struct MetadataCompactionApplicationFailureCase {
   test::MetadataCompactionApplicationFault application_fault;
-  test::MetadataCompactionRaftFault raft_fault;
   std::string_view name;
   bool application_snapshot_visible_after_first_failure;
+};
+
+constexpr std::array<MetadataCompactionApplicationFailureCase, 10U> kApplicationFailures{
+    MetadataCompactionApplicationFailureCase{
+        test::MetadataCompactionApplicationFault::kTemporaryCreate, "temporary_create", false},
+    MetadataCompactionApplicationFailureCase{
+        test::MetadataCompactionApplicationFault::kTemporaryValidationStat,
+        "temporary_validation_stat", false},
+    MetadataCompactionApplicationFailureCase{
+        test::MetadataCompactionApplicationFault::kTemporaryWrite, "temporary_write", false},
+    MetadataCompactionApplicationFailureCase{
+        test::MetadataCompactionApplicationFault::kTemporaryPartialWrite, "temporary_partial_write",
+        false},
+    MetadataCompactionApplicationFailureCase{
+        test::MetadataCompactionApplicationFault::kTemporarySizeStat, "temporary_size_stat", false},
+    MetadataCompactionApplicationFailureCase{
+        test::MetadataCompactionApplicationFault::kTemporaryReadback, "temporary_readback", false},
+    MetadataCompactionApplicationFailureCase{
+        test::MetadataCompactionApplicationFault::kTemporaryFileSync, "temporary_file_sync", false},
+    MetadataCompactionApplicationFailureCase{
+        test::MetadataCompactionApplicationFault::kTemporaryClose, "temporary_close", false},
+    MetadataCompactionApplicationFailureCase{test::MetadataCompactionApplicationFault::kFinalRename,
+                                             "final_rename", false},
+    MetadataCompactionApplicationFailureCase{
+        test::MetadataCompactionApplicationFault::kFinalDirectorySync, "final_directory_sync",
+        true},
+};
+
+struct MetadataCompactionRaftFailureCase {
+  test::MetadataCompactionRaftFault raft_fault;
+  std::string_view name;
   bool raft_tail_repair_required;
   bool raft_authority_recovered;
 };
 
-constexpr std::array<MetadataCompactionMixedFailureCase, 10U> kMixedFailures{
-    MetadataCompactionMixedFailureCase{
-        test::MetadataCompactionApplicationFault::kTemporaryPartialWrite,
-        test::MetadataCompactionRaftFault::kWriteBefore, "temporary_partial_then_raft_write_before",
-        false, false, false},
-    MetadataCompactionMixedFailureCase{
-        test::MetadataCompactionApplicationFault::kTemporaryPartialWrite,
-        test::MetadataCompactionRaftFault::kWritePrefixThenError,
-        "temporary_partial_then_raft_partial", false, true, false},
-    MetadataCompactionMixedFailureCase{
-        test::MetadataCompactionApplicationFault::kTemporaryPartialWrite,
-        test::MetadataCompactionRaftFault::kWriteAfter, "temporary_partial_then_raft_write_after",
-        false, false, true},
-    MetadataCompactionMixedFailureCase{
-        test::MetadataCompactionApplicationFault::kTemporaryPartialWrite,
-        test::MetadataCompactionRaftFault::kDataSyncBefore,
-        "temporary_partial_then_raft_data_sync_before", false, false, true},
-    MetadataCompactionMixedFailureCase{
-        test::MetadataCompactionApplicationFault::kTemporaryPartialWrite,
-        test::MetadataCompactionRaftFault::kDataSyncAfter,
-        "temporary_partial_then_raft_data_sync_after", false, false, true},
-    MetadataCompactionMixedFailureCase{
-        test::MetadataCompactionApplicationFault::kFinalDirectorySync,
-        test::MetadataCompactionRaftFault::kWriteBefore, "directory_sync_then_raft_write_before",
-        true, false, false},
-    MetadataCompactionMixedFailureCase{
-        test::MetadataCompactionApplicationFault::kFinalDirectorySync,
-        test::MetadataCompactionRaftFault::kWritePrefixThenError,
-        "directory_sync_then_raft_partial", true, true, false},
-    MetadataCompactionMixedFailureCase{
-        test::MetadataCompactionApplicationFault::kFinalDirectorySync,
-        test::MetadataCompactionRaftFault::kWriteAfter, "directory_sync_then_raft_write_after",
-        true, false, true},
-    MetadataCompactionMixedFailureCase{
-        test::MetadataCompactionApplicationFault::kFinalDirectorySync,
-        test::MetadataCompactionRaftFault::kDataSyncBefore,
-        "directory_sync_then_raft_data_sync_before", true, false, true},
-    MetadataCompactionMixedFailureCase{
-        test::MetadataCompactionApplicationFault::kFinalDirectorySync,
-        test::MetadataCompactionRaftFault::kDataSyncAfter,
-        "directory_sync_then_raft_data_sync_after", true, false, true},
+constexpr std::array<MetadataCompactionRaftFailureCase, 5U> kRaftFailures{
+    MetadataCompactionRaftFailureCase{test::MetadataCompactionRaftFault::kWriteBefore,
+                                      "raft_write_before", false, false},
+    MetadataCompactionRaftFailureCase{test::MetadataCompactionRaftFault::kWritePrefixThenError,
+                                      "raft_partial_write", true, false},
+    MetadataCompactionRaftFailureCase{test::MetadataCompactionRaftFault::kWriteAfter,
+                                      "raft_write_after", false, true},
+    MetadataCompactionRaftFailureCase{test::MetadataCompactionRaftFault::kDataSyncBefore,
+                                      "raft_data_sync_before", false, true},
+    MetadataCompactionRaftFailureCase{test::MetadataCompactionRaftFault::kDataSyncAfter,
+                                      "raft_data_sync_after", false, true},
 };
+
+using MetadataCompactionMixedFailureCase =
+    std::tuple<MetadataCompactionApplicationFailureCase, MetadataCompactionRaftFailureCase>;
 
 struct MetadataCompactionReopenFailureCase {
   test::MetadataCompactionApplicationFault application_reopen_fault;
@@ -185,11 +189,12 @@ TEST_P(MetadataSnapshotCompactionMixedFailureTest,
        WithholdsBothAttemptsAndConvergesFromRecoveredOwners) {
   CompactionFailureDirectory directory;
   ASSERT_FALSE(directory.path().empty());
-  const MetadataCompactionMixedFailureCase failure = GetParam();
+  const auto& [application_failure, raft_failure] = GetParam();
   const RaftPersistentLogConfig log_config = test::metadata_compaction_log_config(directory.path());
   const std::vector<RaftGroupConfiguration> groups = test::metadata_crash_groups();
-  test::MetadataCompactionApplicationFaultSyscalls application_syscalls{failure.application_fault};
-  test::MetadataCompactionRaftFaultSyscalls raft_syscalls{failure.raft_fault};
+  test::MetadataCompactionApplicationFaultSyscalls application_syscalls{
+      application_failure.application_fault};
+  test::MetadataCompactionRaftFaultSyscalls raft_syscalls{raft_failure.raft_fault};
 
   {
     auto runtime = detail::DurableMultiRaftRuntimeTestAccess::create_new(1U, log_config, groups, {},
@@ -239,7 +244,7 @@ TEST_P(MetadataSnapshotCompactionMixedFailureTest,
         test::metadata_compaction_storage_config(directory.path()));
     ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
     auto after_first_failure = storage->load(1U);
-    if (failure.application_snapshot_visible_after_first_failure) {
+    if (application_failure.application_snapshot_visible_after_first_failure) {
       ASSERT_TRUE(after_first_failure.has_value()) << after_first_failure.error().to_string();
       expect_application_snapshot(after_first_failure->snapshot);
     } else {
@@ -272,21 +277,21 @@ TEST_P(MetadataSnapshotCompactionMixedFailureTest,
     ASSERT_TRUE(runtime->close().is_ok());
   }
 
-  if (failure.raft_tail_repair_required) {
+  if (raft_failure.raft_tail_repair_required) {
     auto strict = DurableMultiRaftRuntime::open_existing(1U, log_config, {}, groups);
     ASSERT_FALSE(strict.has_value());
     EXPECT_EQ(strict.error().code(), common::StatusCode::kCorruption);
   }
   const RaftPersistentLogOpenOptions open_options{.repair_incomplete_final_tail =
-                                                      failure.raft_tail_repair_required};
+                                                      raft_failure.raft_tail_repair_required};
   auto runtime = DurableMultiRaftRuntime::open_existing(1U, log_config, open_options, groups);
   ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
   const RaftNode* recovered_node = runtime->find_group(test::metadata_crash_group_id());
   ASSERT_NE(recovered_node, nullptr);
   EXPECT_EQ(recovered_node->persistent_state().snapshot.last_included_index,
-            failure.raft_authority_recovered ? 1U : 0U);
+            raft_failure.raft_authority_recovered ? 1U : 0U);
   EXPECT_EQ(recovered_node->persistent_state().log.size(),
-            failure.raft_authority_recovered ? 0U : 1U);
+            raft_failure.raft_authority_recovered ? 0U : 1U);
   auto storage = MetadataSnapshotStorage::open_existing(
       test::metadata_compaction_storage_config(directory.path()));
   ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
@@ -299,7 +304,7 @@ TEST_P(MetadataSnapshotCompactionMixedFailureTest,
   std::optional<DurableMetadataStateMachine> metadata{std::move(*recovered)};
   expect_catalog(*metadata);
 
-  if (!failure.raft_authority_recovered) {
+  if (!raft_failure.raft_authority_recovered) {
     auto compacted = metadata->compact_applied_prefix(1U);
 
     ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
@@ -336,9 +341,13 @@ TEST_P(MetadataSnapshotCompactionMixedFailureTest,
 
 INSTANTIATE_TEST_SUITE_P(
     EveryCrossOwnerFailure, MetadataSnapshotCompactionMixedFailureTest,
-    ::testing::ValuesIn(kMixedFailures),
+    ::testing::Combine(::testing::ValuesIn(kApplicationFailures),
+                       ::testing::ValuesIn(kRaftFailures)),
     [](const ::testing::TestParamInfo<MetadataCompactionMixedFailureCase>& parameter) {
-      return std::string{parameter.param.name};
+      std::string name{std::get<0>(parameter.param).name};
+      name += "_then_";
+      name += std::get<1>(parameter.param).name;
+      return name;
     });
 
 TEST(MetadataSnapshotCompactionRepeatedFailureTest,

@@ -85,10 +85,12 @@ error leaves an incomplete final record that strict recovery rejects and explici
 removes. A complete write that reports `EIO`, plus data-sync errors before and after the real sync,
 withhold success but may leave a complete compacted record in the immediate restart image. Recovery
 accepts that record only after full validation and requires its exact application snapshot before
-reconstructing the catalog. The complete 2-by-5 matrix converges from each observed image and
-survives another reopen; it does not reinterpret a failed compaction as acknowledged durability or
-qualify power loss. This ordering is why the two owners can be recovered independently without
-allowing Raft to reference missing catalog state.
+reconstructing the catalog. The complete 10-by-5 matrix crosses every post-ownership application
+install failure—from temporary creation through validation, writes, readback, synchronization,
+close, rename, and final directory sync—with those five Raft outcomes on retry. It converges from
+each observed image and survives another reopen; it does not reinterpret a failed compaction as
+acknowledged durability or qualify power loss. This ordering is why the two owners can be recovered
+independently without allowing Raft to reference missing catalog state.
 
 Repeated failure does not weaken that convergence argument. A real-filesystem test performs two
 separate partial application-snapshot writes, reopening each time to remove the prior temporary,

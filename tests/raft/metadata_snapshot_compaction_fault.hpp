@@ -16,7 +16,15 @@ inline constexpr std::size_t kMetadataCompactionPartialRecordBytes = 16U;
 
 enum class MetadataCompactionApplicationFault : std::uint8_t {
   kPriorTemporaryUnlink,
+  kTemporaryCreate,
+  kTemporaryValidationStat,
+  kTemporaryWrite,
   kTemporaryPartialWrite,
+  kTemporarySizeStat,
+  kTemporaryReadback,
+  kTemporaryFileSync,
+  kTemporaryClose,
+  kFinalRename,
   kFinalDirectorySync,
 };
 
@@ -39,6 +47,10 @@ public:
   }
 
   int open_at(const io::detail::OpenAtRequest& request) override {
+    if (armed_ && fault_ == MetadataCompactionApplicationFault::kTemporaryCreate &&
+        std::string_view{request.name}.ends_with(".rmas.tmp")) {
+      return fail();
+    }
     return delegate_.open_at(request);
   }
 
@@ -47,10 +59,14 @@ public:
   }
 
   ssize_t pread(const io::detail::ReadAtRequest& request) override {
+    if (armed_ && fault_ == MetadataCompactionApplicationFault::kTemporaryReadback)
+      return fail_ssize();
     return delegate_.pread(request);
   }
 
   ssize_t pwrite(const io::detail::WriteAtRequest& request) override {
+    if (armed_ && fault_ == MetadataCompactionApplicationFault::kTemporaryWrite)
+      return fail_ssize();
     if (armed_ && fault_ == MetadataCompactionApplicationFault::kTemporaryPartialWrite) {
       if (!partial_write_started_) {
         partial_write_started_ = true;
@@ -65,7 +81,17 @@ public:
   }
 
   int fstat(const int descriptor, struct stat* metadata) override {
-    return delegate_.fstat(descriptor, metadata);
+    const int result = delegate_.fstat(descriptor, metadata);
+    if (!armed_ || result != 0 || !S_ISREG(metadata->st_mode))
+      return result;
+    ++regular_stat_calls_;
+    if ((fault_ == MetadataCompactionApplicationFault::kTemporaryValidationStat &&
+         regular_stat_calls_ == 1U) ||
+        (fault_ == MetadataCompactionApplicationFault::kTemporarySizeStat &&
+         regular_stat_calls_ == 2U)) {
+      return fail();
+    }
+    return result;
   }
 
   int ftruncate(const io::detail::TruncateRequest& request) override {
@@ -77,15 +103,23 @@ public:
   }
 
   int fsync(const int descriptor) override {
-    if (armed_ && fault_ == MetadataCompactionApplicationFault::kFinalDirectorySync) {
+    if (armed_ && (fault_ == MetadataCompactionApplicationFault::kTemporaryFileSync ||
+                   fault_ == MetadataCompactionApplicationFault::kFinalDirectorySync)) {
       struct stat metadata {};
-      if (delegate_.fstat(descriptor, &metadata) == 0 && S_ISDIR(metadata.st_mode))
+      if (delegate_.fstat(descriptor, &metadata) == 0 &&
+          ((fault_ == MetadataCompactionApplicationFault::kTemporaryFileSync &&
+            S_ISREG(metadata.st_mode)) ||
+           (fault_ == MetadataCompactionApplicationFault::kFinalDirectorySync &&
+            S_ISDIR(metadata.st_mode)))) {
         return fail();
+      }
     }
     return delegate_.fsync(descriptor);
   }
 
   int rename_no_replace(const io::detail::RenameAtRequest& request) override {
+    if (armed_ && fault_ == MetadataCompactionApplicationFault::kFinalRename)
+      return fail();
     return delegate_.rename_no_replace(request);
   }
 
@@ -107,7 +141,10 @@ public:
   }
 
   int close(const int descriptor) override {
-    return delegate_.close(descriptor);
+    const int result = delegate_.close(descriptor);
+    if (armed_ && result == 0 && fault_ == MetadataCompactionApplicationFault::kTemporaryClose)
+      return fail();
+    return result;
   }
 
 private:
@@ -125,6 +162,7 @@ private:
 
   io::detail::PosixSyscalls& delegate_;
   MetadataCompactionApplicationFault fault_;
+  std::size_t regular_stat_calls_{};
   bool partial_write_started_{false};
   bool armed_{false};
   bool fired_{false};
