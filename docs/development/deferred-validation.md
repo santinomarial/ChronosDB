@@ -474,7 +474,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   mixed-version processes, broader count-shape corruption campaigns, and broader reclamation
   matrices. The composed tablet RTAS/Raft install now has a ten-cut real-process `SIGKILL` matrix;
   the RTAS owner also covers one-shot failures at every install and cleanup syscall. Physical
-  power-loss, other repeated-stage combinations, and simultaneous faults remain. A four-schedule
+  power-loss, other repeated-stage combinations, and simultaneous faults remain. Tablet snapshot
+  reclamation now covers every authoritative preflight, directory enumeration, ordered unlink, and
+  directory-sync failure for nonzero and zero authority with exact retry/reopen convergence; its
+  process-kill matrix remains deferred. A four-schedule
   mixed-owner matrix crosses RTAS temporary-prefix and final-directory-sync failures with a definite
   or partial Raft write on the following attempt. A five-attempt lifecycle further repeats the RTAS
   partial write twice and the repaired Raft partial write twice before success. A complete 2-by-4

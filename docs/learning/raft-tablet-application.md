@@ -147,6 +147,13 @@ is synchronized. A failed unlink or sync may have shortened the namespace withou
 success counters. `snapshot_cleanup_metrics()` forwards this process-local snapshot from the tablet
 state machine only when recovery transferred snapshot-storage ownership.
 
+Deterministic reclamation injection covers all four authoritative-file preflight calls before
+mutation, directory enumeration, each possible ordered obsolete-file unlink, and the final
+directory sync. Eight middle-authority cases prove that the exact authority remains readable; five
+zero-authority cases expose only the deletion prefix already completed. Every failed owner remains
+usable, its failure-only metrics do not claim unsynchronized removals, and retry plus reopen
+converges from the observed namespace.
+
 ## Complexity and likely interview questions
 
 Application is linear in committed commands plus decoded column bytes. Retry lookup is `O(log N)`

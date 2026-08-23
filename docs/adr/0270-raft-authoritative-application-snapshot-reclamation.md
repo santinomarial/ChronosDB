@@ -50,22 +50,22 @@ Automatic highest-file retention was rejected because a pre-Raft crash orphan ma
 index. Reader pins are unnecessary for v1 because snapshot loads own and decode all bytes before the
 file handle is released; no live state retains mapped or borrowed file storage.
 
-Scheduling, tablet-owner syscall and process-kill matrices, and device qualification remain
-hardening work.
+Scheduling, the tablet-owner process-kill matrix, and device qualification remain hardening work.
 
 ## Validation and invariants
 
 Invariants 1–5, 8, 10, 11, 14, and 18 apply. Real-filesystem tests retain an exact middle authority
 while deleting older and future files, reclaim all files for a zero-snapshot boundary, and exercise
-the tablet and metadata state-machine wrappers after repeated compaction. Metadata storage
+the tablet and metadata state-machine wrappers after repeated compaction. Both storage owners'
 one-shot injection covers authoritative-file open, validation stat, size stat, and read before any
 mutation; directory enumeration; failure at each ordered obsolete-file unlink; and final directory
-sync. Eight nonzero-authority cases always preserve and revalidate the middle authority. Five
-zero-authority cases expose only the exact partial orphan deletion already completed. Every failure
-keeps the owner usable, and exact retry plus reopen converges. An eleven-schedule metadata storage
+sync. Each owner's eight nonzero-authority cases always preserve and revalidate the middle
+authority. Each owner's five zero-authority cases expose only the exact partial orphan deletion
+already completed. Every failure keeps the owner usable, and exact retry plus reopen converges. An
+eleven-schedule metadata storage
 `SIGKILL` matrix stops after enumeration, each individual unlink, final directory sync, and success
 release for both nonzero and zero authority. Reopen observes exactly the completed deletion prefix,
 then exact retry and a second reopen converge without deleting the middle authority or retaining a
 zero-authority orphan. Storage tests pin successful temporary-cleanup counters for both owners and
-reclamation attempt/failure/synchronized-success counters across every injected metadata failure;
-state-machine tests prove ownership-aware forwarding.
+reclamation attempt/failure/synchronized-success counters across every injected failure for both
+owners; state-machine tests prove ownership-aware forwarding.

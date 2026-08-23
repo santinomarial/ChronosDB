@@ -24,6 +24,15 @@ enum class SnapshotStorageFault : std::uint8_t {
   kTemporaryClose,
   kFinalRename,
   kFinalDirectorySync,
+  kReclamationAuthorityOpen,
+  kReclamationAuthorityValidationStat,
+  kReclamationAuthoritySizeStat,
+  kReclamationAuthorityRead,
+  kReclamationList,
+  kReclamationFirstUnlink,
+  kReclamationSecondUnlink,
+  kReclamationThirdUnlink,
+  kReclamationDirectorySync,
 };
 
 class OneShotSnapshotStorageFault final : public io::detail::PosixSyscalls {
@@ -47,14 +56,20 @@ public:
         std::string_view{request.name}.ends_with(".rtas.tmp")) {
       return fail();
     }
+    if (armed_ && fault_ == SnapshotStorageFault::kReclamationAuthorityOpen &&
+        std::string_view{request.name}.ends_with(".rtas")) {
+      return fail();
+    }
     return delegate_.open_at(request);
   }
   int mkdir_at(const io::detail::MkdirAtRequest& request) override {
     return delegate_.mkdir_at(request);
   }
   ssize_t pread(const io::detail::ReadAtRequest& request) override {
-    if (armed_ && fault_ == SnapshotStorageFault::kTemporaryReadback)
+    if (armed_ && (fault_ == SnapshotStorageFault::kTemporaryReadback ||
+                   fault_ == SnapshotStorageFault::kReclamationAuthorityRead)) {
       return fail_ssize();
+    }
     return delegate_.pread(request);
   }
   ssize_t pwrite(const io::detail::WriteAtRequest& request) override {
@@ -78,7 +93,11 @@ public:
       return result;
     ++regular_stat_calls_;
     if ((fault_ == SnapshotStorageFault::kTemporaryValidationStat && regular_stat_calls_ == 1U) ||
-        (fault_ == SnapshotStorageFault::kTemporarySizeStat && regular_stat_calls_ == 2U)) {
+        (fault_ == SnapshotStorageFault::kTemporarySizeStat && regular_stat_calls_ == 2U) ||
+        (fault_ == SnapshotStorageFault::kReclamationAuthorityValidationStat &&
+         regular_stat_calls_ == 1U) ||
+        (fault_ == SnapshotStorageFault::kReclamationAuthoritySizeStat &&
+         regular_stat_calls_ == 2U)) {
       return fail();
     }
     return result;
@@ -91,11 +110,14 @@ public:
   }
   int fsync(const int descriptor) override {
     if (armed_ && (fault_ == SnapshotStorageFault::kTemporaryFileSync ||
-                   fault_ == SnapshotStorageFault::kFinalDirectorySync)) {
+                   fault_ == SnapshotStorageFault::kFinalDirectorySync ||
+                   fault_ == SnapshotStorageFault::kReclamationDirectorySync)) {
       struct stat metadata {};
       if (delegate_.fstat(descriptor, &metadata) == 0 &&
           ((fault_ == SnapshotStorageFault::kTemporaryFileSync && S_ISREG(metadata.st_mode)) ||
-           (fault_ == SnapshotStorageFault::kFinalDirectorySync && S_ISDIR(metadata.st_mode)))) {
+           ((fault_ == SnapshotStorageFault::kFinalDirectorySync ||
+             fault_ == SnapshotStorageFault::kReclamationDirectorySync) &&
+            S_ISDIR(metadata.st_mode)))) {
         return fail();
       }
     }
@@ -111,12 +133,25 @@ public:
   }
   int list_directory_entries(const int descriptor,
                              std::vector<io::DirectoryEntry>& entries) override {
+    if (armed_ && fault_ == SnapshotStorageFault::kReclamationList)
+      return fail();
     return delegate_.list_directory_entries(descriptor, entries);
   }
   int unlink_at(const int directory_descriptor, const char* name) override {
     if (armed_ && fault_ == SnapshotStorageFault::kPriorTemporaryUnlink &&
         std::string_view{name}.ends_with(".rtas.tmp")) {
       return fail();
+    }
+    if (armed_ && std::string_view{name}.ends_with(".rtas")) {
+      ++reclamation_unlink_calls_;
+      if ((fault_ == SnapshotStorageFault::kReclamationFirstUnlink &&
+           reclamation_unlink_calls_ == 1U) ||
+          (fault_ == SnapshotStorageFault::kReclamationSecondUnlink &&
+           reclamation_unlink_calls_ == 2U) ||
+          (fault_ == SnapshotStorageFault::kReclamationThirdUnlink &&
+           reclamation_unlink_calls_ == 3U)) {
+        return fail();
+      }
     }
     return delegate_.unlink_at(directory_descriptor, name);
   }
@@ -143,6 +178,7 @@ private:
   io::detail::PosixSyscalls& delegate_;
   SnapshotStorageFault fault_;
   std::size_t regular_stat_calls_{};
+  std::size_t reclamation_unlink_calls_{};
   bool partial_write_started_{false};
   bool armed_{false};
   bool fired_{false};

@@ -74,4 +74,6 @@ from every resulting image. Other repeated/reopen fault shapes, power-loss quali
 permission matrices, snapshot transport, and physical-log reclamation remain deferred.
 The storage owner now exposes process-local saturating cleanup metrics for synchronized temporary
 removal and Raft-authoritative reclamation, and the composed tablet state machine forwards them only
-while it owns snapshot storage.
+while it owns snapshot storage. A thirteen-case reclamation fault matrix covers every authoritative
+preflight, directory enumeration, ordered obsolete-file unlink, and final directory sync under both
+nonzero and zero authority; exact retry and reopen converge from every partial namespace change.
