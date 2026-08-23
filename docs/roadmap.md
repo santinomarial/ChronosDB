@@ -1051,7 +1051,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   plus a whole-operation-deadline-aware poll owner and strict native endpoint/certificate-principal
   configuration with secure address-stable TLS-context ownership. The packaged `chronosctl`
   command now exact-validates one canonical append and drives that complete bounded route/TLS
-  execution to a receipt; multi-group query routing remains. A Linux-only gate now provisions
+  execution to a receipt. The packaged daemon now accepts an atomic native-server TLS credential
+  and strict client-certificate-principal bundle, owns the immutable authority beyond its reactor
+  borrow, permits non-loopback canonical IPv4 binding only in that mode, and fails closed instead of
+  downgrading io_uring or partial configuration. A Linux-only gate invokes the actual client against
+  the actual mutually authenticated daemon and proves APPLIED followed by MATCHING_RETRY for one
+  exact append. Multi-group query routing remains. A separate Linux-only gate now provisions
   three retained roots, starts three actual daemons with distinct mTLS identities, proves quorum
   ingest, kills the acknowledged tablet leader, proves higher-term matching retry, and reopens
   identical applied/retry state from every root. General provisioning, remote query fragments,

@@ -2,10 +2,11 @@
 
 ## Purpose and boundary
 
-`chronosd` turns the existing Protocol v1 reactor into an installed process with bounded queues,
-startup reporting, and signal-driven shutdown. With `--data-dir`, it owns the recoverable
-single-node database and native service adapter behind that socket. Without the option it retains
-the explicit unconfigured rejection mode. Handshake and PING/PONG remain implemented by the reactor.
+`chronosd` turns the native Protocol 1/2 reactor into an installed process with bounded queues,
+startup reporting, optional mutual TLS, and signal-driven shutdown. With `--data-dir`, it owns the
+recoverable single-node database and native service adapter behind that socket. Without the option
+it retains the explicit unconfigured rejection mode. Handshake and PING/PONG remain implemented by
+the reactor.
 
 ## Ownership and lifetime
 
@@ -13,6 +14,12 @@ The main thread owns the reactor and calls `poll_once`. It is the sole request-r
 response-ring consumer. One joined worker thread is the sole request-ring consumer and response-ring
 producer. The queues outlive both threads and the reactor. Shutdown sets a signal-safe flag, stops
 and joins the worker, and only then closes reactor descriptors.
+
+When the atomic native security bundle is configured, an immutable certificate-to-principal
+authority is created before the reactor and therefore outlives the reactor's borrowed pointer. The
+reactor owns its OpenSSL server context and per-connection sessions. The authority grants coarse
+protocol admission only: it does not infer node, group, leader, placement, table, operation, or
+source-IP authority from a client certificate.
 
 The configured worker dispatches one task synchronously and may retain a bounded query response
 sequence. It publishes that sequence in order and consumes no next request until completion. The
@@ -46,8 +53,11 @@ during signal shutdown until resumable terminal responses have left the worker r
 
 Queue capacity is finite and validated before allocation. Reactor admission, frame, connection,
 handshake, idle, and buffering limits remain the `EpollServerConfig` bounds. Plaintext startup is
-restricted to exact IPv4 loopback. Invalid options and unavailable reactor backends fail before the
-startup banner. Worker publication or reactor failures terminate the process with a nonzero status.
+restricted to IPv4 loopback. Remote serving requires the complete native certificate, private-key,
+trust-store, and client-principal bundle on epoll; empty or partial bundles, unsafe files, unknown
+certificates, and TLS on io_uring fail closed. Invalid options and unavailable reactor backends fail
+before the startup banner. Worker publication or reactor failures terminate the process with a
+nonzero status.
 
 The startup banner reports `data_plane=configured` or `data_plane=replicated` only after the
 corresponding database path and reactor both start; otherwise the explicit unconfigured mode
@@ -74,13 +84,17 @@ same recovered row count. A separate replicated gate provisions three retained r
 mutual-TLS identities, starts three actual daemon processes, obtains an applied quorum
 acknowledgement, kills the acknowledged tablet leader, observes a higher-term replacement, and
 requires an exact matching retry. Reopening each root then proves that all three applications
-recover the same two visible rows and one retry entry. It deliberately does not claim native
-multi-group query failover: SELECT still needs one daemon to lead every barrier group because client
-leader routing and remote fragments are not packaged. On non-Linux hosts, daemon/service build and
-durable-root initialization run, but the socket subprocess is not registered because the server
-reactor is Linux-only.
+recover the same two visible rows and one retry entry. A packaged-client gate starts `chronosd`
+with mutual TLS and a strict client-principal allowlist, invokes the actual `chronosctl` binary, and
+requires APPLIED followed by MATCHING_RETRY for the same canonical append. It deliberately does not
+claim native multi-group query failover: SELECT still needs one daemon to lead every barrier group
+because client leader routing and remote fragments are not packaged. On non-Linux hosts,
+daemon/service build and durable-root initialization run, but the socket subprocess is not
+registered because the server reactor is Linux-only.
 
-Reviewers should ask: Which thread owns each queue endpoint? Can saturation allocate elsewhere? Can
-liveness imply data readiness? What happens to active socket work on `SIGTERM`? Which acknowledged
-durability mode applies? In configured mode, the last answer is the exact requested/effective ASYNC
-or LOCAL_SYNC mode; in unconfigured mode there is no acknowledgement.
+Reviewers should ask: Which thread owns each queue endpoint? Which object outlives the reactor's
+authenticator borrow? Can certificate admission be mistaken for node or placement authority? Can
+saturation allocate elsewhere? Can liveness imply data readiness? What happens to active socket
+work on `SIGTERM`? Which acknowledged durability mode applies? In configured single-node mode, the
+last answer is the exact requested/effective ASYNC or LOCAL_SYNC mode; replicated mode may add the
+exact Protocol 2 QUORUM_SYNC proof, and unconfigured mode has no acknowledgement.

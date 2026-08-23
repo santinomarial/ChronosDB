@@ -43,7 +43,7 @@ Arrows express intended data or control flow, not implemented interfaces.
 
 The write plane accepts versioned network frames, decodes them into immutable columnar batches, selects a tablet, and transfers each batch to the tablet's owning shard worker over a bounded single-producer/single-consumer queue. The reactor owns socket progress and admission; it does not modify tablet storage. [ADR 0004](../adr/0004-thread-ownership-and-ingress-concurrency.md) defines this ownership and handoff contract.
 
-Exactly one shard worker owns a mutable tablet at a time. That worker validates schema, event-time, logical identity, and limits; serializes the operation to the single-node WAL or tablet Raft log; crosses the requested durability boundary; marks the operation committed; and publishes fully initialized columnar rows. [ADR 0006](../adr/0006-wal-durability-and-group-commit.md) fixes the `ASYNC`, `LOCAL_SYNC`, and `QUORUM_SYNC` acknowledgment modes. [ADR 0013](../adr/0013-wal-v1-format-and-recovery.md) fixes the single-node file/directory synchronization ordering, while [ADR 0074](../adr/0074-quorum-sync-proof-boundary.md) fixes the internal replicated majority/apply proof. Defaults, native client exposure, and end-to-end replicated crash qualification remain deferred.
+Exactly one shard worker owns a mutable tablet at a time. That worker validates schema, event-time, logical identity, and limits; serializes the operation to the single-node WAL or tablet Raft log; crosses the requested durability boundary; marks the operation committed; and publishes fully initialized columnar rows. [ADR 0006](../adr/0006-wal-durability-and-group-commit.md) fixes the `ASYNC`, `LOCAL_SYNC`, and `QUORUM_SYNC` acknowledgment modes. [ADR 0013](../adr/0013-wal-v1-format-and-recovery.md) fixes the single-node file/directory synchronization ordering, while [ADR 0074](../adr/0074-quorum-sync-proof-boundary.md) fixes the internal replicated majority/apply proof. Packaged `chronosctl` and mutually authenticated `chronosd` now expose one exact redirect-capable QUORUM_SYNC operation; default policy selection, generalized provisioning, and broader crash/power-loss qualification remain deferred.
 
 The intended write flow is:
 
@@ -344,7 +344,9 @@ to loopback. Under [ADRs 0144](../adr/0144-maintained-mutual-tls-socket-carrier.
 [0145](../adr/0145-bounded-epoll-mutual-tls-admission.md), the epoll backend performs nonblocking
 mutual TLS through OpenSSL, passes only a verified certificate fingerprint to the borrowed
 authenticator, and attaches its stable principal to shard work. The io_uring TLS path remains
-explicitly unsupported.
+explicitly unsupported. [ADR 0420](../adr/0420-packaged-native-mutual-tls-server.md) composes that
+boundary into `chronosd` through one atomic server credential/client-principal bundle; without the
+bundle, packaged plaintext remains IPv4-loopback-only.
 
 ## Distribution foundations: tablets and Raft
 
@@ -360,17 +362,20 @@ decodes committed COLUMNAR_APPEND entries, publishes them in group-index order, 
 index afterward, and reconstructs fresh memory from a complete retained committed log. In-memory
 tablet commit positions
 now distinguish a WAL identity from a Raft group/index identity, while frozen CSEG/Manifest v1
-writers reject Raft identities rather than aliasing them into WAL fields. Production timers,
-transport, a replicated durable-row/application-snapshot format, snapshot installation,
-placement-driven membership orchestration, read index/staleness proof, and a packaged cluster runtime remain
-unimplemented. The
+writers reject Raft identities rather than aliasing them into WAL fields. Authenticated production
+transport, replicated durable-row/application snapshots, group read barriers/staleness-proof
+owners, and packaged cluster-runtime slices are implemented. Snapshot installation handling,
+automatic placement-driven membership orchestration, generalized provisioning, and broader cluster
+integration remain incomplete. The
 single-thread-affine durable runtime already accepts bounded operation batches, persists every
 state-changing transition under one local sync, and exposes outbound messages only afterward.
 
 Multi-Raft will multiplex many groups over shared threads, network connections, timers, and a
 physical log without conflating their logical indexes. The physical-log boundary now supplies
-versioned shared segments, append/sync frontiers, rotation, locked bounded recovery, and explicit
-incomplete-tail repair; batching, reclamation, and runtime transport integration remain.
+versioned shared segments, append/sync frontiers, rotation, locked bounded recovery, explicit
+incomplete-tail repair, synchronized batching, whole-segment reclamation, and authenticated runtime
+transport integration. Group-aware fairness, automatic lifecycle orchestration, and scale evidence
+remain incomplete.
 Distributed queries will acquire compatible per-tablet snapshot boundaries and report consistency;
 rebalancing must preserve identities, resume positions, and retention pins.
 

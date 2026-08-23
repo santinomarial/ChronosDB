@@ -10,8 +10,8 @@
 > boundary and completes logical tablet/retry publication. The replicated runtime and packaged
 > daemon compose stable or joint configuration quorum persistence with tablet application and
 > expose the exact receipt through Protocol 2.0. The packaged native client can drive one exact
-> canonical append through bounded authenticated redirects when the server is embedded with mutual
-> TLS; packaged `chronosd` remains plaintext loopback-only and is not yet that target.
+> canonical append through bounded authenticated redirects to packaged `chronosd` when its atomic
+> mutual-TLS server bundle authorizes the client's leaf certificate.
 > This document does not strengthen guarantees beyond what a process, operating system, filesystem,
 > device, or future replica protocol can establish.
 

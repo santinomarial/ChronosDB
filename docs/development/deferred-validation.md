@@ -923,17 +923,21 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   sync; concurrent multi-process creation; large-root scaling; Linux filesystem/power-loss and macOS
   persistence qualification; install/export and public API review.
 - Extend the packaged `chronosd` authenticated Raft peer lifecycle beyond the implemented
-  three-process quorum-ingest/failover/recovery gate with a packaged command/process above the
-  implemented secure native TLS-route owner, redirect TCP/TLS poll execution, and exact
-  session-replay owners, remote mutable-tablet fragments, and a globally atomic cross-group policy
-  beyond the implemented applied read-barrier vector, live delivery, flush/CSEG/Manifest, failover
-  query, movement, and object storage.
+  three-process quorum-ingest/failover/recovery gate and the packaged mutual-TLS
+  `chronosctl`-to-`chronosd` APPLIED/exact-retry gate. The secure native TLS-route owner, redirect
+  TCP/TLS poll execution, exact session replay, strict server-side client-principal authority, and
+  complete client/server process composition now exist. Remote mutable-tablet fragments, a globally
+  atomic cross-group policy beyond the implemented applied read-barrier vector, live delivery,
+  flush/CSEG/Manifest, failover query, movement, and object storage remain.
 - Configured `chronosd` Linux subprocess execution in CI, daemon ingest over real sockets, corrupt
   root/WAL/Raft startup cases, signals during ingest/query, queue saturation with multi-frame
-  responses, cancellation, concurrent clients, TLS/auth configuration, secure UUID entropy-failure
-  injection, metrics, privilege dropping, service-manager packaging, ASan/UBSan/TSan, and sustained
-  load. The Linux-only test now covers CREATE/query/restart/query; this macOS run verified daemon
-  build and durable root creation before the expected Linux-reactor rejection.
+  responses, cancellation, concurrent clients, TLS credential/principal rotation, secure UUID
+  entropy-failure injection, metrics, privilege dropping, service-manager packaging,
+  ASan/UBSan/TSan, and sustained
+  load. Linux-only tests now cover CREATE/query/restart/query, authenticated three-daemon
+  QUORUM_SYNC failover/recovery, and packaged mutual-TLS client/server APPLIED/exact retry. The
+  process target remains intentionally unregistered on non-Linux hosts because the server reactor
+  is Linux-only.
 - Native ingest service adapter allocation/fault injection, event-time and ancestor-schema retry
   policy, authorization, cancellation during WAL wait, concurrent requests/shutdown, queue-worker
   integration, daemon subprocess/restart, ASan/UBSan/TSan, and throughput/latency profiles. Focused
