@@ -113,6 +113,10 @@ std::uint64_t NativeLeaderRedirectRouter::current_node_id() const noexcept {
   return current_node_id_;
 }
 
+const common::Uuid& NativeLeaderRedirectRouter::group_id() const noexcept {
+  return config_.group_id;
+}
+
 std::size_t NativeLeaderRedirectRouter::accepted_redirects() const noexcept {
   return accepted_redirects_;
 }

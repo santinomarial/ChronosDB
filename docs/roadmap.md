@@ -1046,8 +1046,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   SELECT are now composed. Protocol 2 now has a negotiated, terminal, placement/term-bound leader
   redirect response that rejects emission after partial query output. Replicated ingest now selects
   it only from exact committed placement/stable membership plus an ordered follower observation;
-  endpoint-aware client retry now has a bounded exact-group route-policy owner, while its TCP/TLS
-  replay carrier and multi-group query routing remain. A Linux-only gate now provisions
+  endpoint-aware client retry now has a bounded exact-group route-policy owner and exact portable
+  QUORUM_SYNC session replay, while its TCP/TLS carrier and multi-group query routing remain. A
+  Linux-only gate now provisions
   three retained roots, starts three actual daemons with distinct mTLS identities, proves quorum
   ingest, kills the acknowledged tablet leader, proves higher-term matching retry, and reopens
   identical applied/retry state from every root. General provisioning, remote query fragments,

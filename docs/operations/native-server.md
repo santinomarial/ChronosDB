@@ -47,9 +47,10 @@ follower returns the exact committed tablet group, ordered observed leader/term,
 placement epoch when that leader remains inside stable placement. Candidate/unknown leadership or
 reconfiguration returns an error. The node ID is not a network address: clients need an explicit
 authenticated native-endpoint map. The client library's bounded redirect router joins that map,
-rejects regressing or contradictory authority, and caps retry selection. A TCP/TLS carrier and
-deployment parser must still retain/replay the request and drive the chosen route. Multi-group
-SELECT is not redirected to one arbitrary group leader.
+rejects regressing or contradictory authority, and caps retry selection. Its portable QUORUM_SYNC
+owner retains the exact append and creates a fresh Protocol 2 session/request ID for each selected
+route. A TCP/TLS carrier and deployment parser must still connect, drive readiness/deadlines, and
+handle reconnect events. Multi-group SELECT is not redirected to one arbitrary group leader.
 
 For multi-voter groups, configure the complete transport bundle:
 

@@ -77,7 +77,10 @@ prove the requested consistency at the destination.
 The client library provides a bounded policy owner for this join. It exact-binds one group and a
 canonical node-to-native-endpoint/TLS map, rejects stale placement or term authority, conflicting
 same-term leaders, self redirects, and unknown nodes, and stops after a configured redirect count.
-It deliberately does not open a socket or retain/replay request bytes.
+The QUORUM_SYNC replay owner above it retains one exact append, creates a fresh Protocol 2 session
+and connection-local request ID for every accepted destination, and publishes only a receipt that
+matches the bound group/current route and does not regress the redirect term. Neither owner opens a
+socket; TCP/TLS readiness, deadlines, and generic transport failures remain carrier policy.
 
 ## Compatibility and rejection
 

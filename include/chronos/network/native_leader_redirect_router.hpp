@@ -62,6 +62,7 @@ public:
   [[nodiscard]] common::Result<NativeLeaderRedirectTarget> accept(const LeaderRedirect& redirect);
 
   [[nodiscard]] std::uint64_t current_node_id() const noexcept;
+  [[nodiscard]] const common::Uuid& group_id() const noexcept;
   [[nodiscard]] std::size_t accepted_redirects() const noexcept;
   [[nodiscard]] std::optional<LeaderRedirect> last_authority() const noexcept;
   [[nodiscard]] std::span<const NativeLeaderRoute> routes() const noexcept;

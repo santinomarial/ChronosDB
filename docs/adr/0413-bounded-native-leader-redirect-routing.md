@@ -42,8 +42,9 @@ TLS contexts are borrowed and must outlive every carrier attempt using a returne
 thread serializes mutation, so no inter-thread memory-ordering argument applies. No durable or
 network bytes change.
 
-The native TCP/TLS retry carrier, deployment-text native endpoint configuration, reconnect
-deadlines, request-body retention, process composition, and multi-group SELECT routing remain
+ADR 0414 subsequently supplies exact transport-independent QUORUM_SYNC body retention and fresh
+Protocol 2 session replay. The native TCP/TLS retry carrier, deployment-text native endpoint
+configuration, reconnect deadlines, process composition, and multi-group SELECT routing remain
 separate work.
 
 ## Affected invariants
