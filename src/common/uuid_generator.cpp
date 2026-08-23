@@ -1,9 +1,11 @@
 #include "chronos/common/uuid_generator.hpp"
 
 #include "chronos/common/status.hpp"
+#include "uuid_entropy_internal.hpp"
 
 #include <cerrno>
 #include <cstddef>
+#include <span>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -19,7 +21,6 @@
 namespace chronos::common {
 namespace {
 
-#if defined(__linux__)
 [[nodiscard]] Status entropy_error(const int error_number) {
   std::string message{"system entropy read failed: "};
   message.append(std::error_code{error_number, std::generic_category()}.message());
@@ -28,28 +29,51 @@ namespace {
   message.push_back(')');
   return Status{StatusCode::kIoError, std::move(message)};
 }
+
+#if defined(__linux__)
+class SystemUuidEntropyReader final : public detail::UuidEntropyReader {
+public:
+  [[nodiscard]] detail::UuidEntropyReadOutcome
+  read(const std::span<std::byte> destination) noexcept override {
+    const ssize_t result = ::getrandom(destination.data(), destination.size(), 0U);
+    return {.byte_count = result, .error_number = result < 0 ? errno : 0};
+  }
+};
 #endif
 
 } // namespace
 
-Result<Uuid::Bytes> SystemUuidEntropySource::read() {
+Result<Uuid::Bytes> detail::read_uuid_entropy_to_completion(UuidEntropyReader& reader) {
   Uuid::Bytes bytes{};
-#if defined(__APPLE__)
-  ::arc4random_buf(bytes.data(), bytes.size());
-#elif defined(__linux__)
   std::size_t completed = 0U;
   while (completed < bytes.size()) {
-    const ssize_t result = ::getrandom(bytes.data() + completed, bytes.size() - completed, 0U);
-    if (result > 0) {
-      completed += static_cast<std::size_t>(result);
+    const std::span<std::byte> destination{bytes.data() + completed, bytes.size() - completed};
+    const UuidEntropyReadOutcome outcome = reader.read(destination);
+    if (outcome.byte_count > 0) {
+      const auto progress = static_cast<std::size_t>(outcome.byte_count);
+      if (progress > destination.size())
+        return make_unexpected(entropy_error(EIO));
+      completed += progress;
       continue;
     }
-    if (result == -1 && errno == EINTR)
+    if (outcome.byte_count == -1 && outcome.error_number == EINTR)
       continue;
-    return make_unexpected(entropy_error(result == 0 ? EIO : errno));
+    const int error_number =
+        outcome.byte_count == -1 && outcome.error_number > 0 ? outcome.error_number : EIO;
+    return make_unexpected(entropy_error(error_number));
   }
-#endif
   return bytes;
+}
+
+Result<Uuid::Bytes> SystemUuidEntropySource::read() {
+#if defined(__APPLE__)
+  Uuid::Bytes bytes{};
+  ::arc4random_buf(bytes.data(), bytes.size());
+  return bytes;
+#elif defined(__linux__)
+  SystemUuidEntropyReader reader;
+  return detail::read_uuid_entropy_to_completion(reader);
+#endif
 }
 
 SystemUuidEntropySource& system_uuid_entropy_source() noexcept {

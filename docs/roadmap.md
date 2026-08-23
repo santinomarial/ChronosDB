@@ -44,11 +44,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
   transfer loops, synchronization, no-replace rename, and advisory locking with deterministic
   syscall injection. A typed injectable wall/monotonic time source now replaces the first ad hoc
   subsystem clock seam and supplies default diagnostic timestamps. The OS-backed UUID generator
-  now has a typed injectable entropy boundary with bounded nil/error tests; broader durable
-  identity allocation/collision policy, logging sinks and rotation/collection, and broader test
-  utilities remain incomplete. The phase exit gates below remain unchanged and have not been
-  declared complete. A clean-revision local Apple arm64 baseline now records the common benchmark
-  target's build time, artifact sizes, and harness-iteration proxy; Linux x86-64 and cross-toolchain
+  now has a typed injectable entropy boundary with bounded nil/error tests and direct qualification
+  of the production Linux partial-read/error completion loop; broader durable identity
+  allocation/collision policy, logging sinks and rotation/collection, and broader test utilities
+  remain incomplete. The phase exit gates below remain unchanged and have not been declared
+  complete. A clean-revision local Apple arm64 baseline now records the common benchmark target's
+  build time, artifact sizes, and harness-iteration proxy; Linux x86-64 and cross-toolchain
   repetition remain separate evidence.
 
 - **Scope:** reproducible C++23 build profiles; foundational error/result, byte, checksum, file-I/O, time, identity, logging, and test utilities; sanitizers and initial Linux CI policy.

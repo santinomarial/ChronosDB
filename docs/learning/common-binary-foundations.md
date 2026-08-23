@@ -109,6 +109,13 @@ timers, time-zone conversion, or a mapping between the two clock domains.
 propagate immediately. A nil candidate is retried at most eight times, so a broken source cannot
 hang an identity-allocating operation indefinitely.
 
+The Linux adapter delegates to one private getrandom-shaped completion loop. After each positive
+partial result, the next call receives only the uninitialized suffix. `EINTR` retries that exact
+suffix; zero progress, an invalid result larger than the request, and terminal errors fail before a
+candidate is returned. Deterministic reader scripts exercise this production loop without adding a
+syscall-injection surface to installed headers. The system reader captures `errno` immediately with
+the failed syscall result, so diagnostics do not depend on later library calls.
+
 Injected entropy sources are borrowed and must outlive the generator and overlapping calls; mutable
 sources supply their own synchronization. Successful bytes stay opaque rather than acquiring
 invented RFC version semantics. The owning subsystem remains responsible for the identity domain,
@@ -177,3 +184,4 @@ throughput; future optimization requires a benchmark and an equivalence test aga
 - What lifetime and synchronization obligations accompany an injected `TimeSource`?
 - Why is OS entropy acquisition separate from durable identity-domain and collision policy?
 - Why does the UUID generator bound nil retries instead of promising global uniqueness?
+- Why must a partial entropy read advance the destination before an interrupted retry?

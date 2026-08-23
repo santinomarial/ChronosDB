@@ -965,10 +965,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   concurrent/stale DDL, authorization, ALTER/DROP/rename, crash matrices through protocol dispatch,
   and subprocess restart qualification. The common Linux/macOS system UUID adapter is now shared by
   WAL, daemon bootstrap, and default native DDL/DML. The common adapter now has a typed injected
-  entropy boundary with focused immediate-failure and bounded-nil coverage; Linux syscall-level
-  partial/`EINTR`/terminal-error injection and outer native CREATE failure composition remain
-  deferred. Focused service coverage proves nonnil generation, injected identities, canonical
-  durable completion fields, and immediate queryability.
+  entropy boundary with focused immediate-failure and bounded-nil coverage. Its production Linux
+  completion loop now has deterministic partial-read, `EINTR`, zero-progress, terminal-error, and
+  invalid-result coverage. Outer native CREATE failure composition remains deferred. Focused
+  service coverage proves nonnil generation, injected identities, canonical durable completion
+  fields, and immediate queryability.
 - SQL INSERT columnar materialization allocation-failure sweeps, every logical type and integer
   boundary, hostile maximum-width variable values, exact preflight byte accounting before allocation,
   codec round trips, fuzz/property coverage, and ASan/UBSan. Focused coverage now proves schema-order

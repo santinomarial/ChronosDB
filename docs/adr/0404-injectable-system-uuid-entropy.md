@@ -52,8 +52,9 @@ chosen value before exposure.
 The actual generator's failure and retry policy is deterministic and directly testable without
 weakening the OS-backed default. Success remains allocation-free. The entropy interface is a narrow
 security boundary and does not become a general pseudo-random-number API, deterministic ID scheme,
-or global collision registry. Direct Linux syscall injection for partial progress, `EINTR`, and
-terminal `getrandom` errors remains separate provider-level validation.
+or global collision registry. The Linux completion loop has a private getrandom-shaped reader seam;
+the production adapter and deterministic provider tests use the same loop without exposing syscall
+injection in the installed API.
 
 ## Affected invariants
 
@@ -66,6 +67,9 @@ provider contract executable.
 - Existing system tests generate 32 distinct nonnil candidates through the real OS adapter.
 - Injected tests prove nil retry to the first valid value, the exact eight-attempt ceiling, and
   immediate error propagation.
+- Provider tests prove exact remaining-length requests after partial progress, `EINTR` retry without
+  losing that progress, zero-progress rejection as `EIO`, exact terminal-errno reporting, and
+  oversized-provider-result rejection. The Linux `getrandom` adapter delegates to this exact loop.
 - Header self-containment, installed-consumer, static-analysis, sanitizer, and full-suite gates cover
   the refactored public boundary and unchanged service/WAL consumers.
 
@@ -73,8 +77,8 @@ provider contract executable.
 
 No durable byte changes. Existing `SystemUuidGenerator` default construction and `UuidGenerator`
 injection remain source compatible. Removing the seam requires retaining equivalent executable
-coverage for generator error propagation, nil bounds, and provider ownership; the provider-level
-syscall validation deferred above remains explicit.
+coverage for generator error propagation, nil bounds, provider ownership, and the Linux partial-read
+and error completion contract.
 
 ## References
 
