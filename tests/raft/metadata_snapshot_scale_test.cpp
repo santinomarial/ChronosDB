@@ -1,9 +1,15 @@
 #include "chronos/common/status.hpp"
 #include "chronos/raft/metadata_codec.hpp"
 #include "chronos/raft/metadata_snapshot.hpp"
+#include "chronos/raft/metadata_snapshot_storage.hpp"
 
 #include <cstddef>
+#include <filesystem>
 #include <gtest/gtest.h>
+#include <optional>
+#include <string>
+#include <system_error>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -11,6 +17,29 @@ namespace chronos::raft {
 namespace {
 
 constexpr std::size_t kMaximumEntryCount = 65'536U;
+
+class TemporaryDirectory {
+public:
+  TemporaryDirectory() {
+    std::string pattern =
+        (std::filesystem::temp_directory_path() / "chronos-metadata-scale-XXXXXX").string();
+    if (char* const created = ::mkdtemp(pattern.data()); created != nullptr)
+      path_ = created;
+  }
+  ~TemporaryDirectory() {
+    std::error_code ignored;
+    std::filesystem::remove_all(path_, ignored);
+  }
+  TemporaryDirectory(const TemporaryDirectory&) = delete;
+  TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
+
+  [[nodiscard]] const std::filesystem::path& path() const noexcept {
+    return path_;
+  }
+
+private:
+  std::filesystem::path path_;
+};
 
 [[nodiscard]] std::vector<std::byte> command_payload() {
   return encode_metadata_command_v1(ClusterNodeMetadata{7U, "n"}).value();
@@ -39,6 +68,12 @@ constexpr std::size_t kMaximumEntryCount = 65'536U;
   }
   value.entries.back().term = value.raft_snapshot.last_included_term;
   return value;
+}
+
+[[nodiscard]] MetadataSnapshotStorageConfig storage_config(const TemporaryDirectory& directory) {
+  common::Uuid::Bytes group_bytes{};
+  group_bytes.front() = std::byte{7U};
+  return {.directory_path = directory.path().string(), .group_id = GroupId{group_bytes}};
 }
 
 TEST(MetadataSnapshotScaleTest, ExactMaximumEntryCatalogRoundTripsAndNextEntryIsRejected) {
@@ -81,6 +116,43 @@ TEST(MetadataSnapshotScaleTest, ExactMaximumEntryCatalogRoundTripsAndNextEntryIs
   const auto over_limit = encode_metadata_application_snapshot_v1(expected);
   ASSERT_FALSE(over_limit.has_value());
   EXPECT_EQ(over_limit.error().code(), common::StatusCode::kResourceExhausted);
+}
+
+TEST(MetadataSnapshotScaleTest, ExactMaximumEntryCatalogInstallsAndRecoversAfterReopen) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const MetadataApplicationSnapshot expected = snapshot(kMaximumEntryCount);
+  const auto expected_bytes = encode_metadata_application_snapshot_v1(expected);
+  ASSERT_TRUE(expected_bytes.has_value()) << expected_bytes.error().to_string();
+
+  {
+    auto storage = MetadataSnapshotStorage::create(storage_config(directory));
+    ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+    const auto installed = storage->install(expected);
+    ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+    EXPECT_FALSE(installed->already_present);
+
+    const auto loaded = storage->load(expected.raft_snapshot.last_included_index);
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().to_string();
+    EXPECT_EQ(loaded->snapshot, expected);
+    EXPECT_EQ(loaded->bytes, *expected_bytes);
+
+    const auto repeated = storage->install(expected);
+    ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
+    EXPECT_TRUE(repeated->already_present);
+  }
+
+  auto reopened = MetadataSnapshotStorage::open_existing(storage_config(directory));
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  const auto latest = reopened->load_latest();
+  ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
+  const std::optional<LoadedMetadataSnapshot>& selected = *latest;
+  if (!selected.has_value()) {
+    ADD_FAILURE() << "maximum metadata snapshot is missing after reopen";
+    return;
+  }
+  EXPECT_EQ(selected.value().snapshot, expected);
+  EXPECT_EQ(selected.value().bytes, *expected_bytes);
 }
 
 } // namespace

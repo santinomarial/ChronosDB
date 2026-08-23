@@ -55,7 +55,9 @@ durable installation, process crash points, owned recovery/compaction, physical-
 obsolete snapshot reclamation. An exact structural scale test round-trips the declared 65,536-entry
 maximum with nine voters and valid nested command payloads, then rejects a lowered entry limit and
 entry 65,537. Local-only encode/decode benchmarks publish entry, payload, and complete snapshot-byte
-counters at 1,024, 16,384, and 65,536 entries. Sustained fuzz campaigns remain follow-up work.
+counters at 1,024, 16,384, and 65,536 entries. ADR 0267 additionally qualifies the same shapes
+through the unchanged durable installation and restart-recovery protocol. Sustained fuzz campaigns
+remain follow-up work.
 
 Invariants 1, 4–6, 8, 10, 11, 14, and 18 apply.
 

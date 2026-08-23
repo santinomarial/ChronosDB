@@ -47,7 +47,11 @@ eight-cut real-process `SIGKILL` matrix covers temporary creation, write, readba
 temporary close, final rename, directory sync, and post-success release. Every cut reopens to the
 exact absent or installed authority, removes interrupted temporaries, converges through an
 idempotent retry, and survives a second reopen. Directory/device qualification and wider runtime
-recovery schedules remain deferred. ADR 0268 now composes application partial-write and
+recovery schedules remain deferred. The declared 65,536-entry catalog ceiling is also exercised
+through exact install, owned load, idempotent retry, owner teardown, reopen, and highest-snapshot
+recovery. Local-only real-time benchmark shapes measure fresh durable installation and checked
+restart recovery at 1,024, 16,384, and 65,536 entries without weakening synchronization; they are
+not device or production-throughput claims. ADR 0268 now composes application partial-write and
 post-rename directory-sync faults with later Raft write failures. Metadata snapshot reclamation
 fault injection is covered separately by ADR 0270.
 

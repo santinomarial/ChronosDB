@@ -110,8 +110,13 @@ Scale qualification tests the format's actual entry ceiling rather than a small 
 retained application entries, nine voters, valid nested command bytes, nondecreasing terms, and an
 exact re-encode. Both a 65,535 caller limit and entry 65,537 fail with `RESOURCE_EXHAUSTED`. Separate
 local-only benchmarks time encode and owned decode at 1,024, 16,384, and 65,536 entries while
-reporting the complete encoded size. Those measurements characterize codec scaling only; they do not
-claim durable install/recovery latency or production throughput.
+reporting the complete encoded size. The same maximum also crosses the real durable storage owner:
+exact install and load, byte-identical retry, owner teardown, lock reacquisition, latest-file
+discovery, and checked owned recovery. Separate local-only real-time benchmarks measure fresh
+installations including readback, file sync, no-replace rename, and directory sync, plus restart
+recovery including lock acquisition, discovery, and decode, at the same three entry counts. These
+shapes characterize one host and filesystem only; they do not claim device-qualified durability or
+production throughput.
 
 Obsolete application snapshots are reclaimed only against the current durable Raft boundary. The
 owner exact-matches its adopted snapshot, revalidates that file, removes every older or future

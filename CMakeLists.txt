@@ -2307,6 +2307,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
     chronos_raft_benchmarks
     benchmarks/raft/deterministic_simulator_benchmark.cpp
     benchmarks/raft/metadata_snapshot_benchmark.cpp
+    benchmarks/raft/metadata_snapshot_storage_benchmark.cpp
     benchmarks/raft/transport_codec_benchmark.cpp
   )
   set_target_properties(chronos_raft_benchmarks PROPERTIES CXX_EXTENSIONS OFF)

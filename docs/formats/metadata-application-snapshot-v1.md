@@ -92,5 +92,8 @@ The declared 65,536-entry limit is exercised exactly with nine voters and valid 
 Command v1 payloads. The maximum catalog must round-trip byte-stably, while entry 65,537 and a caller
 limit of 65,535 must return `RESOURCE_EXHAUSTED`. Local-only benchmarks measure encode and owned
 decode at 1,024, 16,384, and 65,536 entries and report the entry count, payload bytes per entry, and
-complete snapshot bytes; their output is evidence only when retained with the revision, compiler,
-host, command, and full result.
+complete snapshot bytes. A real-filesystem scale test carries the maximum through exact install,
+load, idempotent retry, owner teardown, reopen, and latest-file recovery. Separate real-time
+benchmark shapes measure fresh synchronized installation and checked restart recovery at the same
+three entry counts. Benchmark output is evidence only when retained with the revision, compiler,
+host, command, and full result; these local shapes are not device or production-throughput claims.
