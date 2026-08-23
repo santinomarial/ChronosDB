@@ -56,6 +56,9 @@ post-rename directory-sync faults, plus every other post-ownership installation 
 every later Raft record-write and data-sync failure shape. It also composes interrupted-temporary
 cleanup failure before unlink or after unlink at directory sync with all five later Raft persistence
 outcomes. Metadata snapshot reclamation fault injection is covered separately by ADR 0270.
+The storage owner exposes process-local saturating cleanup metrics for synchronized temporary
+removal and Raft-authoritative reclamation; the composed metadata state machine forwards them while
+it retains storage ownership.
 
 Invariants 1, 2, 4–6, 8, 10, 11, 14, and 18 apply.
 

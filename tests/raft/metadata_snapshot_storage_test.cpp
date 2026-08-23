@@ -137,6 +137,9 @@ TEST(MetadataSnapshotStorageTest, CleansTemporaryAndRejectsDamagedInstalledBytes
     ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
     EXPECT_FALSE(std::filesystem::exists(first_temporary));
     EXPECT_FALSE(std::filesystem::exists(second_temporary));
+    EXPECT_EQ(reopened->cleanup_metrics(),
+              (MetadataSnapshotCleanupMetrics{.temporary_files_removed = 2U,
+                                              .temporary_directory_syncs = 1U}));
   }
   {
     std::fstream file{final_path, std::ios::binary | std::ios::in | std::ios::out};
@@ -171,6 +174,10 @@ TEST(MetadataSnapshotStorageTest, ReclaimsOlderAndCrashOrphanedFutureSnapshots) 
   auto orphaned = storage->reclaim_obsolete(std::nullopt);
   ASSERT_TRUE(orphaned.has_value()) << orphaned.error().to_string();
   EXPECT_EQ(orphaned->reclaimed_files, 1U);
+  EXPECT_EQ(storage->cleanup_metrics(),
+            (MetadataSnapshotCleanupMetrics{.reclamation_attempts = 2U,
+                                            .reclaimed_files = 3U,
+                                            .reclamation_directory_syncs = 2U}));
   auto latest = storage->load_latest();
   ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
   EXPECT_FALSE(latest->has_value());

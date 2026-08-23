@@ -72,3 +72,6 @@ cleanup before unlink or after unlink at directory sync, then later fails each R
 size inspection, truncation, repaired-file sync, and repair-directory sync. Fresh owners converge
 from every resulting image. Other repeated/reopen fault shapes, power-loss qualification,
 permission matrices, snapshot transport, and physical-log reclamation remain deferred.
+The storage owner now exposes process-local saturating cleanup metrics for synchronized temporary
+removal and Raft-authoritative reclamation, and the composed tablet state machine forwards them only
+while it owns snapshot storage.

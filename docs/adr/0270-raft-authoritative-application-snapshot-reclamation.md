@@ -34,6 +34,14 @@ the authoritative filename. Partial deletion is safe and retryable because every
 non-authoritative immutable file; directory synchronization determines only whether cleanup itself
 survives a crash.
 
+Both storage owners expose process-local saturating cleanup metrics. They count temporary files and
+their cleanup directory synchronizations only after that synchronization succeeds. Reclamation
+attempts and failures are counted independently, while reclaimed files and reclamation directory
+synchronizations advance only after the successful durability boundary. An unlink or directory-sync
+error may already have changed the observed namespace, so failure counters intentionally do not
+claim those removals; the next attempt restarts discovery from current bytes. The composed tablet
+and metadata state machines forward the metrics only when they own snapshot storage.
+
 ## Consequences and alternatives
 
 Reclamation is caller-triggered rather than part of compaction's success result. This avoids an
@@ -42,8 +50,8 @@ Automatic highest-file retention was rejected because a pre-Raft crash orphan ma
 index. Reader pins are unnecessary for v1 because snapshot loads own and decode all bytes before the
 file handle is released; no live state retains mapped or borrowed file storage.
 
-Scheduling, cleanup metrics, tablet-owner syscall and process-kill matrices, and device
-qualification remain hardening work.
+Scheduling, tablet-owner syscall and process-kill matrices, and device qualification remain
+hardening work.
 
 ## Validation and invariants
 
@@ -58,4 +66,6 @@ keeps the owner usable, and exact retry plus reopen converges. An eleven-schedul
 `SIGKILL` matrix stops after enumeration, each individual unlink, final directory sync, and success
 release for both nonzero and zero authority. Reopen observes exactly the completed deletion prefix,
 then exact retry and a second reopen converge without deleting the middle authority or retaining a
-zero-authority orphan.
+zero-authority orphan. Storage tests pin successful temporary-cleanup counters for both owners and
+reclamation attempt/failure/synchronized-success counters across every injected metadata failure;
+state-machine tests prove ownership-aware forwarding.

@@ -77,6 +77,8 @@ public:
   [[nodiscard]] TabletState& tablet() noexcept;
   [[nodiscard]] const TabletState& tablet() const noexcept;
   [[nodiscard]] const raft::GroupId& group_id() const noexcept;
+  [[nodiscard]] std::optional<RaftTabletSnapshotCleanupMetrics>
+  snapshot_cleanup_metrics() const noexcept;
   [[nodiscard]] bool failed() const noexcept;
   [[nodiscard]] common::Status failure_status() const;
 

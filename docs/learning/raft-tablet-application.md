@@ -140,6 +140,13 @@ then removes every other canonical final and directory-syncs the cleanup. A high
 preferred: it may be an orphan from a crash before Raft compaction. Snapshot decoding owns all
 bytes, so no live tablet reader retains a file mapping or borrowed span that needs a reclamation pin.
 
+The single-thread-affine storage owner retains saturating cleanup metrics. Successful temporary
+removal is counted only after its directory sync; reclamation separately counts attempts and
+failures, then credits reclaimed files and one directory sync only after the complete cleanup batch
+is synchronized. A failed unlink or sync may have shortened the namespace without increasing the
+success counters. `snapshot_cleanup_metrics()` forwards this process-local snapshot from the tablet
+state machine only when recovery transferred snapshot-storage ownership.
+
 ## Complexity and likely interview questions
 
 Application is linear in committed commands plus decoded column bytes. Retry lookup is `O(log N)`

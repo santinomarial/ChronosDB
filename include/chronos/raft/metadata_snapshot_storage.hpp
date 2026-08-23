@@ -45,11 +45,26 @@ struct MetadataSnapshotReclamationReport {
   std::size_t reclaimed_files{};
 };
 
+// Process-local single-owner counters. Successful cleanup counters advance only after the related
+// directory synchronization succeeds; failures can therefore leave uncounted namespace changes.
+struct MetadataSnapshotCleanupMetrics {
+  std::uint64_t temporary_files_removed{};
+  std::uint64_t temporary_directory_syncs{};
+  std::uint64_t reclamation_attempts{};
+  std::uint64_t reclamation_failures{};
+  std::uint64_t reclaimed_files{};
+  std::uint64_t reclamation_directory_syncs{};
+
+  friend bool operator==(const MetadataSnapshotCleanupMetrics&,
+                         const MetadataSnapshotCleanupMetrics&) = default;
+};
+
 [[nodiscard]] common::Result<std::string> metadata_snapshot_file_name(LogIndex last_included_index);
 
-// One lock-protected durable directory for one metadata group. Installation exact-validates,
-// writes and rereads a temporary, synchronizes it, renames without replacement, and synchronizes
-// the directory. Failure after rename poisons this process owner because durability is uncertain.
+// Single-thread-affine owner of one lock-protected durable directory for one metadata group.
+// Installation exact-validates, writes and rereads a temporary, synchronizes it, renames without
+// replacement, and synchronizes the directory. Failure after rename poisons this process owner
+// because durability is uncertain.
 class MetadataSnapshotStorage {
 public:
   MetadataSnapshotStorage() = delete;
@@ -73,6 +88,7 @@ public:
 
   [[nodiscard]] bool is_usable() const noexcept;
   [[nodiscard]] common::Status poison_status() const;
+  [[nodiscard]] MetadataSnapshotCleanupMetrics cleanup_metrics() const noexcept;
 
 private:
   class Impl;

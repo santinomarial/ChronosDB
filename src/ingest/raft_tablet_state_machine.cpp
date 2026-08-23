@@ -573,6 +573,13 @@ const TabletState& RaftTabletStateMachine::tablet() const noexcept {
 const raft::GroupId& RaftTabletStateMachine::group_id() const noexcept {
   return impl_->group_id;
 }
+std::optional<RaftTabletSnapshotCleanupMetrics>
+RaftTabletStateMachine::snapshot_cleanup_metrics() const noexcept {
+  if (!impl_)
+    return std::nullopt;
+  return impl_->snapshot_storage.transform(
+      [](const RaftTabletSnapshotStorage& storage) { return storage.cleanup_metrics(); });
+}
 bool RaftTabletStateMachine::failed() const noexcept {
   return !impl_->failure.is_ok();
 }

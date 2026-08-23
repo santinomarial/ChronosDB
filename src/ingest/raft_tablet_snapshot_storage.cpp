@@ -59,6 +59,11 @@ constexpr std::size_t kIndexDigits = 20U;
   return result;
 }
 
+void saturating_add(std::uint64_t& target, const std::uint64_t increment) noexcept {
+  const std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max();
+  target = target > maximum - increment ? maximum : target + increment;
+}
+
 [[nodiscard]] common::Result<raft::LogIndex> parse_name(const std::string_view name,
                                                         const bool temporary) {
   const std::size_t expected =
@@ -103,12 +108,12 @@ public:
     return unavailable("Raft tablet snapshot storage is poisoned: " + poison_.message());
   }
 
-  [[nodiscard]] common::Status cleanup_temporaries() const {
+  [[nodiscard]] common::Status cleanup_temporaries() {
     auto entries = directory_.list_entries();
     if (!entries.has_value()) {
       return entries.error();
     }
-    bool removed = false;
+    std::uint64_t removed{};
     for (const io::DirectoryEntry& entry : *entries) {
       if (!entry.name.starts_with(kPrefix) || !entry.name.ends_with(kTemporarySuffix)) {
         continue;
@@ -121,9 +126,23 @@ public:
       if (!status.is_ok()) {
         return status;
       }
-      removed = true;
+      saturating_add(removed, 1U);
     }
-    return removed ? directory_.sync() : common::Status::ok();
+    if (removed == 0U) {
+      return common::Status::ok();
+    }
+    common::Status synchronized = directory_.sync();
+    if (!synchronized.is_ok()) {
+      return synchronized;
+    }
+    saturating_add(cleanup_metrics_.temporary_files_removed, removed);
+    saturating_add(cleanup_metrics_.temporary_directory_syncs, 1U);
+    return common::Status::ok();
+  }
+
+  [[nodiscard]] common::Status fail_reclamation(common::Status status) {
+    saturating_add(cleanup_metrics_.reclamation_failures, 1U);
+    return status;
   }
 
   [[nodiscard]] common::Result<LoadedRaftTabletSnapshot>
@@ -176,6 +195,7 @@ public:
   io::PosixDirectory directory_;
   io::PosixAdvisoryLock lock_;
   common::Status poison_;
+  RaftTabletSnapshotCleanupMetrics cleanup_metrics_;
 };
 
 common::Result<std::string>
@@ -294,13 +314,19 @@ RaftTabletSnapshotStorage::install(const RaftTabletApplicationSnapshot& snapshot
 
   const std::string temp_name = temporary_name(*final_name);
   common::Status cleanup = impl_->directory_.remove_file(temp_name);
+  bool removed_temporary = false;
   if (cleanup.is_ok()) {
+    removed_temporary = true;
     cleanup = impl_->directory_.sync();
   } else if (cleanup.code() == common::StatusCode::kNotFound) {
     cleanup = common::Status::ok();
   }
   if (!cleanup.is_ok()) {
     return common::make_unexpected(with_context("clean prior snapshot temporary", cleanup));
+  }
+  if (removed_temporary) {
+    saturating_add(impl_->cleanup_metrics_.temporary_files_removed, 1U);
+    saturating_add(impl_->cleanup_metrics_.temporary_directory_syncs, 1U);
   }
   auto temporary =
       impl_->directory_.create_exclusive_regular_file(temp_name, impl_->config_.file_permissions);
@@ -410,17 +436,18 @@ common::Result<RaftTabletSnapshotReclamationReport> RaftTabletSnapshotStorage::r
     const std::optional<raft::LogIndex> authoritative_index) {
   if (impl_ == nullptr)
     return common::make_unexpected(invalid("Raft tablet snapshot storage was moved from"));
+  saturating_add(impl_->cleanup_metrics_.reclamation_attempts, 1U);
   common::Status usable = impl_->check_usable();
   if (!usable.is_ok())
-    return common::make_unexpected(std::move(usable));
+    return common::make_unexpected(impl_->fail_reclamation(std::move(usable)));
   if (authoritative_index.has_value()) {
     auto authoritative = load(*authoritative_index);
     if (!authoritative.has_value())
-      return common::make_unexpected(authoritative.error());
+      return common::make_unexpected(impl_->fail_reclamation(authoritative.error()));
   }
   auto entries = impl_->directory_.list_entries();
   if (!entries.has_value())
-    return common::make_unexpected(entries.error());
+    return common::make_unexpected(impl_->fail_reclamation(entries.error()));
   std::vector<std::string> obsolete;
   try {
     for (const io::DirectoryEntry& entry : *entries) {
@@ -429,27 +456,33 @@ common::Result<RaftTabletSnapshotReclamationReport> RaftTabletSnapshotStorage::r
       auto parsed = parse_name(entry.name, false);
       if (!parsed.has_value() || entry.type != io::DirectoryEntryType::kRegularFile) {
         return common::make_unexpected(
-            corruption("Raft tablet snapshot directory is noncanonical"));
+            impl_->fail_reclamation(corruption("Raft tablet snapshot directory is noncanonical")));
       }
       if (!authoritative_index.has_value() || *parsed != *authoritative_index)
         obsolete.push_back(entry.name);
     }
   } catch (const std::bad_alloc&) {
-    return common::make_unexpected(exhausted("Raft tablet snapshot reclamation allocation failed"));
+    return common::make_unexpected(
+        impl_->fail_reclamation(exhausted("Raft tablet snapshot reclamation allocation failed")));
   } catch (const std::length_error&) {
-    return common::make_unexpected(exhausted("Raft tablet snapshot reclamation exceeded limits"));
+    return common::make_unexpected(
+        impl_->fail_reclamation(exhausted("Raft tablet snapshot reclamation exceeded limits")));
   }
   for (const std::string& file_name : obsolete) {
     common::Status removed = impl_->directory_.remove_file(file_name);
     if (!removed.is_ok())
-      return common::make_unexpected(with_context("remove obsolete Raft tablet snapshot", removed));
+      return common::make_unexpected(
+          impl_->fail_reclamation(with_context("remove obsolete Raft tablet snapshot", removed)));
   }
   if (!obsolete.empty()) {
     common::Status synchronized = impl_->directory_.sync();
     if (!synchronized.is_ok()) {
-      return common::make_unexpected(
-          with_context("synchronize Raft tablet snapshot reclamation", synchronized));
+      return common::make_unexpected(impl_->fail_reclamation(
+          with_context("synchronize Raft tablet snapshot reclamation", synchronized)));
     }
+    saturating_add(impl_->cleanup_metrics_.reclaimed_files,
+                   static_cast<std::uint64_t>(obsolete.size()));
+    saturating_add(impl_->cleanup_metrics_.reclamation_directory_syncs, 1U);
   }
   return RaftTabletSnapshotReclamationReport{authoritative_index, obsolete.size()};
 }
@@ -460,6 +493,10 @@ bool RaftTabletSnapshotStorage::is_usable() const noexcept {
 
 common::Status RaftTabletSnapshotStorage::poison_status() const {
   return impl_ == nullptr ? invalid("Raft tablet snapshot storage was moved from") : impl_->poison_;
+}
+
+RaftTabletSnapshotCleanupMetrics RaftTabletSnapshotStorage::cleanup_metrics() const noexcept {
+  return impl_ == nullptr ? RaftTabletSnapshotCleanupMetrics{} : impl_->cleanup_metrics_;
 }
 
 } // namespace chronos::ingest

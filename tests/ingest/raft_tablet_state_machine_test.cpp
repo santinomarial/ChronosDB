@@ -103,6 +103,7 @@ TEST(RaftTabletStateMachineTest, AppliesCommittedEntriesOnceAndRebuildsFromRetai
     auto machine = RaftTabletStateMachine::recover(group_id(), durable, retry_directory(), tablet(),
                                                    schemas());
     ASSERT_TRUE(machine.has_value()) << machine.error().to_string();
+    EXPECT_FALSE(machine->snapshot_cleanup_metrics().has_value());
     const std::vector<std::byte> payload = command();
     ASSERT_TRUE(
         durable
@@ -231,6 +232,11 @@ TEST(RaftTabletStateMachineTest, RebuildsCompactedPrefixThenCommittedSuffixFromI
     ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
     EXPECT_EQ(reclaimed->authoritative_index, 2U);
     EXPECT_EQ(reclaimed->reclaimed_files, 1U);
+    EXPECT_EQ(machine->snapshot_cleanup_metrics(),
+              (std::optional<RaftTabletSnapshotCleanupMetrics>{
+                  RaftTabletSnapshotCleanupMetrics{.reclamation_attempts = 1U,
+                                                   .reclaimed_files = 1U,
+                                                   .reclamation_directory_syncs = 1U}}));
     EXPECT_FALSE(
         std::filesystem::exists(snapshot_directory / "snapshot-00000000000000000001.rtas"));
     EXPECT_TRUE(std::filesystem::exists(snapshot_directory / "snapshot-00000000000000000002.rtas"));

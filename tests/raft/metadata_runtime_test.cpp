@@ -104,6 +104,7 @@ TEST(DurableMetadataStateMachineTest, AppliesAndRebuildsCommittedMetadataGroup) 
   ASSERT_TRUE(runtime->execute_batch({{group_id(), StartElectionOperation{}}}).has_value());
   auto recovered = DurableMetadataStateMachine::recover(group_id(), *runtime);
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  EXPECT_FALSE(recovered->snapshot_cleanup_metrics().has_value());
   std::optional<DurableMetadataStateMachine> metadata{std::move(*recovered)};
 
   const auto table = id<schema::TableId>(1U);
@@ -412,6 +413,9 @@ TEST(DurableMetadataStateMachineTest, InstallsCompactsAndReopensSnapshotPlusComm
   ASSERT_TRUE(initial_reclamation.has_value()) << initial_reclamation.error().to_string();
   EXPECT_EQ(initial_reclamation->authoritative_index, std::nullopt);
   EXPECT_EQ(initial_reclamation->reclaimed_files, 0U);
+  EXPECT_EQ(metadata->snapshot_cleanup_metrics(),
+            (std::optional<MetadataSnapshotCleanupMetrics>{
+                MetadataSnapshotCleanupMetrics{.reclamation_attempts = 1U}}));
 
   const CatalogTableDefinition definition = schema_definition();
   const auto tablet = id<schema::TabletId>(41U);
@@ -457,6 +461,10 @@ TEST(DurableMetadataStateMachineTest, InstallsCompactsAndReopensSnapshotPlusComm
   ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
   EXPECT_EQ(reclaimed->authoritative_index, 5U);
   EXPECT_EQ(reclaimed->reclaimed_files, 1U);
+  EXPECT_EQ(
+      metadata->snapshot_cleanup_metrics(),
+      (std::optional<MetadataSnapshotCleanupMetrics>{MetadataSnapshotCleanupMetrics{
+          .reclamation_attempts = 2U, .reclaimed_files = 1U, .reclamation_directory_syncs = 1U}}));
   EXPECT_FALSE(
       std::filesystem::exists(snapshot_directory / "metadata-snapshot-00000000000000000004.rmas"));
   EXPECT_TRUE(

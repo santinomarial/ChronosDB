@@ -168,6 +168,13 @@ enumeration, any completed unlink, directory synchronization, or reported succes
 exact namespace prefix. Retrying and reopening again preserves the middle authoritative snapshot or
 converges to an empty zero-authority directory, respectively.
 
+`snapshot_cleanup_metrics()` exposes the process-local counters only while the state machine owns
+snapshot storage. Temporary removals and their directory syncs are credited only after a successful
+sync. Reclamation attempts and failures are cumulative and saturating; reclaimed-file and directory-
+sync counters advance only when the entire cleanup batch reaches its sync boundary. A failed unlink
+or sync can still leave a shorter namespace, so the counters deliberately avoid claiming ambiguous
+partial deletion and the next attempt discovers the current files again.
+
 Command/definition size, names, columns, role arrays, endpoint bytes, replicas, nodes, schemas, and
 tablets are explicitly bounded. Decoding validates fixed headers before length-driven work, owns
 variable data, reconstructs schemas through the public semantic validator, and never dumps or loads

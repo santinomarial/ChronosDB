@@ -120,6 +120,9 @@ TEST(RaftTabletSnapshotStorageTest, InstallsIdempotentlyAndSelectsHighestAfterRe
   EXPECT_EQ(
       latest->transform([](const LoadedRaftTabletSnapshot& loaded) { return loaded.snapshot; }),
       snapshot(10U));
+  RaftTabletSnapshotStorage moved{std::move(*reopened)};
+  EXPECT_EQ(reopened->cleanup_metrics(), RaftTabletSnapshotCleanupMetrics{});
+  EXPECT_EQ(moved.cleanup_metrics(), RaftTabletSnapshotCleanupMetrics{});
 }
 
 TEST(RaftTabletSnapshotStorageTest, CleansInterruptedTemporaryAndRejectsCorruptInstalledBytes) {
@@ -144,6 +147,9 @@ TEST(RaftTabletSnapshotStorageTest, CleansInterruptedTemporaryAndRejectsCorruptI
     auto reopened = RaftTabletSnapshotStorage::open_existing(config(directory));
     ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
     EXPECT_FALSE(std::filesystem::exists(temporary));
+    EXPECT_EQ(reopened->cleanup_metrics(),
+              (RaftTabletSnapshotCleanupMetrics{.temporary_files_removed = 1U,
+                                                .temporary_directory_syncs = 1U}));
     const auto installed = reopened->load(9U);
     ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
     EXPECT_EQ(installed->snapshot, snapshot());
@@ -183,6 +189,10 @@ TEST(RaftTabletSnapshotStorageTest, ReclaimsOnlyFilesOutsideDurableRaftAuthority
   ASSERT_TRUE(orphaned.has_value()) << orphaned.error().to_string();
   EXPECT_FALSE(orphaned->authoritative_index.has_value());
   EXPECT_EQ(orphaned->reclaimed_files, 1U);
+  EXPECT_EQ(storage->cleanup_metrics(),
+            (RaftTabletSnapshotCleanupMetrics{.reclamation_attempts = 2U,
+                                              .reclaimed_files = 3U,
+                                              .reclamation_directory_syncs = 2U}));
   auto latest = storage->load_latest();
   ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
   EXPECT_FALSE(latest->has_value());

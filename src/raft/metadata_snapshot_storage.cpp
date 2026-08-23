@@ -53,6 +53,11 @@ constexpr std::size_t kIndexDigits = 20U;
   return result;
 }
 
+void saturating_add(std::uint64_t& target, const std::uint64_t increment) noexcept {
+  const std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max();
+  target = target > maximum - increment ? maximum : target + increment;
+}
+
 [[nodiscard]] bool valid_limits(const MetadataSnapshotCodecLimits& limits) noexcept {
   return limits.maximum_snapshot_bytes >=
              kMetadataSnapshotHeaderSize + sizeof(NodeId) + kMetadataSnapshotTrailerSize &&
@@ -100,11 +105,11 @@ public:
                ? common::Status::ok()
                : unavailable("metadata snapshot storage is poisoned: " + poison.message());
   }
-  [[nodiscard]] common::Status cleanup_temporaries() const {
+  [[nodiscard]] common::Status cleanup_temporaries() {
     auto entries = directory.list_entries();
     if (!entries.has_value())
       return entries.error();
-    bool removed = false;
+    std::uint64_t removed{};
     for (const io::DirectoryEntry& entry : *entries) {
       if (!entry.name.starts_with(kPrefix) || !entry.name.ends_with(kTemporarySuffix))
         continue;
@@ -115,9 +120,20 @@ public:
       common::Status status = directory.remove_file(entry.name);
       if (!status.is_ok())
         return status;
-      removed = true;
+      saturating_add(removed, 1U);
     }
-    return removed ? directory.sync() : common::Status::ok();
+    if (removed == 0U)
+      return common::Status::ok();
+    common::Status synchronized = directory.sync();
+    if (!synchronized.is_ok())
+      return synchronized;
+    saturating_add(cleanup_metrics.temporary_files_removed, removed);
+    saturating_add(cleanup_metrics.temporary_directory_syncs, 1U);
+    return common::Status::ok();
+  }
+  [[nodiscard]] common::Status fail_reclamation(common::Status status) {
+    saturating_add(cleanup_metrics.reclamation_failures, 1U);
+    return status;
   }
   [[nodiscard]] common::Result<LoadedMetadataSnapshot>
   load_file(const std::string& file_name, const LogIndex expected_index) const {
@@ -161,6 +177,7 @@ public:
   io::PosixDirectory directory;
   io::PosixAdvisoryLock lock;
   common::Status poison;
+  MetadataSnapshotCleanupMetrics cleanup_metrics;
 };
 
 common::Result<std::string> metadata_snapshot_file_name(const LogIndex last_included_index) {
@@ -254,7 +271,9 @@ MetadataSnapshotStorage::install(const MetadataApplicationSnapshot& snapshot) {
 
   const std::string temp_name = temporary_name(*final_name);
   common::Status operation = impl.directory.remove_file(temp_name);
+  bool removed_temporary = false;
   if (operation.is_ok()) {
+    removed_temporary = true;
     operation = impl.directory.sync();
   } else if (operation.code() == common::StatusCode::kNotFound) {
     operation = common::Status::ok();
@@ -262,6 +281,10 @@ MetadataSnapshotStorage::install(const MetadataApplicationSnapshot& snapshot) {
   if (!operation.is_ok())
     return common::make_unexpected(
         with_context("clean prior metadata snapshot temporary", operation));
+  if (removed_temporary) {
+    saturating_add(impl.cleanup_metrics.temporary_files_removed, 1U);
+    saturating_add(impl.cleanup_metrics.temporary_directory_syncs, 1U);
+  }
   auto temporary =
       impl.directory.create_exclusive_regular_file(temp_name, impl.config.file_permissions);
   if (!temporary.has_value())
@@ -349,17 +372,18 @@ MetadataSnapshotStorage::reclaim_obsolete(const std::optional<LogIndex> authorit
   if (!implementation_)
     return common::make_unexpected(invalid("metadata snapshot storage was moved from"));
   Impl& impl = *implementation_;
+  saturating_add(impl.cleanup_metrics.reclamation_attempts, 1U);
   common::Status usable = impl.check_usable();
   if (!usable.is_ok())
-    return common::make_unexpected(std::move(usable));
+    return common::make_unexpected(impl.fail_reclamation(std::move(usable)));
   if (authoritative_index.has_value()) {
     auto authoritative = load(*authoritative_index);
     if (!authoritative.has_value())
-      return common::make_unexpected(authoritative.error());
+      return common::make_unexpected(impl.fail_reclamation(authoritative.error()));
   }
   auto entries = impl.directory.list_entries();
   if (!entries.has_value())
-    return common::make_unexpected(entries.error());
+    return common::make_unexpected(impl.fail_reclamation(entries.error()));
   std::vector<std::string> obsolete;
   try {
     for (const io::DirectoryEntry& entry : *entries) {
@@ -367,25 +391,32 @@ MetadataSnapshotStorage::reclaim_obsolete(const std::optional<LogIndex> authorit
         continue;
       auto parsed = parse_name(entry.name, false);
       if (!parsed.has_value() || entry.type != io::DirectoryEntryType::kRegularFile)
-        return common::make_unexpected(corruption("metadata snapshot directory is noncanonical"));
+        return common::make_unexpected(
+            impl.fail_reclamation(corruption("metadata snapshot directory is noncanonical")));
       if (!authoritative_index.has_value() || *parsed != *authoritative_index)
         obsolete.push_back(entry.name);
     }
   } catch (const std::bad_alloc&) {
-    return common::make_unexpected(exhausted("metadata snapshot reclamation allocation failed"));
+    return common::make_unexpected(
+        impl.fail_reclamation(exhausted("metadata snapshot reclamation allocation failed")));
   } catch (const std::length_error&) {
-    return common::make_unexpected(exhausted("metadata snapshot reclamation exceeded limits"));
+    return common::make_unexpected(
+        impl.fail_reclamation(exhausted("metadata snapshot reclamation exceeded limits")));
   }
   for (const std::string& file_name : obsolete) {
     common::Status removed = impl.directory.remove_file(file_name);
     if (!removed.is_ok())
-      return common::make_unexpected(with_context("remove obsolete metadata snapshot", removed));
+      return common::make_unexpected(
+          impl.fail_reclamation(with_context("remove obsolete metadata snapshot", removed)));
   }
   if (!obsolete.empty()) {
     common::Status synchronized = impl.directory.sync();
     if (!synchronized.is_ok())
-      return common::make_unexpected(
-          with_context("synchronize metadata snapshot reclamation", synchronized));
+      return common::make_unexpected(impl.fail_reclamation(
+          with_context("synchronize metadata snapshot reclamation", synchronized)));
+    saturating_add(impl.cleanup_metrics.reclaimed_files,
+                   static_cast<std::uint64_t>(obsolete.size()));
+    saturating_add(impl.cleanup_metrics.reclamation_directory_syncs, 1U);
   }
   return MetadataSnapshotReclamationReport{authoritative_index, obsolete.size()};
 }
@@ -396,6 +427,10 @@ bool MetadataSnapshotStorage::is_usable() const noexcept {
 common::Status MetadataSnapshotStorage::poison_status() const {
   return implementation_ ? implementation_->poison
                          : invalid("metadata snapshot storage was moved from");
+}
+
+MetadataSnapshotCleanupMetrics MetadataSnapshotStorage::cleanup_metrics() const noexcept {
+  return implementation_ ? implementation_->cleanup_metrics : MetadataSnapshotCleanupMetrics{};
 }
 
 } // namespace chronos::raft

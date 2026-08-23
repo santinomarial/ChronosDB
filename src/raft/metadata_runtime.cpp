@@ -542,6 +542,13 @@ const MetadataStateMachine& DurableMetadataStateMachine::state() const noexcept 
 const GroupId& DurableMetadataStateMachine::group_id() const noexcept {
   return impl_->group_id;
 }
+std::optional<MetadataSnapshotCleanupMetrics>
+DurableMetadataStateMachine::snapshot_cleanup_metrics() const noexcept {
+  if (!impl_)
+    return std::nullopt;
+  return impl_->snapshot_storage.transform(
+      [](const MetadataSnapshotStorage& storage) { return storage.cleanup_metrics(); });
+}
 bool DurableMetadataStateMachine::failed() const noexcept {
   return !impl_->failure.is_ok();
 }

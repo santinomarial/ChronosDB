@@ -548,8 +548,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   retry after `RESOURCE_EXHAUSTED`. A structure-aware ASan/UBSan libFuzzer target combines raw bytes,
   generated canonical minors with valid nested payloads, lowered caller limits, checksum-repaired
   mutations, truncation, and stable semantic re-encoding; the standard deterministic smoke runs it
-  in CI. Add sustained fuzz campaigns, additional multi-fault schedules, cleanup metrics, and
-  physical power-loss qualification. Repeated failure coverage
+  in CI. Add sustained fuzz campaigns, additional multi-fault schedules, and physical power-loss
+  qualification. Process-local saturating cleanup metrics now distinguish synchronized temporary
+  removals, reclamation attempts/failures, and synchronized reclaimed files through both storage
+  owners and their composed state machines. Repeated failure coverage
   now interrupts and cleans two consecutive application temporaries, then strictly rejects and
   explicitly repairs two consecutive partial Raft compaction records before exact orphan adoption
   and a second reopen. An eight-schedule cross-stage reopen matrix fails application-temporary

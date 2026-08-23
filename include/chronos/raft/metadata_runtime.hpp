@@ -59,6 +59,8 @@ public:
 
   [[nodiscard]] const MetadataStateMachine& state() const noexcept;
   [[nodiscard]] const GroupId& group_id() const noexcept;
+  [[nodiscard]] std::optional<MetadataSnapshotCleanupMetrics>
+  snapshot_cleanup_metrics() const noexcept;
   [[nodiscard]] bool failed() const noexcept;
   [[nodiscard]] common::Status failure_status() const;
 

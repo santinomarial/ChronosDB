@@ -454,6 +454,9 @@ TEST_P(MetadataSnapshotAuthoritativeReclamationFailureTest,
     EXPECT_TRUE(syscalls.fired());
     EXPECT_TRUE(storage->is_usable());
     EXPECT_TRUE(storage->poison_status().is_ok());
+    EXPECT_EQ(
+        storage->cleanup_metrics(),
+        (MetadataSnapshotCleanupMetrics{.reclamation_attempts = 1U, .reclamation_failures = 1U}));
     expect_snapshot_presence(directory, failure.present_after_failure);
     auto authority = storage->load(8U);
     ASSERT_TRUE(authority.has_value()) << authority.error().to_string();
@@ -468,6 +471,12 @@ TEST_P(MetadataSnapshotAuthoritativeReclamationFailureTest,
     auto settled = storage->reclaim_obsolete(8U);
     ASSERT_TRUE(settled.has_value()) << settled.error().to_string();
     EXPECT_EQ(settled->reclaimed_files, 0U);
+    EXPECT_EQ(storage->cleanup_metrics(),
+              (MetadataSnapshotCleanupMetrics{
+                  .reclamation_attempts = 3U,
+                  .reclamation_failures = 1U,
+                  .reclaimed_files = static_cast<std::uint64_t>(failure.reclaimed_on_retry),
+                  .reclamation_directory_syncs = failure.reclaimed_on_retry == 0U ? 0U : 1U}));
   }
 
   auto reopened = MetadataSnapshotStorage::open_existing(config(directory));
@@ -527,6 +536,9 @@ TEST_P(MetadataSnapshotOrphanReclamationFailureTest,
     EXPECT_TRUE(syscalls.fired());
     EXPECT_TRUE(storage->is_usable());
     EXPECT_TRUE(storage->poison_status().is_ok());
+    EXPECT_EQ(
+        storage->cleanup_metrics(),
+        (MetadataSnapshotCleanupMetrics{.reclamation_attempts = 1U, .reclamation_failures = 1U}));
     expect_snapshot_presence(directory, failure.present_after_failure);
 
     auto retried = storage->reclaim_obsolete(std::nullopt);
@@ -538,6 +550,12 @@ TEST_P(MetadataSnapshotOrphanReclamationFailureTest,
     auto settled = storage->reclaim_obsolete(std::nullopt);
     ASSERT_TRUE(settled.has_value()) << settled.error().to_string();
     EXPECT_EQ(settled->reclaimed_files, 0U);
+    EXPECT_EQ(storage->cleanup_metrics(),
+              (MetadataSnapshotCleanupMetrics{
+                  .reclamation_attempts = 3U,
+                  .reclamation_failures = 1U,
+                  .reclaimed_files = static_cast<std::uint64_t>(failure.reclaimed_on_retry),
+                  .reclamation_directory_syncs = failure.reclaimed_on_retry == 0U ? 0U : 1U}));
   }
 
   auto reopened = MetadataSnapshotStorage::open_existing(config(directory));
