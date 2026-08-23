@@ -6,7 +6,10 @@ bounded request/response rings, start one
 `EpollReactor`, and drive `poll_once` from its single owner thread. Port zero is for ephemeral tests;
 deployments should bind explicitly.
 
-Run `chronosd --help` for bounded startup options. The binary accepts plaintext only on `127.0.0.1`.
+Run `chronosd --help` for bounded startup options. Without a native TLS bundle, the binary accepts
+plaintext only on IPv4 loopback and reports `native_transport=plaintext`. With the atomic
+[Native Server Principal Configuration](native-server-principal-config.md) and TLS bundle, epoll
+serves mutual TLS on one canonical nonzero IPv4 bind address and reports `native_transport=tls`.
 Diagnostics use the existing human-readable form by default. `--log-format json` emits one bounded,
 flushed JSON object per startup or error event with an RFC 3339 UTC timestamp, severity, component,
 stable event name, message, and event-specific string fields. JSON is written to the same stream as
@@ -57,10 +60,9 @@ provides explicit cancellation and terminal metrics. The strict
 now build the endpoint/TLS-identity/certificate-principal map without borrowing Raft transport
 configuration. Its address-stable TLS-route owner securely qualifies the file/credentials,
 constructs one client context per route, and publishes the complete borrowed map. Embeddings must
-still supply request-specific group/initial-node/placement authority. `chronosctl quorum-sync` now
-supplies that command composition for TLS-enabled native-server embeddings. The packaged daemon
-still accepts plaintext only on loopback, so it is not yet a compatible target for this mTLS client;
-packaged native-server TLS is a separate remaining gap. Multi-group SELECT is not redirected to one
+still supply request-specific group/initial-node/placement authority. `chronosctl quorum-sync`
+supplies that command composition and can target packaged `chronosd` when its mutual-TLS server
+bundle authorizes the client's leaf certificate. Multi-group SELECT is not redirected to one
 arbitrary group leader.
 
 For multi-voter groups, configure the complete transport bundle:

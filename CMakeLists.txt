@@ -753,6 +753,8 @@ add_library(
   src/service/native_client_route_authority.cpp
   src/service/native_client_route_config.cpp
   src/service/native_client_tls_route_owner.cpp
+  src/service/native_server_principal_authority.cpp
+  src/service/native_server_principal_config.cpp
   src/service/replicated_distributed_grouped_query_receiver.cpp
   src/service/replicated_distributed_grouped_query_tcp_server.cpp
   src/service/native_protocol_service.cpp
@@ -995,6 +997,10 @@ if(CHRONOS_BUILD_TESTS)
     tests/service/native_client_route_config_test.cpp
     tests/service/native_client_tls_route_owner_header_self_contained.cpp
     tests/service/native_client_tls_route_owner_test.cpp
+    tests/service/native_server_principal_authority_header_self_contained.cpp
+    tests/service/native_server_principal_authority_test.cpp
+    tests/service/native_server_principal_config_header_self_contained.cpp
+    tests/service/native_server_principal_config_test.cpp
     tests/service/native_protocol_service_header_self_contained.cpp
     tests/service/replicated_distributed_grouped_query_tcp_server_header_self_contained.cpp
     tests/service/replicated_distributed_query_header_self_contained.cpp
@@ -1534,9 +1540,10 @@ if(CHRONOS_BUILD_TESTS)
       chronosd_process_tests
       PRIVATE
         CHRONOSD_PATH="$<TARGET_FILE:chronosd>"
+        CHRONOSCTL_PATH="$<TARGET_FILE:chronosctl>"
         CHRONOS_TEST_TLS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network/tls"
     )
-    add_dependencies(chronosd_process_tests chronosd)
+    add_dependencies(chronosd_process_tests chronosd chronosctl)
     chronos_set_project_warnings(chronosd_process_tests)
     chronos_enable_sanitizers(chronosd_process_tests)
     chronos_enable_static_analysis(chronosd_process_tests)

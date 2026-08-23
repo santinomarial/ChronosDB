@@ -370,6 +370,8 @@ existence of a design document alone is not implementation evidence.
   TLS identity, and leaf-certificate-to-node authority for authenticated Raft transport.
 - [Native client route configuration](operations/native-client-route-config.md): strict bounded
   native IPv4 route, TLS identity, and leaf-certificate-to-node authority for redirected clients.
+- [Native server principal configuration](operations/native-server-principal-config.md): strict
+  bounded client-certificate-to-principal authority for packaged mutual-TLS admission.
 - [Windowed materialized-view state](learning/windowed-materialized-view.md): committed/event-time
   separation, corrections, watermarks, exact checkpoints, durable recovery, and retention frontier.
 - [Multi-tablet subscription order](learning/multi-tablet-subscription-order.md): canonical source

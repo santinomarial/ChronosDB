@@ -454,3 +454,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0417](0417-strict-native-client-route-configuration.md) | Strict native-client route configuration | accepted |
 | [0418](0418-owning-native-client-tls-routes.md) | Owning native-client TLS routes | accepted |
 | [0419](0419-packaged-native-quorum-sync-client.md) | Packaged native QUORUM_SYNC client command | accepted |
+| [0420](0420-packaged-native-mutual-tls-server.md) | Packaged native mutual-TLS server | accepted |

@@ -58,9 +58,10 @@ chronosctl quorum-sync \
   --json
 ```
 
-The destination must expose the native protocol through mutual TLS. The current packaged
-`chronosd` accepts plaintext only on loopback and is not yet a compatible target; the command can
-currently drive a TLS-enabled embedding of the implemented native server stack.
+The destination must expose the native protocol through mutual TLS. Packaged `chronosd` is a
+compatible target when configured with the complete server bundle documented in
+[Native Server Principal Configuration](native-server-principal-config.md). Its server allowlist
+must contain the fingerprint of the client certificate used here.
 
 Every argument is explicit: the route file does not supply group or placement authority, and the
 command does not infer native routes from Raft endpoints. It exact-validates the append before

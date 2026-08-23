@@ -15,6 +15,7 @@
 
 #include <arpa/inet.h>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstddef>
@@ -121,6 +122,40 @@ public:
               replicated_peers_file.c_str(), "--raft-tls-cert", certificate_file.c_str(),
               "--raft-tls-key", private_key_file.c_str(), "--raft-tls-ca", trust_store_file.c_str(),
               nullptr);
+      std::_Exit(127);
+    }
+    ::close(output[1]);
+    if (pid_ < 0) {
+      ::close(output[0]);
+      return false;
+    }
+    output_ = output[0];
+    return true;
+  }
+
+  [[nodiscard]] bool
+  start_native_tls(const std::string& data_directory, const std::string& replicated_groups_file,
+                   const std::string& principal_file, const std::string& certificate_file,
+                   const std::string& private_key_file, const std::string& trust_store_file) {
+    std::array<int, 2U> output{};
+    if (::pipe(output.data()) != 0)
+      return false;
+    if (::fcntl(output[0], F_SETFD, FD_CLOEXEC) != 0 ||
+        ::fcntl(output[1], F_SETFD, FD_CLOEXEC) != 0) {
+      ::close(output[0]);
+      ::close(output[1]);
+      return false;
+    }
+    pid_ = ::fork();
+    if (pid_ == 0) {
+      static_cast<void>(::dup2(output[1], STDOUT_FILENO));
+      ::close(output[0]);
+      ::close(output[1]);
+      ::execl(CHRONOSD_PATH, CHRONOSD_PATH, "--port", "0", "--data-dir", data_directory.c_str(),
+              "--replicated-groups", replicated_groups_file.c_str(), "--native-client-principals",
+              principal_file.c_str(), "--native-tls-cert", certificate_file.c_str(),
+              "--native-tls-key", private_key_file.c_str(), "--native-tls-ca",
+              trust_store_file.c_str(), nullptr);
       std::_Exit(127);
     }
     ::close(output[1]);
@@ -608,6 +643,96 @@ void provision_replicated_cluster(const std::array<std::string, 3U>& roots) {
   return path;
 }
 
+[[nodiscard]] std::string write_exclusive_bytes(std::string path,
+                                                const std::span<const std::byte> bytes) {
+  const int file = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  EXPECT_GE(file, 0);
+  if (file < 0)
+    return {};
+  EXPECT_EQ(::write(file, bytes.data(), bytes.size()), static_cast<ssize_t>(bytes.size()));
+  EXPECT_EQ(::fsync(file), 0);
+  EXPECT_EQ(::close(file), 0);
+  return path;
+}
+
+[[nodiscard]] std::string copy_private_key(const std::string& source,
+                                           const std::string& destination) {
+  std::error_code error;
+  const bool copied =
+      std::filesystem::copy_file(source, destination, std::filesystem::copy_options::none, error);
+  EXPECT_TRUE(copied) << error.message();
+  EXPECT_EQ(::chmod(destination.c_str(), 0600), 0);
+  return copied && !error ? destination : std::string{};
+}
+
+[[nodiscard]] std::string read_text_file(const std::string& path) {
+  const int file = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+  if (file < 0)
+    return {};
+  std::string text;
+  std::array<char, 4096U> buffer{};
+  for (;;) {
+    const ssize_t count = ::read(file, buffer.data(), buffer.size());
+    if (count < 0 && errno == EINTR)
+      continue;
+    if (count <= 0)
+      break;
+    text.append(buffer.data(), static_cast<std::size_t>(count));
+  }
+  ::close(file);
+  return text;
+}
+
+struct CommandResult {
+  int exit_code{-1};
+  std::string standard_output;
+  std::string standard_error;
+};
+
+[[nodiscard]] CommandResult run_quorum_sync(const std::string& directory, const std::string& routes,
+                                            const std::string& certificate,
+                                            const std::string& private_key,
+                                            const std::string& trust_store,
+                                            const std::string& append_file,
+                                            const std::string_view suffix) {
+  const std::string stdout_path = directory + "/chronosctl-" + std::string{suffix} + ".out";
+  const std::string stderr_path = directory + "/chronosctl-" + std::string{suffix} + ".err";
+  const int standard_output =
+      ::open(stdout_path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  const int standard_error =
+      ::open(stderr_path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  if (standard_output < 0 || standard_error < 0) {
+    if (standard_output >= 0)
+      ::close(standard_output);
+    if (standard_error >= 0)
+      ::close(standard_error);
+    return {};
+  }
+  const pid_t process = ::fork();
+  if (process == 0) {
+    static_cast<void>(::dup2(standard_output, STDOUT_FILENO));
+    static_cast<void>(::dup2(standard_error, STDERR_FILENO));
+    ::close(standard_output);
+    ::close(standard_error);
+    ::execl(CHRONOSCTL_PATH, CHRONOSCTL_PATH, "quorum-sync", "--json", "--group",
+            "91919191-9191-9191-9191-919191919191", "--initial-node", "1",
+            "--minimum-placement-epoch", "1", "--routes", routes.c_str(), "--tls-cert",
+            certificate.c_str(), "--tls-key", private_key.c_str(), "--tls-ca", trust_store.c_str(),
+            "--append-file", append_file.c_str(), "--timeout-ms", "5000", nullptr);
+    std::_Exit(127);
+  }
+  ::close(standard_output);
+  ::close(standard_error);
+  if (process < 0)
+    return {};
+  int status{};
+  if (::waitpid(process, &status, 0) != process)
+    return {};
+  return {.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1,
+          .standard_output = read_text_file(stdout_path),
+          .standard_error = read_text_file(stderr_path)};
+}
+
 struct ReplicatedClusterFiles {
   std::string groups;
   std::string peers;
@@ -929,6 +1054,64 @@ TEST(ChronosdProcessTest, AppliesAndRecoversQuorumSyncThroughReplicatedDaemonMod
   response = network::decode_frame(receive_frame(client)).value();
   EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
   ::close(client);
+  EXPECT_EQ(child.stop(), 0);
+}
+
+TEST(ChronosdProcessTest, PackagesMutualTlsQuorumSyncFromChronosctlToChronosd) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  provision_replicated_database(directory.path());
+  const std::string groups = write_replicated_groups(directory.path());
+  ASSERT_FALSE(groups.empty());
+
+  const std::string fixture_directory = CHRONOS_TEST_TLS_FIXTURE_DIR;
+  const std::string server_certificate = fixture_directory + "/server.pem";
+  const std::string trust_store = fixture_directory + "/ca.pem";
+  const std::string server_key =
+      copy_private_key(fixture_directory + "/server-key.pem", directory.path() + "/server-key.pem");
+  const std::string client_key =
+      copy_private_key(fixture_directory + "/client-key.pem", directory.path() + "/client-key.pem");
+  ASSERT_FALSE(server_key.empty());
+  ASSERT_FALSE(client_key.empty());
+  const std::string principals =
+      write_exclusive_file(directory.path() + "/native-principals.conf",
+                           "CHRONOSDB_NATIVE_SERVER_PRINCIPALS_V1\n"
+                           "7=30aa529b935af809084e419d00f39bce2bf5641da93d7bd9ad71e67bc21de368\n");
+  ASSERT_FALSE(principals.empty());
+
+  ChildProcess child;
+  ASSERT_TRUE(child.start_native_tls(directory.path(), groups, principals, server_certificate,
+                                     server_key, trust_store));
+  const std::string startup = child.read_startup_line();
+  EXPECT_NE(startup.find("data_plane=replicated"), std::string::npos) << startup;
+  EXPECT_NE(startup.find("native_transport=tls"), std::string::npos) << startup;
+  const std::uint16_t port = parse_port(startup);
+  ASSERT_NE(port, 0U) << startup;
+
+  const std::string routes = write_exclusive_file(
+      directory.path() + "/native-client-routes.conf",
+      "CHRONOSDB_NATIVE_CLIENT_ROUTES_V1\n1=127.0.0.1:" + std::to_string(port) +
+          ",127.0.0.1,e79120b0ee5e55f91ea4cb4a29d3ca20aaa36a4abdbeb74d06f97751e61368d1\n");
+  const std::vector<std::byte> append = replicated_command();
+  const std::string append_file = write_exclusive_bytes(directory.path() + "/append.bin", append);
+  ASSERT_FALSE(routes.empty());
+  ASSERT_FALSE(append_file.empty());
+
+  const CommandResult applied =
+      run_quorum_sync(directory.path(), routes, fixture_directory + "/client.pem", client_key,
+                      trust_store, append_file, "applied");
+  EXPECT_EQ(applied.exit_code, 0) << applied.standard_error;
+  EXPECT_TRUE(applied.standard_error.empty()) << applied.standard_error;
+  EXPECT_NE(applied.standard_output.find("\"outcome\":\"APPLIED\""), std::string::npos)
+      << applied.standard_output;
+
+  const CommandResult retried =
+      run_quorum_sync(directory.path(), routes, fixture_directory + "/client.pem", client_key,
+                      trust_store, append_file, "retried");
+  EXPECT_EQ(retried.exit_code, 0) << retried.standard_error;
+  EXPECT_TRUE(retried.standard_error.empty()) << retried.standard_error;
+  EXPECT_NE(retried.standard_output.find("\"outcome\":\"MATCHING_RETRY\""), std::string::npos)
+      << retried.standard_output;
   EXPECT_EQ(child.stop(), 0);
 }
 

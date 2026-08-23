@@ -63,6 +63,8 @@ loopback-only and is not yet a compatible target. The command is synchronous and
 operation; packaged native-server TLS, batching, schema lookup, credential reload, cancellation
 output, DNS routes, and query routing remain outside this decision.
 
+The packaged-server gap is resolved by [ADR 0420](0420-packaged-native-mutual-tls-server.md).
+
 ## Affected invariants
 
 - [Invariant 5](../architecture/invariants.md): the caller names its minimum placement authority,

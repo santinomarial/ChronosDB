@@ -6,7 +6,10 @@
 #include "chronos/network/messages.hpp"
 #include "chronos/network/reactor.hpp"
 #include "chronos/network/spsc_queue.hpp"
+#include "chronos/network/tcp_socket.hpp"
 #include "chronos/service/native_protocol_service.hpp"
+#include "chronos/service/native_server_principal_authority.hpp"
+#include "chronos/service/native_server_principal_config.hpp"
 #include "chronos/service/replicated_group_config.hpp"
 #include "chronos/service/replicated_ingest_database.hpp"
 #include "chronos/service/replicated_ingest_service.hpp"
@@ -41,6 +44,7 @@
 #include <sys/stat.h>
 #include <system_error>
 #include <thread>
+#include <tuple>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -158,6 +162,8 @@ private:
 
 struct Options {
   ReactorBackend backend{ReactorBackend::kEpoll};
+  std::array<std::uint8_t, 4> listen_address{127U, 0U, 0U, 1U};
+  std::string listen_address_text{"127.0.0.1"};
   std::uint16_t port{8812U};
   std::size_t queue_capacity{1024U};
   std::string data_directory;
@@ -168,6 +174,10 @@ struct Options {
   std::string raft_tls_certificate_file;
   std::string raft_tls_private_key_file;
   std::string raft_tls_trust_store_file;
+  std::string native_client_principals_file;
+  std::string native_tls_certificate_file;
+  std::string native_tls_private_key_file;
+  std::string native_tls_trust_store_file;
   LogFormat log_format{LogFormat::kText};
   bool help{};
   bool version{};
@@ -175,12 +185,14 @@ struct Options {
 
 void print_usage(const std::string_view program, std::ostream& stream) {
   stream << "Usage: " << program
-         << " [--listen 127.0.0.1] [--port PORT] [--backend epoll|io_uring]"
+         << " [--listen IPV4] [--port PORT] [--backend epoll|io_uring]"
             " [--queue-capacity COUNT] [--data-dir PATH]"
             " [--log-format text|json]"
             " [--replicated-groups FILE]"
             " [--replicated-peers FILE --raft-tls-cert FILE --raft-tls-key FILE"
             " --raft-tls-ca FILE]"
+            " [--native-client-principals FILE --native-tls-cert FILE --native-tls-key FILE"
+            " --native-tls-ca FILE]"
             " [--subscription-sql SQL --subscription-key-file PATH]\n"
             "       "
          << program << " --help\n"
@@ -220,10 +232,13 @@ template <typename Integer>
     }
     const std::string_view value{argv[++index]};
     if (argument == "--listen") {
-      if (value != "127.0.0.1") {
-        error = "plaintext service is restricted to 127.0.0.1";
+      auto endpoint = chronos::network::parse_ipv4_endpoint(std::string{value} + ":1");
+      if (!endpoint.has_value()) {
+        error = "listen address must be canonical nonzero IPv4";
         return std::nullopt;
       }
+      options.listen_address = endpoint->address;
+      options.listen_address_text = value;
     } else if (argument == "--port") {
       if (!parse_integer(value, options.port)) {
         error = "port must be an integer from 0 through 65535";
@@ -289,6 +304,30 @@ template <typename Integer>
       options.raft_tls_private_key_file = value;
     } else if (argument == "--raft-tls-ca") {
       options.raft_tls_trust_store_file = value;
+    } else if (argument == "--native-client-principals") {
+      if (value.empty()) {
+        error = "native client principal configuration path must be nonempty";
+        return std::nullopt;
+      }
+      options.native_client_principals_file = value;
+    } else if (argument == "--native-tls-cert") {
+      if (value.empty()) {
+        error = "native TLS certificate path must be nonempty";
+        return std::nullopt;
+      }
+      options.native_tls_certificate_file = value;
+    } else if (argument == "--native-tls-key") {
+      if (value.empty()) {
+        error = "native TLS private key path must be nonempty";
+        return std::nullopt;
+      }
+      options.native_tls_private_key_file = value;
+    } else if (argument == "--native-tls-ca") {
+      if (value.empty()) {
+        error = "native TLS trust store path must be nonempty";
+        return std::nullopt;
+      }
+      options.native_tls_trust_store_file = value;
     } else {
       error = "unknown option " + std::string{argument};
       return std::nullopt;
@@ -325,6 +364,24 @@ template <typename Integer>
   }
   if (transport_field_count != 0U && options.replicated_groups_file.empty()) {
     error = "Raft peer transport requires replicated group configuration";
+    return std::nullopt;
+  }
+  const std::array<bool, 4U> native_security_fields{
+      !options.native_client_principals_file.empty(), !options.native_tls_certificate_file.empty(),
+      !options.native_tls_private_key_file.empty(), !options.native_tls_trust_store_file.empty()};
+  const std::size_t native_security_field_count =
+      static_cast<std::size_t>(std::ranges::count(native_security_fields, true));
+  if (native_security_field_count != 0U &&
+      native_security_field_count != native_security_fields.size()) {
+    error = "native client principals and all native TLS files must be configured together";
+    return std::nullopt;
+  }
+  if (native_security_field_count != 0U && options.backend != ReactorBackend::kEpoll) {
+    error = "native TLS requires the epoll backend";
+    return std::nullopt;
+  }
+  if (native_security_field_count == 0U && options.listen_address.front() != 127U) {
+    error = "plaintext service is restricted to IPv4 loopback";
     return std::nullopt;
   }
   return options;
@@ -401,17 +458,21 @@ load_subscription_key(const std::string& path) {
 
 [[nodiscard]] chronos::common::Result<std::string>
 load_bounded_config(const std::string& path, const std::size_t maximum_bytes,
-                    const std::string_view kind) {
+                    const std::string_view kind, const bool reject_group_other_writes = false) {
   const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
   if (descriptor < 0)
     return chronos::common::make_unexpected(io_error("cannot open " + std::string{kind}));
   const auto close_descriptor = [&]() noexcept { static_cast<void>(::close(descriptor)); };
   struct stat metadata {};
   if (::fstat(descriptor, &metadata) != 0 || !S_ISREG(metadata.st_mode) || metadata.st_size <= 0 ||
-      static_cast<std::uintmax_t>(metadata.st_size) > maximum_bytes) {
+      static_cast<std::uintmax_t>(metadata.st_size) > maximum_bytes ||
+      (reject_group_other_writes && (metadata.st_mode & 0022) != 0)) {
     close_descriptor();
     return chronos::common::make_unexpected(
-        invalid(std::string{kind} + " must be a bounded nonempty regular file"));
+        invalid(std::string{kind} +
+                (reject_group_other_writes
+                     ? " must be a bounded nonempty regular file not writable by group/other"
+                     : " must be a bounded nonempty regular file")));
   }
   try {
     std::string bytes(static_cast<std::size_t>(metadata.st_size), '\0');
@@ -451,22 +512,69 @@ load_bounded_config(const std::string& path, const std::size_t maximum_bytes,
 }
 
 [[nodiscard]] chronos::common::Status validate_tls_file(const std::string& path,
-                                                        const bool private_key) {
+                                                        const bool private_key,
+                                                        const std::string_view kind,
+                                                        const bool reject_group_other_writes) {
   const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
   if (descriptor < 0)
-    return io_error("cannot open Raft TLS file");
+    return io_error("cannot open " + std::string{kind});
   struct stat metadata {};
   constexpr std::uintmax_t maximum_bytes = std::uintmax_t{16U} * 1024U * 1024U;
   const bool valid = ::fstat(descriptor, &metadata) == 0 && S_ISREG(metadata.st_mode) &&
                      metadata.st_size > 0 &&
                      static_cast<std::uintmax_t>(metadata.st_size) <= maximum_bytes &&
-                     (!private_key || (metadata.st_mode & 0077) == 0);
+                     (!private_key || (metadata.st_mode & 0077) == 0) &&
+                     (!reject_group_other_writes || (metadata.st_mode & 0022) == 0);
   static_cast<void>(::close(descriptor));
-  return valid ? chronos::common::Status::ok()
-               : invalid(
-                     private_key
-                         ? "Raft TLS key must be a bounded regular file inaccessible to group/other"
-                         : "Raft TLS certificate authority must be a bounded regular file");
+  if (valid)
+    return chronos::common::Status::ok();
+  if (private_key) {
+    return invalid(std::string{kind} +
+                   " must be a bounded regular file inaccessible to group/other");
+  }
+  return invalid(std::string{kind} +
+                 (reject_group_other_writes
+                      ? " must be a bounded regular file not writable by group/other"
+                      : " must be a bounded regular file"));
+}
+
+[[nodiscard]] chronos::common::Result<
+    std::unique_ptr<chronos::service::NativeServerPrincipalAuthority>>
+load_native_principal_authority(const Options& options) {
+  auto loaded =
+      load_bounded_config(options.native_client_principals_file,
+                          chronos::service::NativeServerPrincipalConfigLimits{}.maximum_bytes,
+                          "native client principal config", true);
+  if (!loaded.has_value())
+    return chronos::common::make_unexpected(loaded.error());
+  auto parsed = chronos::service::parse_native_server_principal_config(*loaded);
+  if (!parsed.has_value()) {
+    return chronos::common::make_unexpected(chronos::common::Status{
+        parsed.error().code(),
+        "native client principal config is invalid: " + parsed.error().to_string()});
+  }
+  auto authority = chronos::service::NativeServerPrincipalAuthority::create(std::move(*parsed));
+  if (!authority.has_value())
+    return chronos::common::make_unexpected(authority.error());
+  for (const auto& [path, private_key, kind] :
+       std::array<std::tuple<std::string_view, bool, std::string_view>, 3U>{
+           std::tuple<std::string_view, bool, std::string_view>{options.native_tls_certificate_file,
+                                                                false, "native TLS certificate"},
+           {options.native_tls_private_key_file, true, "native TLS private key"},
+           {options.native_tls_trust_store_file, false, "native TLS trust store"}}) {
+    const chronos::common::Status valid =
+        validate_tls_file(std::string{path}, private_key, kind, true);
+    if (!valid.is_ok())
+      return chronos::common::make_unexpected(valid);
+  }
+  try {
+    return std::make_unique<chronos::service::NativeServerPrincipalAuthority>(
+        std::move(*authority));
+  } catch (const std::bad_alloc&) {
+    return chronos::common::make_unexpected(
+        chronos::common::Status{chronos::common::StatusCode::kResourceExhausted,
+                                "native client principal authority allocation failed"});
+  }
 }
 
 [[nodiscard]] chronos::common::Status
@@ -616,6 +724,12 @@ struct DaemonSubscription {
       : plan(std::move(configured_plan)), coordinator(std::move(configured_coordinator)),
         resources(std::move(configured_resources)), requests(std::move(configured_requests)),
         responses(std::move(configured_responses)) {}
+
+  [[nodiscard]] SingleNodeSubscriptionRuntime* runtime_if_configured() noexcept {
+    if (!runtime.has_value())
+      return nullptr;
+    return std::addressof(*runtime);
+  }
 };
 
 [[nodiscard]] chronos::common::Result<std::unique_ptr<DaemonSubscription>>
@@ -1062,6 +1176,16 @@ int run_daemon(const int argc, const char* const argv[]) {
 
   chronos::common::SystemUuidGenerator identities;
   SingleNodeCommittedAppendRouter append_router;
+  std::unique_ptr<chronos::service::NativeServerPrincipalAuthority> native_principal_authority;
+  if (!options->native_client_principals_file.empty()) {
+    auto authority = load_native_principal_authority(*options);
+    if (!authority.has_value()) {
+      logger.error("native_security_setup_failed",
+                   "native security setup failed: " + authority.error().to_string());
+      return 1;
+    }
+    native_principal_authority = std::move(*authority);
+  }
   std::optional<std::vector<chronos::raft::RaftGroupConfiguration>> replicated_groups;
   if (!options->replicated_groups_file.empty()) {
     auto loaded = load_bounded_config(options->replicated_groups_file,
@@ -1096,11 +1220,14 @@ int run_daemon(const int argc, const char* const argv[]) {
                    "replicated peer config is invalid: " + parsed.error().to_string());
       return 1;
     }
-    for (const auto& [path, private_key] : std::array<std::pair<std::string_view, bool>, 3U>{
-             std::pair<std::string_view, bool>{options->raft_tls_certificate_file, false},
-             {options->raft_tls_private_key_file, true},
-             {options->raft_tls_trust_store_file, false}}) {
-      const chronos::common::Status valid = validate_tls_file(std::string{path}, private_key);
+    for (const auto& [path, private_key, kind] :
+         std::array<std::tuple<std::string_view, bool, std::string_view>, 3U>{
+             std::tuple<std::string_view, bool, std::string_view>{
+                 options->raft_tls_certificate_file, false, "Raft TLS certificate"},
+             {options->raft_tls_private_key_file, true, "Raft TLS private key"},
+             {options->raft_tls_trust_store_file, false, "Raft TLS trust store"}}) {
+      const chronos::common::Status valid =
+          validate_tls_file(std::string{path}, private_key, kind, false);
       if (!valid.is_ok()) {
         logger.error("raft_tls_file_invalid",
                      "Raft TLS file validation failed: " + valid.to_string());
@@ -1271,7 +1398,17 @@ int run_daemon(const int argc, const char* const argv[]) {
   }
 
   chronos::network::EpollServerConfig config;
+  config.bind_address = options->listen_address;
   config.port = options->port;
+  if (native_principal_authority != nullptr) {
+    config.security = {.mode = chronos::network::TransportSecurityMode::kTlsRequired,
+                       .authenticator = native_principal_authority.get(),
+                       .tls = chronos::network::TlsServerConfig{
+                           .certificate_chain_file = options->native_tls_certificate_file,
+                           .private_key_file = options->native_tls_private_key_file,
+                           .trust_store_file = options->native_tls_trust_store_file,
+                           .require_client_certificate = true}};
+  }
   if (replicated_service.has_value()) {
     config.state.maximum_protocol_major = chronos::network::kProtocolV2Major;
     config.state.supported_feature_bits = chronos::network::kProtocolV2QuorumSyncFeature |
@@ -1289,9 +1426,17 @@ int run_daemon(const int argc, const char* const argv[]) {
     return 1;
   }
 
-  std::optional<RaftTransportWorker> raft_worker;
+  std::optional<RaftTransportWorker> raft_worker_owner;
+  RaftTransportWorker* raft_worker{};
   if (raft_transport.has_value()) {
-    raft_worker.emplace(*raft_transport, *replicated_read_barrier);
+    if (!replicated_read_barrier.has_value() || !replicated_database.has_value()) {
+      static_cast<void>(raft_transport->shutdown());
+      static_cast<void>(reactor->shutdown());
+      logger.error("raft_transport_owner_invalid", "Raft transport owners are incomplete");
+      return 1;
+    }
+    raft_worker =
+        std::addressof(raft_worker_owner.emplace(*raft_transport, *replicated_read_barrier));
     if (!raft_worker->start()) {
       static_cast<void>(reactor->shutdown());
       replicated_service.reset();
@@ -1302,22 +1447,26 @@ int run_daemon(const int argc, const char* const argv[]) {
     }
   }
 
+  SingleNodeSubscriptionRuntime* subscription_runtime{};
+  if (subscription != nullptr)
+    subscription_runtime = subscription->runtime_if_configured();
   DataPlaneWorker worker{
       {.requests = std::addressof(*requests),
        .responses = std::addressof(*responses),
        .reactor = std::addressof(*reactor),
        .service = service.has_value() ? std::addressof(*service) : nullptr,
        .replicated = replicated_service.has_value() ? std::addressof(*replicated_service) : nullptr,
-       .subscriptions = subscription != nullptr ? std::addressof(*subscription->runtime) : nullptr,
+       .subscriptions = subscription_runtime,
        .subscription_requests =
            subscription != nullptr ? std::addressof(subscription->requests) : nullptr,
        .subscription_responses =
            subscription != nullptr ? std::addressof(subscription->responses) : nullptr}};
   if (!worker.start()) {
-    if (raft_worker.has_value()) {
+    if (raft_worker != nullptr) {
       raft_worker->request_stop();
       raft_worker->join();
-      static_cast<void>(raft_transport->shutdown());
+      if (raft_transport.has_value())
+        static_cast<void>(raft_transport->shutdown());
     }
     static_cast<void>(reactor->shutdown());
     subscription.reset();
@@ -1339,10 +1488,11 @@ int run_daemon(const int argc, const char* const argv[]) {
     worker.join();
     if (replicated_read_barrier.has_value())
       static_cast<void>(replicated_read_barrier->shutdown());
-    if (raft_worker.has_value()) {
+    if (raft_worker != nullptr) {
       raft_worker->request_stop();
       raft_worker->join();
-      static_cast<void>(raft_transport->shutdown());
+      if (raft_transport.has_value())
+        static_cast<void>(raft_transport->shutdown());
     }
     static_cast<void>(reactor->shutdown());
     subscription.reset();
@@ -1364,7 +1514,11 @@ int run_daemon(const int argc, const char* const argv[]) {
   const std::string_view raft_transport_state =
       raft_transport.has_value() ? "configured"
                                  : (replicated_service.has_value() ? "local" : "disabled");
-  std::string startup{"chronosd listening on 127.0.0.1:"};
+  const std::string_view native_transport =
+      native_principal_authority != nullptr ? "tls" : "plaintext";
+  std::string startup{"chronosd listening on "};
+  startup.append(options->listen_address_text);
+  startup.push_back(':');
   startup.append(port);
   startup.append(" backend=");
   startup.append(backend);
@@ -1374,18 +1528,21 @@ int run_daemon(const int argc, const char* const argv[]) {
   startup.append(subscriptions);
   startup.append(" raft_transport=");
   startup.append(raft_transport_state);
+  startup.append(" native_transport=");
+  startup.append(native_transport);
   const std::array startup_fields{
-      chronos::common::LogField{"address", "127.0.0.1"},
+      chronos::common::LogField{"address", options->listen_address_text},
       chronos::common::LogField{"port", port},
       chronos::common::LogField{"backend", backend},
       chronos::common::LogField{"data_plane", data_plane},
       chronos::common::LogField{"subscriptions", subscriptions},
-      chronos::common::LogField{"raft_transport", raft_transport_state}};
+      chronos::common::LogField{"raft_transport", raft_transport_state},
+      chronos::common::LogField{"native_transport", native_transport}};
   logger.info("server_listening", startup, startup_fields);
 
   int exit_code = 0;
   while (stop_requested == 0 && !worker.failed() &&
-         (!raft_worker.has_value() || !raft_worker->failed())) {
+         (raft_worker == nullptr || !raft_worker->failed())) {
     const auto status = reactor->poll_once(std::chrono::milliseconds{10});
     if (!status.is_ok()) {
       logger.error("reactor_failed", "reactor failure: " + status.to_string());
@@ -1397,7 +1554,7 @@ int run_daemon(const int argc, const char* const argv[]) {
     logger.error("data_plane_worker_failed", "data-plane worker failed");
     exit_code = 1;
   }
-  if (raft_worker.has_value() && raft_worker->failed()) {
+  if (raft_worker != nullptr && raft_worker->failed()) {
     logger.error("raft_transport_worker_failed", "Raft transport worker failed");
     exit_code = 1;
   }
@@ -1434,14 +1591,16 @@ int run_daemon(const int argc, const char* const argv[]) {
       exit_code = 1;
     }
   }
-  if (raft_worker.has_value()) {
+  if (raft_worker != nullptr) {
     raft_worker->request_stop();
     raft_worker->join();
-    const auto transport_shutdown = raft_transport->shutdown();
-    if (!transport_shutdown.is_ok()) {
-      logger.error("raft_transport_shutdown_failed",
-                   "Raft transport shutdown failed: " + transport_shutdown.to_string());
-      exit_code = 1;
+    if (raft_transport.has_value()) {
+      const auto transport_shutdown = raft_transport->shutdown();
+      if (!transport_shutdown.is_ok()) {
+        logger.error("raft_transport_shutdown_failed",
+                     "Raft transport shutdown failed: " + transport_shutdown.to_string());
+        exit_code = 1;
+      }
     }
   }
   if (database.has_value()) {
