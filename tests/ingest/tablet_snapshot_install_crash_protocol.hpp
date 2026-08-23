@@ -54,6 +54,13 @@ inline constexpr std::string_view kAfterApplicationCompactionRaftSync =
     "after_application_compaction_raft_sync";
 inline constexpr std::string_view kAfterApplicationCompactionSuccess =
     "after_application_compaction_success";
+inline constexpr std::string_view kBeforeTabletAppliedIndexWrite =
+    "before_tablet_applied_index_write";
+inline constexpr std::string_view kAfterTabletAppliedIndexWrite =
+    "after_tablet_applied_index_write";
+inline constexpr std::string_view kAfterTabletAppliedIndexSync = "after_tablet_applied_index_sync";
+inline constexpr std::string_view kAfterTabletApplicationSuccess =
+    "after_tablet_application_success";
 
 } // namespace chronos::ingest::test
 

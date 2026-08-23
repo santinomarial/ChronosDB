@@ -35,6 +35,13 @@ process-memory tablet. Therefore startup creates fresh owners and deterministica
 complete retained committed log. It may leave the durable applied index unchanged when it already
 equals commit, because application memory has just been rebuilt from those exact bytes.
 
+A four-cut process-crash matrix freezes the live path after rows and retry state are published but
+before the applied-index record write, after that write, after its sync, and after successful return.
+The pre-write image retains applied index 0; every complete-record image recovers applied index 1.
+All four rebuild the same two rows, one retry identity, and group/index frontier from the retained
+committed entry, then remain identical on a second reopen. Persisted applied position is therefore a
+progress marker, never a substitute for reconstructing application memory.
+
 Without a supplied application-snapshot owner, this model intentionally rejects any nonzero Raft
 snapshot boundary. A compacted prefix must atomically describe the omitted rows, retry outcomes,
 schema binding, and included group/index before suffix replay can be safe.

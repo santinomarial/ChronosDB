@@ -226,10 +226,13 @@ public:
   }
 
   ssize_t pwrite(const io::detail::WriteAtRequest& request) override {
+    if (active_)
+      observe(kBeforeTabletAppliedIndexWrite);
     const ssize_t result = delegate_.pwrite(request);
     if (active_ && result >= 0 && static_cast<std::size_t>(result) == request.size) {
       observe(kAfterRaftStateWrite);
       observe(kAfterApplicationCompactionRaftWrite);
+      observe(kAfterTabletAppliedIndexWrite);
     }
     return result;
   }
@@ -238,12 +241,17 @@ public:
     if (active_ && result == 0) {
       observe(kAfterRaftStateSync);
       observe(kAfterApplicationCompactionRaftSync);
+      observe(kAfterTabletAppliedIndexSync);
     }
     return result;
   }
 
   void observe_success_release() const {
     observe(kAfterSuccessRelease);
+  }
+
+  void observe_tablet_application_success() const {
+    observe(kAfterTabletApplicationSuccess);
   }
 
 private:
@@ -269,6 +277,39 @@ private:
 
 [[nodiscard]] bool is_compaction_point(const std::string_view point) {
   return point.starts_with("after_application_compaction_");
+}
+
+[[nodiscard]] bool is_tablet_application_point(const std::string_view point) {
+  return point.starts_with("before_tablet_applied_index_") ||
+         point.starts_with("after_tablet_applied_index_") ||
+         point == kAfterTabletApplicationSuccess;
+}
+
+[[nodiscard]] int run_tablet_application(const ChildConfig& config) {
+  RaftObservingSyscalls raft_syscalls{io::detail::system_posix_syscalls(), config.pause_after};
+  auto runtime = raft::detail::DurableMultiRaftRuntimeTestAccess::create_new(
+      4U, crash_log_config(config.directory), crash_compaction_groups(), {}, raft_syscalls);
+  if (!runtime.has_value())
+    return 21;
+  auto election = runtime->execute_batch({{crash_group_id(), raft::StartElectionOperation{}}});
+  if (!election.has_value() || election->size() != 1U || !election->front().status.is_ok())
+    return 22;
+  auto machine = RaftTabletStateMachine::recover(
+      crash_group_id(), *runtime, crash_compaction_retry_directory(), crash_compaction_tablet(),
+      crash_compaction_schemas());
+  if (!machine.has_value())
+    return 23;
+  auto proposed = runtime->execute_batch(
+      {{crash_group_id(),
+        raft::ProposeOperation{kRaftColumnarAppendEntryType, crash_compaction_command()}}});
+  if (!proposed.has_value() || proposed->size() != 1U || !proposed->front().status.is_ok())
+    return 24;
+  raft_syscalls.begin();
+  auto applied = machine->apply_committed();
+  if (!applied.has_value() || applied->last_applied_index != 1U)
+    return 25;
+  raft_syscalls.observe_tablet_application_success();
+  return 26;
 }
 
 [[nodiscard]] int run_compaction(const ChildConfig& config) {
@@ -311,6 +352,8 @@ private:
 [[nodiscard]] int run(const ChildConfig& config) {
   if (config.directory.empty() || config.pause_after.empty() || config.pause_occurrence == 0U)
     return 2;
+  if (is_tablet_application_point(config.pause_after))
+    return run_tablet_application(config);
   if (is_compaction_point(config.pause_after))
     return run_compaction(config);
   ApplicationObservingSyscalls application_syscalls{io::detail::system_posix_syscalls(),

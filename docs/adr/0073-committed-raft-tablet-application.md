@@ -56,8 +56,13 @@ because their retry and row-publication semantics could diverge.
 
 Invariants 1, 3, 4, 5, 6, 8, 11, 14, and 18 apply. Focused tests prove uncommitted invisibility,
 ordered committed publication, exact duplicate suppression, durable applied-index advancement,
-fail-closed corrupt committed bytes, and complete reconstruction after durable runtime reopen. Crash
-injection at application/applied-index boundaries, application snapshots, log reclamation, schema
-catalog recovery, multi-group scheduling, and true quorum acknowledgment remain required. A
-deterministic allocation sweep fails every post-apply state copy, requires the full committed-
-unapplied range and persistent state to remain exact, and then advances identically on retry.
+fail-closed corrupt committed bytes, and complete reconstruction after durable runtime reopen. A
+four-cut real-process `SIGKILL` matrix stops after row/retry publication but before the applied-index
+record write, after its complete write, after synchronization, and after successful return. Reopen
+observes applied index 0 only before the write and 1 after every complete record, but always rebuilds
+the same rows, retry identity, and publication frontier from the retained committed log; a second
+reopen is identical. Application snapshots and log reclamation are implemented by extending ADRs.
+Additional injected-I/O shapes, schema catalog recovery, multi-group scheduling, and true quorum
+acknowledgment remain required. A deterministic allocation sweep fails every post-apply state copy,
+requires the full committed-unapplied range and persistent state to remain exact, and then advances
+identically on retry.
