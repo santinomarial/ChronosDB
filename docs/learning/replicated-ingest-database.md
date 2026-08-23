@@ -78,11 +78,13 @@ retry, and survives another reopen. Syscall-level cuts inside those stages remai
 
 Shutdown exposes a separate observer borrowed only for the synchronous call.
 `kCoordinatorReleased` means request/result ownership is gone while the durable worker remains;
-`kRuntimeStopped` follows worker drain, application shutdown, and Raft-log close while the root owner
-remains; `kRootReleased` follows the root close. A three-case `SIGKILL` matrix proves exact reopen
-and retry. The first case admits a real proposal before coordinator destruction, so recovery may
-select only the atomic pre-write or committed state and exact retry cannot duplicate it. Cuts inside
-worker drain, extension shutdown, log close, and root-close syscalls remain separate work.
+`kAcceptedWorkDrained`, `kApplicationsStopped`, and `kLogClosed` expose the worker-owned teardown
+order; `kRuntimeStopped` follows join and runtime reset while the root owner remains; and
+`kRootReleased` follows the root close. A six-case `SIGKILL` matrix proves exact reopen and retry.
+The first four cases admit a real proposal before coordinator destruction. Recovery at the first
+may select only the atomic pre-write or committed state, while every case at or after drain requires
+the committed mutation and retry identity; exact retry cannot duplicate either outcome. Cuts inside
+worker drain, extension hooks, physical close, and root-close syscalls remain separate work.
 
 ## Query snapshot boundary
 

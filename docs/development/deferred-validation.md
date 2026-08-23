@@ -532,8 +532,8 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   crash-cut and syscall matrices beyond the completed retained-log and snapshot-backed steady-state
   owner `SIGKILL` lifecycles, snapshot-plus-suffix reopen, and coordinator post-admission/pre-response
   write cut, plus the completed four-stage packaged-startup owner matrix, broader reconfiguration
-  matrices beyond the completed committed-joint removal restart, internal shutdown/syscall cuts
-  beyond the completed coordinator-released/runtime-stopped/root-released matrix, broader
+  matrices beyond the completed committed-joint removal restart, intra-drain/extension-hook/
+  physical-close syscall cuts beyond the completed six-stage packaged shutdown matrix, broader
   queue/disconnect failure matrices, and TSan scheduling coverage.
 - Carry the implemented group-scoped read-barrier operation through authenticated production
   transport, request deadlines/coalescing, apply waiting, and exact tablet snapshot acquisition.

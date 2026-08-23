@@ -52,6 +52,15 @@ public:
     case ReplicatedIngestRuntimeShutdownStage::kCoordinatorReleased:
       observer_.on_shutdown_stage(ReplicatedIngestDatabaseShutdownStage::kCoordinatorReleased);
       return;
+    case ReplicatedIngestRuntimeShutdownStage::kAcceptedWorkDrained:
+      observer_.on_shutdown_stage(ReplicatedIngestDatabaseShutdownStage::kAcceptedWorkDrained);
+      return;
+    case ReplicatedIngestRuntimeShutdownStage::kApplicationsStopped:
+      observer_.on_shutdown_stage(ReplicatedIngestDatabaseShutdownStage::kApplicationsStopped);
+      return;
+    case ReplicatedIngestRuntimeShutdownStage::kLogClosed:
+      observer_.on_shutdown_stage(ReplicatedIngestDatabaseShutdownStage::kLogClosed);
+      return;
     case ReplicatedIngestRuntimeShutdownStage::kWorkerStopped:
       observer_.on_shutdown_stage(ReplicatedIngestDatabaseShutdownStage::kRuntimeStopped);
       return;

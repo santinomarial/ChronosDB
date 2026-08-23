@@ -383,17 +383,23 @@ public:
     }
   }
 
-  [[nodiscard]] common::Status shutdown() {
+  [[nodiscard]] common::Status
+  shutdown(AsyncDurableMultiRaftShutdownObserver* const observer = nullptr) {
     const std::lock_guard shutdown_lock{shutdown_mutex_};
+    if (!worker_.joinable()) {
+      const std::lock_guard lock{mutex_};
+      return terminal_status_;
+    }
     {
       const std::lock_guard lock{mutex_};
+      shutdown_observer_ = observer;
       shutdown_requested_ = true;
       metrics_.accepting = false;
     }
     condition_.notify_all();
-    if (worker_.joinable())
-      worker_.join();
+    worker_.join();
     const std::lock_guard lock{mutex_};
+    shutdown_observer_ = nullptr;
     return terminal_status_;
   }
 
@@ -468,6 +474,16 @@ public:
   }
 
 private:
+  void observe_shutdown(const AsyncDurableMultiRaftShutdownStage stage) noexcept {
+    AsyncDurableMultiRaftShutdownObserver* observer = nullptr;
+    {
+      const std::lock_guard lock{mutex_};
+      observer = shutdown_observer_;
+    }
+    if (observer != nullptr)
+      observer->on_shutdown_stage(stage);
+  }
+
   [[nodiscard]] common::Status fail_worker_start(common::Status failure) {
     {
       const std::lock_guard lock{mutex_};
@@ -689,6 +705,7 @@ private:
         metrics_.accepting = false;
       }
     }
+    observe_shutdown(AsyncDurableMultiRaftShutdownStage::kExtensionStopped);
     const common::Status closed = runtime_.close();
     if (!closed.is_ok()) {
       const std::lock_guard lock{mutex_};
@@ -697,6 +714,7 @@ private:
       metrics_.terminal_failure = true;
       metrics_.accepting = false;
     }
+    observe_shutdown(AsyncDurableMultiRaftShutdownStage::kLogClosed);
   }
 
   void run() {
@@ -789,6 +807,7 @@ private:
         break;
       }
     }
+    observe_shutdown(AsyncDurableMultiRaftShutdownStage::kAcceptedWorkDrained);
     close_runtime();
   }
 
@@ -805,6 +824,7 @@ private:
   AsyncDurableMultiRaftMetrics metrics_;
   common::Status terminal_status_;
   bool shutdown_requested_{};
+  AsyncDurableMultiRaftShutdownObserver* shutdown_observer_{};
   std::thread worker_;
   std::mutex shutdown_mutex_;
   std::mutex initialization_mutex_;
@@ -1010,7 +1030,17 @@ AsyncDurableMultiRaftRuntime::try_checkpoint_and_reclaim() {
 }
 
 common::Status AsyncDurableMultiRaftRuntime::shutdown() {
-  return impl_ == nullptr ? common::Status::ok() : impl_->shutdown();
+  return shutdown_with(nullptr);
+}
+
+common::Status
+AsyncDurableMultiRaftRuntime::shutdown(AsyncDurableMultiRaftShutdownObserver& observer) {
+  return shutdown_with(std::addressof(observer));
+}
+
+common::Status
+AsyncDurableMultiRaftRuntime::shutdown_with(AsyncDurableMultiRaftShutdownObserver* const observer) {
+  return impl_ == nullptr ? common::Status::ok() : impl_->shutdown(observer);
 }
 
 int AsyncDurableMultiRaftRuntime::completion_descriptor() const noexcept {

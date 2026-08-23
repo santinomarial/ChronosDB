@@ -284,6 +284,7 @@ struct PackagedShutdownCrashCase {
   std::string_view pause_after;
   std::string_view event;
   bool admitted_write{};
+  bool write_must_commit{};
 };
 
 class ReplicatedIngestDatabaseShutdownCrashTest
@@ -306,7 +307,7 @@ TEST_P(ReplicatedIngestDatabaseShutdownCrashTest,
       ReplicatedIngestDatabase::open_existing(test::crash_database_config(directory.path(), false));
   ASSERT_TRUE(database.has_value()) << database.error().to_string();
   raft::LogIndex recovered_index = 1U;
-  if (test_case.admitted_write) {
+  if (test_case.admitted_write && !test_case.write_must_commit) {
     auto publication =
         database->ingest_runtime()->tablet_application()->snapshot(test::crash_tablet_group());
     ASSERT_TRUE(publication.has_value()) << publication.error().to_string();
@@ -320,6 +321,9 @@ TEST_P(ReplicatedIngestDatabaseShutdownCrashTest,
                                head::HeadCommitPosition::raft(test::crash_tablet_group(), 2U);
     ASSERT_TRUE(absent || committed);
     recovered_index = committed ? 2U : 1U;
+  } else if (test_case.write_must_commit) {
+    expect_recovered_publication(*database, {.rows = 4U, .retries = 2U, .applied_index = 2U});
+    recovered_index = 2U;
   } else {
     expect_recovered_publication(*database, {.rows = 2U, .retries = 1U, .applied_index = 1U});
   }
@@ -342,13 +346,19 @@ TEST_P(ReplicatedIngestDatabaseShutdownCrashTest,
 
 INSTANTIATE_TEST_SUITE_P(
     ShutdownStages, ReplicatedIngestDatabaseShutdownCrashTest,
-    ::testing::Values(PackagedShutdownCrashCase{"CoordinatorReleased",
-                                                "after_shutdown_coordinator_released",
-                                                "SHUTDOWN_COORDINATOR_RELEASED", true},
-                      PackagedShutdownCrashCase{"RuntimeStopped", "after_shutdown_runtime_stopped",
-                                                "SHUTDOWN_RUNTIME_STOPPED"},
-                      PackagedShutdownCrashCase{"RootReleased", "after_shutdown_root_released",
-                                                "SHUTDOWN_ROOT_RELEASED"}),
+    ::testing::Values(
+        PackagedShutdownCrashCase{"CoordinatorReleased", "after_shutdown_coordinator_released",
+                                  "SHUTDOWN_COORDINATOR_RELEASED", true},
+        PackagedShutdownCrashCase{"AcceptedWorkDrained", "after_shutdown_accepted_work_drained",
+                                  "SHUTDOWN_ACCEPTED_WORK_DRAINED", true, true},
+        PackagedShutdownCrashCase{"ApplicationsStopped", "after_shutdown_applications_stopped",
+                                  "SHUTDOWN_APPLICATIONS_STOPPED", true, true},
+        PackagedShutdownCrashCase{"LogClosed", "after_shutdown_log_closed", "SHUTDOWN_LOG_CLOSED",
+                                  true, true},
+        PackagedShutdownCrashCase{"RuntimeStopped", "after_shutdown_runtime_stopped",
+                                  "SHUTDOWN_RUNTIME_STOPPED"},
+        PackagedShutdownCrashCase{"RootReleased", "after_shutdown_root_released",
+                                  "SHUTDOWN_ROOT_RELEASED"}),
     [](const ::testing::TestParamInfo<PackagedShutdownCrashCase>& info) {
       return std::string{info.param.name};
     });

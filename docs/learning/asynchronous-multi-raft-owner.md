@@ -96,6 +96,14 @@ observation, drains the pipe, and proves a later completion creates a fresh wake
 Completion state is shared ownership, so it can outlive the runtime. Requests are unique ownership
 and are released after exactly one completion. Runtime destruction stops admission, drains or
 terminally rejects every accepted task, closes storage, and joins before destroying state.
+A synchronous shutdown call may borrow an observer whose three callbacks run serially on that
+worker: accepted work has first completed or failed closed, extension cleanup has then returned, and
+physical-log close has finally returned. The shutdown mutex fixes one observer's lifetime through
+join; queue-mutex publication makes the pointer and shutdown request visible to the worker, and join
+makes callback writes visible to the caller. Repeated shutdown emits no callbacks. An observer must
+not reenter the same runtime because shutdown is waiting for that worker to exit. Concurrent callers
+serialize on the shutdown mutex; only the caller that transitions the live worker can install an
+observer, and later callers receive the retained status without retrospective callbacks.
 A controlled test blocks the worker at the exact 64-task admission bound, races eight producers
 with two shutdown callers, and verifies every accepted sequence completes once, both shutdown calls
 converge, terminal metrics are exact, and the joined runtime's descriptor remains drainable.

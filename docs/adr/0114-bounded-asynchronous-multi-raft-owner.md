@@ -39,6 +39,9 @@ shutdown never skips any physical close. Shutdown is idempotent. An unexpected w
 top-level durable batch failure fails the owner closed, completes the current and all queued requests
 with one terminal error, and rejects new admission. Destruction performs the same shutdown and never
 detaches the owner thread.
+An optional observer borrowed by one synchronous shutdown call receives worker-thread callbacks
+after accepted work has completed or failed closed, after extension cleanup, and after physical-log
+close. The observer cannot alter shutdown status and must not reenter the runtime.
 If worker launch fails, no extension hook has acquired worker affinity. The caller thread retains
 ownership, records the startup failure as the root cause, closes the just-created or reopened
 durable runtime immediately, and returns without invoking extension initialization or shutdown.
@@ -93,9 +96,15 @@ failure, rejection, notification, and zero-pending metrics. An exhaustive physic
 drains one accepted election under every nonempty active-file/lock/directory close-failure
 combination, both with and without an extension shutdown failure. It proves exact first-failure
 arbitration, complete physical cleanup, idempotence, terminal metrics, successful completion
-preservation, and exact reopen. Deterministic manual-clock validation holds an extension preparation
-active across its configured watchdog threshold and proves both live detection and exact completed
-metrics for every lifecycle hook. A deterministic worker-launch `system_error` is injected into
+preservation, and exact reopen. A three-stage observer test proves one admitted election is complete
+before the drain callback, extension cleanup occurs strictly between the first two callbacks, every
+callback uses the durable worker, and repeated shutdown emits nothing. A packaged six-stage process
+matrix carries those internal boundaries through coordinator release, runtime reset, and root
+release. Its internal cases admit a real application proposal, kill with `SIGKILL`, and require
+exact committed application/retry recovery before idempotent retry. Intra-hook and intra-close
+syscall crash points remain deferred. Deterministic manual-clock validation holds an extension
+preparation active across its configured watchdog threshold and proves both live detection and exact
+completed metrics for every lifecycle hook. A deterministic worker-launch `system_error` is injected into
 both fresh-create and reopen paths; each preserves that resource-exhaustion root cause, invokes no
 extension callback, releases the physical-log lock, and permits an exact successful reopen. Broader
 allocation sweeps now cover every async-owner construction allocation after durable-owner transfer,

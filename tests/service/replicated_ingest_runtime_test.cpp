@@ -31,7 +31,7 @@ public:
     ++count;
   }
 
-  std::array<ReplicatedIngestRuntimeShutdownStage, 2U> stages{};
+  std::array<ReplicatedIngestRuntimeShutdownStage, 5U> stages{};
   std::size_t count{};
 };
 
@@ -211,6 +211,9 @@ TEST(ReplicatedIngestRuntimeTest, OwnsCreateShutdownAndExactRecoveryComposition)
     EXPECT_EQ(observer.count, observer.stages.size());
     EXPECT_EQ(observer.stages,
               (std::array{ReplicatedIngestRuntimeShutdownStage::kCoordinatorReleased,
+                          ReplicatedIngestRuntimeShutdownStage::kAcceptedWorkDrained,
+                          ReplicatedIngestRuntimeShutdownStage::kApplicationsStopped,
+                          ReplicatedIngestRuntimeShutdownStage::kLogClosed,
                           ReplicatedIngestRuntimeShutdownStage::kWorkerStopped}));
     EXPECT_TRUE(moved_owner.shutdown(observer).is_ok());
     EXPECT_EQ(observer.count, observer.stages.size());

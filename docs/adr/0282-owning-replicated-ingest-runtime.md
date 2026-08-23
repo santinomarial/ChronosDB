@@ -59,11 +59,13 @@ identity. The outer replicated-database owner now exposes ordered synchronous, n
 observations for root ownership, catalog recovery, tablet preparation, and runtime readiness; the
 complete four-stage sequence has a real-process kill/reopen matrix. Syscall-level startup cuts,
 additional write stages, and snapshot operations remain deferred. The runtime now reports
-synchronous coordinator-released and worker-stopped shutdown stages. The outer database maps both
-before reporting root release, and all three stages have real-process kill/reopen coverage. The
-coordinator-stage case drops an admitted proposal response owner before the kill and proves
-recovery permits only the atomic pre-write or committed state before exact retry. Worker-drain,
-extension-shutdown, and log-close syscall cuts remain deferred.
+synchronous coordinator-released and worker-stopped shutdown stages plus the asynchronous owner's
+accepted-work-drained, applications-stopped, and log-closed worker boundaries. The outer database
+maps all five before reporting root release, and all six stages have real-process kill/reopen
+coverage. Every internal case drops an admitted proposal response owner before shutdown. The
+coordinator-stage case permits only the atomic pre-write or committed state; every case from drain
+onward requires the mutation and retry identity to be committed together before exact retry.
+Intra-drain, intra-extension-hook, and physical-close syscall cuts remain deferred.
 
 ## Affected invariants
 

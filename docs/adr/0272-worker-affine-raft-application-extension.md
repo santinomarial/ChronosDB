@@ -79,12 +79,15 @@ concrete tablet tests prove touched-group application before completion, untouch
 pre-admission restart reconstruction, duplicate-group rejection, terminal corruption handling, and
 inactive lifecycle reporting after worker shutdown. The production tablet-plus-metadata composition
 also drains an admitted tablet proposal after its coordinator result owner is destroyed and recovers
-the exact application state on reopen. A deterministic manual-clock test observes an active
-preparation beyond its watchdog threshold and then proves exact completed timing and violation
-metrics for initialization, preparation, completion, and shutdown.
+the exact application state on reopen. A packaged process matrix now kills after accepted-work
+drain, after reverse application shutdown, and after physical-log close; each later boundary
+requires the admitted mutation and retry identity to recover together before exact retry. A
+deterministic manual-clock test observes an active preparation beyond its watchdog threshold and
+then proves exact completed timing and violation metrics for initialization, preparation,
+completion, and shutdown.
 
-The metadata extension, proposal-result index extraction, transport/client integration, crash cut
-points, TSan, and scheduling measurements remain subsequent work.
+The metadata extension, proposal-result index extraction, transport/client integration, intra-hook
+crash cut points, broader TSan, and scheduling measurements remain subsequent work.
 
 ## References
 

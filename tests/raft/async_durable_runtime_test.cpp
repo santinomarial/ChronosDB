@@ -513,6 +513,77 @@ private:
   BlockingWorkerExtension* extension_;
 };
 
+class RecordingAsyncShutdownObserver final : public AsyncDurableMultiRaftShutdownObserver {
+public:
+  RecordingAsyncShutdownObserver(AsyncDurableRaftCompletion& completion,
+                                 CountingWorkerExtension& extension) noexcept
+      : completion_(completion), extension_(extension) {}
+
+  void on_shutdown_stage(const AsyncDurableMultiRaftShutdownStage stage) noexcept override {
+    if (count < stages.size()) {
+      stages[count] = stage;
+      threads[count] = std::this_thread::get_id();
+      extension_shutdown_counts[count] = extension_.shutdown_calls.load();
+    }
+    if (stage == AsyncDurableMultiRaftShutdownStage::kAcceptedWorkDrained)
+      completion_ready_at_drain = completion_.is_ready();
+    ++count;
+  }
+
+  std::array<AsyncDurableMultiRaftShutdownStage, 3U> stages{};
+  std::array<std::thread::id, 3U> threads{};
+  std::array<std::size_t, 3U> extension_shutdown_counts{};
+  std::size_t count{};
+  bool completion_ready_at_drain{};
+
+private:
+  AsyncDurableRaftCompletion& completion_;
+  CountingWorkerExtension& extension_;
+};
+
+class ShutdownStageRecorder final : public AsyncDurableMultiRaftShutdownObserver {
+public:
+  void on_shutdown_stage(const AsyncDurableMultiRaftShutdownStage stage) noexcept override {
+    if (count < stages.size())
+      stages[count] = stage;
+    ++count;
+  }
+
+  std::array<AsyncDurableMultiRaftShutdownStage, 3U> stages{};
+  std::size_t count{};
+};
+
+TEST(AsyncDurableMultiRaftRuntimeTest, ReportsWorkerShutdownPhasesAfterAcceptedWorkSettles) {
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{7U});
+  auto extension = std::make_shared<CountingWorkerExtension>();
+  auto runtime = AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group, {1U}}}, {}, extension);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  auto election = runtime->try_submit({{group, StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+
+  const std::thread::id caller = std::this_thread::get_id();
+  RecordingAsyncShutdownObserver observer{*election, *extension};
+  ASSERT_TRUE(runtime->shutdown(observer).is_ok());
+  EXPECT_EQ(observer.count, observer.stages.size());
+  EXPECT_EQ(observer.stages, (std::array{AsyncDurableMultiRaftShutdownStage::kAcceptedWorkDrained,
+                                         AsyncDurableMultiRaftShutdownStage::kExtensionStopped,
+                                         AsyncDurableMultiRaftShutdownStage::kLogClosed}));
+  EXPECT_TRUE(observer.completion_ready_at_drain);
+  EXPECT_EQ(observer.extension_shutdown_counts, (std::array<std::size_t, 3U>{0U, 1U, 1U}));
+  EXPECT_NE(observer.threads.front(), caller);
+  EXPECT_EQ(observer.threads[0], observer.threads[1]);
+  EXPECT_EQ(observer.threads[1], observer.threads[2]);
+  ASSERT_TRUE(runtime->shutdown(observer).is_ok());
+  EXPECT_EQ(observer.count, observer.stages.size());
+
+  auto result = election->wait();
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  ASSERT_EQ(result->size(), 1U);
+  EXPECT_TRUE(result->front().status.is_ok());
+}
+
 TEST(AsyncDurableMultiRaftRuntimeTest, RunsApplicationExtensionBeforePublishingCompletion) {
   TemporaryDirectory directory;
   const GroupId group = group_id(std::byte{8U});
@@ -736,7 +807,8 @@ TEST(AsyncDurableMultiRaftRuntimeTest,
       auto election = runtime->try_submit({{group, StartElectionOperation{}}});
       ASSERT_TRUE(election.has_value()) << election.error().to_string();
 
-      const common::Status shutdown = runtime->shutdown();
+      ShutdownStageRecorder observer;
+      const common::Status shutdown = runtime->shutdown(observer);
 
       if (extension_fails != 0U) {
         EXPECT_EQ(shutdown, extension_failure);
@@ -767,7 +839,13 @@ TEST(AsyncDurableMultiRaftRuntimeTest,
       EXPECT_TRUE(extension->shutdown_on_worker());
       EXPECT_EQ(extension->shutdown_calls(), 1U);
       EXPECT_EQ(syscalls.close_calls(), 3U);
-      EXPECT_EQ(runtime->shutdown(), shutdown);
+      EXPECT_EQ(observer.count, observer.stages.size());
+      EXPECT_EQ(observer.stages,
+                (std::array{AsyncDurableMultiRaftShutdownStage::kAcceptedWorkDrained,
+                            AsyncDurableMultiRaftShutdownStage::kExtensionStopped,
+                            AsyncDurableMultiRaftShutdownStage::kLogClosed}));
+      EXPECT_EQ(runtime->shutdown(observer), shutdown);
+      EXPECT_EQ(observer.count, observer.stages.size());
       EXPECT_EQ(extension->shutdown_calls(), 1U);
       EXPECT_EQ(syscalls.close_calls(), 3U);
 

@@ -38,12 +38,16 @@ public:
 
 enum class ReplicatedIngestDatabaseShutdownStage : std::uint8_t {
   kCoordinatorReleased,
+  kAcceptedWorkDrained,
+  kApplicationsStopped,
+  kLogClosed,
   kRuntimeStopped,
   kRootReleased,
 };
 
-// Borrowed only for one synchronous shutdown(observer) call. Callbacks run in order on the calling
-// thread, are emitted at most once, and have no return channel into the retained shutdown status.
+// Borrowed only for one synchronous shutdown(observer) call. Callbacks run in order and are emitted
+// at most once; internal drain/application/log callbacks run on the durable worker, while the outer
+// ownership callbacks run on the calling thread. They have no return channel into shutdown status.
 class ReplicatedIngestDatabaseShutdownObserver {
 public:
   virtual ~ReplicatedIngestDatabaseShutdownObserver() = default;

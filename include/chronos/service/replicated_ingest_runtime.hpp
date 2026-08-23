@@ -16,11 +16,14 @@ namespace chronos::service {
 
 enum class ReplicatedIngestRuntimeShutdownStage : std::uint8_t {
   kCoordinatorReleased,
+  kAcceptedWorkDrained,
+  kApplicationsStopped,
+  kLogClosed,
   kWorkerStopped,
 };
 
-// Borrowed only for one synchronous shutdown(observer) call. The coordinator-release callback
-// precedes durable-worker drain; the worker-stopped callback follows log and extension shutdown.
+// Borrowed only for one synchronous shutdown(observer) call. Coordinator release and worker stop
+// run on the calling thread; the three intervening callbacks run serially on the durable worker.
 class ReplicatedIngestRuntimeShutdownObserver {
 public:
   virtual ~ReplicatedIngestRuntimeShutdownObserver() = default;

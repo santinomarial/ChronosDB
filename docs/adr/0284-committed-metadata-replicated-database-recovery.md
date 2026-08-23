@@ -39,8 +39,10 @@ Shutdown first drains and closes the replicated-ingest runtime and then releases
 first failure is retained across repeated shutdown calls.
 
 An optional shutdown observer is borrowed only for one synchronous `shutdown(observer)` call. It
-receives non-throwing callbacks after the coordinator is released, after the runtime worker is
-stopped, and after the root is released; repeated shutdown emits no stage again and preserves the
+receives non-throwing callbacks after the coordinator is released, after accepted work drains,
+after applications stop, after the log closes, after the runtime worker is stopped, and after the
+root is released. The three internal callbacks run on the durable worker; the outer ownership
+callbacks run on the shutdown caller. Repeated shutdown emits no stage again and preserves the
 original status.
 
 An optional borrowed startup observer receives four synchronous, non-throwing callbacks on the
@@ -89,11 +91,12 @@ accordingly without duplicate rows. The observer's complete success order is tes
 four-case child matrix pauses after each of validated root ownership, catalog recovery, tablet-owner
 preparation, and asynchronous runtime readiness. Every child dies by `SIGKILL`; the parent proves
 exact recovery, retry, and repeated reopen. Syscall-level startup cuts, remaining write stages,
-snapshot-install/compaction, and internal shutdown crash/syscall matrices, larger resident-set
-profiles, and broader TSan coverage remain deferred. A three-case shutdown matrix kills the process
+snapshot-install/compaction, and intra-stage shutdown syscall matrices, larger resident-set
+profiles, and broader TSan coverage remain deferred. A six-case shutdown matrix kills the process
 at each callback and proves exact reopen and retry. Its coordinator-release case first admits a real
 QUORUM_SYNC proposal without observing a response, then proves recovery is atomically pre-write or
-committed and the exact retry never duplicates rows.
+committed. The drain, application-stop, and log-close cases require that same proposal to recover as
+committed. Exact retry never duplicates rows in either outcome.
 
 ## Affected invariants
 

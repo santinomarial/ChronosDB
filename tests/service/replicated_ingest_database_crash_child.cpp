@@ -94,6 +94,12 @@ public:
     switch (stage) {
     case ReplicatedIngestDatabaseShutdownStage::kCoordinatorReleased:
       pause_with_event("SHUTDOWN_COORDINATOR_RELEASED\n");
+    case ReplicatedIngestDatabaseShutdownStage::kAcceptedWorkDrained:
+      pause_with_event("SHUTDOWN_ACCEPTED_WORK_DRAINED\n");
+    case ReplicatedIngestDatabaseShutdownStage::kApplicationsStopped:
+      pause_with_event("SHUTDOWN_APPLICATIONS_STOPPED\n");
+    case ReplicatedIngestDatabaseShutdownStage::kLogClosed:
+      pause_with_event("SHUTDOWN_LOG_CLOSED\n");
     case ReplicatedIngestDatabaseShutdownStage::kRuntimeStopped:
       pause_with_event("SHUTDOWN_RUNTIME_STOPPED\n");
     case ReplicatedIngestDatabaseShutdownStage::kRootReleased:
@@ -339,15 +345,27 @@ struct ChildConfig {
   }
 
   if (config.pause_after == "after_shutdown_coordinator_released" ||
+      config.pause_after == "after_shutdown_accepted_work_drained" ||
+      config.pause_after == "after_shutdown_applications_stopped" ||
+      config.pause_after == "after_shutdown_log_closed" ||
       config.pause_after == "after_shutdown_runtime_stopped" ||
       config.pause_after == "after_shutdown_root_released") {
-    if (config.pause_after == "after_shutdown_coordinator_released") {
+    if (config.pause_after == "after_shutdown_coordinator_released" ||
+        config.pause_after == "after_shutdown_accepted_work_drained" ||
+        config.pause_after == "after_shutdown_applications_stopped" ||
+        config.pause_after == "after_shutdown_log_closed") {
       const common::Status admitted = admit_suffix_without_response(*database);
       if (!admitted.is_ok())
         return admitted;
     }
     const auto stage = config.pause_after == "after_shutdown_coordinator_released"
                            ? ReplicatedIngestDatabaseShutdownStage::kCoordinatorReleased
+                       : config.pause_after == "after_shutdown_accepted_work_drained"
+                           ? ReplicatedIngestDatabaseShutdownStage::kAcceptedWorkDrained
+                       : config.pause_after == "after_shutdown_applications_stopped"
+                           ? ReplicatedIngestDatabaseShutdownStage::kApplicationsStopped
+                       : config.pause_after == "after_shutdown_log_closed"
+                           ? ReplicatedIngestDatabaseShutdownStage::kLogClosed
                        : config.pause_after == "after_shutdown_runtime_stopped"
                            ? ReplicatedIngestDatabaseShutdownStage::kRuntimeStopped
                            : ReplicatedIngestDatabaseShutdownStage::kRootReleased;

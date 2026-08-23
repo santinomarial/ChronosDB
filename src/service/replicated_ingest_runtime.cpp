@@ -19,6 +19,31 @@ namespace {
   return {common::StatusCode::kResourceExhausted, message};
 }
 
+class IngestAsyncRuntimeShutdownObserver final
+    : public raft::AsyncDurableMultiRaftShutdownObserver {
+public:
+  explicit IngestAsyncRuntimeShutdownObserver(
+      ReplicatedIngestRuntimeShutdownObserver& configured) noexcept
+      : observer_(configured) {}
+
+  void on_shutdown_stage(const raft::AsyncDurableMultiRaftShutdownStage stage) noexcept override {
+    switch (stage) {
+    case raft::AsyncDurableMultiRaftShutdownStage::kAcceptedWorkDrained:
+      observer_.on_shutdown_stage(ReplicatedIngestRuntimeShutdownStage::kAcceptedWorkDrained);
+      return;
+    case raft::AsyncDurableMultiRaftShutdownStage::kExtensionStopped:
+      observer_.on_shutdown_stage(ReplicatedIngestRuntimeShutdownStage::kApplicationsStopped);
+      return;
+    case raft::AsyncDurableMultiRaftShutdownStage::kLogClosed:
+      observer_.on_shutdown_stage(ReplicatedIngestRuntimeShutdownStage::kLogClosed);
+      return;
+    }
+  }
+
+private:
+  ReplicatedIngestRuntimeShutdownObserver& observer_;
+};
+
 [[nodiscard]] common::Status validate_config(const ReplicatedIngestRuntimeConfig& config) {
   if (config.local_node_id == 0U || config.metadata.group_id.is_nil() ||
       config.groups.size() != config.tablets.size() + 1U)
@@ -204,7 +229,12 @@ ReplicatedIngestRuntime::shutdown_with(ReplicatedIngestRuntimeShutdownObserver* 
     observer->on_shutdown_stage(ReplicatedIngestRuntimeShutdownStage::kCoordinatorReleased);
   auto& runtime = impl_->runtime;
   if (runtime.has_value()) {
-    impl_->shutdown_status = runtime->shutdown();
+    if (observer != nullptr) {
+      IngestAsyncRuntimeShutdownObserver runtime_observer{*observer};
+      impl_->shutdown_status = runtime->shutdown(runtime_observer);
+    } else {
+      impl_->shutdown_status = runtime->shutdown();
+    }
     runtime.reset();
   } else {
     impl_->shutdown_status = invalid("replicated ingest runtime owner is absent");

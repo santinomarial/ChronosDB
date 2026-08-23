@@ -112,6 +112,24 @@ struct AsyncDurableMultiRaftMetrics {
   bool terminal_failure{};
 };
 
+enum class AsyncDurableMultiRaftShutdownStage : std::uint8_t {
+  kAcceptedWorkDrained,
+  kExtensionStopped,
+  kLogClosed,
+};
+
+// Borrowed only for one synchronous shutdown(observer) call. Callbacks run serially on the durable
+// worker after all accepted work is completed or failed closed, after extension cleanup, and after
+// the physical-log close attempt. A callback reports phase completion even when that phase produced
+// the retained shutdown error. Blocking a callback blocks shutdown and the observer must not call
+// back into this runtime. Only the caller that initiates live-worker shutdown can receive stages;
+// concurrent, repeated, or post-termination calls emit no retrospective callbacks.
+class AsyncDurableMultiRaftShutdownObserver {
+public:
+  virtual ~AsyncDurableMultiRaftShutdownObserver() = default;
+  virtual void on_shutdown_stage(AsyncDurableMultiRaftShutdownStage stage) noexcept = 0;
+};
+
 namespace detail {
 class AsyncDurableRaftCompletionIo;
 class AsyncDurableMultiRaftRuntimeTestAccess;
@@ -207,6 +225,7 @@ public:
   // Idempotently stops admission, drains all accepted batches in FIFO order, closes the log, and
   // joins the worker. A terminal worker failure rejects all not-yet-executed accepted batches.
   [[nodiscard]] common::Status shutdown();
+  [[nodiscard]] common::Status shutdown(AsyncDurableMultiRaftShutdownObserver& observer);
   // Borrowed nonblocking descriptor readable after one or more completions are published. A single
   // event-loop consumer drains it, then inspects every completion owner that it coordinates.
   [[nodiscard]] int completion_descriptor() const noexcept;
@@ -220,6 +239,7 @@ public:
   [[nodiscard]] common::Status terminal_status() const;
 
 private:
+  [[nodiscard]] common::Status shutdown_with(AsyncDurableMultiRaftShutdownObserver* observer);
   class Impl;
   explicit AsyncDurableMultiRaftRuntime(std::unique_ptr<Impl> impl) noexcept;
   [[nodiscard]] static common::Result<AsyncDurableMultiRaftRuntime>
