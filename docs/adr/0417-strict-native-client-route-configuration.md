@@ -48,9 +48,9 @@ The concrete immutable authority may be called concurrently after construction a
 mutation, so it requires no inter-thread memory-ordering protocol.
 
 The file contains no private key, client certificate, trust-store path, or DNS-resolved address.
-Secure route-file loading, TLS credential qualification/context ownership, request-specific
-group/initial-node/placement inputs, and a packaged `chronosctl` command remain separate work. No
-durable or network bytes change.
+ADR 0418 subsequently supplies secure route-file loading, TLS credential qualification, and
+address-stable context ownership. Request-specific group/initial-node/placement inputs and a
+packaged `chronosctl` command remain separate work. No durable or network bytes change.
 
 ## Affected invariants
 

@@ -49,9 +49,9 @@ thread serializes all methods, so no inter-thread memory-ordering argument appli
 
 The owner does not parse deployment text, own TLS credentials or contexts, resolve DNS, spawn a
 thread, manage multiple operations, or add a `chronosctl` command. ADR 0417 subsequently supplies
-strict native route and certificate-principal configuration. Secure file loading, TLS
-credential/context composition, and packaged command/process ownership remain separate work. No
-durable or network bytes change.
+strict native route and certificate-principal configuration, and ADR 0418 supplies secure file
+loading plus TLS credential/context composition. Packaged command/process ownership remains
+separate work. No durable or network bytes change.
 
 ## Affected invariants
 

@@ -79,6 +79,9 @@ canonical node-to-native-endpoint/TLS map, rejects stale placement or term autho
 same-term leaders, self redirects, and unknown nodes, and stops after a configured redirect count.
 The strict `CHRONOSDB_NATIVE_CLIENT_ROUTES_V1` deployment file supplies only that endpoint, expected
 TLS identity, and certificate-principal map; it cannot assert group membership or leader authority.
+The owning TLS-route composition securely loads and qualifies that map plus local client
+credentials, creates one immutable expected-identity context per node, and publishes stable route
+pointers only after complete construction.
 The QUORUM_SYNC replay owner above it retains one exact append, creates a fresh Protocol 2 session
 and connection-local request ID for every accepted destination, and publishes only a receipt that
 matches the bound group/current route and does not regress the redirect term. Those policy owners

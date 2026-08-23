@@ -212,6 +212,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/network/epoll_reactor.hpp>
 #include <chronos/service/native_client_route_authority.hpp>
 #include <chronos/service/native_client_route_config.hpp>
+#include <chronos/service/native_client_tls_route_owner.hpp>
 #include <chronos/wal/application.hpp>
 
 #include <array>

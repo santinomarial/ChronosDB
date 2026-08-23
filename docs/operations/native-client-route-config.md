@@ -29,7 +29,13 @@ node principal. The server may claim the configured destination node only when t
 node ID match exactly. A certificate presented from another configured address is not authorized.
 
 Client certificate, private-key, and trust-store paths are separate local secret configuration and
-never appear in this shared route file. Secure file loading, immutable TLS-context construction,
-credential rotation, DNS endpoint resolution, live reload, and a packaged client command are not
-yet implemented. Embeddings currently parse the text and compose the returned routes and immutable
-authority with their own credential/context owner.
+never appear in this shared route file. `NativeClientTlsRouteOwner::load` opens every final path
+without following a symlink, requires bounded nonempty regular files, rejects group/other-writable
+route, certificate, and trust files, and requires the private key to be inaccessible to group and
+other. It creates one expected-identity TLS client context per route and publishes stable borrowed
+route pointers only after the complete bundle succeeds.
+
+The current OpenSSL path API reopens qualified credential paths during context creation. Protect
+parent directories and replace credentials atomically so a path cannot be swapped between those
+steps. Existing contexts retain loaded credential state; credential rotation, DNS endpoint
+resolution, live reload, and a packaged client command are not implemented.

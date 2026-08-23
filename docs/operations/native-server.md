@@ -55,9 +55,10 @@ owner schedules the descriptor, caps kernel waits by phase and whole-operation d
 provides explicit cancellation and terminal metrics. The strict
 [Native Client Route Configuration](native-client-route-config.md) parser and immutable authority
 now build the endpoint/TLS-identity/certificate-principal map without borrowing Raft transport
-configuration. Embeddings must still load that file securely, construct and retain one TLS client
-context per route, and integrate the workflow into a command or process. Multi-group SELECT is not
-redirected to one arbitrary group leader.
+configuration. Its address-stable TLS-route owner securely qualifies the file/credentials,
+constructs one client context per route, and publishes the complete borrowed map. Embeddings must
+still supply request-specific group/initial-node/placement authority and integrate the workflow
+into a command or process. Multi-group SELECT is not redirected to one arbitrary group leader.
 
 For multi-voter groups, configure the complete transport bundle:
 

@@ -22,6 +22,12 @@ certificate fingerprint. `NativeClientRouteAuthority` then binds a verified fing
 connected address to the same stable node principal required by the carrier. The file deliberately
 contains no group, leader, term, membership, or placement state; request-specific routing authority
 still comes from the caller and authenticated protocol observations.
+`NativeClientTlsRouteOwner` closes the deployment lifetime above that parser. It reads the exact
+route file through a final-symlink-resistant descriptor, qualifies bounded credential files and
+private-key permissions, owns the immutable authority, reserves one TLS client context per route,
+and publishes context pointers only after every context succeeds. Its PIMPL keeps those pointers
+stable across an outer move. OpenSSL still reopens each credential path while constructing a
+context, so protected parent directories and atomic deployment remain required.
 `NativeQuorumIngestRetry` is the explicit higher-level replay composition: it owns one append,
 requires both Protocol 2 features, creates a fresh session/request ID per accepted redirect, and
 publishes only a group/current-leader/nonregressing-term receipt. Its reconnect event tells a later

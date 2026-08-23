@@ -452,3 +452,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0415](0415-deadline-bound-native-quorum-ingest-tcp-client.md) | Deadline-bound native QUORUM_SYNC TCP client | accepted |
 | [0416](0416-bounded-native-quorum-ingest-tcp-execution.md) | Bounded native QUORUM_SYNC TCP execution | accepted |
 | [0417](0417-strict-native-client-route-configuration.md) | Strict native-client route configuration | accepted |
+| [0418](0418-owning-native-client-tls-routes.md) | Owning native-client TLS routes | accepted |
