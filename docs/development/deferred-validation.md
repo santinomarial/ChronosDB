@@ -554,9 +554,12 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   explicitly repairs two consecutive partial Raft compaction records before exact orphan adoption
   and a second reopen. An eight-schedule cross-stage reopen matrix fails application-temporary
   cleanup before or after unlink, then fails each Raft partial-tail repair stage and proves exact
-  lock release, byte-observed retry, orphan adoption, and second-reopen convergence. A twelve-case
-  real-filesystem policy matrix now crosses legacy migration, complete replacement, matching
-  projections, and divergent suffixes over the application-snapshot boundary. The structural codec
+  lock release, byte-observed retry, orphan adoption, and second-reopen convergence. A ten-schedule
+  matrix additionally crosses both cleanup failures with all five subsequent Raft persistence
+  outcomes and converges from exact absent, incomplete, or complete authority after the third
+  failed operation. A twelve-case real-filesystem policy matrix now crosses legacy migration,
+  complete replacement, matching projections, and divergent suffixes over the
+  application-snapshot boundary. The structural codec
   now exact-round-trips its 65,536-entry maximum, rejects entry 65,537 and lowered limits, and has
   local-only encode/decode measurement shapes through that maximum. The same maximum now crosses
   exact real-filesystem install, retry, teardown, reopen, and recovery, with local-only synchronized

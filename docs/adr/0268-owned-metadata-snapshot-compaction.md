@@ -72,15 +72,18 @@ application temporaries and proves each following open removes the exact partial
 interrupts two consecutive Raft compaction records and requires strict rejection plus explicit tail
 repair after each. The final retry adopts the immutable application orphan, compacts Raft,
 reconstructs the catalog, and survives another reopen. An eight-schedule owner-reopen matrix now
-leaves an interrupted application temporary,
-fails cleanup before unlink or after unlink at directory sync, then leaves a partial Raft compaction
-record and fails each authorized repair stage: size inspection, truncation, repaired-file sync, and
-repair-directory sync. Every failed open releases its lock; the next open accepts the observed
-temporary and tail state, adopts the exact application orphan, finishes compaction, and survives a
-second reopen. Additional multi-fault schedules beyond the covered two-attempt and repeated-partial
-lifecycles remain deferred. A membership-boundary filesystem test compacts an application entry
-before retained joint/final commands, requires the installed metadata snapshot to carry the older
-voter set, and keeps the live group on the newer stable set.
+leaves an interrupted application temporary, fails cleanup before unlink or after unlink at
+directory sync, then leaves a partial Raft compaction record and fails each authorized repair stage:
+size inspection, truncation, repaired-file sync, and repair-directory sync. Every failed open
+releases its lock; the next open accepts the observed temporary and tail state, adopts the exact
+application orphan, finishes compaction, and survives a second reopen. A separate ten-schedule
+matrix crosses those two cleanup failures with every subsequent Raft persistence outcome. It proves
+that the third failed operation still converges from exact absent, incomplete, or complete Raft
+authority and survives another reopen. Additional multi-fault schedules beyond the covered
+cleanup-to-persistence, cleanup-to-repair, two-attempt, and repeated-partial lifecycles remain
+deferred. A membership-boundary filesystem test compacts an application entry before retained
+joint/final commands, requires the installed metadata snapshot to carry the older voter set, and
+keeps the live group on the newer stable set.
 
 Invariants 1–6, 8, 10, 11, 14, and 18 apply.
 

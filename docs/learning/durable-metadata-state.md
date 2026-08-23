@@ -107,6 +107,14 @@ repaired-file sync, or repair-directory sync. Depending on the ambiguous operati
 observes the temporary present or absent and the Raft prefix present or already removed. It restarts
 validation from those bytes, finishes compaction, reconstructs the catalog, and reopens again.
 
+Cleanup failure also composes with every later Raft persistence image, not only with partial-tail
+repair. A ten-case matrix first interrupts the application write, fails cleanup before unlink or
+after unlink at directory sync, cleanly reopens from the observed temporary state, and then injects
+each Raft pre-write, partial-write, complete-write, and pre/post-sync failure. The third failed
+operation leaves exact absent, incomplete, or complete Raft authority. Strict recovery preserves an
+incomplete tail until explicit repair; every other image reopens directly. Each schedule adopts the
+same application snapshot, converges to matching Raft authority, and survives another reopen.
+
 The structural format is pinned independently for compatibility. One minor-0 fixture retains a
 valid Metadata Command v1 cluster-node payload; one minor-1 fixture adds a valid Tablet Group
 Binding v1 payload. Their nested envelopes and outer bytes were packed from the specifications with
