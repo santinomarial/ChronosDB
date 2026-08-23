@@ -575,8 +575,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   with crash injection around publication/applied-index persistence. Extend the implemented durable
   application-snapshot creation/compaction plus prefix/suffix recovery beyond its ten-cut
   process-crash, ten-case application-I/O, and 50-case cross-owner persistence matrices with
-  mismatch and cross-stage application-cleanup/Raft-tail-repair fault products. Extend the
-  implemented obsolete-file and physical-log reclamation with scheduling; version CSEG/Manifest
+  mismatch and cleanup/Raft-tail-repair reopen fault products; a ten-case cleanup-to-persistence
+  matrix is implemented. Extend the implemented obsolete-file and physical-log reclamation with
+  scheduling; version CSEG/Manifest
   row identities for Raft source/group positions, and cover query row-version columns and
   compaction migration. Protocol 2.0 now negotiates the implemented joint-membership
   quorum-sync/application receipt without changing v1 bytes. Carry that request through the

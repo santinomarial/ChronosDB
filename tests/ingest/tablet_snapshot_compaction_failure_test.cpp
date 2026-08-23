@@ -235,6 +235,22 @@ constexpr std::array<TabletCompactionRaftFailureCase, 5U> kRaftFailures{
 using TabletCompactionMixedFailureCase =
     std::tuple<TabletCompactionApplicationFailureCase, TabletCompactionRaftFailureCase>;
 
+struct TabletCompactionCleanupFailureCase {
+  test::SnapshotStorageFault fault;
+  std::string_view name;
+  bool temporary_removed;
+};
+
+constexpr std::array<TabletCompactionCleanupFailureCase, 2U> kCleanupFailures{
+    TabletCompactionCleanupFailureCase{test::SnapshotStorageFault::kPriorTemporaryUnlink,
+                                       "cleanup_unlink", false},
+    TabletCompactionCleanupFailureCase{test::SnapshotStorageFault::kFinalDirectorySync,
+                                       "cleanup_directory_sync", true},
+};
+
+using TabletCompactionCleanupPersistenceFailureCase =
+    std::tuple<TabletCompactionCleanupFailureCase, TabletCompactionRaftFailureCase>;
+
 void expect_application_snapshot(const RaftTabletApplicationSnapshot& snapshot) {
   EXPECT_EQ(snapshot.group_id, test::crash_group_id());
   EXPECT_EQ(snapshot.table_id, test::crash_compaction_schemas().front()->table_id());
@@ -265,6 +281,9 @@ class TabletSnapshotCompactionApplicationFailureTest
 
 class TabletSnapshotCompactionMixedFailureTest
     : public ::testing::TestWithParam<TabletCompactionMixedFailureCase> {};
+
+class TabletSnapshotCompactionCleanupPersistenceFailureTest
+    : public ::testing::TestWithParam<TabletCompactionCleanupPersistenceFailureCase> {};
 
 TEST_P(TabletSnapshotCompactionApplicationFailureTest,
        WithholdsRaftMutationAndConvergesAfterReopen) {
@@ -566,6 +585,181 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Combine(::testing::ValuesIn(kApplicationFailures),
                        ::testing::ValuesIn(kRaftFailures)),
     [](const ::testing::TestParamInfo<TabletCompactionMixedFailureCase>& parameter) {
+      std::string name{std::get<0>(parameter.param).name};
+      name += "_then_";
+      name += std::get<1>(parameter.param).name;
+      return name;
+    });
+
+TEST_P(TabletSnapshotCompactionCleanupPersistenceFailureTest,
+       SurvivesCleanupFailureBeforeEveryRaftPersistenceOutcome) {
+  CompactionFailureDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const auto& [cleanup_failure, raft_failure] = GetParam();
+  const std::filesystem::path snapshot_temporary =
+      directory.path() / "snapshots" / "snapshot-00000000000000000001.rtas.tmp";
+
+  {
+    test::OneShotSnapshotStorageFault application_syscalls{
+        test::SnapshotStorageFault::kTemporaryPartialWrite};
+    auto runtime = raft::DurableMultiRaftRuntime::create_new(
+        4U, test::crash_log_config(directory.path()), test::crash_compaction_groups());
+    ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+    auto election =
+        runtime->execute_batch({{test::crash_group_id(), raft::StartElectionOperation{}}});
+    ASSERT_TRUE(election.has_value()) << election.error().to_string();
+    ASSERT_EQ(election->size(), 1U);
+    ASSERT_TRUE(election->front().status.is_ok()) << election->front().status.to_string();
+    auto storage = detail::RaftTabletSnapshotStorageTestAccess::create(
+        test::crash_snapshot_config(directory.path()), application_syscalls);
+    ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+    auto recovered = RaftTabletStateMachine::recover(
+        test::crash_group_id(), *runtime, std::move(*storage),
+        test::crash_compaction_retry_directory(), test::crash_compaction_tablet(),
+        test::crash_compaction_schemas());
+    ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+    std::optional<RaftTabletStateMachine> machine{std::move(*recovered)};
+    auto proposed = runtime->execute_batch(
+        {{test::crash_group_id(),
+          raft::ProposeOperation{kRaftColumnarAppendEntryType, test::crash_compaction_command()}}});
+    ASSERT_TRUE(proposed.has_value()) << proposed.error().to_string();
+    ASSERT_EQ(proposed->size(), 1U);
+    ASSERT_TRUE(proposed->front().status.is_ok()) << proposed->front().status.to_string();
+    auto applied = machine->apply_committed();
+    ASSERT_TRUE(applied.has_value()) << applied.error().to_string();
+    ASSERT_EQ(applied->last_applied_index, 1U);
+    expect_tablet_recovered(*machine);
+    application_syscalls.arm();
+
+    auto compacted = machine->compact_applied_prefix(1U, 1U, {});
+
+    ASSERT_FALSE(compacted.has_value());
+    EXPECT_EQ(compacted.error().code(), common::StatusCode::kIoError);
+    EXPECT_TRUE(application_syscalls.fired());
+    EXPECT_TRUE(std::filesystem::exists(snapshot_temporary));
+    EXPECT_FALSE(machine->failed());
+    EXPECT_FALSE(runtime->failed());
+    machine.reset();
+    ASSERT_TRUE(runtime->close().is_ok());
+  }
+
+  test::OneShotSnapshotStorageFault cleanup_syscalls{cleanup_failure.fault};
+  cleanup_syscalls.arm();
+  auto failed_storage = detail::RaftTabletSnapshotStorageTestAccess::open_existing(
+      test::crash_snapshot_config(directory.path()), cleanup_syscalls);
+  ASSERT_FALSE(failed_storage.has_value());
+  EXPECT_EQ(failed_storage.error().code(), common::StatusCode::kIoError);
+  EXPECT_TRUE(cleanup_syscalls.fired());
+  EXPECT_EQ(std::filesystem::exists(snapshot_temporary), !cleanup_failure.temporary_removed);
+
+  auto storage =
+      RaftTabletSnapshotStorage::open_existing(test::crash_snapshot_config(directory.path()));
+  ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+  EXPECT_FALSE(std::filesystem::exists(snapshot_temporary));
+  auto absent = storage->load(1U);
+  ASSERT_FALSE(absent.has_value());
+  EXPECT_EQ(absent.error().code(), common::StatusCode::kNotFound);
+
+  OneShotTabletCompactionRaftFault raft_syscalls{raft_failure.fault};
+  {
+    auto runtime = raft::detail::DurableMultiRaftRuntimeTestAccess::open_existing(
+        4U, test::crash_log_config(directory.path()), {}, test::crash_compaction_groups(), {},
+        raft_syscalls);
+    ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+    auto recovered = RaftTabletStateMachine::recover(
+        test::crash_group_id(), *runtime, std::move(*storage),
+        test::crash_compaction_retry_directory(), test::crash_compaction_tablet(),
+        test::crash_compaction_schemas());
+    ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+    std::optional<RaftTabletStateMachine> machine{std::move(*recovered)};
+    expect_tablet_recovered(*machine);
+    raft_syscalls.arm();
+
+    auto compacted = machine->compact_applied_prefix(1U, 1U, {});
+
+    ASSERT_FALSE(compacted.has_value());
+    EXPECT_EQ(compacted.error().code(), common::StatusCode::kIoError);
+    EXPECT_TRUE(raft_syscalls.fired());
+    EXPECT_TRUE(machine->failed());
+    EXPECT_TRUE(runtime->failed());
+    machine.reset();
+    ASSERT_TRUE(runtime->close().is_ok());
+  }
+
+  auto installed_storage =
+      RaftTabletSnapshotStorage::open_existing(test::crash_snapshot_config(directory.path()));
+  ASSERT_TRUE(installed_storage.has_value()) << installed_storage.error().to_string();
+  auto installed = installed_storage->load(1U);
+  ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+  expect_application_snapshot(installed->snapshot);
+
+  if (raft_failure.tail_repair_required) {
+    auto strict = raft::DurableMultiRaftRuntime::open_existing(
+        4U, test::crash_log_config(directory.path()), {}, test::crash_compaction_groups());
+    ASSERT_FALSE(strict.has_value());
+    EXPECT_EQ(strict.error().code(), common::StatusCode::kCorruption);
+  }
+  const raft::RaftPersistentLogOpenOptions open_options{.repair_incomplete_final_tail =
+                                                            raft_failure.tail_repair_required};
+  auto runtime = raft::DurableMultiRaftRuntime::open_existing(
+      4U, test::crash_log_config(directory.path()), open_options, test::crash_compaction_groups());
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  const raft::RaftNode* recovered_node = runtime->find_group(test::crash_group_id());
+  ASSERT_NE(recovered_node, nullptr);
+  EXPECT_EQ(recovered_node->persistent_state().snapshot.last_included_index,
+            raft_failure.raft_authority_recovered ? 1U : 0U);
+  EXPECT_EQ(recovered_node->persistent_state().log.size(),
+            raft_failure.raft_authority_recovered ? 0U : 1U);
+  auto recovered = RaftTabletStateMachine::recover(
+      test::crash_group_id(), *runtime, std::move(*installed_storage),
+      test::crash_compaction_retry_directory(), test::crash_compaction_tablet(),
+      test::crash_compaction_schemas());
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  std::optional<RaftTabletStateMachine> machine{std::move(*recovered)};
+  expect_tablet_recovered(*machine);
+
+  if (!raft_failure.raft_authority_recovered) {
+    auto compacted = machine->compact_applied_prefix(1U, 1U, {});
+
+    ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
+    EXPECT_TRUE(compacted->application_snapshot_already_present);
+    EXPECT_EQ(compacted->application_entries, 1U);
+    recovered_node = runtime->find_group(test::crash_group_id());
+    ASSERT_NE(recovered_node, nullptr);
+  }
+  EXPECT_EQ(recovered_node->persistent_state().snapshot, installed->snapshot.raft_snapshot);
+  auto reclaimed = machine->reclaim_obsolete_snapshots();
+  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  EXPECT_EQ(reclaimed->authoritative_index, 1U);
+  EXPECT_EQ(reclaimed->reclaimed_files, 0U);
+  machine.reset();
+  ASSERT_TRUE(runtime->close().is_ok());
+
+  auto repeated_runtime = raft::DurableMultiRaftRuntime::open_existing(
+      4U, test::crash_log_config(directory.path()), {}, test::crash_compaction_groups());
+  ASSERT_TRUE(repeated_runtime.has_value()) << repeated_runtime.error().to_string();
+  auto repeated_storage =
+      RaftTabletSnapshotStorage::open_existing(test::crash_snapshot_config(directory.path()));
+  ASSERT_TRUE(repeated_storage.has_value()) << repeated_storage.error().to_string();
+  auto final_snapshot = repeated_storage->load(1U);
+  ASSERT_TRUE(final_snapshot.has_value()) << final_snapshot.error().to_string();
+  expect_application_snapshot(final_snapshot->snapshot);
+  auto repeated = RaftTabletStateMachine::recover(
+      test::crash_group_id(), *repeated_runtime, std::move(*repeated_storage),
+      test::crash_compaction_retry_directory(), test::crash_compaction_tablet(),
+      test::crash_compaction_schemas());
+  ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
+  expect_tablet_recovered(*repeated);
+  const raft::RaftNode* repeated_node = repeated_runtime->find_group(test::crash_group_id());
+  ASSERT_NE(repeated_node, nullptr);
+  EXPECT_EQ(repeated_node->persistent_state().snapshot, final_snapshot->snapshot.raft_snapshot);
+  ASSERT_TRUE(repeated_runtime->close().is_ok());
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    EveryCleanupToPersistenceFailure, TabletSnapshotCompactionCleanupPersistenceFailureTest,
+    ::testing::Combine(::testing::ValuesIn(kCleanupFailures), ::testing::ValuesIn(kRaftFailures)),
+    [](const ::testing::TestParamInfo<TabletCompactionCleanupPersistenceFailureCase>& parameter) {
       std::string name{std::get<0>(parameter.param).name};
       name += "_then_";
       name += std::get<1>(parameter.param).name;

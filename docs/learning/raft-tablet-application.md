@@ -81,6 +81,13 @@ retained entry or the exact snapshot authority. Both paths reconstruct the same 
 identity, converge through orphan adoption when needed, reclaim nothing current, and survive a
 second reopen.
 
+Cleanup ambiguity is crossed separately with those same five Raft outcomes. A partial RTAS is left
+behind, then reopen fails either before its unlink or after unlink at the directory-sync boundary.
+The next public reopen removes or confirms removal of the temporary, reconstructs from the retained
+entry, and proceeds to the injected Raft failure. Tail repair, authority selection, exact retry,
+reclamation, and repeated reopen then converge for all ten products; the temporary is never treated
+as an application snapshot.
+
 Exact retransmissions also coalesce without re-entering the application owner. A competing remote
 snapshot receives a negative response while the first transfer retains the sole completion
 identity; after that identity resolves, a later request can be admitted normally.

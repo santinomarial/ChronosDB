@@ -69,11 +69,15 @@ write-after, sync-before, and sync-after outcomes on the retry. It proves that t
 never reaches Raft, the second leaves an installed immutable snapshot while failing the runtime
 closed, and reopen either repairs the partial tail and retries from retained-log authority or loads
 the exact recovered Raft snapshot. Reclamation and a second reopen converge in every product. A
-ten-cut real-process `SIGKILL` matrix stops after the same application-file transitions, then after
-the Raft state-record write, sync, and successful return. Reopen observes no application file, an
-immutable orphan, or the exact Raft authority as appropriate; state-machine recovery, idempotent
-retry or adoption, reclamation, and a second reopen converge with the exact rows and retry state.
-Obsolete-file reclamation, follower transfer, and physical shared-log/application-file fault
-injection are tracked by their extending ADRs. A membership-boundary integration test compacts an
-application entry before retained joint/final commands and requires the installed application
-snapshot to carry the older voter set while the live group retains the newer set.
+ten-case cross-stage matrix first leaves a partial application temporary, fails reopen either before
+unlink or after unlink at directory sync, then crosses the successful cleanup retry with all five
+Raft persistence outcomes. It proves exact convergence from both cleanup ambiguities without
+allowing a temporary file to become authority. A ten-cut real-process `SIGKILL` matrix stops after
+the same application-file transitions, then after the Raft state-record write, sync, and successful
+return. Reopen observes no application file, an immutable orphan, or the exact Raft authority as
+appropriate; state-machine recovery, idempotent retry or adoption, reclamation, and a second reopen
+converge with the exact rows and retry state. Obsolete-file reclamation, follower transfer, and
+physical shared-log/application-file fault injection are tracked by their extending ADRs. A
+membership-boundary integration test compacts an application entry before retained joint/final
+commands and requires the installed application snapshot to carry the older voter set while the
+live group retains the newer set.
