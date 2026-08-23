@@ -202,6 +202,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/tiering/tiered_pair_commit.hpp>
 #include <chronos/network/spsc_queue.hpp>
 #include <chronos/network/messages.hpp>
+#include <chronos/network/native_leader_redirect_router.hpp>
 #include <chronos/network/connection_state.hpp>
 #include <chronos/network/connection_buffers.hpp>
 #include <chronos/network/client_session.hpp>

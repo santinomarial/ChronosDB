@@ -46,8 +46,10 @@ Replicated mode also advertises Protocol 2 leader redirect. A canonical ingest r
 follower returns the exact committed tablet group, ordered observed leader/term, and current
 placement epoch when that leader remains inside stable placement. Candidate/unknown leadership or
 reconfiguration returns an error. The node ID is not a network address: clients need an explicit
-authenticated native-endpoint map and bounded retry policy. Multi-group SELECT is not redirected to
-one arbitrary group leader.
+authenticated native-endpoint map. The client library's bounded redirect router joins that map,
+rejects regressing or contradictory authority, and caps retry selection. A TCP/TLS carrier and
+deployment parser must still retain/replay the request and drive the chosen route. Multi-group
+SELECT is not redirected to one arbitrary group leader.
 
 For multi-voter groups, configure the complete transport bundle:
 

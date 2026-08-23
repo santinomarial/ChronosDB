@@ -497,6 +497,7 @@ add_library(
   src/network/epoll_reactor.cpp
   src/network/io_uring_reactor.cpp
   src/network/messages.cpp
+  src/network/native_leader_redirect_router.cpp
   src/network/protocol.cpp
   src/network/reactor.cpp
   src/network/security.cpp
@@ -903,6 +904,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/network/io_uring_reactor_test.cpp
     tests/network/messages_header_self_contained.cpp
     tests/network/messages_test.cpp
+    tests/network/native_leader_redirect_router_header_self_contained.cpp
+    tests/network/native_leader_redirect_router_test.cpp
     tests/network/packet_fixture_test.cpp
     tests/network/protocol_header_self_contained.cpp
     tests/network/protocol_test.cpp

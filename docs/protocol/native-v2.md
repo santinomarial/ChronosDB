@@ -74,6 +74,11 @@ stable node ID is resolved through deployment-owned authenticated native endpoin
 endpoint is not a native client endpoint. The observation is not a lease, so a retry must still
 prove the requested consistency at the destination.
 
+The client library provides a bounded policy owner for this join. It exact-binds one group and a
+canonical node-to-native-endpoint/TLS map, rejects stale placement or term authority, conflicting
+same-term leaders, self redirects, and unknown nodes, and stops after a configured redirect count.
+It deliberately does not open a socket or retain/replay request bytes.
+
 ## Compatibility and rejection
 
 - Protocol 1 decoders reject message types 12 and 13, durability value 3, and Protocol-2 feature

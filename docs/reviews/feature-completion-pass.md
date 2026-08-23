@@ -969,7 +969,9 @@ were deliberately not run.
   current-term quorum read barrier before bounded native SELECT dispatch. Bounded Linux evidence now
   covers three authenticated daemon processes, quorum ingest, tablet-leader loss, a higher-term
   matching retry, and identical retained-root recovery. A globally atomic cross-group instant,
-  remote fragments/client leader routing, and three-process query failover remain absent.
+  remote mutable-tablet fragments, the native redirect TCP/TLS replay carrier, and three-process
+  query failover remain absent. Native redirect selection itself now has an exact-group,
+  monotonic-authority, authenticated-route, finite-retry policy owner.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
@@ -987,9 +989,9 @@ were deliberately not run.
 The exact subsystem/category ledger is
 [`deferred-validation.md`](../development/deferred-validation.md). Recommended order:
 
-1. Add remote query fragments and client leader routing, then extend the existing three-process
-   quorum-ingest/failover gate through applied read-barrier native SELECT and the remaining real
-   data-plane sequence.
+1. Add remote mutable-tablet query fragments and the native redirect TCP/TLS replay carrier, then
+   extend the existing three-process quorum-ingest/failover gate through applied read-barrier native
+   SELECT and the remaining real data-plane sequence.
 2. Specify database namespaces/catalog tombstones and placement-driven membership orchestration
    without changing Metadata Command v1 or Metadata Application Snapshot 1.0 bytes in place.
 3. Finish direct vector temporal winner lowering, mixed WAL/Raft recovery, durable retention
