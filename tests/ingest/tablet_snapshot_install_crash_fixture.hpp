@@ -1,15 +1,21 @@
 #ifndef CHRONOS_TESTS_INGEST_TABLET_SNAPSHOT_INSTALL_CRASH_FIXTURE_HPP_
 #define CHRONOS_TESTS_INGEST_TABLET_SNAPSHOT_INSTALL_CRASH_FIXTURE_HPP_
 
+#include "chronos/columnar/columnar_batch_codec.hpp"
 #include "chronos/common/crc32c.hpp"
+#include "chronos/ingest/columnar_append.hpp"
 #include "chronos/ingest/raft_tablet_snapshot.hpp"
 #include "chronos/ingest/raft_tablet_snapshot_storage.hpp"
+#include "chronos/ingest/raft_tablet_state_machine.hpp"
 #include "chronos/raft/durable_runtime.hpp"
 #include "chronos/raft/rebalancing.hpp"
 #include "chronos/raft/tablet_movement_checkpoint_recovery.hpp"
+#include "columnar/columnar_test_support.hpp"
+#include "ingest/ingest_test_support.hpp"
 
 #include <cstddef>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -34,6 +40,43 @@ template <typename Identifier> [[nodiscard]] inline Identifier crash_id(const st
 
 [[nodiscard]] inline schema::TabletId crash_tablet_id() {
   return crash_id<schema::TabletId>(std::byte{5U});
+}
+
+[[nodiscard]] inline schema::TabletId crash_compaction_tablet_id() {
+  return columnar::test::id<schema::TabletId>(70U);
+}
+
+[[nodiscard]] inline TabletState crash_compaction_tablet() {
+  return TabletState::create(
+             columnar::test::batch_schema(), crash_compaction_tablet_id(),
+             TabletStateConfig{
+                 .head_capacity = {.row_capacity = 8U, .variable_value_bytes = {0U, 8U, 0U}},
+                 .maximum_schema_versions = 1U,
+                 .maximum_sealed_generations = 2U,
+                 .maximum_retry_entries = 8U})
+      .value();
+}
+
+[[nodiscard]] inline RetryDirectory crash_compaction_retry_directory() {
+  return RetryDirectory::create({.maximum_entries = 8U}).value();
+}
+
+[[nodiscard]] inline std::vector<std::shared_ptr<const schema::TableSchema>>
+crash_compaction_schemas() {
+  return {columnar::test::batch_schema()};
+}
+
+[[nodiscard]] inline std::vector<std::byte> crash_compaction_command() {
+  auto batch = columnar::OwnedColumnarBatch::create(columnar::test::batch_schema(),
+                                                    columnar::test::batch_columns())
+                   .value();
+  const auto encoded_batch = columnar::encode_columnar_batch_v1(batch).value();
+  const auto encoded = encode_columnar_append_v1({.client_id = request_id<ClientId>(1U),
+                                                  .client_batch_id = request_id<ClientBatchId>(33U),
+                                                  .tablet_id = crash_compaction_tablet_id()},
+                                                 encoded_batch)
+                           .value();
+  return {encoded.bytes().begin(), encoded.bytes().end()};
 }
 
 [[nodiscard]] inline RaftTabletApplicationSnapshot
@@ -72,6 +115,10 @@ crash_recovered_movement(const std::vector<std::byte>& bytes) {
 
 [[nodiscard]] inline std::vector<raft::RaftGroupConfiguration> crash_groups() {
   return {{crash_group_id(), {1U, 2U, 3U}}};
+}
+
+[[nodiscard]] inline std::vector<raft::RaftGroupConfiguration> crash_compaction_groups() {
+  return {{crash_group_id(), {4U}}};
 }
 
 [[nodiscard]] inline raft::RaftPersistentLogConfig

@@ -34,6 +34,26 @@ inline constexpr std::string_view kAfterApplicationOrphanReclamationDirectorySyn
     "after_application_orphan_reclamation_directory_sync";
 inline constexpr std::string_view kAfterApplicationOrphanReclamationSuccess =
     "after_application_orphan_reclamation_success";
+inline constexpr std::string_view kAfterApplicationCompactionTemporaryCreate =
+    "after_application_compaction_temporary_create";
+inline constexpr std::string_view kAfterApplicationCompactionWrite =
+    "after_application_compaction_write";
+inline constexpr std::string_view kAfterApplicationCompactionReadback =
+    "after_application_compaction_readback";
+inline constexpr std::string_view kAfterApplicationCompactionFileSync =
+    "after_application_compaction_file_sync";
+inline constexpr std::string_view kAfterApplicationCompactionTemporaryClose =
+    "after_application_compaction_temporary_close";
+inline constexpr std::string_view kAfterApplicationCompactionRename =
+    "after_application_compaction_rename";
+inline constexpr std::string_view kAfterApplicationCompactionDirectorySync =
+    "after_application_compaction_directory_sync";
+inline constexpr std::string_view kAfterApplicationCompactionRaftWrite =
+    "after_application_compaction_raft_write";
+inline constexpr std::string_view kAfterApplicationCompactionRaftSync =
+    "after_application_compaction_raft_sync";
+inline constexpr std::string_view kAfterApplicationCompactionSuccess =
+    "after_application_compaction_success";
 
 } // namespace chronos::ingest::test
 

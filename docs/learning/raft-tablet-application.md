@@ -60,6 +60,14 @@ Raft to the identical boundary. A crash between those steps leaves an unreferenc
 an unrecoverable Raft prefix. If a remote two-stage snapshot installation is already pending, the
 core rejects local compaction until that installation is completed or rejected; two immutable
 application-snapshot identities therefore cannot race for one Raft boundary.
+
+A ten-cut local-compaction process matrix stops after every application-file durability transition,
+the Raft state-record write and sync, and successful return. Public reopen sees no snapshot file, an
+immutable future orphan, or exact application/Raft authority according to the completed prefix.
+Recovery rebuilds the same two rows and retry identity, exact retry adopts an orphan when needed,
+and reclamation plus a second reopen converge. This is process-restart evidence; power-loss and
+device qualification remain separate.
+
 Exact retransmissions also coalesce without re-entering the application owner. A competing remote
 snapshot receives a negative response while the first transfer retains the sole completion
 identity; after that identity resolves, a later request can be admitted normally.

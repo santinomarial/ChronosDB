@@ -60,7 +60,12 @@ Invariants 1–8, 10, 11, 14, and 18 apply. The filesystem integration test now 
 owned snapshot, applies an exact retry, extends the snapshot to a second boundary, leaves a distinct
 committed suffix unapplied, restarts, and reconstructs both the compacted prefix and suffix with
 their exact row/retry counts and final group/index frontier. Fault injection at every installation
-and runtime-persistence boundary, obsolete-file reclamation, follower transfer, and physical shared-
-log/application-file reclamation fault injection remains deferred. A membership-boundary integration
-test compacts an application entry before retained joint/final commands and requires the installed
-application snapshot to carry the older voter set while the live group retains the newer set.
+and runtime-persistence boundary remains deferred. A ten-cut real-process `SIGKILL` matrix stops
+after application temporary creation, write, readback, file sync, close, rename, and directory sync,
+then after the Raft state-record write, sync, and successful return. Reopen observes no application
+file, an immutable orphan, or the exact Raft authority as appropriate; state-machine recovery,
+idempotent retry or adoption, reclamation, and a second reopen converge with the exact rows and retry
+state. Obsolete-file reclamation, follower transfer, and physical shared-log/application-file fault
+injection are tracked by their extending ADRs. A membership-boundary integration test compacts an
+application entry before retained joint/final commands and requires the installed application
+snapshot to carry the older voter set while the live group retains the newer set.

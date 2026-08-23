@@ -1,3 +1,4 @@
+#include "chronos/ingest/raft_tablet_state_machine.hpp"
 #include "chronos/ingest/tablet_movement_raft_snapshot_completion.hpp"
 #include "ingest/raft_tablet_snapshot_storage_internal.hpp"
 #include "ingest/tablet_snapshot_install_crash_fixture.hpp"
@@ -112,20 +113,26 @@ public:
 
   int open_at(const io::detail::OpenAtRequest& request) override {
     const int result = delegate_.open_at(request);
-    if (active_ && result >= 0)
+    if (active_ && result >= 0) {
       observe(kAfterApplicationTemporaryCreate);
+      observe(kAfterApplicationCompactionTemporaryCreate);
+    }
     return result;
   }
   ssize_t pwrite(const io::detail::WriteAtRequest& request) override {
     const ssize_t result = delegate_.pwrite(request);
-    if (active_ && result >= 0 && static_cast<std::size_t>(result) == request.size)
+    if (active_ && result >= 0 && static_cast<std::size_t>(result) == request.size) {
       observe(kAfterApplicationWrite);
+      observe(kAfterApplicationCompactionWrite);
+    }
     return result;
   }
   ssize_t pread(const io::detail::ReadAtRequest& request) override {
     const ssize_t result = delegate_.pread(request);
-    if (active_ && result >= 0 && static_cast<std::size_t>(result) == request.size)
+    if (active_ && result >= 0 && static_cast<std::size_t>(result) == request.size) {
       observe(kAfterApplicationReadback);
+      observe(kAfterApplicationCompactionReadback);
+    }
     return result;
   }
   int fsync(const int descriptor) override {
@@ -134,26 +141,32 @@ public:
       return result;
     struct stat metadata {};
     if (delegate_.fstat(descriptor, &metadata) == 0) {
-      if (S_ISREG(metadata.st_mode))
+      if (S_ISREG(metadata.st_mode)) {
         observe(kAfterApplicationFileSync);
-      else if (S_ISDIR(metadata.st_mode)) {
+        observe(kAfterApplicationCompactionFileSync);
+      } else if (S_ISDIR(metadata.st_mode)) {
         observe(kAfterApplicationDirectorySync);
         observe(kAfterApplicationAuthoritativeReclamationDirectorySync);
         observe(kAfterApplicationOrphanReclamationDirectorySync);
+        observe(kAfterApplicationCompactionDirectorySync);
       }
     }
     return result;
   }
   int rename_no_replace(const io::detail::RenameAtRequest& request) override {
     const int result = delegate_.rename_no_replace(request);
-    if (active_ && result == 0)
+    if (active_ && result == 0) {
       observe(kAfterApplicationRename);
+      observe(kAfterApplicationCompactionRename);
+    }
     return result;
   }
   int close(const int descriptor) override {
     const int result = delegate_.close(descriptor);
-    if (active_ && result == 0)
+    if (active_ && result == 0) {
       observe(kAfterApplicationTemporaryClose);
+      observe(kAfterApplicationCompactionTemporaryClose);
+    }
     return result;
   }
 
@@ -179,6 +192,10 @@ public:
   void observe_reclamation_success(const bool authoritative) {
     observe(authoritative ? kAfterApplicationAuthoritativeReclamationSuccess
                           : kAfterApplicationOrphanReclamationSuccess);
+  }
+
+  void observe_compaction_success() {
+    observe(kAfterApplicationCompactionSuccess);
   }
 
 private:
@@ -210,14 +227,18 @@ public:
 
   ssize_t pwrite(const io::detail::WriteAtRequest& request) override {
     const ssize_t result = delegate_.pwrite(request);
-    if (active_ && result >= 0 && static_cast<std::size_t>(result) == request.size)
+    if (active_ && result >= 0 && static_cast<std::size_t>(result) == request.size) {
       observe(kAfterRaftStateWrite);
+      observe(kAfterApplicationCompactionRaftWrite);
+    }
     return result;
   }
   int fdatasync(const int descriptor) override {
     const int result = delegate_.fdatasync(descriptor);
-    if (active_ && result == 0)
+    if (active_ && result == 0) {
       observe(kAfterRaftStateSync);
+      observe(kAfterApplicationCompactionRaftSync);
+    }
     return result;
   }
 
@@ -246,9 +267,52 @@ private:
   return point.starts_with("after_application_orphan_reclamation_");
 }
 
+[[nodiscard]] bool is_compaction_point(const std::string_view point) {
+  return point.starts_with("after_application_compaction_");
+}
+
+[[nodiscard]] int run_compaction(const ChildConfig& config) {
+  ApplicationObservingSyscalls application_syscalls{io::detail::system_posix_syscalls(),
+                                                    config.pause_after, config.pause_occurrence};
+  RaftObservingSyscalls raft_syscalls{io::detail::system_posix_syscalls(), config.pause_after};
+  auto runtime = raft::detail::DurableMultiRaftRuntimeTestAccess::create_new(
+      4U, crash_log_config(config.directory), crash_compaction_groups(), {}, raft_syscalls);
+  if (!runtime.has_value())
+    return 13;
+  auto election = runtime->execute_batch({{crash_group_id(), raft::StartElectionOperation{}}});
+  if (!election.has_value() || election->size() != 1U || !election->front().status.is_ok())
+    return 14;
+  auto storage = detail::RaftTabletSnapshotStorageTestAccess::create(
+      crash_snapshot_config(config.directory), application_syscalls);
+  if (!storage.has_value())
+    return 15;
+  auto machine = RaftTabletStateMachine::recover(
+      crash_group_id(), *runtime, std::move(*storage), crash_compaction_retry_directory(),
+      crash_compaction_tablet(), crash_compaction_schemas());
+  if (!machine.has_value())
+    return 16;
+  auto proposed = runtime->execute_batch(
+      {{crash_group_id(),
+        raft::ProposeOperation{kRaftColumnarAppendEntryType, crash_compaction_command()}}});
+  if (!proposed.has_value() || proposed->size() != 1U || !proposed->front().status.is_ok())
+    return 17;
+  auto applied = machine->apply_committed();
+  if (!applied.has_value() || applied->last_applied_index != 1U)
+    return 18;
+  application_syscalls.begin();
+  raft_syscalls.begin();
+  auto compacted = machine->compact_applied_prefix(1U, 1U, {});
+  if (!compacted.has_value())
+    return 19;
+  application_syscalls.observe_compaction_success();
+  return 20;
+}
+
 [[nodiscard]] int run(const ChildConfig& config) {
   if (config.directory.empty() || config.pause_after.empty() || config.pause_occurrence == 0U)
     return 2;
+  if (is_compaction_point(config.pause_after))
+    return run_compaction(config);
   ApplicationObservingSyscalls application_syscalls{io::detail::system_posix_syscalls(),
                                                     config.pause_after, config.pause_occurrence};
   RaftObservingSyscalls raft_syscalls{io::detail::system_posix_syscalls(), config.pause_after};
