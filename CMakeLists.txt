@@ -1741,6 +1741,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/ingest/identity_test.cpp
     tests/ingest/raft_tablet_state_machine_header_self_contained.cpp
     tests/ingest/raft_tablet_application_crash_matrix_test.cpp
+    tests/ingest/raft_tablet_application_failure_test.cpp
     tests/ingest/raft_tablet_state_machine_test.cpp
     tests/ingest/raft_tablet_snapshot_header_self_contained.cpp
     tests/ingest/raft_tablet_snapshot_test.cpp

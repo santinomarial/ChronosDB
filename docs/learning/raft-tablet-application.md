@@ -42,6 +42,14 @@ All four rebuild the same two rows, one retry identity, and group/index frontier
 committed entry, then remain identical on a second reopen. Persisted applied position is therefore a
 progress marker, never a substitute for reconstructing application memory.
 
+A deterministic five-case companion matrix fails before the applied-index record write, after a
+record prefix, after a complete write, before synchronization, and after synchronization. The live
+state machine and runtime fail closed in every case because application publication already
+happened. Strict recovery rejects the partial tail until explicitly authorized repair; write-before
+and repaired-partial images retain applied index 0, while the three complete-record images retain 1.
+Retained-log recovery nevertheless reconstructs the same rows, retry identity, and frontier in all
+five cases, advances a trailing progress marker, and stays identical on another reopen.
+
 Without a supplied application-snapshot owner, this model intentionally rejects any nonzero Raft
 snapshot boundary. A compacted prefix must atomically describe the omitted rows, retry outcomes,
 schema binding, and included group/index before suffix replay can be safe.

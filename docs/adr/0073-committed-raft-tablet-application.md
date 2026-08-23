@@ -61,8 +61,12 @@ four-cut real-process `SIGKILL` matrix stops after row/retry publication but bef
 record write, after its complete write, after synchronization, and after successful return. Reopen
 observes applied index 0 only before the write and 1 after every complete record, but always rebuilds
 the same rows, retry identity, and publication frontier from the retained committed log; a second
-reopen is identical. Application snapshots and log reclamation are implemented by extending ADRs.
-Additional injected-I/O shapes, schema catalog recovery, multi-group scheduling, and true quorum
-acknowledgment remain required. A deterministic allocation sweep fails every post-apply state copy,
-requires the full committed-unapplied range and persistent state to remain exact, and then advances
-identically on retry.
+reopen is identical. A five-case deterministic persistence matrix injects write-before,
+prefix-then-error, write-after, sync-before, and sync-after failures. Every case returns I/O failure
+and poisons the live application/runtime after publication; write-before and repaired partial tails
+recover applied index 0, while complete-write and sync cases recover applied index 1. All rebuild the
+same application state and converge identically. Application snapshots and log reclamation are
+implemented by extending ADRs. Multi-entry schedules, schema catalog recovery, multi-group
+scheduling, and true quorum acknowledgment remain required. A deterministic allocation sweep fails
+every post-apply state copy, requires the full committed-unapplied range and persistent state to
+remain exact, and then advances identically on retry.
