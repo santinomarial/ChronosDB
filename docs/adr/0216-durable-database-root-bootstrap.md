@@ -43,8 +43,11 @@ subsystem validation after bootstrap. Directory removal or repair is not attempt
 This decision supports invariants 1, 8, 10, and 14 through explicit directory durability ordering,
 restartable exact intent, integrity coverage, and version rejection. Focused tests cover exact
 round-trip, checksum damage, lock exclusion, final reopen, interrupted creation, and unexpected
-state rejection. Crash injection at every synchronization boundary and cross-platform persistence
-qualification remain deferred.
+state rejection. A packaged replicated-database subprocess additionally reaches a synchronous
+`kRootOwnerReady` startup observation with the validated root lock live, dies by `SIGKILL`, and
+proves that the next owner reacquires the root and recovers the exact committed state. Crash
+injection at every bootstrap synchronization boundary and cross-platform persistence qualification
+remain deferred.
 
 ## References
 

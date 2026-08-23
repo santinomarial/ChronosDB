@@ -7,6 +7,7 @@
 #include "chronos/service/replicated_ingest_runtime.hpp"
 #include "service/replicated_ingest_database_crash_fixture.hpp"
 
+#include <cerrno>
 #include <exception>
 #include <filesystem>
 #include <iostream>
@@ -20,6 +21,29 @@
 
 namespace chronos::service::test {
 namespace {
+
+class RootOwnerPauseObserver final : public ReplicatedIngestDatabaseStartupObserver {
+public:
+  void on_startup_stage(const ReplicatedIngestDatabaseStartupStage stage) noexcept override {
+    if (stage != ReplicatedIngestDatabaseStartupStage::kRootOwnerReady)
+      return;
+    constexpr std::string_view event{"ROOT_OWNER_READY\n"};
+    std::size_t completed = 0U;
+    while (completed < event.size()) {
+      const ssize_t count =
+          ::write(STDOUT_FILENO, event.data() + completed, event.size() - completed);
+      if (count > 0) {
+        completed += static_cast<std::size_t>(count);
+        continue;
+      }
+      if (count < 0 && errno == EINTR)
+        continue;
+      ::_exit(6);
+    }
+    for (;;)
+      static_cast<void>(::pause());
+  }
+};
 
 struct ChildConfig {
   std::filesystem::path root;
@@ -193,8 +217,11 @@ struct ChildConfig {
   if (!prepared.is_ok())
     return prepared;
 
-  auto database = ReplicatedIngestDatabase::open_existing(
-      crash_database_config(config.root, config.use_snapshots));
+  auto database_config = crash_database_config(config.root, config.use_snapshots);
+  RootOwnerPauseObserver root_owner_pause;
+  if (config.pause_after == "after_root_owner_ready")
+    database_config.startup_observer = &root_owner_pause;
+  auto database = ReplicatedIngestDatabase::open_existing(std::move(database_config));
   if (!database.has_value())
     return database.error();
   auto catalog = database->ingest_runtime()->metadata_application()->catalog_snapshot();

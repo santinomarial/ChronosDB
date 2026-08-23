@@ -12,12 +12,29 @@
 #include "chronos/runtime/database_bootstrap.hpp"
 #include "chronos/service/replicated_ingest_runtime.hpp"
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
 #include <vector>
 
 namespace chronos::service {
+
+enum class ReplicatedIngestDatabaseStartupStage : std::uint8_t {
+  kRootOwnerReady,
+  kCatalogRecovered,
+  kTabletOwnersPrepared,
+  kRuntimeReady,
+};
+
+// Borrowed only for the synchronous duration of open_existing(). Callbacks run in order on the
+// opening thread after each named owner is complete, receive no partially constructed database,
+// and have no return channel into startup status. Blocking a callback directly blocks startup.
+class ReplicatedIngestDatabaseStartupObserver {
+public:
+  virtual ~ReplicatedIngestDatabaseStartupObserver() = default;
+  virtual void on_startup_stage(ReplicatedIngestDatabaseStartupStage stage) noexcept = 0;
+};
 
 class ReplicatedQuerySnapshot {
 public:
@@ -59,6 +76,7 @@ struct ReplicatedIngestDatabaseConfig {
   raft::MetadataCommandCodecLimits metadata_codec_limits;
   raft::SchemaDefinitionCodecLimits schema_codec_limits;
   ingest::ColumnarAppendDecodeLimits columnar_append_limits;
+  ReplicatedIngestDatabaseStartupObserver* startup_observer{};
 };
 
 // Recoverable database-root owner for an already provisioned replicated ingest node. External

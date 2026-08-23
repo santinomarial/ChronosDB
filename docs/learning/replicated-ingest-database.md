@@ -20,10 +20,17 @@ authority.
 
 ```text
 Database root lock
+  -> [kRootOwnerReady]
   -> temporary Raft-log owner -> committed metadata projection -> close
-  -> build resident tablet owners
-  -> asynchronous ReplicatedIngestRuntime -> native service
+  -> [kCatalogRecovered] -> build resident tablet owners -> [kTabletOwnersPrepared]
+  -> asynchronous ReplicatedIngestRuntime -> [kRuntimeReady] -> native service
 ```
+
+The optional startup observer borrows caller-owned state only for `open_existing`. Its four
+callbacks run synchronously in the order above on the opening thread, are non-throwing, and expose
+no partially constructed database. This makes phase timing observable and gives crash tests exact
+ownership boundaries; a blocking observer also blocks startup and is therefore an embedding-owned
+policy choice.
 
 The committed catalog is cluster-global, so remote bindings are skipped when their placement does
 not include this node and their group is absent from the resident configuration. A locally placed
@@ -60,6 +67,13 @@ cut stops the owner after the coordinator admits an observation and write propos
 publishes a response. The next owner accepts only the exact pre-write or committed publication,
 then uses the request identity to turn an ambiguous client retry into one application or a matching
 retry without duplicate rows.
+
+The first deterministic startup cut pauses at `kRootOwnerReady`, after bootstrap validation and
+root-lock acquisition but before catalog recovery owns the Raft log. Killing that process proves
+kernel release of the partial startup owner; the next packaged owner reconstructs the exact rows and
+retry identity, advances only the application frontier for an exact retry, and survives another
+reopen. The later catalog, tablet-preparation, and runtime-ready startup stages still need their own
+crash cuts.
 
 ## Query snapshot boundary
 

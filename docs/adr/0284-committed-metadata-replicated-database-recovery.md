@@ -38,6 +38,12 @@ membership against committed placement before admitting a write.
 Shutdown first drains and closes the replicated-ingest runtime and then releases the root lock. The
 first failure is retained across repeated shutdown calls.
 
+An optional borrowed startup observer receives four synchronous, non-throwing callbacks on the
+opening thread after root ownership, catalog recovery, tablet-owner preparation, and asynchronous
+runtime readiness. The observer receives no partially constructed database and has no return
+channel into startup status; blocking it directly blocks startup. These stages provide operational
+timing and deterministic process-crash boundaries without changing durable state.
+
 ## Consequences and validation
 
 Tablet shape is no longer an independent daemon truth. Existing provisioned roots can reconstruct
@@ -74,9 +80,12 @@ survives an exact suffix retry plus another reopen. These are steady-state owner
 a third child dies after the QUORUM_SYNC coordinator has admitted its observation and write proposal
 but before the caller observes a response. Recovery permits only the exact pre-write or fully
 committed publication, and the same request then returns first-application or matching-retry
-accordingly without duplicate rows. Packaged startup, remaining write stages,
+accordingly without duplicate rows. Remaining packaged startup stages and write stages,
 snapshot-install/compaction, and shutdown crash/syscall matrices, larger resident-set profiles, and
-broader TSan coverage remain deferred.
+broader TSan coverage remain deferred. The observer's complete success order is tested, and a fourth
+child pauses immediately after validated root ownership, dies by `SIGKILL`, and proves exact
+recovery, retry, and repeated reopen. Later packaged startup stages remain part of the deferred
+matrix.
 
 ## Affected invariants
 

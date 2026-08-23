@@ -35,6 +35,12 @@ namespace {
   return {common::StatusCode::kUnavailable, std::move(message)};
 }
 
+void observe_startup(const ReplicatedIngestDatabaseConfig& config,
+                     const ReplicatedIngestDatabaseStartupStage stage) noexcept {
+  if (config.startup_observer != nullptr)
+    config.startup_observer->on_startup_stage(stage);
+}
+
 [[nodiscard]] const raft::GroupReadBarrier*
 find_barrier(const std::span<const raft::GroupReadBarrier> barriers,
              const raft::GroupId& group_id) noexcept {
@@ -349,6 +355,7 @@ ReplicatedIngestDatabase::open_existing(ReplicatedIngestDatabaseConfig config) {
   auto bootstrap = runtime::DatabaseBootstrap::open_or_create(config.bootstrap);
   if (!bootstrap.has_value())
     return common::make_unexpected(bootstrap.error());
+  observe_startup(config, ReplicatedIngestDatabaseStartupStage::kRootOwnerReady);
   const runtime::DatabaseBootstrapDescriptor descriptor = bootstrap->descriptor();
   if (config.groups.empty() || find_group(config.groups, descriptor.metadata_group_id) == nullptr)
     return common::make_unexpected(
@@ -359,6 +366,7 @@ ReplicatedIngestDatabase::open_existing(ReplicatedIngestDatabaseConfig config) {
   auto catalog = recover_catalog(config, *bootstrap);
   if (!catalog.has_value())
     return common::make_unexpected(catalog.error());
+  observe_startup(config, ReplicatedIngestDatabaseStartupStage::kCatalogRecovered);
   auto tablets = build_tablets(config, descriptor, *catalog);
   if (!tablets.has_value())
     return common::make_unexpected(tablets.error());
@@ -373,6 +381,7 @@ ReplicatedIngestDatabase::open_existing(ReplicatedIngestDatabaseConfig config) {
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("replicated resident-group allocation failed"));
   }
+  observe_startup(config, ReplicatedIngestDatabaseStartupStage::kTabletOwnersPrepared);
   std::optional<raft::MetadataSnapshotStorage> metadata_snapshots;
   if (config.metadata_snapshots.has_value()) {
     auto opened = raft::MetadataSnapshotStorage::open_existing(*config.metadata_snapshots);
@@ -398,6 +407,7 @@ ReplicatedIngestDatabase::open_existing(ReplicatedIngestDatabaseConfig config) {
       ReplicatedIngestRuntime::open_existing(std::move(runtime_config), config.raft_recovery);
   if (!ingest_runtime.has_value())
     return common::make_unexpected(ingest_runtime.error());
+  observe_startup(config, ReplicatedIngestDatabaseStartupStage::kRuntimeReady);
   try {
     return ReplicatedIngestDatabase{std::make_unique<Impl>(
         std::move(*bootstrap), std::move(*ingest_runtime), std::move(resident_groups))};

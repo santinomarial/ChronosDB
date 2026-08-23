@@ -55,8 +55,10 @@ snapshot-backed variant repeats that proof while metadata and tablet application
 retained suffixes are all live. A coordinator variant kills the owner after the observation and
 write proposal are admitted but before any response is observed; reopen accepts either atomic
 pre-write or committed state, and an exact protocol retry converges without duplicate rows or retry
-identity. Startup, additional write-stage, snapshot-operation, and shutdown crash cuts remain
-deferred.
+identity. The outer replicated-database owner now exposes ordered synchronous, non-throwing startup
+observations for root ownership, catalog recovery, tablet preparation, and runtime readiness; the
+first stage has a real-process kill/reopen proof. Later startup stages, additional write stages,
+snapshot operations, and shutdown crash cuts remain deferred.
 
 ## Affected invariants
 

@@ -16,6 +16,7 @@
 #include "columnar/columnar_test_support.hpp"
 #include "ingest/ingest_test_support.hpp"
 
+#include <array>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <memory>
@@ -30,6 +31,21 @@
 
 namespace chronos::service {
 namespace {
+
+class RecordingStartupObserver final : public ReplicatedIngestDatabaseStartupObserver {
+public:
+  void on_startup_stage(const ReplicatedIngestDatabaseStartupStage stage) noexcept override {
+    if (count < stages.size())
+      stages[count] = stage;
+    else
+      overflow = true;
+    ++count;
+  }
+
+  std::array<ReplicatedIngestDatabaseStartupStage, 4U> stages{};
+  std::size_t count{};
+  bool overflow{};
+};
 
 class TemporaryDirectory {
 public:
@@ -329,6 +345,33 @@ void elect_and_provision_multiple_tablets(ReplicatedIngestRuntime& owner) {
   }
   ADD_FAILURE() << "replicated database response timed out";
   return {};
+}
+
+TEST(ReplicatedIngestDatabaseTest, ReportsPackagedStartupStagesInOwnershipOrder) {
+  TemporaryDirectory directory;
+  runtime::DatabaseBootstrapConfig bootstrap_config{.database_root = directory.path().string(),
+                                                    .new_database = descriptor()};
+  auto bootstrap = runtime::DatabaseBootstrap::open_or_create(bootstrap_config);
+  ASSERT_TRUE(bootstrap.has_value()) << bootstrap.error().to_string();
+  auto initial = ReplicatedIngestRuntime::create_new(initial_runtime_config(*bootstrap));
+  ASSERT_TRUE(initial.has_value()) << initial.error().to_string();
+  elect_and_provision(*initial);
+  ASSERT_TRUE(initial->shutdown().is_ok());
+  ASSERT_TRUE(bootstrap->close().is_ok());
+
+  RecordingStartupObserver observer;
+  ReplicatedIngestDatabaseConfig config{.bootstrap = bootstrap_config, .groups = groups()};
+  config.startup_observer = &observer;
+  auto database = ReplicatedIngestDatabase::open_existing(std::move(config));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  EXPECT_EQ(observer.count, observer.stages.size());
+  EXPECT_FALSE(observer.overflow);
+  EXPECT_EQ(observer.stages,
+            (std::array{ReplicatedIngestDatabaseStartupStage::kRootOwnerReady,
+                        ReplicatedIngestDatabaseStartupStage::kCatalogRecovered,
+                        ReplicatedIngestDatabaseStartupStage::kTabletOwnersPrepared,
+                        ReplicatedIngestDatabaseStartupStage::kRuntimeReady}));
+  ASSERT_TRUE(database->shutdown().is_ok());
 }
 
 TEST(ReplicatedIngestDatabaseTest, RebuildsTabletOwnersFromCommittedMetadataUnderRootLock) {
