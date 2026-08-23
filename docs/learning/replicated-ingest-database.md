@@ -24,6 +24,12 @@ group cannot be omitted. A configured data group cannot lack one committed bindi
 current membership are deliberately not forced equal during startup because a durable
 reconfiguration can be in progress; write admission performs the stable-membership proof.
 
+Recovery ownership is per binding rather than per table. When two resident groups own different
+tablets of one table, replay rebuilds two tablet states and two retry directories without merging
+their Raft indexes or client identities. A later query snapshot may concatenate both immutable
+tablet publications beneath one global pipeline, but that query composition does not weaken the
+independent durability boundaries.
+
 Projection is linear in catalog definitions, bindings, and configured groups with straightforward
 searches favored for correctness at the present scale. Recovery cost is dominated by reading the
 Raft log/application snapshots twice and replaying tablet suffixes. A later profile can justify a

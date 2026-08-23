@@ -43,8 +43,10 @@ separate integration work. No durable or network format changes.
 Focused recovery tests apply a QUORUM_SYNC append, reopen the database, pin a whole-table view,
 destroy the database owner, and execute an exact vector count from the retained pins. A second test
 provisions one resident and one remote tablet and verifies execution fails with `UNAVAILABLE` and
-leaks no query credit. Broader schema-change races, multi-group scheduling, allocation fault
-injection, sanitizers, and linearizable-read work remain in the hardening ledger.
+leaks no query credit. A two-resident-group recovery test preserves each independent retry identity
+and executes one four-row global count after owner shutdown. Broader schema-change races,
+high-cardinality group scheduling, allocation fault injection, sanitizers, and linearizable-read
+work remain in the hardening ledger.
 
 ## Affected invariants
 

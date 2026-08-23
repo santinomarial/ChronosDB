@@ -523,13 +523,14 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   a database-root owner now reconstructs resident tablet applications from committed global
   metadata and explicit group membership before reopening the asynchronous runtime, including
   predecessor and active-successor generations across committed schema evolution and repeated
-  reopen. A strict bounded group/voter deployment parser and secure packaged daemon loading/routing
-  now exist. A strict authenticated peer route/identity parser and exact
-  certificate/address/node authority also exist, and an owning transport runtime plus packaged
-  daemon poll thread composes them with TLS contexts and randomized timers; add in-memory credential
-  loading, remote leader redirection, metadata/tablet snapshot process recovery, broader
-  reconfiguration matrices beyond the completed committed-joint removal restart, broader
-  queue/disconnect failure matrices, and TSan scheduling coverage.
+  reopen plus two same-table resident groups with independent retry recovery and one pinned global
+  query. Larger resident-set profiles remain. A strict bounded group/voter deployment parser and
+  secure packaged daemon loading/routing now exist. A strict authenticated peer route/identity
+  parser and exact certificate/address/node authority also exist, and an owning transport runtime
+  plus packaged daemon poll thread composes them with TLS contexts and randomized timers; add
+  in-memory credential loading, remote leader redirection, metadata/tablet snapshot process
+  recovery, broader reconfiguration matrices beyond the completed committed-joint removal restart,
+  broader queue/disconnect failure matrices, and TSan scheduling coverage.
 - Carry the implemented group-scoped read-barrier operation through authenticated production
   transport, request deadlines/coalescing, apply waiting, and exact tablet snapshot acquisition.
 - Extend the implemented metadata Raft codec/application/reopen path and complete-schema-definition
