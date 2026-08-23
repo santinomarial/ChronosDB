@@ -68,6 +68,13 @@ Recovery rebuilds the same two rows and retry identity, exact retry adopts an or
 and reclamation plus a second reopen converge. This is process-restart evidence; power-loss and
 device qualification remain separate.
 
+Deterministic local-compaction injection separately fails all ten post-ownership application-file
+stages, including a 16-byte partial temporary and final directory-sync ambiguity. The failed call
+never reaches Raft compaction: its retained entry remains authority and the live tablet state does
+not fail closed. Public reopen removes any temporary, rebuilds the same rows and retry identity from
+Raft, and exact retry either installs a new file or adopts the complete post-rename orphan. Raft
+persistence fault products remain a separate matrix.
+
 Exact retransmissions also coalesce without re-entering the application owner. A competing remote
 snapshot receives a negative response while the first transfer retains the sole completion
 identity; after that identity resolves, a later request can be admitted normally.
