@@ -11,6 +11,7 @@
 #include <exception>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -22,12 +23,43 @@
 namespace chronos::service::test {
 namespace {
 
-class RootOwnerPauseObserver final : public ReplicatedIngestDatabaseStartupObserver {
+[[nodiscard]] constexpr std::string_view
+startup_event(const ReplicatedIngestDatabaseStartupStage stage) noexcept {
+  switch (stage) {
+  case ReplicatedIngestDatabaseStartupStage::kRootOwnerReady:
+    return "ROOT_OWNER_READY\n";
+  case ReplicatedIngestDatabaseStartupStage::kCatalogRecovered:
+    return "CATALOG_RECOVERED\n";
+  case ReplicatedIngestDatabaseStartupStage::kTabletOwnersPrepared:
+    return "TABLET_OWNERS_PREPARED\n";
+  case ReplicatedIngestDatabaseStartupStage::kRuntimeReady:
+    return "RUNTIME_READY\n";
+  }
+  return {};
+}
+
+[[nodiscard]] std::optional<ReplicatedIngestDatabaseStartupStage>
+pause_stage(const std::string_view pause_after) noexcept {
+  if (pause_after == "after_root_owner_ready")
+    return ReplicatedIngestDatabaseStartupStage::kRootOwnerReady;
+  if (pause_after == "after_catalog_recovered")
+    return ReplicatedIngestDatabaseStartupStage::kCatalogRecovered;
+  if (pause_after == "after_tablet_owners_prepared")
+    return ReplicatedIngestDatabaseStartupStage::kTabletOwnersPrepared;
+  if (pause_after == "after_runtime_ready")
+    return ReplicatedIngestDatabaseStartupStage::kRuntimeReady;
+  return std::nullopt;
+}
+
+class StartupPauseObserver final : public ReplicatedIngestDatabaseStartupObserver {
 public:
+  explicit StartupPauseObserver(const ReplicatedIngestDatabaseStartupStage desired) noexcept
+      : desired_(desired) {}
+
   void on_startup_stage(const ReplicatedIngestDatabaseStartupStage stage) noexcept override {
-    if (stage != ReplicatedIngestDatabaseStartupStage::kRootOwnerReady)
+    if (stage != desired_)
       return;
-    constexpr std::string_view event{"ROOT_OWNER_READY\n"};
+    const std::string_view event = startup_event(stage);
     std::size_t completed = 0U;
     while (completed < event.size()) {
       const ssize_t count =
@@ -43,6 +75,9 @@ public:
     for (;;)
       static_cast<void>(::pause());
   }
+
+private:
+  ReplicatedIngestDatabaseStartupStage desired_;
 };
 
 struct ChildConfig {
@@ -218,9 +253,11 @@ struct ChildConfig {
     return prepared;
 
   auto database_config = crash_database_config(config.root, config.use_snapshots);
-  RootOwnerPauseObserver root_owner_pause;
-  if (config.pause_after == "after_root_owner_ready")
-    database_config.startup_observer = &root_owner_pause;
+  const auto desired_stage = pause_stage(config.pause_after);
+  StartupPauseObserver startup_pause{
+      desired_stage.value_or(ReplicatedIngestDatabaseStartupStage::kRootOwnerReady)};
+  if (desired_stage.has_value())
+    database_config.startup_observer = &startup_pause;
   auto database = ReplicatedIngestDatabase::open_existing(std::move(database_config));
   if (!database.has_value())
     return database.error();

@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <unistd.h>
@@ -221,15 +222,26 @@ TEST(ReplicatedIngestDatabaseCrashTest, RecoversAmbiguousQuorumWriteAfterAdmissi
   ASSERT_TRUE(repeated->shutdown().is_ok());
 }
 
-TEST(ReplicatedIngestDatabaseCrashTest, ReclaimsRootOwnershipWhenKilledDuringPackagedStartup) {
+struct PackagedStartupCrashCase {
+  std::string_view name;
+  std::string_view pause_after;
+  std::string_view event;
+};
+
+class ReplicatedIngestDatabaseStartupCrashTest
+    : public ::testing::TestWithParam<PackagedStartupCrashCase> {};
+
+TEST_P(ReplicatedIngestDatabaseStartupCrashTest,
+       ReclaimsPartialOwnershipAndRecoversExactStateAfterSigkill) {
+  const PackagedStartupCrashCase test_case = GetParam();
   ReplicatedDatabaseCrashDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   auto spawned = wal::test::CrashChildProcess::spawn(
-      {.directory = directory.path(), .pause_after = "after_root_owner_ready"});
+      {.directory = directory.path(), .pause_after = std::string{test_case.pause_after}});
   ASSERT_TRUE(spawned.has_value()) << spawned.error().to_string();
   wal::test::CrashChildProcess child = std::move(*spawned);
-  auto root_ready = child.wait_for("ROOT_OWNER_READY");
-  ASSERT_TRUE(root_ready.has_value()) << root_ready.error().to_string();
+  auto stage_ready = child.wait_for(test_case.event);
+  ASSERT_TRUE(stage_ready.has_value()) << stage_ready.error().to_string();
   ASSERT_TRUE(child.kill_abruptly().is_ok());
 
   auto database =
@@ -254,6 +266,18 @@ TEST(ReplicatedIngestDatabaseCrashTest, ReclaimsRootOwnershipWhenKilledDuringPac
   expect_recovered_publication(*repeated, {.rows = 2U, .retries = 1U, .applied_index = 2U});
   ASSERT_TRUE(repeated->shutdown().is_ok());
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    StartupStages, ReplicatedIngestDatabaseStartupCrashTest,
+    ::testing::Values(
+        PackagedStartupCrashCase{"RootOwner", "after_root_owner_ready", "ROOT_OWNER_READY"},
+        PackagedStartupCrashCase{"Catalog", "after_catalog_recovered", "CATALOG_RECOVERED"},
+        PackagedStartupCrashCase{"TabletOwners", "after_tablet_owners_prepared",
+                                 "TABLET_OWNERS_PREPARED"},
+        PackagedStartupCrashCase{"Runtime", "after_runtime_ready", "RUNTIME_READY"}),
+    [](const ::testing::TestParamInfo<PackagedStartupCrashCase>& info) {
+      return std::string{info.param.name};
+    });
 
 } // namespace
 } // namespace chronos::service

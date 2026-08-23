@@ -80,12 +80,12 @@ survives an exact suffix retry plus another reopen. These are steady-state owner
 a third child dies after the QUORUM_SYNC coordinator has admitted its observation and write proposal
 but before the caller observes a response. Recovery permits only the exact pre-write or fully
 committed publication, and the same request then returns first-application or matching-retry
-accordingly without duplicate rows. Remaining packaged startup stages and write stages,
+accordingly without duplicate rows. The observer's complete success order is tested, and a
+four-case child matrix pauses after each of validated root ownership, catalog recovery, tablet-owner
+preparation, and asynchronous runtime readiness. Every child dies by `SIGKILL`; the parent proves
+exact recovery, retry, and repeated reopen. Syscall-level startup cuts, remaining write stages,
 snapshot-install/compaction, and shutdown crash/syscall matrices, larger resident-set profiles, and
-broader TSan coverage remain deferred. The observer's complete success order is tested, and a fourth
-child pauses immediately after validated root ownership, dies by `SIGKILL`, and proves exact
-recovery, retry, and repeated reopen. Later packaged startup stages remain part of the deferred
-matrix.
+broader TSan coverage remain deferred.
 
 ## Affected invariants
 

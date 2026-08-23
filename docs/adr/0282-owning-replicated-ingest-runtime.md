@@ -57,8 +57,8 @@ write proposal are admitted but before any response is observed; reopen accepts 
 pre-write or committed state, and an exact protocol retry converges without duplicate rows or retry
 identity. The outer replicated-database owner now exposes ordered synchronous, non-throwing startup
 observations for root ownership, catalog recovery, tablet preparation, and runtime readiness; the
-first stage has a real-process kill/reopen proof. Later startup stages, additional write stages,
-snapshot operations, and shutdown crash cuts remain deferred.
+complete four-stage sequence has a real-process kill/reopen matrix. Syscall-level startup cuts,
+additional write stages, snapshot operations, and shutdown crash cuts remain deferred.
 
 ## Affected invariants
 

@@ -68,12 +68,13 @@ publishes a response. The next owner accepts only the exact pre-write or committ
 then uses the request identity to turn an ambiguous client retry into one application or a matching
 retry without duplicate rows.
 
-The first deterministic startup cut pauses at `kRootOwnerReady`, after bootstrap validation and
-root-lock acquisition but before catalog recovery owns the Raft log. Killing that process proves
-kernel release of the partial startup owner; the next packaged owner reconstructs the exact rows and
-retry identity, advances only the application frontier for an exact retry, and survives another
-reopen. The later catalog, tablet-preparation, and runtime-ready startup stages still need their own
-crash cuts.
+The deterministic startup matrix pauses separately at all four stages. `kRootOwnerReady` holds only
+the validated bootstrap/root owner; `kCatalogRecovered` has completed and closed the temporary Raft
+owner; `kTabletOwnersPrepared` retains the projected tablet owners; and `kRuntimeReady` holds the
+live asynchronous Raft/application graph before the final database result is returned. Killing each
+process proves release of its exact partial ownership set. In every case the next packaged owner
+reconstructs the exact rows and retry identity, advances only the application frontier for an exact
+retry, and survives another reopen. Syscall-level cuts inside those stages remain separate work.
 
 ## Query snapshot boundary
 
