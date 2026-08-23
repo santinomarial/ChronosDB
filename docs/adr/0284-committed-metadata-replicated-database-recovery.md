@@ -57,8 +57,13 @@ finalization eligibility; a new joint election finishes membership, committed pl
 `{1}`, exact retry succeeds, and another reopen observes stable voter `{1}`. A two-tablet lifecycle
 commits one write to each same-table resident group, reopens both owners, returns each group's exact
 retry independently, and executes one four-row whole-table count from pins that outlive shutdown.
-An omitted recovered resident group fails closed. Snapshot/crash/syscall matrices, larger
-resident-set profiles, and broader TSan coverage remain deferred.
+The application-snapshot lifecycle compacts the complete provisioning catalog and first tablet
+append, commits one unapplied suffix in each group, and closes both owners. Packaged startup without
+the authoritative snapshot configuration fails closed; configured startup reconstructs the catalog,
+four rows, and two retry identities from both snapshots plus suffixes, returns an exact suffix retry,
+and reproduces that state on another reopen. An omitted recovered resident group fails closed.
+Packaged crash/syscall matrices, larger resident-set profiles, and broader TSan coverage remain
+deferred.
 
 ## Affected invariants
 

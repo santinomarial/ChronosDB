@@ -11,6 +11,13 @@ catalog and then closes. That owning projection is used to build bounded tablet/
 final asynchronous runtime reopens the same log, recovers metadata and every selected tablet on its
 worker, and only then exposes the coordinator. The two log owners never overlap.
 
+When durable Raft state has compacted a prefix, both stages require the exact group-owned
+application-snapshot storage named by configuration. The temporary metadata stage rebuilds its
+catalog from the metadata snapshot plus retained suffix; projected tablet owners then receive their
+own snapshot locks for asynchronous recovery. Missing snapshot ownership fails before a partial
+runtime is exposed, and neither stage selects a merely newer orphan snapshot over Raft's exact
+authority.
+
 ```text
 Database root lock
   -> temporary Raft-log owner -> committed metadata projection -> close

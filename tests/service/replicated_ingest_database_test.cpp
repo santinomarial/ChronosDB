@@ -1,10 +1,12 @@
 #include "chronos/columnar/columnar_batch_codec.hpp"
 #include "chronos/common/byte_reader.hpp"
+#include "chronos/ingest/raft_tablet_state_machine.hpp"
 #include "chronos/network/messages.hpp"
 #include "chronos/query/binder.hpp"
 #include "chronos/query/parser.hpp"
 #include "chronos/query/physical_lowering.hpp"
 #include "chronos/raft/metadata_codec.hpp"
+#include "chronos/raft/metadata_runtime.hpp"
 #include "chronos/raft/schema_definition_codec.hpp"
 #include "chronos/raft/tablet_group_binding_codec.hpp"
 #include "chronos/service/native_protocol_service.hpp"
@@ -370,6 +372,157 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsTabletOwnersFromCommittedMetadataUnde
   EXPECT_TRUE(database->shutdown().is_ok());
   EXPECT_FALSE(database->is_running());
   EXPECT_EQ(database->ingest_runtime(), nullptr);
+}
+
+TEST(ReplicatedIngestDatabaseTest, RebuildsCompactedApplicationPrefixesAndRetainedSuffixes) {
+  TemporaryDirectory directory;
+  runtime::DatabaseBootstrapConfig bootstrap_config{.database_root = directory.path().string(),
+                                                    .new_database = descriptor()};
+  auto bootstrap = runtime::DatabaseBootstrap::open_or_create(bootstrap_config);
+  ASSERT_TRUE(bootstrap.has_value()) << bootstrap.error().to_string();
+  const raft::MetadataSnapshotStorageConfig metadata_snapshot_config{
+      .directory_path = (directory.path() / "metadata-snapshots").string(),
+      .group_id = metadata_group()};
+  const ingest::RaftTabletSnapshotStorageConfig tablet_snapshot_config{
+      .directory_path = (directory.path() / "tablet-snapshots").string(),
+      .group_id = tablet_group()};
+  ASSERT_TRUE(std::filesystem::create_directories(metadata_snapshot_config.directory_path));
+  ASSERT_TRUE(std::filesystem::create_directories(tablet_snapshot_config.directory_path));
+
+  auto configured = initial_runtime_config(*bootstrap);
+  auto durable = raft::DurableMultiRaftRuntime::create_new(configured.local_node_id, configured.log,
+                                                           configured.groups);
+  ASSERT_TRUE(durable.has_value()) << durable.error().to_string();
+  {
+    auto metadata_storage = raft::MetadataSnapshotStorage::create(metadata_snapshot_config);
+    ASSERT_TRUE(metadata_storage.has_value()) << metadata_storage.error().to_string();
+    auto metadata = raft::DurableMetadataStateMachine::recover(metadata_group(), *durable,
+                                                               std::move(*metadata_storage));
+    ASSERT_TRUE(metadata.has_value()) << metadata.error().to_string();
+    auto tablet_storage = ingest::RaftTabletSnapshotStorage::create(tablet_snapshot_config);
+    ASSERT_TRUE(tablet_storage.has_value()) << tablet_storage.error().to_string();
+    ASSERT_EQ(configured.tablets.size(), 1U);
+    auto& tablet_config = configured.tablets.front();
+    auto tablet = ingest::RaftTabletStateMachine::recover(
+        tablet_group(), *durable, std::move(*tablet_storage),
+        std::move(tablet_config.retry_directory), std::move(tablet_config.tablet),
+        std::move(tablet_config.retained_schemas), tablet_config.decode_limits);
+    ASSERT_TRUE(tablet.has_value()) << tablet.error().to_string();
+
+    auto election = durable->execute_batch({{metadata_group(), raft::StartElectionOperation{}}});
+    ASSERT_TRUE(election.has_value()) << election.error().to_string();
+    election = durable->execute_batch({{tablet_group(), raft::StartElectionOperation{}}});
+    ASSERT_TRUE(election.has_value()) << election.error().to_string();
+    const raft::ProposeOperation schema{
+        raft::kRaftSchemaDefinitionEntryType,
+        raft::encode_schema_definition_v1(
+            {.name = "events", .quoted = false, .schema = columnar::test::batch_schema()})
+            .value()};
+    const raft::ProposeOperation policy{
+        raft::kRaftMetadataCommandEntryType,
+        raft::encode_metadata_command_v1(
+            raft::TablePolicyMetadata{columnar::test::batch_schema()->table_id(), 1'000'000'000LL,
+                                      86'400'000'000'000LL, 86'400'000'000'000LL, 0LL, 8U})
+            .value()};
+    const raft::ProposeOperation placement{
+        raft::kRaftMetadataCommandEntryType,
+        raft::encode_metadata_command_v1(
+            raft::TabletPlacementMetadata{
+                columnar::test::batch_schema()->table_id(), tablet_id(), 1U, {1U}, 1U})
+            .value()};
+    const raft::ProposeOperation binding{
+        raft::kRaftTabletGroupBindingEntryType,
+        raft::encode_tablet_group_binding_v1({tablet_id(), tablet_group()}).value()};
+    auto metadata_entries = durable->execute_batch({{metadata_group(), schema},
+                                                    {metadata_group(), policy},
+                                                    {metadata_group(), placement},
+                                                    {metadata_group(), binding}});
+    ASSERT_TRUE(metadata_entries.has_value()) << metadata_entries.error().to_string();
+    auto tablet_entry = durable->execute_batch(
+        {{tablet_group(),
+          raft::ProposeOperation{ingest::kRaftColumnarAppendEntryType, command()}}});
+    ASSERT_TRUE(tablet_entry.has_value()) << tablet_entry.error().to_string();
+    auto metadata_applied = metadata->apply_committed();
+    ASSERT_TRUE(metadata_applied.has_value()) << metadata_applied.error().to_string();
+    ASSERT_EQ(metadata_applied->last_applied_index, 4U);
+    auto tablet_applied = tablet->apply_committed();
+    ASSERT_TRUE(tablet_applied.has_value()) << tablet_applied.error().to_string();
+    ASSERT_EQ(tablet_applied->last_applied_index, 1U);
+    auto metadata_compacted = metadata->compact_applied_prefix(4U);
+    ASSERT_TRUE(metadata_compacted.has_value()) << metadata_compacted.error().to_string();
+    auto tablet_compacted = tablet->compact_applied_prefix(1U, 1U, {});
+    ASSERT_TRUE(tablet_compacted.has_value()) << tablet_compacted.error().to_string();
+
+    const raft::ProposeOperation node{
+        raft::kRaftMetadataCommandEntryType,
+        raft::encode_metadata_command_v1(raft::ClusterNodeMetadata{1U, "node-1.example:7000"})
+            .value()};
+    metadata_entries = durable->execute_batch({{metadata_group(), node}});
+    ASSERT_TRUE(metadata_entries.has_value()) << metadata_entries.error().to_string();
+    auto suffix_command =
+        command(columnar::test::batch_schema(), columnar::test::batch_columns(), 5U);
+    tablet_entry = durable->execute_batch(
+        {{tablet_group(),
+          raft::ProposeOperation{ingest::kRaftColumnarAppendEntryType, suffix_command}}});
+    ASSERT_TRUE(tablet_entry.has_value()) << tablet_entry.error().to_string();
+    EXPECT_EQ(durable->find_group(metadata_group())->commit_index(), 5U);
+    EXPECT_EQ(durable->find_group(metadata_group())->applied_index(), 4U);
+    EXPECT_EQ(durable->find_group(tablet_group())->commit_index(), 2U);
+    EXPECT_EQ(durable->find_group(tablet_group())->applied_index(), 1U);
+  }
+  ASSERT_TRUE(durable->close().is_ok());
+  ASSERT_TRUE(bootstrap->close().is_ok());
+
+  auto missing_snapshots =
+      ReplicatedIngestDatabase::open_existing({.bootstrap = bootstrap_config, .groups = groups()});
+  ASSERT_FALSE(missing_snapshots.has_value());
+  EXPECT_EQ(missing_snapshots.error().code(), common::StatusCode::kNotSupported);
+  auto database =
+      ReplicatedIngestDatabase::open_existing({.bootstrap = bootstrap_config,
+                                               .groups = groups(),
+                                               .metadata_snapshots = metadata_snapshot_config,
+                                               .tablet_snapshots = {tablet_snapshot_config}});
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  auto catalog = database->ingest_runtime()->metadata_application()->catalog_snapshot();
+  ASSERT_TRUE(catalog.has_value()) << catalog.error().to_string();
+  EXPECT_EQ((*catalog)->applied_index, 5U);
+  ASSERT_EQ((*catalog)->cluster_nodes.size(), 1U);
+  EXPECT_EQ((*catalog)->cluster_nodes.front(),
+            (raft::ClusterNodeMetadata{1U, "node-1.example:7000"}));
+  auto recovered = database->ingest_runtime()->tablet_application()->snapshot(tablet_group());
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  EXPECT_EQ(recovered->visible_row_count(), 4U);
+  EXPECT_EQ(recovered->retry_entry_count(), 2U);
+  EXPECT_EQ(recovered->applied_position(), head::HeadCommitPosition::raft(tablet_group(), 2U));
+
+  auto election = database->ingest_runtime()->runtime()->try_submit(
+      {{tablet_group(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  ASSERT_TRUE(election->wait().has_value());
+  auto suffix_command =
+      command(columnar::test::batch_schema(), columnar::test::batch_columns(), 5U);
+  ASSERT_TRUE(
+      database->ingest_runtime()->coordinator()->admit(request(suffix_command, 2U)).is_ok());
+  auto retry_response = await_response(*database->ingest_runtime());
+  auto retry_acknowledgement =
+      network::decode_quorum_sync_ingest_acknowledgement(retry_response.frame.payload);
+  ASSERT_TRUE(retry_acknowledgement.has_value());
+  EXPECT_EQ(retry_acknowledgement->outcome, network::IngestOutcome::kMatchingRetry);
+  EXPECT_EQ(retry_acknowledgement->log_index, 3U);
+  ASSERT_TRUE(database->shutdown().is_ok());
+
+  auto repeated =
+      ReplicatedIngestDatabase::open_existing({.bootstrap = bootstrap_config,
+                                               .groups = groups(),
+                                               .metadata_snapshots = metadata_snapshot_config,
+                                               .tablet_snapshots = {tablet_snapshot_config}});
+  ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
+  recovered = repeated->ingest_runtime()->tablet_application()->snapshot(tablet_group());
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  EXPECT_EQ(recovered->visible_row_count(), 4U);
+  EXPECT_EQ(recovered->retry_entry_count(), 2U);
+  EXPECT_EQ(recovered->applied_position(), head::HeadCommitPosition::raft(tablet_group(), 3U));
+  ASSERT_TRUE(repeated->shutdown().is_ok());
 }
 
 TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWholeTableView) {
