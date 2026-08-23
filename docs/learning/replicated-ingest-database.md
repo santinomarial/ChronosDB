@@ -62,11 +62,13 @@ exact retry without duplication, and survive a second reopen. The same lifecycle
 authoritative metadata and tablet application snapshots plus committed retained suffixes, proving
 that all four lock domains are process-scoped and that Raft's exact snapshot boundary—not directory
 recency—still selects recovery state. This evidence does not provide deterministic cuts inside
-startup, persistence, application, snapshot installation/compaction, or shutdown. One additional
-cut stops the owner after the coordinator admits an observation and write proposal but before it
-publishes a response. The next owner accepts only the exact pre-write or committed publication,
-then uses the request identity to turn an ambiguous client retry into one application or a matching
-retry without duplicate rows.
+persistence syscalls, application hooks, or snapshot installation/compaction. A separate four-case
+matrix stops the owner at the coordinator's correlated route-validated, proposal-admitted,
+application-proved, and response-ready boundaries. Route validation is before proposal submission
+and must recover the exact pre-write publication. Proposal admission allows only pre-write or fully
+committed state. Application proof and response readiness require the committed rows and retry
+identity. The next owner uses the same request identity to return one application or a matching
+retry without duplicate rows, and a second reopen preserves the resulting frontier.
 
 The deterministic startup matrix pauses separately at all four stages. `kRootOwnerReady` holds only
 the validated bootstrap/root owner; `kCatalogRecovered` has completed and closed the temporary Raft

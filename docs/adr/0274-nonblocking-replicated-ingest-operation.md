@@ -32,8 +32,11 @@ routing, schema/placement authorization, and response-queue backpressure.
 
 No durable or network format changes. Focused tests cover an applied command, an exact matching
 retry at a later Raft index, acknowledgement round-trip, and rejection outside the required leader
-term. Delayed multi-node service polling, reactor integration, disconnect/deadline races, crash
-cuts, TSan, and load measurement remain deferred.
+term. The owning coordinator's packaged crash matrix now cuts before submission, after proposal
+admission, after exact application proof, and after response construction; the latter two require
+the committed publication on reopen. Delayed multi-node service polling, reactor integration,
+disconnect/deadline races, operation-internal persistence syscall cuts, TSan, and load measurement
+remain deferred.
 
 ## References
 

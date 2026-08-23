@@ -52,14 +52,17 @@ injection, partial shutdown faults, TSan, and multi-node transport remain harden
 steady-state subprocess test now kills the fully recovered outer database owner and proves the next
 owner reacquires every lock and rebuilds exact rows, retry identity, and application frontier. A
 snapshot-backed variant repeats that proof while metadata and tablet application-snapshot locks and
-retained suffixes are all live. A coordinator variant kills the owner after the observation and
-write proposal are admitted but before any response is observed; reopen accepts either atomic
-pre-write or committed state, and an exact protocol retry converges without duplicate rows or retry
-identity. The outer replicated-database owner now exposes ordered synchronous, non-throwing startup
-observations for root ownership, catalog recovery, tablet preparation, and runtime readiness; the
-complete four-stage sequence has a real-process kill/reopen matrix. Syscall-level startup cuts,
-additional write stages, and snapshot operations remain deferred. The runtime now reports
-synchronous coordinator-released and worker-stopped shutdown stages plus the asynchronous owner's
+retained suffixes are all live. A four-case coordinator matrix kills the owner after route
+validation, proposal admission, exact application proof, or complete response construction. Route
+validation is pre-proposal and must recover the prior publication; proposal admission permits only
+the atomic prior or committed publication; application proof and response readiness require the
+committed mutation and retry identity. An exact protocol retry converges without duplicate rows or
+retry identity in every case. The outer replicated-database owner now exposes ordered synchronous,
+non-throwing startup observations for root ownership, catalog recovery, tablet preparation, and
+runtime readiness; the complete four-stage sequence has a real-process kill/reopen matrix.
+Syscall-level startup cuts, intra-operation persistence syscall cuts, and snapshot operations remain
+deferred. The runtime now reports synchronous coordinator-released and worker-stopped shutdown
+stages plus the asynchronous owner's
 accepted-work-drained, applications-stopped, and log-closed worker boundaries. The outer database
 maps all five before reporting root release, and all six stages have real-process kill/reopen
 coverage. Every internal case drops an admitted proposal response owner before shutdown. The

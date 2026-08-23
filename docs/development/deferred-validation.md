@@ -529,9 +529,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   parser and exact certificate/address/node authority also exist, and an owning transport runtime
   plus packaged daemon poll thread composes them with TLS contexts and randomized timers; add
   in-memory credential loading, remote leader redirection, packaged startup/write/snapshot/shutdown
-  crash-cut and syscall matrices beyond the completed retained-log and snapshot-backed steady-state
-  owner `SIGKILL` lifecycles, snapshot-plus-suffix reopen, and coordinator post-admission/pre-response
-  write cut, plus the completed four-stage packaged-startup owner matrix, broader reconfiguration
+  syscall and intra-operation matrices beyond the completed retained-log and snapshot-backed
+  steady-state owner `SIGKILL` lifecycles, snapshot-plus-suffix reopen, four-stage coordinator write
+  matrix, and four-stage packaged-startup owner matrix, broader reconfiguration
   matrices beyond the completed committed-joint removal restart, intra-drain/extension-hook/
   physical-close syscall cuts beyond the completed six-stage packaged shutdown matrix, broader
   queue/disconnect failure matrices, and TSan scheduling coverage.

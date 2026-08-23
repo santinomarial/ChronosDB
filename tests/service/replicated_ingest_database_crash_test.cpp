@@ -7,6 +7,7 @@
 #include "wal/wal_crash_protocol.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <string>
@@ -162,32 +163,57 @@ TEST(ReplicatedIngestDatabaseCrashTest, ReclaimsSnapshotOwnershipAndRetainedSuff
   ASSERT_TRUE(repeated->shutdown().is_ok());
 }
 
-TEST(ReplicatedIngestDatabaseCrashTest, RecoversAmbiguousQuorumWriteAfterAdmissionWithoutResponse) {
+enum class PackagedWriteRecoveryExpectation : std::uint8_t {
+  kAbsent,
+  kAbsentOrCommitted,
+  kCommitted,
+};
+
+struct PackagedWriteCrashCase {
+  std::string_view name;
+  std::string_view pause_after;
+  std::string_view event;
+  PackagedWriteRecoveryExpectation recovery;
+};
+
+class ReplicatedIngestDatabaseWriteCrashTest
+    : public ::testing::TestWithParam<PackagedWriteCrashCase> {};
+
+TEST_P(ReplicatedIngestDatabaseWriteCrashTest,
+       RecoversTheExactAllowedStateAndResolvesAClientRetry) {
+  const PackagedWriteCrashCase test_case = GetParam();
   ReplicatedDatabaseCrashDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   auto spawned = wal::test::CrashChildProcess::spawn(
-      {.directory = directory.path(), .pause_after = "after_ingest_admission"});
+      {.directory = directory.path(), .pause_after = std::string{test_case.pause_after}});
   ASSERT_TRUE(spawned.has_value()) << spawned.error().to_string();
   wal::test::CrashChildProcess child = std::move(*spawned);
-  auto admitted = child.wait_for("ADMITTED", 2U);
-  ASSERT_TRUE(admitted.has_value()) << admitted.error().to_string();
+  auto stage_ready = child.wait_for(test_case.event);
+  ASSERT_TRUE(stage_ready.has_value()) << stage_ready.error().to_string();
   ASSERT_TRUE(child.kill_abruptly().is_ok());
 
   auto database =
       ReplicatedIngestDatabase::open_existing(test::crash_database_config(directory.path(), false));
   ASSERT_TRUE(database.has_value()) << database.error().to_string();
-  auto publication =
-      database->ingest_runtime()->tablet_application()->snapshot(test::crash_tablet_group());
-  ASSERT_TRUE(publication.has_value()) << publication.error().to_string();
-  const bool absent = publication->visible_row_count() == 2U &&
-                      publication->retry_entry_count() == 1U &&
-                      publication->applied_position() ==
-                          head::HeadCommitPosition::raft(test::crash_tablet_group(), 1U);
-  const bool committed = publication->visible_row_count() == 4U &&
-                         publication->retry_entry_count() == 2U &&
-                         publication->applied_position() ==
-                             head::HeadCommitPosition::raft(test::crash_tablet_group(), 2U);
-  ASSERT_TRUE(absent || committed);
+  bool committed = false;
+  if (test_case.recovery == PackagedWriteRecoveryExpectation::kAbsent) {
+    expect_recovered_publication(*database, {.rows = 2U, .retries = 1U, .applied_index = 1U});
+  } else if (test_case.recovery == PackagedWriteRecoveryExpectation::kCommitted) {
+    expect_recovered_publication(*database, {.rows = 4U, .retries = 2U, .applied_index = 2U});
+    committed = true;
+  } else {
+    auto publication =
+        database->ingest_runtime()->tablet_application()->snapshot(test::crash_tablet_group());
+    ASSERT_TRUE(publication.has_value()) << publication.error().to_string();
+    const bool absent = publication->visible_row_count() == 2U &&
+                        publication->retry_entry_count() == 1U &&
+                        publication->applied_position() ==
+                            head::HeadCommitPosition::raft(test::crash_tablet_group(), 1U);
+    committed = publication->visible_row_count() == 4U && publication->retry_entry_count() == 2U &&
+                publication->applied_position() ==
+                    head::HeadCommitPosition::raft(test::crash_tablet_group(), 2U);
+    ASSERT_TRUE(absent || committed);
+  }
   const raft::LogIndex recovered_index = committed ? 2U : 1U;
 
   auto election = database->ingest_runtime()->runtime()->try_submit(
@@ -221,6 +247,24 @@ TEST(ReplicatedIngestDatabaseCrashTest, RecoversAmbiguousQuorumWriteAfterAdmissi
                                {.rows = 4U, .retries = 2U, .applied_index = recovered_index + 1U});
   ASSERT_TRUE(repeated->shutdown().is_ok());
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    CoordinatorWriteStages, ReplicatedIngestDatabaseWriteCrashTest,
+    ::testing::Values(PackagedWriteCrashCase{"RouteValidated", "after_ingest_route_validated",
+                                             "INGEST_ROUTE_VALIDATED",
+                                             PackagedWriteRecoveryExpectation::kAbsent},
+                      PackagedWriteCrashCase{"ProposalAdmitted", "after_ingest_proposal_admitted",
+                                             "INGEST_PROPOSAL_ADMITTED",
+                                             PackagedWriteRecoveryExpectation::kAbsentOrCommitted},
+                      PackagedWriteCrashCase{"ApplicationProved", "after_ingest_application_proved",
+                                             "INGEST_APPLICATION_PROVED",
+                                             PackagedWriteRecoveryExpectation::kCommitted},
+                      PackagedWriteCrashCase{"ResponseReady", "after_ingest_response_ready",
+                                             "INGEST_RESPONSE_READY",
+                                             PackagedWriteRecoveryExpectation::kCommitted}),
+    [](const ::testing::TestParamInfo<PackagedWriteCrashCase>& info) {
+      return std::string{info.param.name};
+    });
 
 struct PackagedStartupCrashCase {
   std::string_view name;

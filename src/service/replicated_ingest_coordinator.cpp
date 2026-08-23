@@ -255,7 +255,8 @@ public:
   }
 
   [[nodiscard]] common::Result<std::optional<network::NetworkTask>>
-  poll(const std::chrono::steady_clock::time_point now) {
+  poll(const std::chrono::steady_clock::time_point now,
+       ReplicatedIngestCoordinatorProgressObserver* const observer) {
     if (pending.empty())
       return std::optional<network::NetworkTask>{};
     for (std::size_t checked = 0U; checked < pending.size(); ++checked) {
@@ -301,6 +302,7 @@ public:
             failure = unavailable("replicated ingest remote leader requires negotiated redirect");
           }
           if (failure.is_ok() && !redirect.has_value()) {
+            observe(observer, ReplicatedIngestCoordinatorProgressStage::kRouteValidated, item);
             auto operation = ReplicatedIngestOperation::submit(
                 route->group_id, observed_term, std::move(route->command), *runtime, *application,
                 limits.columnar_append);
@@ -308,6 +310,7 @@ public:
               failure = operation.error();
             else {
               item.work = std::move(*operation);
+              observe(observer, ReplicatedIngestCoordinatorProgressStage::kProposalAdmitted, item);
               ++cursor;
               continue;
             }
@@ -318,9 +321,10 @@ public:
             failure = result.error();
           else {
             const auto& operation_result = *result;
-            if (operation_result.has_value())
+            if (operation_result.has_value()) {
               completed = *operation_result;
-            else {
+              observe(observer, ReplicatedIngestCoordinatorProgressStage::kApplicationProved, item);
+            } else {
               ++cursor;
               continue;
             }
@@ -355,6 +359,8 @@ public:
                                .request_id = item.request_id,
                                .payload_size = static_cast<std::uint32_t>(payload->size())},
                     .payload = std::move(*payload)}};
+      if (completed.has_value())
+        observe(observer, ReplicatedIngestCoordinatorProgressStage::kResponseReady, item);
       pending.erase(pending.begin() + static_cast<std::ptrdiff_t>(cursor));
       if (cursor == pending.size())
         cursor = 0U;
@@ -374,6 +380,14 @@ public:
   std::vector<Pending> pending;
   std::size_t cursor{};
   ReplicatedIngestCoordinatorMetrics stats;
+
+private:
+  static void observe(ReplicatedIngestCoordinatorProgressObserver* const observer,
+                      const ReplicatedIngestCoordinatorProgressStage stage,
+                      const Pending& item) noexcept {
+    if (observer != nullptr)
+      observer->on_progress({stage, item.connection_id, item.request_id});
+  }
 };
 
 ReplicatedIngestCoordinator::ReplicatedIngestCoordinator(std::unique_ptr<Impl> impl) noexcept
@@ -427,7 +441,19 @@ bool ReplicatedIngestCoordinator::cancel(const std::uint64_t connection_id,
 
 common::Result<std::optional<network::NetworkTask>>
 ReplicatedIngestCoordinator::poll(const std::chrono::steady_clock::time_point now) {
-  return impl_->poll(now);
+  return poll_with(nullptr, now);
+}
+
+common::Result<std::optional<network::NetworkTask>>
+ReplicatedIngestCoordinator::poll(ReplicatedIngestCoordinatorProgressObserver& observer,
+                                  const std::chrono::steady_clock::time_point now) {
+  return poll_with(std::addressof(observer), now);
+}
+
+common::Result<std::optional<network::NetworkTask>>
+ReplicatedIngestCoordinator::poll_with(ReplicatedIngestCoordinatorProgressObserver* const observer,
+                                       const std::chrono::steady_clock::time_point now) {
+  return impl_->poll(now, observer);
 }
 
 ReplicatedIngestCoordinatorMetrics ReplicatedIngestCoordinator::metrics() const noexcept {

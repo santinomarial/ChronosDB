@@ -25,11 +25,23 @@ connection/request owner and emits no response because the reactor already retir
 An admitted Raft proposal cannot be undone by cancellation, timeout, or destruction. Its eventual
 application remains authoritative and retry-safe even when response ownership disappears.
 
+One optional observer can be borrowed for a synchronous `poll(observer)` call. Successful writes
+report correlated route-validated, proposal-admitted, application-proved, and response-ready stages
+in order on the coordinator thread. Errors and redirects emit no write stage. The callback is
+non-throwing, is not retained, and must not reenter or mutate the coordinator; blocking it blocks
+that poll call.
+
 ## Consequences and validation
 
 Node-wide pending count, high water, admissions, completions, cancellations, timeouts, and
 rejections are observable. Focused tests cover finite overload, exact cancellation, successful
-correlated acknowledgement, deadline error, metrics, and refusal without negotiated authority.
+correlated acknowledgement, deadline error, metrics, refusal without negotiated authority, and
+the exact success-stage order without duplicate callbacks.
+
+A real-process matrix kills the packaged database at each observed write stage. Route validation
+is pre-proposal and must reopen to the prior publication; proposal admission permits either prior
+or committed state; application proof and response readiness require the committed mutation and
+retry identity. Every outcome is resolved by an exact protocol retry and repeated reopen.
 
 Authoritative tablet/group placement and local leader routing are added by ADR 0280, and committed
 active-schema authorization by ADR 0281. Remote leader redirection, packaged daemon integration,

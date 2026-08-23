@@ -83,14 +83,17 @@ second reopen. A second child variant compacts the provisioning catalog and firs
 commits one retained suffix in each group, opens the packaged owner from both authoritative
 application snapshots, and then reaches the same `SIGKILL` boundary. Parent recovery reacquires both
 snapshot locks, reconstructs four rows and two retry identities, replays the metadata suffix, and
-survives an exact suffix retry plus another reopen. These are steady-state owner-death boundaries;
-a third child dies after the QUORUM_SYNC coordinator has admitted its observation and write proposal
-but before the caller observes a response. Recovery permits only the exact pre-write or fully
-committed publication, and the same request then returns first-application or matching-retry
-accordingly without duplicate rows. The observer's complete success order is tested, and a
-four-case child matrix pauses after each of validated root ownership, catalog recovery, tablet-owner
-preparation, and asynchronous runtime readiness. Every child dies by `SIGKILL`; the parent proves
-exact recovery, retry, and repeated reopen. Syscall-level startup cuts, remaining write stages,
+survives an exact suffix retry plus another reopen. These are steady-state owner-death boundaries.
+A four-case QUORUM_SYNC child matrix pauses after correlated route validation, proposal admission,
+exact application proof, and complete response construction. The route-validated case is
+pre-proposal and requires the exact prior publication; the admitted case permits only the exact
+prior or fully committed publication; the proved and response-ready cases require the committed
+mutation and retry identity. The same request then returns first-application or matching-retry as
+appropriate, without duplicate rows, and repeated reopen preserves the resulting frontier. The
+observer's complete success order is tested. A separate four-case child matrix pauses after each of
+validated root ownership, catalog recovery, tablet-owner preparation, and asynchronous runtime
+readiness. Every child dies by `SIGKILL`; the parent proves exact recovery, retry, and repeated
+reopen. Syscall-level startup cuts, intra-operation write syscall cuts,
 snapshot-install/compaction, and intra-stage shutdown syscall matrices, larger resident-set
 profiles, and broader TSan coverage remain deferred. A six-case shutdown matrix kills the process
 at each callback and proves exact reopen and retry. Its coordinator-release case first admits a real

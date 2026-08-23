@@ -51,8 +51,10 @@ ADR 0296 permits an explicitly negotiated redirect from an exact stable follower
 other nonlocal or changing authority still fails closed. Focused tests cover a successful
 metadata-derived route, bounded cancellation and timeout across the two-phase owner,
 missing-binding rejection, and placement/voter divergence. Multi-process redirect retry, packaged
-reactor wakeups, concurrent metadata movement races, crash cuts, TSan, and load measurement remain
-hardening work.
+reactor wakeups, and concurrent metadata movement races remain hardening work. A packaged crash
+matrix now proves the route-validated pre-proposal boundary recovers no mutation and the
+proposal-admitted boundary recovers only the atomic prior or committed publication; routing cuts
+inside metadata observation/revalidation, TSan, and load measurement remain.
 
 ## Affected invariants
 

@@ -68,6 +68,34 @@ pause_stage(const std::string_view pause_after) noexcept {
   return std::nullopt;
 }
 
+[[nodiscard]] std::optional<ReplicatedIngestCoordinatorProgressStage>
+coordinator_stage(const std::string_view pause_after) noexcept {
+  if (pause_after == "after_ingest_route_validated")
+    return ReplicatedIngestCoordinatorProgressStage::kRouteValidated;
+  if (pause_after == "after_ingest_proposal_admitted")
+    return ReplicatedIngestCoordinatorProgressStage::kProposalAdmitted;
+  if (pause_after == "after_ingest_application_proved")
+    return ReplicatedIngestCoordinatorProgressStage::kApplicationProved;
+  if (pause_after == "after_ingest_response_ready")
+    return ReplicatedIngestCoordinatorProgressStage::kResponseReady;
+  return std::nullopt;
+}
+
+[[nodiscard]] constexpr std::string_view
+coordinator_event(const ReplicatedIngestCoordinatorProgressStage stage) noexcept {
+  switch (stage) {
+  case ReplicatedIngestCoordinatorProgressStage::kRouteValidated:
+    return "INGEST_ROUTE_VALIDATED\n";
+  case ReplicatedIngestCoordinatorProgressStage::kProposalAdmitted:
+    return "INGEST_PROPOSAL_ADMITTED\n";
+  case ReplicatedIngestCoordinatorProgressStage::kApplicationProved:
+    return "INGEST_APPLICATION_PROVED\n";
+  case ReplicatedIngestCoordinatorProgressStage::kResponseReady:
+    return "INGEST_RESPONSE_READY\n";
+  }
+  return {};
+}
+
 class StartupPauseObserver final : public ReplicatedIngestDatabaseStartupObserver {
 public:
   explicit StartupPauseObserver(const ReplicatedIngestDatabaseStartupStage desired) noexcept
@@ -81,6 +109,20 @@ public:
 
 private:
   ReplicatedIngestDatabaseStartupStage desired_;
+};
+
+class CoordinatorPauseObserver final : public ReplicatedIngestCoordinatorProgressObserver {
+public:
+  explicit CoordinatorPauseObserver(const ReplicatedIngestCoordinatorProgressStage desired) noexcept
+      : desired_(desired) {}
+
+  void on_progress(const ReplicatedIngestCoordinatorProgress& progress) noexcept override {
+    if (progress.stage == desired_ && progress.connection_id == 20U && progress.request_id == 2U)
+      pause_with_event(coordinator_event(progress.stage));
+  }
+
+private:
+  ReplicatedIngestCoordinatorProgressStage desired_;
 };
 
 class ShutdownPauseObserver final : public ReplicatedIngestDatabaseShutdownObserver {
@@ -307,6 +349,34 @@ struct ChildConfig {
           "crash child timed out waiting for ingest proposal admission"};
 }
 
+[[nodiscard]] common::Status
+pause_during_suffix_write(ReplicatedIngestDatabase& database,
+                          const ReplicatedIngestCoordinatorProgressStage desired_stage) {
+  auto election = database.ingest_runtime()->runtime()->try_submit(
+      {{crash_tablet_group(), raft::StartElectionOperation{}}});
+  if (!election.has_value())
+    return election.error();
+  auto elected = election->wait();
+  if (!elected.has_value())
+    return elected.error();
+  ReplicatedIngestCoordinator* const coordinator = database.ingest_runtime()->coordinator();
+  common::Status admitted = coordinator->admit(crash_request(crash_suffix_command(), 2U));
+  if (!admitted.is_ok())
+    return admitted;
+  CoordinatorPauseObserver observer{desired_stage};
+  for (std::size_t attempt = 0U; attempt < 10'000U; ++attempt) {
+    auto response = coordinator->poll(observer);
+    if (!response.has_value())
+      return response.error();
+    if (response->has_value())
+      return {common::StatusCode::kInternal,
+              "crash child returned an ingest response before the requested write stage"};
+    std::this_thread::yield();
+  }
+  return {common::StatusCode::kUnavailable,
+          "crash child timed out waiting for the requested ingest write stage"};
+}
+
 [[nodiscard]] common::Status prepare_and_reopen(const ChildConfig& config) {
   common::Status prepared = config.use_snapshots ? prepare_snapshot_history(config.root)
                                                  : prepare_retained_history(config.root);
@@ -373,12 +443,8 @@ struct ChildConfig {
     return database->shutdown(observer);
   }
 
-  if (config.pause_after == "after_ingest_admission") {
-    const common::Status admitted = admit_suffix_without_response(*database);
-    if (!admitted.is_ok())
-      return admitted;
-    pause_with_event("ADMITTED 2\n");
-  }
+  if (const auto stage = coordinator_stage(config.pause_after); stage.has_value())
+    return pause_during_suffix_write(*database, *stage);
 
   std::cout << "READY " << recovered->visible_row_count() << ' ' << recovered->retry_entry_count()
             << '\n'

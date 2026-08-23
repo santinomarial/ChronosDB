@@ -67,9 +67,11 @@ resolution, delayed three-voter majority commit, exact leader-term loss, pending
 dropped-owner reclamation, shutdown completion, terminal corrupt-command failure, and suppression of
 a staged success when a later touched group fails the same hook.
 
-Proposal-result index extraction, reactor wakeup/service deadlines, protocol-v2 response encoding,
-disconnect races, crash cut points, TSan, and scheduling/latency measurements remain subsequent
-work.
+Proposal-result index extraction, service deadlines, and protocol-v2 response encoding are covered
+through the replicated-ingest operation and coordinator. A packaged four-stage coordinator matrix
+now proves that a crash after application proof or response construction recovers the committed
+mutation and retry identity. Delayed multi-node response handling, disconnect races, cuts inside
+the application hook, TSan, and scheduling/latency measurements remain subsequent work.
 
 ## References
 

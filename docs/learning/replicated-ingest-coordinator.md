@@ -14,6 +14,18 @@ The connection/request pair is the cancellation and correlation key. A cancel dr
 ownership but does not pretend to roll back Raft. Deadlines create a correlated CANCELLED error;
 the same command remains safely retryable through its canonical client identity.
 
+`poll(observer)` borrows one progress observer only for that synchronous call. On the coordinator
+thread, a successful write reports route validated, proposal admitted, application proved, and
+response ready in exact order with the same connection/request key. Errors and redirects report no
+write stage. The callback cannot throw, reenter, or mutate the coordinator, and blocking it blocks
+polling. The observer is a test/embedding boundary; it changes no durable or network format.
+
+The packaged `SIGKILL` matrix uses those stages as recovery contracts. Route validation is before
+proposal submission and must recover the prior state. Admission may recover prior or committed
+state because the worker is concurrent. Application proof and response readiness both require the
+committed rows and retry identity. An exact retry resolves either allowed outcome without duplicate
+rows, and another reopen preserves it.
+
 Pending storage is pre-reserved and bounded. Admission and polling are `O(P)` in the worst case;
 operation work retains its own Raft/application costs. Measure hot pending counts, completion skew,
 poll scan cost, timeout bursts, and response-queue stalls before replacing the vector.

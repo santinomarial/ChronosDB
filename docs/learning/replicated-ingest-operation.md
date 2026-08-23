@@ -21,6 +21,13 @@ retains the move-only owner and calls it only when coordinating completions. Des
 response ownership but cannot roll back a durable proposal. Runtime and application owners must
 outlive it.
 
+For packaged recovery tests, the coordinator exposes four success-only observation boundaries.
+Route validation precedes operation submission. Proposal admission follows installation of the
+operation owner. Application proof means this operation has validated its exact persisted proposal,
+applied-quorum receipt, and retry publication. Response readiness follows complete acknowledgement
+construction but precedes its return. A crash at the first boundary cannot contain the mutation;
+admission is ambiguous; either later boundary requires it to recover committed.
+
 The published retry outcome identifies the first logical application index. Equality with the
 attempt receipt index means `APPLIED`; a larger receipt index with the identical retry/mutation
 identity means `MATCHING_RETRY`. A missing, foreign, WAL-sourced, or future outcome is corruption.
@@ -32,5 +39,5 @@ overhead, retries, and response-queue delay before optimizing the result contrac
 
 Likely review questions: why bind the leader term, why validate metadata both before and after the
 ordered observation, why reject writes during joint membership, why decode the persisted command
-again, why can destruction not cancel Raft, and why does the first retry record sequence
-distinguish outcomes?
+again, why application proof is a stronger crash boundary than proposal admission, why destruction
+cannot cancel Raft, and why the first retry record sequence distinguishes outcomes?

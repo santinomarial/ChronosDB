@@ -11,6 +11,7 @@
 #include "columnar/columnar_test_support.hpp"
 #include "ingest/ingest_test_support.hpp"
 
+#include <array>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <memory>
@@ -79,6 +80,35 @@ struct QuorumRequestIdentity {
   std::uint64_t connection_id;
   std::uint64_t request_id;
   std::uint8_t seed;
+};
+
+class CoordinatorProgressRecorder final : public ReplicatedIngestCoordinatorProgressObserver {
+public:
+  void on_progress(const ReplicatedIngestCoordinatorProgress& progress) noexcept override {
+    if (count_ < progress_.size())
+      progress_[count_] = progress;
+    else
+      overflow_ = true;
+    ++count_;
+  }
+
+  [[nodiscard]] std::size_t count() const noexcept {
+    return count_;
+  }
+
+  [[nodiscard]] bool overflowed() const noexcept {
+    return overflow_;
+  }
+
+  [[nodiscard]] const ReplicatedIngestCoordinatorProgress&
+  operator[](const std::size_t index) const noexcept {
+    return progress_[index];
+  }
+
+private:
+  std::array<ReplicatedIngestCoordinatorProgress, 4U> progress_{};
+  std::size_t count_{};
+  bool overflow_{};
 };
 
 [[nodiscard]] network::NetworkTask quorum_request(const QuorumRequestIdentity identity) {
@@ -284,9 +314,10 @@ TEST(ReplicatedIngestCoordinatorTest, BoundsCancelsCompletesAndTimesOutCorrelate
   EXPECT_TRUE(coordinator->cancel(11U, 1U));
   EXPECT_FALSE(coordinator->cancel(11U, 1U));
 
+  CoordinatorProgressRecorder progress;
   std::optional<network::NetworkTask> response;
   for (std::size_t attempt = 0U; attempt < 10'000U && !response.has_value(); ++attempt) {
-    auto polled = coordinator->poll(start);
+    auto polled = coordinator->poll(progress, start);
     ASSERT_TRUE(polled.has_value()) << polled.error().to_string();
     response = std::move(*polled);
     std::this_thread::yield();
@@ -302,12 +333,23 @@ TEST(ReplicatedIngestCoordinatorTest, BoundsCancelsCompletesAndTimesOutCorrelate
             network::MessageType::kQuorumSyncIngestAcknowledgement);
   EXPECT_TRUE(network::decode_quorum_sync_ingest_acknowledgement(completed_response.frame.payload)
                   .has_value());
+  ASSERT_EQ(progress.count(), 4U);
+  EXPECT_FALSE(progress.overflowed());
+  constexpr std::array expected_stages{ReplicatedIngestCoordinatorProgressStage::kRouteValidated,
+                                       ReplicatedIngestCoordinatorProgressStage::kProposalAdmitted,
+                                       ReplicatedIngestCoordinatorProgressStage::kApplicationProved,
+                                       ReplicatedIngestCoordinatorProgressStage::kResponseReady};
+  for (std::size_t index = 0U; index < expected_stages.size(); ++index) {
+    EXPECT_EQ(progress[index].stage, expected_stages[index]);
+    EXPECT_EQ(progress[index].connection_id, 10U);
+    EXPECT_EQ(progress[index].request_id, 1U);
+  }
 
   EXPECT_TRUE(
       coordinator
           ->admit(quorum_request({.connection_id = 13U, .request_id = 7U, .seed = 4U}), start)
           .is_ok());
-  auto timed_out = coordinator->poll(start + std::chrono::milliseconds{101});
+  auto timed_out = coordinator->poll(progress, start + std::chrono::milliseconds{101});
   ASSERT_TRUE(timed_out.has_value()) << timed_out.error().to_string();
   auto& timed_out_response = *timed_out;
   if (!timed_out_response.has_value()) {
@@ -320,6 +362,11 @@ TEST(ReplicatedIngestCoordinatorTest, BoundsCancelsCompletesAndTimesOutCorrelate
   const auto error = network::decode_error_message(timeout.frame.payload);
   ASSERT_TRUE(error.has_value());
   EXPECT_EQ(error->code, network::ProtocolErrorCode::kCancelled);
+  auto empty = coordinator->poll(progress, start + std::chrono::milliseconds{101});
+  ASSERT_TRUE(empty.has_value()) << empty.error().to_string();
+  EXPECT_FALSE(empty->has_value());
+  EXPECT_EQ(progress.count(), 4U);
+  EXPECT_FALSE(progress.overflowed());
   const auto metrics = coordinator->metrics();
   EXPECT_EQ(metrics.pending_requests, 0U);
   EXPECT_EQ(metrics.admitted_requests, 3U);

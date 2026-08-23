@@ -9,6 +9,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 
@@ -30,6 +31,29 @@ struct ReplicatedIngestCoordinatorMetrics {
   std::uint64_t timed_out_requests{};
   std::uint64_t rejected_requests{};
   std::uint64_t redirected_requests{};
+};
+
+enum class ReplicatedIngestCoordinatorProgressStage : std::uint8_t {
+  kRouteValidated,
+  kProposalAdmitted,
+  kApplicationProved,
+  kResponseReady,
+};
+
+struct ReplicatedIngestCoordinatorProgress {
+  ReplicatedIngestCoordinatorProgressStage stage{
+      ReplicatedIngestCoordinatorProgressStage::kRouteValidated};
+  std::uint64_t connection_id{};
+  std::uint64_t request_id{};
+};
+
+// Borrowed only for one synchronous poll(observer) call on the coordinator thread. Successful
+// writes report correlated progress in order; errors and redirects report no write stage. Blocking
+// blocks polling, and the callback must not reenter or mutate this coordinator.
+class ReplicatedIngestCoordinatorProgressObserver {
+public:
+  virtual ~ReplicatedIngestCoordinatorProgressObserver() = default;
+  virtual void on_progress(const ReplicatedIngestCoordinatorProgress& progress) noexcept = 0;
 };
 
 // Thread-affine bounded owner for multiple reactor-routed QUORUM_SYNC requests. poll() performs no
@@ -56,9 +80,15 @@ public:
   [[nodiscard]] bool cancel(std::uint64_t connection_id, std::uint64_t request_id) noexcept;
   [[nodiscard]] common::Result<std::optional<network::NetworkTask>>
   poll(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+  [[nodiscard]] common::Result<std::optional<network::NetworkTask>>
+  poll(ReplicatedIngestCoordinatorProgressObserver& observer,
+       std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
   [[nodiscard]] ReplicatedIngestCoordinatorMetrics metrics() const noexcept;
 
 private:
+  [[nodiscard]] common::Result<std::optional<network::NetworkTask>>
+  poll_with(ReplicatedIngestCoordinatorProgressObserver* observer,
+            std::chrono::steady_clock::time_point now);
   class Impl;
   explicit ReplicatedIngestCoordinator(std::unique_ptr<Impl> impl) noexcept;
   std::unique_ptr<Impl> impl_;
