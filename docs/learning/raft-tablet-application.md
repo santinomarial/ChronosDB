@@ -88,6 +88,12 @@ entry, and proceeds to the injected Raft failure. Tail repair, authority selecti
 reclamation, and repeated reopen then converge for all ten products; the temporary is never treated
 as an application snapshot.
 
+The corresponding eight-case reopen matrix combines both cleanup failures with incomplete-Raft-tail
+repair failures at size inspection, truncate, file sync, and directory sync. Size inspection leaves
+the 16-byte tail intact; the other failures occur after truncation. A later repairing reopen observes
+the correct bytes in either case. Successful snapshot and runtime opens after the injected errors
+also prove that both domain locks were released before exact orphan adoption and repeated recovery.
+
 Exact retransmissions also coalesce without re-entering the application owner. A competing remote
 snapshot receives a negative response while the first transfer retains the sole completion
 identity; after that identity resolves, a later request can be admitted normally.
