@@ -4,8 +4,11 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <future>
 #include <gtest/gtest.h>
+#include <iterator>
+#include <memory>
 #include <string>
 #include <system_error>
 #include <unistd.h>
@@ -35,6 +38,18 @@ private:
 
 [[nodiscard]] std::filesystem::path fixture(const char* name) {
   return std::filesystem::path{CHRONOS_NETWORK_FIXTURE_DIR} / "tls" / name;
+}
+
+[[nodiscard]] std::string fixture_bytes(const char* name) {
+  std::ifstream stream{fixture(name), std::ios::binary};
+  return {std::istreambuf_iterator<char>{stream}, std::istreambuf_iterator<char>{}};
+}
+
+[[nodiscard]] std::shared_ptr<const network::TlsPemCredentials> server_pem_credentials() {
+  return std::make_shared<const network::TlsPemCredentials>(
+      network::TlsPemCredentials{.certificate_chain = fixture_bytes("server.pem"),
+                                 .private_key = fixture_bytes("server-key.pem"),
+                                 .trust_store = fixture_bytes("ca.pem")});
 }
 
 [[nodiscard]] raft::GroupId group() {
@@ -168,9 +183,7 @@ TEST(ReplicatedRaftTransportRuntimeTest, RejectsMissingRemoteAndDuplicateGroups)
             .peers = {peer(1U, {{127U, 0U, 0U, 1U}, 7001U}, 11U),
                       peer(2U, {{127U, 0U, 0U, 1U}, 7002U}, 22U)},
             .resident_groups = {group(), group()},
-            .tls = {.certificate_chain_file = fixture("server.pem").string(),
-                    .private_key_file = fixture("server-key.pem").string(),
-                    .trust_store_file = fixture("ca.pem").string()}};
+            .tls = {.pem_credentials = server_pem_credentials()}};
   auto duplicate = ReplicatedRaftTransportRuntime::create(std::move(config));
   ASSERT_FALSE(duplicate.has_value());
   EXPECT_EQ(duplicate.error().code(), common::StatusCode::kAlreadyExists);

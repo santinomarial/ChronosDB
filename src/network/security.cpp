@@ -11,6 +11,23 @@ namespace {
   return address.front() == 127U;
 }
 
+[[nodiscard]] bool valid_path(const std::string& path) noexcept {
+  return !path.empty() && path.find('\0') == std::string::npos;
+}
+
+[[nodiscard]] bool valid_server_credentials(const TlsServerConfig& tls) noexcept {
+  const bool any_path = !tls.certificate_chain_file.empty() || !tls.private_key_file.empty() ||
+                        !tls.trust_store_file.empty();
+  const bool complete_paths = valid_path(tls.certificate_chain_file) &&
+                              valid_path(tls.private_key_file) && valid_path(tls.trust_store_file);
+  const bool has_pem = tls.pem_credentials != nullptr;
+  const bool complete_pem = has_pem && !tls.pem_credentials->certificate_chain.empty() &&
+                            !tls.pem_credentials->private_key.empty() &&
+                            !tls.pem_credentials->trust_store.empty();
+  return tls.require_client_certificate && !(any_path && !complete_paths) &&
+         (complete_paths != has_pem) && (!has_pem || complete_pem);
+}
+
 } // namespace
 
 common::Status validate_network_security_config(const NetworkSecurityConfig& config,
@@ -20,8 +37,7 @@ common::Status validate_network_security_config(const NetworkSecurityConfig& con
       return invalid("TLS_REQUIRED needs TLS server credentials");
     if (config.authenticator == nullptr)
       return invalid("TLS_REQUIRED needs a certificate principal authenticator");
-    if (config.tls->certificate_chain_file.empty() || config.tls->private_key_file.empty() ||
-        config.tls->trust_store_file.empty() || !config.tls->require_client_certificate)
+    if (!valid_server_credentials(*config.tls))
       return invalid("TLS_REQUIRED server credentials are invalid");
     return common::Status::ok();
   }

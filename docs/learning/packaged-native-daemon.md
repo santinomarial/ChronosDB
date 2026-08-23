@@ -19,7 +19,11 @@ When the atomic native security bundle is configured, an immutable certificate-t
 authority is created before the reactor and therefore outlives the reactor's borrowed pointer. The
 reactor owns its OpenSSL server context and per-connection sessions. The authority grants coarse
 protocol admission only: it does not infer node, group, leader, placement, table, operation, or
-source-IP authority from a client certificate.
+source-IP authority from a client certificate. The daemon reads the certificate, private key, and
+trust store to exact EOF through their already-qualified descriptors and passes one immutable PEM
+bundle to context construction. Replacing a configured path after that read cannot change the
+credentials OpenSSL parses. Replicated peer transport uses the same descriptor-to-memory boundary
+for its shared inbound/outbound identity.
 
 The configured worker dispatches one task synchronously and may retain a bounded query response
 sequence. It publishes that sequence in order and consumes no next request until completion. The

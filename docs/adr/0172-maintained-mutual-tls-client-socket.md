@@ -20,6 +20,9 @@ identity behind the same OpenSSL-free PIMPL boundary. It loads an explicit trust
 certificate/private-key pair, requires TLS 1.2 or newer, disables compression and renegotiation, and
 enables the same nonblocking partial-write modes as the server context.
 
+ADR 0421 subsequently adds an exact in-memory PEM source, mutually exclusive with the retained path
+source. Secure-file-owning services use it after reading already-qualified descriptors.
+
 `TlsSocket::connect` creates a client session over a borrowed connected nonblocking descriptor. A
 DNS identity is configured as both the certificate hostname check and SNI value; an IPv4 or IPv6
 identity is configured through OpenSSL's IP SAN verifier and is not sent as SNI. Empty, overlong, or
@@ -70,4 +73,5 @@ server-only carrier and therefore makes authenticated outbound cluster transport
 - [Bounded epoll mutual-TLS admission](0145-bounded-epoll-mutual-tls-admission.md)
 - [Authenticated distributed query transport](0168-authenticated-distributed-query-transport.md)
 - [OpenSSL dependency record](../dependencies/openssl.md)
+- [Descriptor-bound in-memory TLS credentials](0421-descriptor-bound-in-memory-tls-credentials.md)
 - [Architecture invariants](../architecture/invariants.md)

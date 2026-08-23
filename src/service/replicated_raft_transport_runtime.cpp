@@ -65,6 +65,25 @@ private:
          limits.maximum_election_timeout <= maximum_election && limits.connect_timeout.count() > 0;
 }
 
+[[nodiscard]] bool valid_path(const std::string& path) noexcept {
+  return !path.empty() && path.find('\0') == std::string::npos;
+}
+
+[[nodiscard]] bool
+valid_tls_credentials(const ReplicatedRaftTransportTlsCredentials& credentials) noexcept {
+  const bool any_path = !credentials.certificate_chain_file.empty() ||
+                        !credentials.private_key_file.empty() ||
+                        !credentials.trust_store_file.empty();
+  const bool complete_paths = valid_path(credentials.certificate_chain_file) &&
+                              valid_path(credentials.private_key_file) &&
+                              valid_path(credentials.trust_store_file);
+  const bool has_pem = credentials.pem_credentials != nullptr;
+  const bool complete_pem = has_pem && !credentials.pem_credentials->certificate_chain.empty() &&
+                            !credentials.pem_credentials->private_key.empty() &&
+                            !credentials.pem_credentials->trust_store.empty();
+  return !(any_path && !complete_paths) && complete_paths != has_pem && (!has_pem || complete_pem);
+}
+
 } // namespace
 
 class ReplicatedRaftTransportRuntime::Impl {
@@ -99,7 +118,8 @@ public:
             {.certificate_chain_file = config.tls.certificate_chain_file,
              .private_key_file = config.tls.private_key_file,
              .trust_store_file = config.tls.trust_store_file,
-             .expected_server_identity = peer.tls_server_identity});
+             .expected_server_identity = peer.tls_server_identity,
+             .pem_credentials = config.tls.pem_credentials});
         if (!context.has_value())
           return context.error();
         client_contexts.push_back(std::move(*context));
@@ -119,7 +139,8 @@ public:
           {.listener = {.bind_endpoint = authority.local_peer().endpoint},
            .tls = {.certificate_chain_file = config.tls.certificate_chain_file,
                    .private_key_file = config.tls.private_key_file,
-                   .trust_store_file = config.tls.trust_store_file},
+                   .trust_store_file = config.tls.trust_store_file,
+                   .pem_credentials = config.tls.pem_credentials},
            .authenticator = &authority,
            .receiver = &installed_receiver,
            .carrier_limits = config.limits.inbound_carrier,
@@ -199,8 +220,7 @@ ReplicatedRaftTransportRuntime::operator=(ReplicatedRaftTransportRuntime&&) noex
 common::Result<ReplicatedRaftTransportRuntime>
 ReplicatedRaftTransportRuntime::create(ReplicatedRaftTransportRuntimeConfig config) {
   if (config.local_node_id == 0U || config.durable_runtime == nullptr || config.peers.size() < 2U ||
-      config.resident_groups.empty() || config.tls.certificate_chain_file.empty() ||
-      config.tls.private_key_file.empty() || config.tls.trust_store_file.empty() ||
+      config.resident_groups.empty() || !valid_tls_credentials(config.tls) ||
       !valid_timeouts(config.limits))
     return common::make_unexpected(status(common::StatusCode::kInvalidArgument,
                                           "replicated Raft transport configuration is invalid"));

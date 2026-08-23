@@ -31,8 +31,10 @@ invalid credentials fail closed without protocol dispatch.
 
 The daemon opens final paths with `O_NOFOLLOW`, bounds regular-file size, rejects group/other writes
 to the authority, certificate, and trust store, and requires the key to have no group/other access.
-It reports `native_transport=tls|plaintext` only after reactor startup. Configuration and
-credential reload remain restart operations.
+ADR 0421 subsequently required exact descriptor reads and in-memory OpenSSL loading, so path
+replacement after qualification cannot select different credential bytes. It reports
+`native_transport=tls|plaintext` only after reactor startup. Configuration and credential reload
+remain restart operations.
 
 ## Alternatives considered
 
@@ -92,3 +94,4 @@ revocation, and io_uring TLS require independent ownership and operational decis
 - [Native server principal configuration](../operations/native-server-principal-config.md)
 - [Native client route configuration](../operations/native-client-route-config.md)
 - [Native server operations baseline](../operations/native-server.md)
+- [Descriptor-bound in-memory TLS credentials](0421-descriptor-bound-in-memory-tls-credentials.md)

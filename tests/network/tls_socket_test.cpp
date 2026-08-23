@@ -8,7 +8,9 @@
 #include <cstdint>
 #include <fcntl.h>
 #include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
+#include <iterator>
 #include <memory>
 #include <openssl/ssl.h>
 #include <optional>
@@ -94,6 +96,19 @@ private:
           .private_key_file = fixture("client-key.pem").string(),
           .trust_store_file = fixture("ca.pem").string(),
           .expected_server_identity = "127.0.0.1"};
+}
+
+[[nodiscard]] std::string fixture_bytes(const char* name) {
+  std::ifstream stream{fixture(name), std::ios::binary};
+  return {std::istreambuf_iterator<char>{stream}, std::istreambuf_iterator<char>{}};
+}
+
+[[nodiscard]] std::shared_ptr<const TlsPemCredentials> pem_credentials(const char* certificate,
+                                                                       const char* private_key) {
+  return std::make_shared<const TlsPemCredentials>(
+      TlsPemCredentials{.certificate_chain = fixture_bytes(certificate),
+                        .private_key = fixture_bytes(private_key),
+                        .trust_store = fixture_bytes("ca.pem")});
 }
 
 [[nodiscard]] SocketPair nonblocking_socket_pair() {
@@ -186,6 +201,51 @@ TEST(TlsSocketTest, InvalidCredentialConfigurationFailsClosed) {
   const auto missing_client_context = TlsClientContext::create(missing_client);
   ASSERT_FALSE(missing_client_context.has_value());
   EXPECT_EQ(missing_client_context.error().code(), common::StatusCode::kUnauthenticated);
+
+  TlsServerConfig ambiguous = server_config();
+  ambiguous.pem_credentials = pem_credentials("server.pem", "server-key.pem");
+  const auto ambiguous_context = TlsServerContext::create(ambiguous);
+  ASSERT_FALSE(ambiguous_context.has_value());
+  EXPECT_EQ(ambiguous_context.error().code(), common::StatusCode::kInvalidArgument);
+
+  auto invalid_pem =
+      std::make_shared<TlsPemCredentials>(*pem_credentials("server.pem", "server-key.pem"));
+  invalid_pem->certificate_chain = "not a certificate";
+  const auto invalid_pem_context =
+      TlsServerContext::create({.pem_credentials = std::move(invalid_pem)});
+  ASSERT_FALSE(invalid_pem_context.has_value());
+  EXPECT_EQ(invalid_pem_context.error().code(), common::StatusCode::kUnauthenticated);
+}
+
+TEST(TlsSocketTest, InMemoryPemCredentialsCompleteMutualHandshakeWithoutPaths) {
+  const auto server_credentials = pem_credentials("server.pem", "server-key.pem");
+  auto client_credentials =
+      std::make_shared<TlsPemCredentials>(*pem_credentials("client.pem", "client-key.pem"));
+  client_credentials->trust_store += client_credentials->trust_store;
+  ASSERT_FALSE(server_credentials->certificate_chain.empty());
+  ASSERT_FALSE(server_credentials->private_key.empty());
+  ASSERT_FALSE(server_credentials->trust_store.empty());
+  auto server_context = TlsServerContext::create(
+      {.require_client_certificate = true, .pem_credentials = server_credentials});
+  ASSERT_TRUE(server_context.has_value()) << server_context.error().message();
+  auto client_context_owner = TlsClientContext::create(
+      {.expected_server_identity = "127.0.0.1", .pem_credentials = client_credentials});
+  ASSERT_TRUE(client_context_owner.has_value()) << client_context_owner.error().message();
+  CapturingAuthenticator authenticator;
+  NetworkSecurityConfig security{.mode = TransportSecurityMode::kTlsRequired,
+                                 .authenticator = &authenticator,
+                                 .tls = TlsServerConfig{.require_client_certificate = true,
+                                                        .pem_credentials = server_credentials}};
+  EXPECT_TRUE(validate_network_security_config(security, {10U, 0U, 0U, 1U}).is_ok());
+
+  SocketPair sockets = nonblocking_socket_pair();
+  auto server = TlsSocket::accept(*server_context, sockets.sockets[0]);
+  ASSERT_TRUE(server.has_value()) << server.error().message();
+  auto client = TlsSocket::connect(*client_context_owner, sockets.sockets[1]);
+  ASSERT_TRUE(client.has_value()) << client.error().message();
+  complete_handshake(*server, *client);
+  EXPECT_TRUE(server->peer_certificate_sha256().has_value());
+  EXPECT_TRUE(client->peer_certificate_sha256().has_value());
 }
 
 TEST(TlsSocketTest, ReusesSignalSafeBioMethodAcrossSessionLifetimes) {

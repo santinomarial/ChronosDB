@@ -32,13 +32,11 @@ Client certificate, private-key, and trust-store paths are separate local secret
 never appear in this shared route file. `NativeClientTlsRouteOwner::load` opens every final path
 without following a symlink, requires bounded nonempty regular files, rejects group/other-writable
 route, certificate, and trust files, and requires the private key to be inaccessible to group and
-other. It creates one expected-identity TLS client context per route and publishes stable borrowed
-route pointers only after the complete bundle succeeds.
-
-The current OpenSSL path API reopens qualified credential paths during context creation. Protect
-parent directories and replace credentials atomically so a path cannot be swapped between those
-steps. Existing contexts retain loaded credential state; credential rotation, DNS endpoint
-resolution, and live reload are not implemented.
+other. Each credential is read completely from that already-open descriptor and the owner creates
+every expected-identity TLS client context from one shared immutable PEM bundle. OpenSSL does not
+resolve the configured names again. The owner publishes stable borrowed route pointers only after
+the complete bundle succeeds. Existing contexts retain parsed credential state; credential
+rotation, DNS endpoint resolution, and live reload are not implemented.
 
 ## Packaged QUORUM_SYNC command
 

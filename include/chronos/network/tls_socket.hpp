@@ -14,11 +14,22 @@ namespace chronos::network {
 
 using PeerCertificateSha256 = std::array<std::uint8_t, 32>;
 
+// Owning PEM bytes for one certificate chain, private key, and trust bundle. Context creation
+// consumes the bytes synchronously; an established context owns only OpenSSL's parsed state.
+struct TlsPemCredentials {
+  std::string certificate_chain;
+  std::string private_key;
+  std::string trust_store;
+};
+
 struct TlsServerConfig {
   std::string certificate_chain_file;
   std::string private_key_file;
   std::string trust_store_file;
   bool require_client_certificate{true};
+  // Alternative to the three file paths. The carrier parses these exact bytes without reopening
+  // a filesystem path. Exactly one complete credential source must be configured.
+  std::shared_ptr<const TlsPemCredentials> pem_credentials;
 };
 
 struct TlsClientConfig {
@@ -27,6 +38,8 @@ struct TlsClientConfig {
   std::string trust_store_file;
   // Required DNS name or IP address matched against the server certificate SAN.
   std::string expected_server_identity;
+  // Alternative to the three file paths. Exactly one complete credential source is required.
+  std::shared_ptr<const TlsPemCredentials> pem_credentials;
 };
 
 enum class TlsIoState : std::uint8_t { kComplete, kWantRead, kWantWrite, kClosed };

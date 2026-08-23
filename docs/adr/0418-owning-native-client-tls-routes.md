@@ -34,13 +34,10 @@ The PIMPL owns the authority before the TLS-context vector and published pointer
 reservation prevents context relocation while pointers are formed, no vector mutates after
 publication, reverse destruction removes published routes before their context targets, and moving
 the outer owner does not change any pointee address. Existing TLS contexts own their loaded
-credential state and do not borrow the configured path strings.
-
-OpenSSL's current path-based context API reopens each qualified credential path during context
-creation. Therefore deployment must replace credentials atomically and protect parent directories
-against an attacker who could swap a path between qualification and OpenSSL's open. This owner
-closes the previous ad hoc loading and lifetime gaps but does not claim descriptor-to-OpenSSL inode
-binding or in-memory PEM loading.
+credential state and do not borrow configured path strings. ADR 0421 subsequently made each TLS
+qualification return the exact bytes read from that already-open descriptor and constructs all
+contexts from one shared immutable PEM bundle. OpenSSL therefore never resolves those route-owner
+credential paths again.
 
 ## Consequences
 
@@ -88,3 +85,4 @@ server, durable, or wire state.
 - [Native client route configuration](../operations/native-client-route-config.md)
 - [Deadline-bound native QUORUM_SYNC TCP client](0415-deadline-bound-native-quorum-ingest-tcp-client.md)
 - [Bounded native QUORUM_SYNC TCP execution](0416-bounded-native-quorum-ingest-tcp-execution.md)
+- [Descriptor-bound in-memory TLS credentials](0421-descriptor-bound-in-memory-tls-credentials.md)

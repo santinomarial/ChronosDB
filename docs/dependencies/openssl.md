@@ -5,7 +5,9 @@
 `chronos_ingest` uses OpenSSL's maintained EVP provider API to compute SHA-256 request digests.
 `chronos_network` uses the maintained TLS record, certificate-loading, chain-verification,
 DNS/IP identity-verification, SNI, and EVP certificate-digest APIs behind an OpenSSL-free public
-PIMPL boundary. OpenSSL does not define a
+PIMPL boundary. TLS contexts accept either explicit paths or owning PEM bytes. Packaged and
+secure-file-owning service paths use memory BIOs so OpenSSL parses the exact bytes read from an
+already-qualified descriptor rather than reopening its name. OpenSSL does not define a
 durable representation, database command, application principal, or authorization policy.
 The network wrapper supplies a shared borrowed-socket BIO so record writes can suppress `SIGPIPE`
 without changing process-global signal handling or transferring descriptor ownership to OpenSSL.

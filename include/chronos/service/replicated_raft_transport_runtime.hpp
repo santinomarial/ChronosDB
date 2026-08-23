@@ -3,6 +3,7 @@
 
 #include "chronos/cluster/raft_transport_runtime.hpp"
 #include "chronos/common/result.hpp"
+#include "chronos/network/tls_socket.hpp"
 #include "chronos/raft/async_durable_runtime.hpp"
 #include "chronos/service/replicated_peer_config.hpp"
 
@@ -18,6 +19,7 @@ struct ReplicatedRaftTransportTlsCredentials {
   std::string certificate_chain_file;
   std::string private_key_file;
   std::string trust_store_file;
+  std::shared_ptr<const network::TlsPemCredentials> pem_credentials;
 };
 
 struct ReplicatedRaftTransportLimits {

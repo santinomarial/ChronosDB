@@ -24,6 +24,12 @@ group/local-node mismatch before returning. Its completed-result API intentional
 the service layer cannot discard snapshot-install or read-barrier work merely because ordinary
 election traffic needs no additional handling.
 
+The TLS credential source is atomic: embedders choose either the complete compatibility path bundle
+or one shared immutable PEM bundle. Packaged startup always uses the PEM bundle after reading each
+credential to exact EOF through its already-qualified descriptor. The owner shares it across the
+inbound context and every per-peer expected-identity client context; successful contexts retain
+OpenSSL's parsed credential state.
+
 ## Data structures and invariants
 
 The poll table is rebuilt into pre-reserved storage from four exact owner kinds: durable wakeup,

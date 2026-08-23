@@ -32,6 +32,11 @@ bounds are positive, ordered, strictly greater than the heartbeat interval, and 
 seconds. Completed transport results remain
 explicitly caller-owned because snapshot-install and read-barrier work cannot be silently discarded.
 
+ADR 0421 subsequently added a mutually exclusive shared in-memory PEM source. Packaged startup
+reads all three credential files from qualified descriptors and shares those exact bytes across the
+inbound server and every remote-identity client context; the compatibility path source remains
+available to direct embedders.
+
 ## Consequences and validation
 
 The service layer now has a complete transport lifecycle boundary that can be started before client
@@ -52,3 +57,4 @@ multi-process election/failover, and snapshot/read result handling remain subseq
 - [ADR 0265](0265-unified-raft-transport-runtime.md)
 - [ADR 0287](0287-strict-authenticated-raft-peer-config.md)
 - [ADR 0288](0288-exact-raft-certificate-node-authority.md)
+- [ADR 0421](0421-descriptor-bound-in-memory-tls-credentials.md)

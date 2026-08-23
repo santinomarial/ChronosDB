@@ -36,10 +36,10 @@ backend never downgrades TLS to plaintext.
 
 The daemon opens final paths without following symlinks and requires bounded nonempty regular
 files. The principal file, certificate, and trust store must not be writable by group or other;
-the private key must be inaccessible to group and other. OpenSSL reopens credential paths while
-building its immutable context, so protect parent directories and replace credentials atomically.
-Credential and principal reload are not implemented; restart the daemon after rotating the
-complete bundle.
+the private key must be inaccessible to group and other. It reads each credential completely from
+that qualified descriptor and builds the immutable OpenSSL context from those exact PEM bytes; it
+does not resolve the configured names again. Credential and principal reload are not implemented;
+restart the daemon after rotating the complete bundle.
 
 TLS verifies the client chain against the configured trust store and requires a client
 certificate. Only then does the immutable allowlist compare the verified leaf fingerprint. An

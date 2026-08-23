@@ -51,7 +51,8 @@ the finite OpenSSL custom-BIO type namespace is not consumed per connection.
 ## Consequences
 
 `chronos_network` now privately links OpenSSL Crypto and SSL, while its public ABI remains free of
-OpenSSL types. TLS credentials are owning strings in the copied server configuration; the
+OpenSSL types. TLS credential paths are owning strings in the copied server configuration; ADR 0421
+later adds a mutually exclusive shared owning PEM source for descriptor-qualified callers. The
 application authenticator remains borrowed and must outlive the reactor. The socket carrier is
 usable independently and is the only accepted transport-authentication source. ADR 0145 integrates
 its readiness states into epoll. Other backends may not claim TLS serving support until they provide
@@ -97,4 +98,5 @@ with required DNS or IP server-identity verification.
 - [ADR 0145](0145-bounded-epoll-mutual-tls-admission.md)
 - [ADR 0172](0172-maintained-mutual-tls-client-socket.md)
 - [OpenSSL dependency record](../dependencies/openssl.md)
+- [Descriptor-bound in-memory TLS credentials](0421-descriptor-bound-in-memory-tls-credentials.md)
 - [Architecture invariants](../architecture/invariants.md)

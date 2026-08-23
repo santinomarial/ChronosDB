@@ -44,7 +44,6 @@
 #include <sys/stat.h>
 #include <system_error>
 #include <thread>
-#include <tuple>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -511,35 +510,112 @@ load_bounded_config(const std::string& path, const std::size_t maximum_bytes,
   }
 }
 
-[[nodiscard]] chronos::common::Status validate_tls_file(const std::string& path,
-                                                        const bool private_key,
-                                                        const std::string_view kind,
-                                                        const bool reject_group_other_writes) {
-  const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+[[nodiscard]] chronos::common::Result<std::string>
+load_tls_file(const std::string& path, const bool private_key, const std::string_view kind,
+              const bool reject_group_other_writes) {
+  int descriptor{};
+  do {
+    descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  } while (descriptor < 0 && errno == EINTR);
   if (descriptor < 0)
-    return io_error("cannot open " + std::string{kind});
+    return chronos::common::make_unexpected(io_error("cannot open " + std::string{kind}));
+  const auto close_descriptor = [&]() noexcept {
+    if (descriptor >= 0) {
+      static_cast<void>(::close(descriptor));
+      descriptor = -1;
+    }
+  };
   struct stat metadata {};
+  int inspected{};
+  do {
+    inspected = ::fstat(descriptor, &metadata);
+  } while (inspected != 0 && errno == EINTR);
   constexpr std::uintmax_t maximum_bytes = std::uintmax_t{16U} * 1024U * 1024U;
-  const bool valid = ::fstat(descriptor, &metadata) == 0 && S_ISREG(metadata.st_mode) &&
-                     metadata.st_size > 0 &&
+  const bool valid = inspected == 0 && S_ISREG(metadata.st_mode) && metadata.st_size > 0 &&
                      static_cast<std::uintmax_t>(metadata.st_size) <= maximum_bytes &&
                      (!private_key || (metadata.st_mode & 0077) == 0) &&
                      (!reject_group_other_writes || (metadata.st_mode & 0022) == 0);
-  static_cast<void>(::close(descriptor));
-  if (valid)
-    return chronos::common::Status::ok();
-  if (private_key) {
-    return invalid(std::string{kind} +
-                   " must be a bounded regular file inaccessible to group/other");
+  if (!valid) {
+    close_descriptor();
+    if (private_key) {
+      return chronos::common::make_unexpected(invalid(
+          std::string{kind} + " must be a bounded regular file inaccessible to group/other"));
+    }
+    return chronos::common::make_unexpected(invalid(
+        std::string{kind} + (reject_group_other_writes
+                                 ? " must be a bounded regular file not writable by group/other"
+                                 : " must be a bounded regular file")));
   }
-  return invalid(std::string{kind} +
-                 (reject_group_other_writes
-                      ? " must be a bounded regular file not writable by group/other"
-                      : " must be a bounded regular file"));
+  try {
+    std::string bytes(static_cast<std::size_t>(metadata.st_size), '\0');
+    std::size_t offset{};
+    while (offset < bytes.size()) {
+      const ssize_t count = ::read(descriptor, bytes.data() + offset, bytes.size() - offset);
+      if (count < 0 && errno == EINTR)
+        continue;
+      if (count <= 0) {
+        close_descriptor();
+        return chronos::common::make_unexpected(
+            io_error("cannot read complete " + std::string{kind}));
+      }
+      offset += static_cast<std::size_t>(count);
+    }
+    char extra{};
+    ssize_t trailing{};
+    do {
+      trailing = ::read(descriptor, &extra, 1U);
+    } while (trailing < 0 && errno == EINTR);
+    close_descriptor();
+    if (trailing < 0)
+      return chronos::common::make_unexpected(io_error("cannot finish " + std::string{kind}));
+    if (trailing != 0)
+      return chronos::common::make_unexpected(invalid(std::string{kind} + " changed while read"));
+    return bytes;
+  } catch (const std::bad_alloc&) {
+    close_descriptor();
+    return chronos::common::make_unexpected(chronos::common::Status{
+        chronos::common::StatusCode::kResourceExhausted, std::string{kind} + " allocation failed"});
+  } catch (const std::length_error&) {
+    close_descriptor();
+    return chronos::common::make_unexpected(
+        invalid(std::string{kind} + " size exceeds process limits"));
+  }
 }
 
-[[nodiscard]] chronos::common::Result<
-    std::unique_ptr<chronos::service::NativeServerPrincipalAuthority>>
+[[nodiscard]] chronos::common::Result<std::shared_ptr<const chronos::network::TlsPemCredentials>>
+load_tls_credentials(const std::string& certificate_path, const std::string& private_key_path,
+                     const std::string& trust_store_path, const std::string_view prefix,
+                     const bool reject_group_other_writes) {
+  auto certificate = load_tls_file(certificate_path, false, std::string{prefix} + " certificate",
+                                   reject_group_other_writes);
+  if (!certificate.has_value())
+    return chronos::common::make_unexpected(certificate.error());
+  auto private_key = load_tls_file(private_key_path, true, std::string{prefix} + " private key",
+                                   reject_group_other_writes);
+  if (!private_key.has_value())
+    return chronos::common::make_unexpected(private_key.error());
+  auto trust_store = load_tls_file(trust_store_path, false, std::string{prefix} + " trust store",
+                                   reject_group_other_writes);
+  if (!trust_store.has_value())
+    return chronos::common::make_unexpected(trust_store.error());
+  try {
+    return std::make_shared<const chronos::network::TlsPemCredentials>(
+        chronos::network::TlsPemCredentials{.certificate_chain = std::move(*certificate),
+                                            .private_key = std::move(*private_key),
+                                            .trust_store = std::move(*trust_store)});
+  } catch (const std::bad_alloc&) {
+    return chronos::common::make_unexpected(
+        chronos::common::Status{chronos::common::StatusCode::kResourceExhausted,
+                                std::string{prefix} + " credential allocation failed"});
+  }
+}
+
+struct NativeServerSecurity {
+  std::unique_ptr<chronos::service::NativeServerPrincipalAuthority> authority;
+  std::shared_ptr<const chronos::network::TlsPemCredentials> credentials;
+};
+
+[[nodiscard]] chronos::common::Result<NativeServerSecurity>
 load_native_principal_authority(const Options& options) {
   auto loaded =
       load_bounded_config(options.native_client_principals_file,
@@ -556,20 +632,16 @@ load_native_principal_authority(const Options& options) {
   auto authority = chronos::service::NativeServerPrincipalAuthority::create(std::move(*parsed));
   if (!authority.has_value())
     return chronos::common::make_unexpected(authority.error());
-  for (const auto& [path, private_key, kind] :
-       std::array<std::tuple<std::string_view, bool, std::string_view>, 3U>{
-           std::tuple<std::string_view, bool, std::string_view>{options.native_tls_certificate_file,
-                                                                false, "native TLS certificate"},
-           {options.native_tls_private_key_file, true, "native TLS private key"},
-           {options.native_tls_trust_store_file, false, "native TLS trust store"}}) {
-    const chronos::common::Status valid =
-        validate_tls_file(std::string{path}, private_key, kind, true);
-    if (!valid.is_ok())
-      return chronos::common::make_unexpected(valid);
-  }
+  auto credentials =
+      load_tls_credentials(options.native_tls_certificate_file, options.native_tls_private_key_file,
+                           options.native_tls_trust_store_file, "native TLS", true);
+  if (!credentials.has_value())
+    return chronos::common::make_unexpected(credentials.error());
   try {
-    return std::make_unique<chronos::service::NativeServerPrincipalAuthority>(
-        std::move(*authority));
+    return NativeServerSecurity{
+        .authority = std::make_unique<chronos::service::NativeServerPrincipalAuthority>(
+            std::move(*authority)),
+        .credentials = std::move(*credentials)};
   } catch (const std::bad_alloc&) {
     return chronos::common::make_unexpected(
         chronos::common::Status{chronos::common::StatusCode::kResourceExhausted,
@@ -1177,14 +1249,16 @@ int run_daemon(const int argc, const char* const argv[]) {
   chronos::common::SystemUuidGenerator identities;
   SingleNodeCommittedAppendRouter append_router;
   std::unique_ptr<chronos::service::NativeServerPrincipalAuthority> native_principal_authority;
+  std::shared_ptr<const chronos::network::TlsPemCredentials> native_tls_credentials;
   if (!options->native_client_principals_file.empty()) {
-    auto authority = load_native_principal_authority(*options);
-    if (!authority.has_value()) {
+    auto security = load_native_principal_authority(*options);
+    if (!security.has_value()) {
       logger.error("native_security_setup_failed",
-                   "native security setup failed: " + authority.error().to_string());
+                   "native security setup failed: " + security.error().to_string());
       return 1;
     }
-    native_principal_authority = std::move(*authority);
+    native_principal_authority = std::move(security->authority);
+    native_tls_credentials = std::move(security->credentials);
   }
   std::optional<std::vector<chronos::raft::RaftGroupConfiguration>> replicated_groups;
   if (!options->replicated_groups_file.empty()) {
@@ -1205,6 +1279,7 @@ int run_daemon(const int argc, const char* const argv[]) {
     replicated_groups.emplace(std::move(*parsed));
   }
   std::optional<std::vector<chronos::service::ReplicatedPeer>> replicated_peers;
+  std::shared_ptr<const chronos::network::TlsPemCredentials> raft_tls_credentials;
   if (!options->replicated_peers_file.empty()) {
     auto loaded = load_bounded_config(options->replicated_peers_file,
                                       chronos::service::ReplicatedPeerConfigLimits{}.maximum_bytes,
@@ -1220,20 +1295,15 @@ int run_daemon(const int argc, const char* const argv[]) {
                    "replicated peer config is invalid: " + parsed.error().to_string());
       return 1;
     }
-    for (const auto& [path, private_key, kind] :
-         std::array<std::tuple<std::string_view, bool, std::string_view>, 3U>{
-             std::tuple<std::string_view, bool, std::string_view>{
-                 options->raft_tls_certificate_file, false, "Raft TLS certificate"},
-             {options->raft_tls_private_key_file, true, "Raft TLS private key"},
-             {options->raft_tls_trust_store_file, false, "Raft TLS trust store"}}) {
-      const chronos::common::Status valid =
-          validate_tls_file(std::string{path}, private_key, kind, false);
-      if (!valid.is_ok()) {
-        logger.error("raft_tls_file_invalid",
-                     "Raft TLS file validation failed: " + valid.to_string());
-        return 1;
-      }
+    auto credentials =
+        load_tls_credentials(options->raft_tls_certificate_file, options->raft_tls_private_key_file,
+                             options->raft_tls_trust_store_file, "Raft TLS", false);
+    if (!credentials.has_value()) {
+      logger.error("raft_tls_file_invalid",
+                   "Raft TLS file validation failed: " + credentials.error().to_string());
+      return 1;
     }
+    raft_tls_credentials = std::move(*credentials);
     replicated_peers.emplace(std::move(*parsed));
   }
   std::optional<chronos::live::ResumeTokenMacKey> subscription_key;
@@ -1280,9 +1350,7 @@ int run_daemon(const int argc, const char* const argv[]) {
              .durable_runtime = replicated_database->ingest_runtime()->runtime(),
              .peers = *replicated_peers,
              .resident_groups = std::move(resident_groups),
-             .tls = {.certificate_chain_file = options->raft_tls_certificate_file,
-                     .private_key_file = options->raft_tls_private_key_file,
-                     .trust_store_file = options->raft_tls_trust_store_file}});
+             .tls = {.pem_credentials = raft_tls_credentials}});
         if (!transport.has_value()) {
           static_cast<void>(replicated_database->shutdown());
           logger.error("raft_peer_transport_start_failed",
@@ -1401,13 +1469,11 @@ int run_daemon(const int argc, const char* const argv[]) {
   config.bind_address = options->listen_address;
   config.port = options->port;
   if (native_principal_authority != nullptr) {
-    config.security = {.mode = chronos::network::TransportSecurityMode::kTlsRequired,
-                       .authenticator = native_principal_authority.get(),
-                       .tls = chronos::network::TlsServerConfig{
-                           .certificate_chain_file = options->native_tls_certificate_file,
-                           .private_key_file = options->native_tls_private_key_file,
-                           .trust_store_file = options->native_tls_trust_store_file,
-                           .require_client_certificate = true}};
+    config.security = {
+        .mode = chronos::network::TransportSecurityMode::kTlsRequired,
+        .authenticator = native_principal_authority.get(),
+        .tls = chronos::network::TlsServerConfig{.require_client_certificate = true,
+                                                 .pem_credentials = native_tls_credentials}};
   }
   if (replicated_service.has_value()) {
     config.state.maximum_protocol_major = chronos::network::kProtocolV2Major;

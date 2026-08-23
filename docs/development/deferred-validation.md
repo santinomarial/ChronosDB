@@ -530,7 +530,8 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   plus packaged daemon poll thread composes them with TLS contexts and randomized timers. A
   Linux-only gate now starts three actual daemons with distinct mTLS identities, applies one quorum
   write, kills its tablet leader, proves a higher-term matching retry on the surviving quorum, and
-  reopens identical tablet/retry state from all three roots; add in-memory credential loading,
+  reopens identical tablet/retry state from all three roots. Packaged Raft and native TLS now parse
+  the exact PEM bytes read from qualified descriptors instead of reopening credential paths; add
   packaged snapshot and deeper startup/write/shutdown
   syscall and intra-operation matrices beyond the completed retained-log and snapshot-backed
   steady-state owner `SIGKILL` lifecycles, snapshot-plus-suffix reopen, four-stage coordinator write

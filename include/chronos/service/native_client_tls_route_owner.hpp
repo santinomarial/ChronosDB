@@ -32,8 +32,9 @@ struct NativeClientTlsRouteOwnerConfig {
 
 // Address-stable owner for a securely loaded native route file, its immutable certificate/node
 // authority, and one expected-identity TLS client context per route. Published leader-route
-// pointers remain valid until this owner is destroyed. TLS contexts own credential material after
-// creation; the configured paths need not remain valid for existing contexts.
+// pointers remain valid until this owner is destroyed. Credential bytes are read completely from
+// qualified descriptors before OpenSSL context construction, so configured paths are never
+// reopened and need not remain valid after load returns.
 class NativeClientTlsRouteOwner {
 public:
   NativeClientTlsRouteOwner() = delete;

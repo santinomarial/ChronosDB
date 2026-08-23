@@ -114,29 +114,56 @@ private:
   return bytes;
 }
 
-[[nodiscard]] common::Status qualify_tls_file(const std::string& path, const std::string_view kind,
-                                              const std::size_t maximum_bytes,
-                                              const bool private_key) {
+[[nodiscard]] common::Result<std::string> read_tls_file(const std::string& path,
+                                                        const std::string_view kind,
+                                                        const std::size_t maximum_bytes,
+                                                        const bool private_key) {
   int descriptor{};
   do {
     descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
   } while (descriptor < 0 && errno == EINTR);
   if (descriptor < 0)
-    return io_error("opening native client " + std::string{kind});
+    return common::make_unexpected(io_error("opening native client " + std::string{kind}));
   const Descriptor owned{descriptor};
   auto metadata = regular_file_metadata(owned.get(), kind);
   if (!metadata.has_value())
-    return metadata.error();
+    return common::make_unexpected(metadata.error());
   if (metadata->st_size <= 0 || static_cast<std::uintmax_t>(metadata->st_size) > maximum_bytes)
-    return invalid("native client " + std::string{kind} + " has an invalid bounded size");
+    return common::make_unexpected(
+        invalid("native client " + std::string{kind} + " has an invalid bounded size"));
   if (private_key) {
     if ((metadata->st_mode & 0077) != 0)
-      return invalid("native client private key must be inaccessible to group and other");
+      return common::make_unexpected(
+          invalid("native client private key must be inaccessible to group and other"));
   } else if ((metadata->st_mode & 0022) != 0) {
-    return invalid("native client " + std::string{kind} +
-                   " must not be writable by group or other");
+    return common::make_unexpected(
+        invalid("native client " + std::string{kind} + " must not be writable by group or other"));
   }
-  return common::Status::ok();
+  std::string bytes(static_cast<std::size_t>(metadata->st_size), '\0');
+  std::size_t offset{};
+  while (offset < bytes.size()) {
+    const ssize_t count = ::read(owned.get(), bytes.data() + offset, bytes.size() - offset);
+    if (count < 0 && errno == EINTR)
+      continue;
+    if (count <= 0) {
+      return common::make_unexpected(io_error("reading complete native client " + std::string{kind},
+                                              count == 0 ? EIO : errno));
+    }
+    offset += static_cast<std::size_t>(count);
+  }
+  char extra{};
+  ssize_t trailing{};
+  do {
+    trailing = ::read(owned.get(), &extra, 1U);
+  } while (trailing < 0 && errno == EINTR);
+  if (trailing < 0)
+    return common::make_unexpected(
+        io_error("finishing native client " + std::string{kind} + " read"));
+  if (trailing != 0) {
+    return common::make_unexpected(
+        invalid("native client " + std::string{kind} + " changed while being read"));
+  }
+  return bytes;
 }
 
 [[nodiscard]] bool valid_limits(const NativeClientTlsRouteFileLimits& limits) noexcept {
@@ -156,17 +183,16 @@ public:
   explicit Impl(NativeClientRouteAuthority configured_authority) noexcept
       : route_authority(std::move(configured_authority)) {}
 
-  [[nodiscard]] common::Status initialize(const NativeClientTlsCredentials& credentials) {
+  [[nodiscard]] common::Status
+  initialize(const std::shared_ptr<const network::TlsPemCredentials>& credentials) {
     try {
       const auto configured = route_authority.routes();
       tls_contexts.reserve(configured.size());
       routes.reserve(configured.size());
       for (const NativeClientRoute& route : configured) {
         auto context = network::TlsClientContext::create(
-            {.certificate_chain_file = credentials.certificate_chain_file,
-             .private_key_file = credentials.private_key_file,
-             .trust_store_file = credentials.trust_store_file,
-             .expected_server_identity = route.tls_server_identity});
+            {.expected_server_identity = route.tls_server_identity,
+             .pem_credentials = credentials});
         if (!context.has_value())
           return context.error();
         tls_contexts.push_back(std::move(*context));
@@ -210,25 +236,28 @@ NativeClientTlsRouteOwner::load(const NativeClientTlsRouteOwnerConfig& config) {
     if (!configured_routes.has_value())
       return common::make_unexpected(configured_routes.error());
 
-    common::Status qualified =
-        qualify_tls_file(config.tls.certificate_chain_file, "certificate chain",
-                         config.limits.maximum_tls_file_bytes, false);
-    if (!qualified.is_ok())
-      return common::make_unexpected(std::move(qualified));
-    qualified = qualify_tls_file(config.tls.private_key_file, "private key",
-                                 config.limits.maximum_tls_file_bytes, true);
-    if (!qualified.is_ok())
-      return common::make_unexpected(std::move(qualified));
-    qualified = qualify_tls_file(config.tls.trust_store_file, "trust store",
-                                 config.limits.maximum_tls_file_bytes, false);
-    if (!qualified.is_ok())
-      return common::make_unexpected(std::move(qualified));
+    auto certificate_chain = read_tls_file(config.tls.certificate_chain_file, "certificate chain",
+                                           config.limits.maximum_tls_file_bytes, false);
+    if (!certificate_chain.has_value())
+      return common::make_unexpected(certificate_chain.error());
+    auto private_key = read_tls_file(config.tls.private_key_file, "private key",
+                                     config.limits.maximum_tls_file_bytes, true);
+    if (!private_key.has_value())
+      return common::make_unexpected(private_key.error());
+    auto trust_store = read_tls_file(config.tls.trust_store_file, "trust store",
+                                     config.limits.maximum_tls_file_bytes, false);
+    if (!trust_store.has_value())
+      return common::make_unexpected(trust_store.error());
+    auto credentials = std::make_shared<network::TlsPemCredentials>(
+        network::TlsPemCredentials{.certificate_chain = std::move(*certificate_chain),
+                                   .private_key = std::move(*private_key),
+                                   .trust_store = std::move(*trust_store)});
 
     auto authority = NativeClientRouteAuthority::create(std::move(*configured_routes));
     if (!authority.has_value())
       return common::make_unexpected(authority.error());
     auto impl = std::make_unique<Impl>(std::move(*authority));
-    const common::Status initialized = impl->initialize(config.tls);
+    const common::Status initialized = impl->initialize(credentials);
     if (!initialized.is_ok())
       return common::make_unexpected(initialized);
     return NativeClientTlsRouteOwner{std::move(impl)};

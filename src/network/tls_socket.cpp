@@ -4,12 +4,14 @@
 #include <array>
 #include <cerrno>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <new>
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
+#include <openssl/pem.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
@@ -35,6 +37,136 @@ namespace {
 
 [[nodiscard]] common::Status exhausted(std::string message) {
   return {common::StatusCode::kResourceExhausted, std::move(message)};
+}
+
+[[nodiscard]] bool valid_path(const std::string& path) noexcept {
+  return !path.empty() && path.find('\0') == std::string::npos;
+}
+
+[[nodiscard]] bool valid_pem_bytes(const std::string& bytes) noexcept {
+  return !bytes.empty() &&
+         bytes.size() <= static_cast<std::size_t>(std::numeric_limits<int>::max()) &&
+         bytes.find('\0') == std::string::npos;
+}
+
+template <typename Config>
+[[nodiscard]] common::Result<bool> use_pem_credentials(const Config& config) {
+  const bool any_path = !config.certificate_chain_file.empty() ||
+                        !config.private_key_file.empty() || !config.trust_store_file.empty();
+  const bool complete_paths = valid_path(config.certificate_chain_file) &&
+                              valid_path(config.private_key_file) &&
+                              valid_path(config.trust_store_file);
+  const bool has_pem = config.pem_credentials != nullptr;
+  if ((any_path && !complete_paths) || complete_paths == has_pem)
+    return common::make_unexpected(
+        invalid("TLS requires exactly one complete file or in-memory PEM credential source"));
+  if (has_pem && (!valid_pem_bytes(config.pem_credentials->certificate_chain) ||
+                  !valid_pem_bytes(config.pem_credentials->private_key) ||
+                  !valid_pem_bytes(config.pem_credentials->trust_store))) {
+    return common::make_unexpected(invalid("TLS in-memory PEM credentials are invalid"));
+  }
+  return has_pem;
+}
+
+[[nodiscard]] bool clean_pem_end() noexcept {
+  const unsigned long error = ERR_peek_last_error();
+  if (error != 0UL && ERR_GET_LIB(error) == ERR_LIB_PEM &&
+      ERR_GET_REASON(error) == PEM_R_NO_START_LINE) {
+    ERR_clear_error();
+    return true;
+  }
+  return error == 0UL;
+}
+
+[[nodiscard]] common::Status load_pem_trust_store(SSL_CTX* context, const std::string& bytes) {
+  BIO* bio = BIO_new_mem_buf(bytes.data(), static_cast<int>(bytes.size()));
+  if (bio == nullptr)
+    return exhausted("OpenSSL trust-store BIO allocation failed");
+  X509_STORE* store = SSL_CTX_get_cert_store(context);
+  std::size_t loaded{};
+  bool failed{};
+  while (!failed) {
+    ERR_clear_error();
+    X509* certificate = PEM_read_bio_X509_AUX(bio, nullptr, nullptr, nullptr);
+    if (certificate == nullptr) {
+      failed = !clean_pem_end();
+      break;
+    }
+    if (X509_STORE_add_cert(store, certificate) != 1) {
+      const unsigned long error = ERR_peek_last_error();
+      if (error == 0UL || ERR_GET_LIB(error) != ERR_LIB_X509 ||
+          ERR_GET_REASON(error) != X509_R_CERT_ALREADY_IN_HASH_TABLE) {
+        failed = true;
+      } else {
+        ERR_clear_error();
+      }
+    }
+    X509_free(certificate);
+    ++loaded;
+  }
+  BIO_free(bio);
+  if (failed || loaded == 0U)
+    return unauthenticated("TLS trust store could not be loaded from memory");
+  return common::Status::ok();
+}
+
+[[nodiscard]] common::Status load_pem_certificate_chain(SSL_CTX* context,
+                                                        const std::string& bytes) {
+  BIO* bio = BIO_new_mem_buf(bytes.data(), static_cast<int>(bytes.size()));
+  if (bio == nullptr)
+    return exhausted("OpenSSL certificate-chain BIO allocation failed");
+  X509* leaf = PEM_read_bio_X509_AUX(bio, nullptr, nullptr, nullptr);
+  if (leaf == nullptr) {
+    BIO_free(bio);
+    return unauthenticated("TLS certificate chain could not be loaded from memory");
+  }
+  bool failed = SSL_CTX_use_certificate(context, leaf) != 1;
+  X509_free(leaf);
+  while (!failed) {
+    ERR_clear_error();
+    X509* certificate = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
+    if (certificate == nullptr) {
+      failed = !clean_pem_end();
+      break;
+    }
+    failed = SSL_CTX_add1_chain_cert(context, certificate) != 1;
+    X509_free(certificate);
+  }
+  BIO_free(bio);
+  if (failed)
+    return unauthenticated("TLS certificate chain could not be loaded from memory");
+  return common::Status::ok();
+}
+
+[[nodiscard]] common::Status load_pem_private_key(SSL_CTX* context, const std::string& bytes) {
+  BIO* bio = BIO_new_mem_buf(bytes.data(), static_cast<int>(bytes.size()));
+  if (bio == nullptr)
+    return exhausted("OpenSSL private-key BIO allocation failed");
+  EVP_PKEY* private_key = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+  BIO_free(bio);
+  if (private_key == nullptr)
+    return unauthenticated("TLS private key could not be loaded from memory");
+  const bool installed = SSL_CTX_use_PrivateKey(context, private_key) == 1;
+  EVP_PKEY_free(private_key);
+  if (!installed)
+    return unauthenticated("TLS private key could not be loaded from memory");
+  return common::Status::ok();
+}
+
+[[nodiscard]] common::Status load_pem_credentials(SSL_CTX* context,
+                                                  const TlsPemCredentials& credentials) {
+  common::Status loaded = load_pem_trust_store(context, credentials.trust_store);
+  if (!loaded.is_ok())
+    return loaded;
+  loaded = load_pem_certificate_chain(context, credentials.certificate_chain);
+  if (!loaded.is_ok())
+    return loaded;
+  loaded = load_pem_private_key(context, credentials.private_key);
+  if (!loaded.is_ok())
+    return loaded;
+  if (SSL_CTX_check_private_key(context) != 1)
+    return unauthenticated("TLS private key does not match certificate");
+  return common::Status::ok();
 }
 
 template <typename Value>
@@ -272,9 +404,9 @@ TlsServerContext::TlsServerContext(TlsServerContext&&) noexcept = default;
 TlsServerContext& TlsServerContext::operator=(TlsServerContext&&) noexcept = default;
 
 common::Result<TlsServerContext> TlsServerContext::create(const TlsServerConfig& config) {
-  if (config.certificate_chain_file.empty() || config.private_key_file.empty() ||
-      config.trust_store_file.empty())
-    return common::make_unexpected(invalid("TLS credential paths must not be empty"));
+  auto use_pem = use_pem_credentials(config);
+  if (!use_pem.has_value())
+    return common::make_unexpected(use_pem.error());
   if (!config.require_client_certificate)
     return common::make_unexpected(
         invalid("ChronosDB TLS server connections require a client certificate"));
@@ -295,14 +427,21 @@ common::Result<TlsServerContext> TlsServerContext::create(const TlsServerConfig&
   SSL_CTX_set_options(context, SSL_OP_NO_COMPRESSION | SSL_OP_NO_RENEGOTIATION);
   SSL_CTX_set_mode(context, SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
   SSL_CTX_set_verify(context, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nullptr);
-  if (SSL_CTX_load_verify_locations(context, config.trust_store_file.c_str(), nullptr) != 1)
-    return release_on_error(unauthenticated("TLS trust store could not be loaded"));
-  if (SSL_CTX_use_certificate_chain_file(context, config.certificate_chain_file.c_str()) != 1)
-    return release_on_error(unauthenticated("TLS certificate chain could not be loaded"));
-  if (SSL_CTX_use_PrivateKey_file(context, config.private_key_file.c_str(), SSL_FILETYPE_PEM) != 1)
-    return release_on_error(unauthenticated("TLS private key could not be loaded"));
-  if (SSL_CTX_check_private_key(context) != 1)
-    return release_on_error(unauthenticated("TLS private key does not match certificate"));
+  if (*use_pem) {
+    const common::Status loaded = load_pem_credentials(context, *config.pem_credentials);
+    if (!loaded.is_ok())
+      return release_on_error(loaded);
+  } else {
+    if (SSL_CTX_load_verify_locations(context, config.trust_store_file.c_str(), nullptr) != 1)
+      return release_on_error(unauthenticated("TLS trust store could not be loaded"));
+    if (SSL_CTX_use_certificate_chain_file(context, config.certificate_chain_file.c_str()) != 1)
+      return release_on_error(unauthenticated("TLS certificate chain could not be loaded"));
+    if (SSL_CTX_use_PrivateKey_file(context, config.private_key_file.c_str(), SSL_FILETYPE_PEM) !=
+        1)
+      return release_on_error(unauthenticated("TLS private key could not be loaded"));
+    if (SSL_CTX_check_private_key(context) != 1)
+      return release_on_error(unauthenticated("TLS private key does not match certificate"));
+  }
 
   try {
     return TlsServerContext{std::make_unique<Impl>(context)};
@@ -319,10 +458,11 @@ TlsClientContext::TlsClientContext(TlsClientContext&&) noexcept = default;
 TlsClientContext& TlsClientContext::operator=(TlsClientContext&&) noexcept = default;
 
 common::Result<TlsClientContext> TlsClientContext::create(const TlsClientConfig& config) {
-  if (config.certificate_chain_file.empty() || config.private_key_file.empty() ||
-      config.trust_store_file.empty() || config.expected_server_identity.empty())
-    return common::make_unexpected(
-        invalid("TLS client credential paths and expected server identity must not be empty"));
+  auto use_pem = use_pem_credentials(config);
+  if (!use_pem.has_value())
+    return common::make_unexpected(use_pem.error());
+  if (config.expected_server_identity.empty())
+    return common::make_unexpected(invalid("TLS expected server identity must not be empty"));
   if (config.expected_server_identity.size() > 253U ||
       config.expected_server_identity.find('\0') != std::string::npos)
     return common::make_unexpected(invalid("TLS expected server identity is invalid"));
@@ -343,14 +483,21 @@ common::Result<TlsClientContext> TlsClientContext::create(const TlsClientConfig&
   SSL_CTX_set_options(context, SSL_OP_NO_COMPRESSION | SSL_OP_NO_RENEGOTIATION);
   SSL_CTX_set_mode(context, SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
   SSL_CTX_set_verify(context, SSL_VERIFY_PEER, nullptr);
-  if (SSL_CTX_load_verify_locations(context, config.trust_store_file.c_str(), nullptr) != 1)
-    return release_on_error(unauthenticated("TLS trust store could not be loaded"));
-  if (SSL_CTX_use_certificate_chain_file(context, config.certificate_chain_file.c_str()) != 1)
-    return release_on_error(unauthenticated("TLS certificate chain could not be loaded"));
-  if (SSL_CTX_use_PrivateKey_file(context, config.private_key_file.c_str(), SSL_FILETYPE_PEM) != 1)
-    return release_on_error(unauthenticated("TLS private key could not be loaded"));
-  if (SSL_CTX_check_private_key(context) != 1)
-    return release_on_error(unauthenticated("TLS private key does not match certificate"));
+  if (*use_pem) {
+    const common::Status loaded = load_pem_credentials(context, *config.pem_credentials);
+    if (!loaded.is_ok())
+      return release_on_error(loaded);
+  } else {
+    if (SSL_CTX_load_verify_locations(context, config.trust_store_file.c_str(), nullptr) != 1)
+      return release_on_error(unauthenticated("TLS trust store could not be loaded"));
+    if (SSL_CTX_use_certificate_chain_file(context, config.certificate_chain_file.c_str()) != 1)
+      return release_on_error(unauthenticated("TLS certificate chain could not be loaded"));
+    if (SSL_CTX_use_PrivateKey_file(context, config.private_key_file.c_str(), SSL_FILETYPE_PEM) !=
+        1)
+      return release_on_error(unauthenticated("TLS private key could not be loaded"));
+    if (SSL_CTX_check_private_key(context) != 1)
+      return release_on_error(unauthenticated("TLS private key does not match certificate"));
+  }
 
   try {
     return TlsClientContext{std::make_unique<Impl>(context, config.expected_server_identity)};
