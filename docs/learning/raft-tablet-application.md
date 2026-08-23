@@ -50,6 +50,12 @@ and repaired-partial images retain applied index 0, while the three complete-rec
 Retained-log recovery nevertheless reconstructs the same rows, retry identity, and frontier in all
 five cases, advances a trailing progress marker, and stays identical on another reopen.
 
+The five persistence faults are also crossed with four committed-range shapes: one command, three
+distinct commands, a matching retry within the range, and an internal leader no-op followed by
+commands and a retry. These 20 schedules prove that the single final applied-index record covers the
+whole preflighted range, while reconstruction still derives two, four, or six visible rows, the exact
+distinct retry identities, and the last command-or-internal index solely from retained log order.
+
 Without a supplied application-snapshot owner, this model intentionally rejects any nonzero Raft
 snapshot boundary. A compacted prefix must atomically describe the omitted rows, retry outcomes,
 schema binding, and included group/index before suffix replay can be safe.

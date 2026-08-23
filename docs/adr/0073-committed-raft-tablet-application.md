@@ -65,8 +65,11 @@ reopen is identical. A five-case deterministic persistence matrix injects write-
 prefix-then-error, write-after, sync-before, and sync-after failures. Every case returns I/O failure
 and poisons the live application/runtime after publication; write-before and repaired partial tails
 recover applied index 0, while complete-write and sync cases recover applied index 1. All rebuild the
-same application state and converge identically. Application snapshots and log reclamation are
-implemented by extending ADRs. Multi-entry schedules, schema catalog recovery, multi-group
-scheduling, and true quorum acknowledgment remain required. A deterministic allocation sweep fails
-every post-apply state copy, requires the full committed-unapplied range and persistent state to
-remain exact, and then advances identically on retry.
+same application state and converge identically. The five faults are crossed with a single command,
+three distinct commands, an in-range matching retry, and an internal no-op plus retry for 20
+single-batch persistence schedules. Each reconstructs the exact row count, retry identities, and
+last log index across two reopens. Application snapshots and log reclamation are implemented by
+extending ADRs. Schema catalog recovery, multi-group scheduling, and true quorum acknowledgment
+remain required. A deterministic allocation sweep fails every post-apply state copy, requires the
+full committed-unapplied range and persistent state to remain exact, and then advances identically
+on retry.

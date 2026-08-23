@@ -17,6 +17,7 @@
 #include <string_view>
 #include <sys/stat.h>
 #include <system_error>
+#include <tuple>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -195,22 +196,56 @@ constexpr std::array<TabletApplicationFailureCase, 5U> kFailureCases{
                                  true},
 };
 
-void expect_recovered_tablet(const RaftTabletStateMachine& machine) {
-  auto publication = machine.tablet().snapshot();
-  ASSERT_TRUE(publication.has_value()) << publication.error().to_string();
-  EXPECT_EQ(publication->visible_row_count(), 2U);
-  EXPECT_EQ(publication->retry_entry_count(), 1U);
-  EXPECT_EQ(publication->applied_position(),
-            head::HeadCommitPosition::raft(test::crash_group_id(), 1U));
+struct TabletApplicationSchedule {
+  std::string_view name;
+  std::array<std::uint8_t, 3U> request_seeds;
+  std::size_t request_count;
+  bool prepend_internal_entry;
+  std::size_t expected_rows;
+  std::size_t expected_retry_entries;
+};
+
+constexpr std::array<TabletApplicationSchedule, 4U> kApplicationSchedules{
+    TabletApplicationSchedule{"single", {1U, 0U, 0U}, 1U, false, 2U, 1U},
+    TabletApplicationSchedule{"three_distinct", {1U, 2U, 3U}, 3U, false, 6U, 3U},
+    TabletApplicationSchedule{"matching_retry", {1U, 1U, 2U}, 3U, false, 4U, 2U},
+    TabletApplicationSchedule{"internal_and_retry", {1U, 2U, 1U}, 3U, true, 4U, 2U},
+};
+
+[[nodiscard]] raft::LogIndex last_index(const TabletApplicationSchedule& schedule) {
+  return schedule.request_count + (schedule.prepend_internal_entry ? 1U : 0U);
 }
 
-class TabletApplicationFailureTest : public ::testing::TestWithParam<TabletApplicationFailureCase> {
-};
+void expect_recovered_tablet(const RaftTabletStateMachine& machine,
+                             const TabletApplicationSchedule& schedule) {
+  auto publication = machine.tablet().snapshot();
+  ASSERT_TRUE(publication.has_value()) << publication.error().to_string();
+  EXPECT_EQ(publication->visible_row_count(), schedule.expected_rows);
+  EXPECT_EQ(publication->retry_entry_count(), schedule.expected_retry_entries);
+  std::array<bool, 256U> observed_seeds{};
+  for (std::size_t index = 0U; index < schedule.request_count; ++index) {
+    const std::uint8_t seed = schedule.request_seeds[index];
+    if (observed_seeds[seed])
+      continue;
+    observed_seeds[seed] = true;
+    const RetryIdentity identity{test::request_id<ClientId>(seed),
+                                 test::request_id<ClientBatchId>(seed + 32U)};
+    EXPECT_NE(publication->retry_outcome(identity), nullptr);
+  }
+  EXPECT_EQ(publication->applied_position(),
+            head::HeadCommitPosition::raft(test::crash_group_id(), last_index(schedule)));
+}
+
+using TabletApplicationFailureSchedule =
+    std::tuple<TabletApplicationFailureCase, TabletApplicationSchedule>;
+
+class TabletApplicationFailureTest
+    : public ::testing::TestWithParam<TabletApplicationFailureSchedule> {};
 
 TEST_P(TabletApplicationFailureTest, FailsClosedThenRebuildsFromTheRetainedCommittedEntry) {
   TabletApplicationFailureDirectory directory;
   ASSERT_FALSE(directory.path().empty());
-  const TabletApplicationFailureCase failure = GetParam();
+  const auto& [failure, schedule] = GetParam();
   OneShotTabletApplicationIoFault syscalls{failure.fault};
 
   auto runtime = raft::detail::DurableMultiRaftRuntimeTestAccess::create_new(
@@ -226,12 +261,22 @@ TEST_P(TabletApplicationFailureTest, FailsClosedThenRebuildsFromTheRetainedCommi
       test::crash_compaction_tablet(), test::crash_compaction_schemas());
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   std::optional<RaftTabletStateMachine> machine{std::move(*recovered)};
-  auto proposed = runtime->execute_batch(
-      {{test::crash_group_id(),
-        raft::ProposeOperation{kRaftColumnarAppendEntryType, test::crash_compaction_command()}}});
-  ASSERT_TRUE(proposed.has_value()) << proposed.error().to_string();
-  ASSERT_EQ(proposed->size(), 1U);
-  ASSERT_TRUE(proposed->front().status.is_ok()) << proposed->front().status.to_string();
+  if (schedule.prepend_internal_entry) {
+    auto internal =
+        runtime->execute_batch({{test::crash_group_id(), raft::CommitCurrentTermOperation{}}});
+    ASSERT_TRUE(internal.has_value()) << internal.error().to_string();
+    ASSERT_EQ(internal->size(), 1U);
+    ASSERT_TRUE(internal->front().status.is_ok()) << internal->front().status.to_string();
+  }
+  for (std::size_t index = 0U; index < schedule.request_count; ++index) {
+    auto proposed = runtime->execute_batch(
+        {{test::crash_group_id(),
+          raft::ProposeOperation{kRaftColumnarAppendEntryType,
+                                 test::crash_compaction_command(schedule.request_seeds[index])}}});
+    ASSERT_TRUE(proposed.has_value()) << proposed.error().to_string();
+    ASSERT_EQ(proposed->size(), 1U);
+    ASSERT_TRUE(proposed->front().status.is_ok()) << proposed->front().status.to_string();
+  }
   syscalls.arm();
 
   auto applied = machine->apply_committed();
@@ -241,7 +286,7 @@ TEST_P(TabletApplicationFailureTest, FailsClosedThenRebuildsFromTheRetainedCommi
   EXPECT_TRUE(syscalls.fired());
   EXPECT_TRUE(machine->failed());
   EXPECT_TRUE(runtime->failed());
-  expect_recovered_tablet(*machine);
+  expect_recovered_tablet(*machine, schedule);
   machine.reset();
   ASSERT_TRUE(runtime->close().is_ok());
 
@@ -258,21 +303,22 @@ TEST_P(TabletApplicationFailureTest, FailsClosedThenRebuildsFromTheRetainedCommi
   ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
   const raft::RaftNode* node = reopened->find_group(test::crash_group_id());
   ASSERT_NE(node, nullptr);
-  EXPECT_EQ(node->persistent_state().commit_index, 1U);
+  EXPECT_EQ(node->persistent_state().commit_index, last_index(schedule));
   EXPECT_EQ(node->persistent_state().applied_index,
-            failure.applied_index_record_recovered ? 1U : 0U);
-  ASSERT_EQ(node->persistent_state().log.size(), 1U);
+            failure.applied_index_record_recovered ? last_index(schedule) : 0U);
+  ASSERT_EQ(node->persistent_state().log.size(), last_index(schedule));
   EXPECT_EQ(node->persistent_state().log.front().index, 1U);
+  EXPECT_EQ(node->persistent_state().log.back().index, last_index(schedule));
 
   recovered = RaftTabletStateMachine::recover(
       test::crash_group_id(), *reopened, test::crash_compaction_retry_directory(),
       test::crash_compaction_tablet(), test::crash_compaction_schemas());
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   std::optional<RaftTabletStateMachine> rebuilt{std::move(*recovered)};
-  expect_recovered_tablet(*rebuilt);
+  expect_recovered_tablet(*rebuilt, schedule);
   node = reopened->find_group(test::crash_group_id());
   ASSERT_NE(node, nullptr);
-  EXPECT_EQ(node->persistent_state().applied_index, 1U);
+  EXPECT_EQ(node->persistent_state().applied_index, last_index(schedule));
   rebuilt.reset();
   ASSERT_TRUE(reopened->close().is_ok());
 
@@ -284,19 +330,23 @@ TEST_P(TabletApplicationFailureTest, FailsClosedThenRebuildsFromTheRetainedCommi
       test::crash_compaction_tablet(), test::crash_compaction_schemas());
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   std::optional<RaftTabletStateMachine> repeated{std::move(*recovered)};
-  expect_recovered_tablet(*repeated);
+  expect_recovered_tablet(*repeated, schedule);
   node = repeated_runtime->find_group(test::crash_group_id());
   ASSERT_NE(node, nullptr);
-  EXPECT_EQ(node->persistent_state().applied_index, 1U);
+  EXPECT_EQ(node->persistent_state().applied_index, last_index(schedule));
   repeated.reset();
   ASSERT_TRUE(repeated_runtime->close().is_ok());
 }
 
 INSTANTIATE_TEST_SUITE_P(
     EveryAppliedIndexPersistenceFailure, TabletApplicationFailureTest,
-    ::testing::ValuesIn(kFailureCases),
-    [](const ::testing::TestParamInfo<TabletApplicationFailureCase>& parameter) {
-      return std::string{parameter.param.name};
+    ::testing::Combine(::testing::ValuesIn(kFailureCases),
+                       ::testing::ValuesIn(kApplicationSchedules)),
+    [](const ::testing::TestParamInfo<TabletApplicationFailureSchedule>& parameter) {
+      std::string name{std::get<1>(parameter.param).name};
+      name += "_then_";
+      name += std::get<0>(parameter.param).name;
+      return name;
     });
 
 } // namespace

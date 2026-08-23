@@ -571,10 +571,8 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   exact real-filesystem install, retry, teardown, reopen, and recovery, with local-only synchronized
   install and checked restart-recovery benchmark shapes at three catalog sizes. Device-qualified
   durability and production-scale workload qualification remain open.
-- Extend the implemented committed-only tablet command application and full retained-log rebuild
-  beyond its completed four-cut publication/applied-index process-crash and five-case applied-index
-  persistence I/O matrices with multi-entry schedules. Extend the implemented durable
-  application-snapshot creation/compaction plus prefix/suffix recovery beyond its completed ten-cut
+- Extend the implemented durable application-snapshot creation/compaction plus prefix/suffix
+  recovery beyond its completed ten-cut
   process-crash, ten-case application-I/O, 50-case cross-owner persistence, ten-case
   cleanup-to-persistence, eight-case cleanup/Raft-tail-repair reopen, repeated-partial-failure, and
   seven-case immutable-mismatch coverage as new failure shapes are identified. Extend the

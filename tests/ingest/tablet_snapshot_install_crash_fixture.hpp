@@ -66,16 +66,18 @@ crash_compaction_schemas() {
   return {columnar::test::batch_schema()};
 }
 
-[[nodiscard]] inline std::vector<std::byte> crash_compaction_command() {
+[[nodiscard]] inline std::vector<std::byte>
+crash_compaction_command(const std::uint8_t request_seed = 1U) {
   auto batch = columnar::OwnedColumnarBatch::create(columnar::test::batch_schema(),
                                                     columnar::test::batch_columns())
                    .value();
   const auto encoded_batch = columnar::encode_columnar_batch_v1(batch).value();
-  const auto encoded = encode_columnar_append_v1({.client_id = request_id<ClientId>(1U),
-                                                  .client_batch_id = request_id<ClientBatchId>(33U),
-                                                  .tablet_id = crash_compaction_tablet_id()},
-                                                 encoded_batch)
-                           .value();
+  const auto encoded =
+      encode_columnar_append_v1({.client_id = request_id<ClientId>(request_seed),
+                                 .client_batch_id = request_id<ClientBatchId>(request_seed + 32U),
+                                 .tablet_id = crash_compaction_tablet_id()},
+                                encoded_batch)
+          .value();
   return {encoded.bytes().begin(), encoded.bytes().end()};
 }
 
