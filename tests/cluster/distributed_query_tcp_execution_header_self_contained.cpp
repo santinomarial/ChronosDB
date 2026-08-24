@@ -20,8 +20,16 @@ using VectorRouteResolver =
         std::span<const chronos::query::DistributedVectorFragmentDispatch>,
         std::span<const chronos::cluster::DistributedQueryNodeTlsContext>,
         chronos::cluster::DistributedQueryRouteResolutionLimits);
+using MutableVectorRouteResolver =
+    chronos::common::Result<std::vector<chronos::cluster::DistributedQueryNodeRoute>> (*)(
+        const chronos::raft::MetadataCatalogSnapshot&,
+        std::span<const chronos::query::DistributedMutableVectorFragment>,
+        std::span<const chronos::cluster::DistributedQueryNodeTlsContext>,
+        chronos::cluster::DistributedQueryRouteResolutionLimits);
 [[maybe_unused]] const AggregateRouteResolver kResolveAggregateRoutes =
     &chronos::cluster::resolve_distributed_query_node_routes;
 [[maybe_unused]] const VectorRouteResolver kResolveVectorRoutes =
+    &chronos::cluster::resolve_distributed_query_node_routes;
+[[maybe_unused]] const MutableVectorRouteResolver kResolveMutableVectorRoutes =
     &chronos::cluster::resolve_distributed_query_node_routes;
 } // namespace

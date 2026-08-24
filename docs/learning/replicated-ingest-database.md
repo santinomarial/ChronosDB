@@ -125,3 +125,11 @@ planner's leader/applied/commit copies before delegating to the proof-bound frag
 call returns every owning fragment or none. A target worker still reacquires and exact-matches its
 current publication, so ordinary Raft progress can make a fragment unavailable but cannot make it
 read a different boundary; the coordinator must then use whole-query authority rebinding.
+
+The routed variant performs that full bind first and then passes only the returned fragment set to
+the shared committed-node resolver while the same metadata publication is still pinned. Numeric
+addresses bypass DNS; strict lowercase DNS names resolve synchronously into a finite owned answer
+vector before scheduler polling. The result owns both fragments and routes, deduplicates tablets
+served by one node, and borrows only explicit node-specific TLS contexts. No route answer can
+retarget a fragment, and any bind, metadata, TLS, endpoint, DNS, or allocation failure returns no
+routed query.

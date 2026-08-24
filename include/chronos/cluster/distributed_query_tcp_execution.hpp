@@ -8,6 +8,7 @@
 #include "chronos/network/tcp_socket.hpp"
 #include "chronos/network/tls_socket.hpp"
 #include "chronos/query/distributed.hpp"
+#include "chronos/query/distributed_mutable_vector_fragment.hpp"
 #include "chronos/query/distributed_vector_fragment.hpp"
 #include "chronos/raft/metadata.hpp"
 #include "chronos/raft/types.hpp"
@@ -56,6 +57,14 @@ resolve_distributed_query_node_routes(
 resolve_distributed_query_node_routes(
     const raft::MetadataCatalogSnapshot& catalog,
     std::span<const query::DistributedVectorFragmentDispatch> dispatches,
+    std::span<const DistributedQueryNodeTlsContext> tls_contexts,
+    DistributedQueryRouteResolutionLimits limits = {});
+
+// Applies the same committed node/TLS join to proof-bound mutable TabletState fragments.
+[[nodiscard]] common::Result<std::vector<DistributedQueryNodeRoute>>
+resolve_distributed_query_node_routes(
+    const raft::MetadataCatalogSnapshot& catalog,
+    std::span<const query::DistributedMutableVectorFragment> fragments,
     std::span<const DistributedQueryNodeTlsContext> tls_contexts,
     DistributedQueryRouteResolutionLimits limits = {});
 

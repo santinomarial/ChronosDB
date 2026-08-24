@@ -592,6 +592,25 @@ ReplicatedQuerySnapshot::bind_linearizable_mutable_vector_fragments(
   }
 }
 
+common::Result<ReplicatedRoutedMutableVectorQuery>
+ReplicatedQuerySnapshot::bind_and_resolve_linearizable_mutable_vector_query(
+    const ReplicatedMutableVectorQueryBinding& binding,
+    const std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts,
+    const cluster::DistributedQueryRouteResolutionLimits limits) const {
+  if (impl_ == nullptr)
+    return common::make_unexpected(invalid("replicated query snapshot was moved from"));
+  auto fragments = bind_linearizable_mutable_vector_fragments(binding);
+  if (!fragments.has_value())
+    return common::make_unexpected(fragments.error());
+  auto routes = cluster::resolve_distributed_query_node_routes(
+      *impl_->metadata, std::span<const query::DistributedMutableVectorFragment>{*fragments},
+      tls_contexts, limits);
+  if (!routes.has_value())
+    return common::make_unexpected(routes.error());
+  return ReplicatedRoutedMutableVectorQuery{.fragments = std::move(*fragments),
+                                            .routes = std::move(*routes)};
+}
+
 class ReplicatedIngestDatabase::Impl {
 public:
   Impl(runtime::DatabaseBootstrap configured_bootstrap, ReplicatedIngestRuntime configured_runtime,

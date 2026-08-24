@@ -110,6 +110,11 @@ selected_serving_node(const query::DistributedVectorFragmentDispatch& dispatch) 
   return dispatch.serving_node;
 }
 
+[[nodiscard]] raft::NodeId
+selected_serving_node(const query::DistributedMutableVectorFragment& fragment) noexcept {
+  return fragment.serving_node;
+}
+
 template <typename Dispatch>
 common::Result<std::vector<DistributedQueryNodeRoute>> resolve_distributed_query_node_routes_impl(
     const raft::MetadataCatalogSnapshot& catalog, const std::span<const Dispatch> dispatches,
@@ -211,6 +216,15 @@ common::Result<std::vector<DistributedQueryNodeRoute>> resolve_distributed_query
     const DistributedQueryRouteResolutionLimits limits) {
   return resolve_distributed_query_node_routes_impl<query::DistributedVectorFragmentDispatch>(
       catalog, dispatches, tls_contexts, limits);
+}
+
+common::Result<std::vector<DistributedQueryNodeRoute>> resolve_distributed_query_node_routes(
+    const raft::MetadataCatalogSnapshot& catalog,
+    const std::span<const query::DistributedMutableVectorFragment> fragments,
+    const std::span<const DistributedQueryNodeTlsContext> tls_contexts,
+    const DistributedQueryRouteResolutionLimits limits) {
+  return resolve_distributed_query_node_routes_impl<query::DistributedMutableVectorFragment>(
+      catalog, fragments, tls_contexts, limits);
 }
 
 class DistributedQueryTcpExecution::Impl {

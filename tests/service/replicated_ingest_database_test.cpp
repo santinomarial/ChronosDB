@@ -398,6 +398,9 @@ void elect_and_provision_multiple_tablets(ReplicatedIngestRuntime& owner) {
           raft::TablePolicyMetadata{columnar::test::batch_schema()->table_id(), 1'000'000'000LL,
                                     86'400'000'000'000LL, 86'400'000'000'000LL, 0LL, 8U})
           .value()};
+  const raft::ProposeOperation node{
+      raft::kRaftMetadataCommandEntryType,
+      raft::encode_metadata_command_v1(raft::ClusterNodeMetadata{1U, "127.0.0.1:7411"}).value()};
   const raft::ProposeOperation first_placement{
       raft::kRaftMetadataCommandEntryType,
       raft::encode_metadata_command_v1(
@@ -416,7 +419,8 @@ void elect_and_provision_multiple_tablets(ReplicatedIngestRuntime& owner) {
   const raft::ProposeOperation second_binding{
       raft::kRaftTabletGroupBindingEntryType,
       raft::encode_tablet_group_binding_v1({second_tablet_id(), second_tablet_group()}).value()};
-  auto metadata = owner.runtime()->try_submit({{metadata_group(), schema},
+  auto metadata = owner.runtime()->try_submit({{metadata_group(), node},
+                                               {metadata_group(), schema},
                                                {metadata_group(), policy},
                                                {metadata_group(), first_placement},
                                                {metadata_group(), first_binding},
@@ -815,6 +819,23 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   EXPECT_EQ((*mutable_fragments)[1].tablet_id, tablet_id());
   EXPECT_EQ((*mutable_fragments)[1].raft_group_id, tablet_group());
   EXPECT_EQ((*mutable_fragments)[1].linearizable_barrier, first_authority.barrier.barrier);
+  network::TlsClientContext mutable_tls;
+  const std::array mutable_tls_contexts{
+      cluster::DistributedQueryNodeTlsContext{.node_id = 1U, .tls_context = &mutable_tls}};
+  auto routed_mutable_query = mutable_snapshot->bind_and_resolve_linearizable_mutable_vector_query(
+      {.plan = std::cref(mutable_plan),
+       .table_id = columnar::test::batch_schema()->table_id(),
+       .group_authorities = *authorities,
+       .destination_column_ordinals = projection,
+       .result_schema = std::cref(result_schema)},
+      mutable_tls_contexts);
+  ASSERT_TRUE(routed_mutable_query.has_value()) << routed_mutable_query.error().to_string();
+  ASSERT_EQ(routed_mutable_query->fragments.size(), 2U);
+  ASSERT_EQ(routed_mutable_query->routes.size(), 1U);
+  EXPECT_EQ(routed_mutable_query->routes.front().node_id, 1U);
+  EXPECT_EQ(routed_mutable_query->routes.front().endpoints,
+            (std::vector<network::Ipv4Endpoint>{{{127U, 0U, 0U, 1U}, 7411U}}));
+  EXPECT_EQ(routed_mutable_query->routes.front().tls_context, &mutable_tls);
 
   ++mutable_plan.fragments.front().local_applied_position;
   auto mixed_publication = mutable_snapshot->bind_linearizable_mutable_vector_fragments(

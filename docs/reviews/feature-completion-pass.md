@@ -998,9 +998,11 @@ were deliberately not run.
   identity while permitting new leader/position/placement/barrier authority. The replicated query
   snapshot now retains the committed metadata publication and database identity and performs the
   complete plan-ordered join from correlated leader barriers/observations to resident immutable
-  publications, placements, group bindings, projection, plan, and result schema. Native SQL
-  lowering, node TLS route resolution, scheduler/finalizer ownership, and process composition
-  remain absent.
+  publications, placements, group bindings, projection, plan, and result schema. Those mutable
+  fragments now use the shared committed-node/TLS resolver, and one snapshot call returns the
+  complete owning fragment set plus deduplicated bounded routes from the same metadata
+  publication. Native SQL lowering, scheduler/finalizer ownership, and process composition remain
+  absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

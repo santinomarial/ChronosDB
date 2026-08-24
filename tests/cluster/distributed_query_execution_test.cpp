@@ -1778,6 +1778,35 @@ TEST(DistributedQueryTcpExecutionTest, ResolvesSelectedRoutesFromCommittedNodeMe
     EXPECT_EQ((*vector_routes)[index].endpoints, (*routes)[index].endpoints);
     EXPECT_EQ((*vector_routes)[index].tls_context, (*routes)[index].tls_context);
   }
+  std::vector<query::DistributedMutableVectorFragment> mutable_fragments;
+  for (const query::DistributedVectorFragmentDispatch& dispatch :
+       input->vector_snapshot.dispatches()) {
+    mutable_fragments.push_back(
+        {.query_id = dispatch.query_id,
+         .database_id = dispatch.database_id,
+         .table_id = dispatch.table_id,
+         .tablet_id = dispatch.tablet_id,
+         .destination_schema_id = dispatch.destination_schema_id,
+         .raft_group_id = dispatch.raft_group_id,
+         .serving_node = dispatch.serving_node,
+         .applied_position = dispatch.applied_position,
+         .observed_leader_commit_position = dispatch.observed_leader_commit_position,
+         .placement_epoch = dispatch.placement_epoch,
+         .read_policy = dispatch.read_policy,
+         .linearizable_barrier = dispatch.linearizable_barrier,
+         .destination_column_ordinals = dispatch.destination_column_ordinals,
+         .event_time_predicate = dispatch.event_time_predicate,
+         .plan = dispatch.plan,
+         .result_schema = input->vector_snapshot.result_schema()});
+  }
+  auto mutable_routes = resolve_distributed_query_node_routes(catalog, mutable_fragments, contexts);
+  ASSERT_TRUE(mutable_routes.has_value()) << mutable_routes.error().to_string();
+  ASSERT_EQ(mutable_routes->size(), routes->size());
+  for (std::size_t index = 0U; index < routes->size(); ++index) {
+    EXPECT_EQ((*mutable_routes)[index].node_id, (*routes)[index].node_id);
+    EXPECT_EQ((*mutable_routes)[index].endpoints, (*routes)[index].endpoints);
+    EXPECT_EQ((*mutable_routes)[index].tls_context, (*routes)[index].tls_context);
+  }
   ASSERT_EQ(input->vector_snapshot.dispatches().size(), 2U);
   std::array invalid_vector_dispatches{input->vector_snapshot.dispatches()[0],
                                        input->vector_snapshot.dispatches()[1]};
@@ -1786,6 +1815,10 @@ TEST(DistributedQueryTcpExecutionTest, ResolvesSelectedRoutesFromCommittedNodeMe
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);
+  mutable_fragments.front().serving_node = 0U;
+  EXPECT_EQ(
+      resolve_distributed_query_node_routes(catalog, mutable_fragments, contexts).error().code(),
+      common::StatusCode::kInvalidArgument);
 
   catalog.cluster_nodes[2].endpoint = "localhost:7412";
   routes = resolve_distributed_query_node_routes(catalog, input->snapshot.dispatches(), contexts);

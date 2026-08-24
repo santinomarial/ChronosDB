@@ -1,6 +1,7 @@
 #ifndef CHRONOS_SERVICE_REPLICATED_INGEST_DATABASE_HPP_
 #define CHRONOS_SERVICE_REPLICATED_INGEST_DATABASE_HPP_
 
+#include "chronos/cluster/distributed_query_tcp_execution.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/ingest/raft_tablet_snapshot_storage.hpp"
 #include "chronos/query/catalog.hpp"
@@ -52,6 +53,11 @@ struct ReplicatedMutableVectorQueryBinding {
   std::span<const std::uint32_t> destination_column_ordinals;
   std::optional<cseg::EventTimePredicate> event_time_predicate;
   std::reference_wrapper<const query::DistributedVectorResultSchema> result_schema;
+};
+
+struct ReplicatedRoutedMutableVectorQuery {
+  std::vector<query::DistributedMutableVectorFragment> fragments;
+  std::vector<cluster::DistributedQueryNodeRoute> routes;
 };
 
 enum class ReplicatedIngestDatabaseStartupStage : std::uint8_t {
@@ -117,6 +123,14 @@ public:
   [[nodiscard]] common::Result<std::vector<query::DistributedMutableVectorFragment>>
   bind_linearizable_mutable_vector_fragments(
       const ReplicatedMutableVectorQueryBinding& binding) const;
+  // Performs fragment binding and then resolves only those exact serving nodes through the same
+  // committed metadata publication. Returned routes own addresses and borrow the supplied TLS
+  // contexts, which must outlive the eventual TCP execution.
+  [[nodiscard]] common::Result<ReplicatedRoutedMutableVectorQuery>
+  bind_and_resolve_linearizable_mutable_vector_query(
+      const ReplicatedMutableVectorQueryBinding& binding,
+      std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts,
+      cluster::DistributedQueryRouteResolutionLimits limits = {}) const;
 
 private:
   class Impl;

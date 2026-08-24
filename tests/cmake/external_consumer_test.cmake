@@ -451,6 +451,9 @@ int main() {
       &chronos::service::ReplicatedDistributedMutableVectorQueryTcpServer::start;
   const auto bind_replicated_mutable_vector_fragments =
       &chronos::service::ReplicatedQuerySnapshot::bind_linearizable_mutable_vector_fragments;
+  const auto bind_and_resolve_replicated_mutable_vector_query =
+      &chronos::service::ReplicatedQuerySnapshot::
+          bind_and_resolve_linearizable_mutable_vector_query;
   const auto start_replicated_vector_aggregate_query_server_v2 =
       &chronos::service::ReplicatedDistributedVectorAggregateQueryTcpServerV2::start;
   const auto create_distributed_query_tls_client =
@@ -481,9 +484,17 @@ int main() {
       std::span<const chronos::query::DistributedVectorFragmentDispatch>,
       std::span<const chronos::cluster::DistributedQueryNodeTlsContext>,
       chronos::cluster::DistributedQueryRouteResolutionLimits);
+  using MutableVectorQueryRouteResolver = chronos::common::Result<
+      std::vector<chronos::cluster::DistributedQueryNodeRoute>> (*)(
+      const chronos::raft::MetadataCatalogSnapshot&,
+      std::span<const chronos::query::DistributedMutableVectorFragment>,
+      std::span<const chronos::cluster::DistributedQueryNodeTlsContext>,
+      chronos::cluster::DistributedQueryRouteResolutionLimits);
   const AggregateQueryRouteResolver resolve_aggregate_query_routes =
       &chronos::cluster::resolve_distributed_query_node_routes;
   const VectorQueryRouteResolver resolve_vector_query_routes =
+      &chronos::cluster::resolve_distributed_query_node_routes;
+  const MutableVectorQueryRouteResolver resolve_mutable_vector_query_routes =
       &chronos::cluster::resolve_distributed_query_node_routes;
   const auto encode_raft_observation_request =
       &chronos::cluster::encode_raft_observation_request_v1;
@@ -689,6 +700,8 @@ int main() {
   (void)create_replicated_follower_vector_aggregate_lifecycle_v2;
   (void)resolve_aggregate_query_routes;
   (void)resolve_vector_query_routes;
+  (void)resolve_mutable_vector_query_routes;
+  (void)bind_and_resolve_replicated_mutable_vector_query;
   (void)encode_raft_observation_request;
   (void)decode_raft_observation_response;
   (void)create_raft_observation_response_reader;
