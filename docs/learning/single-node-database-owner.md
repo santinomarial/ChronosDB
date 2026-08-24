@@ -137,9 +137,10 @@ fails before projection and does not fall back to removed history or rewrite the
 A portable truncation case cuts that anchor to 63 bytes. Two startup attempts return its exact
 invalid-size corruption before projection, release ownership, preserve both authority files, and do
 not reconstruct segment 1.
-A semantic-field case sets one required-zero byte and recomputes the anchor checksum. Two startups
-pass checksum validation but return the exact invalid-fields corruption before projection, release
-ownership, and preserve the malformed anchor and retained checkpoint.
+A ten-case semantic matrix recomputes the anchor checksum after independently changing magic,
+versions, layout, filename-bound base identity, checkpoint range/count fields, or reserved bytes.
+Two startups per image return the exact corruption or unsupported-version result before projection,
+release ownership, and preserve the malformed anchor and retained checkpoint.
 If that anchor is missing after segment-1 reclamation, the owner likewise fails before projection:
 it cannot infer the retained base from segment 2 alone. Portable coverage synchronizes the removal,
 twice requires the exact absent-base diagnostic with ownership release, and preserves segment 2.

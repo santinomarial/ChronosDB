@@ -145,9 +145,10 @@ fallback and preserves both the 64-byte image and retained checkpoint segment.
 A portable owner companion truncates that anchor to 63 bytes. Repeated recovery rejects its exact
 invalid-size corruption, releases ownership, preserves the truncated anchor and retained segment,
 and never consults reclaimed history as fallback authority.
-A semantic-field companion sets a required-zero byte and recomputes CRC32C. Repeated recovery passes
-the checksum gate, rejects the exact invalid-fields corruption, and preserves the malformed anchor
-and retained segment; integrity coverage cannot replace semantic validation.
+A ten-case matrix recomputes CRC32C after independently changing magic, either version, layout,
+filename-bound base identity, checkpoint range/count fields, or reserved bytes. Repeated recovery
+preserves every image while distinguishing corruption from future-version incompatibility;
+integrity coverage cannot replace semantic or compatibility validation.
 A portable database-owner companion removes that anchor after segment 1 has been reclaimed. Without
 the anchor, recovery requires base segment 1, rejects the surviving segment-2 checkpoint as an absent
 base, and leaves it unchanged rather than treating its filename as authority.

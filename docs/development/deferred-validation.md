@@ -960,12 +960,13 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   then rejects one covered-byte anchor checksum failure without fallback or rewrite; other anchor
   fields, packaged truncations, and retained-history combinations remain deferred. A portable owner
   companion truncates the anchor by one byte, twice requires the exact invalid-size corruption, and
-  preserves it with segment 2. A semantic-field companion changes one required-zero byte, recomputes
-  CRC32C, twice requires the exact invalid-fields corruption, and preserves both files; other
-  checksum-valid field combinations remain deferred. A portable aggregate-owner case also removes
-  the authoritative anchor after segment-1 reclamation, twice requires the exact absent-base
-  corruption with ownership release, and preserves segment 2; packaged missing-anchor qualification
-  remains deferred. Companion portable cases retain the valid anchor, corrupt either
+  preserves it with segment 2. A ten-case checksum-valid semantic matrix now covers magic, both
+  versions, layout, filename/base identity, checkpoint sequence/range/count, and reserved bytes with
+  exact corruption-versus-unsupported classification and repeated byte preservation; packaged
+  semantic variants remain deferred. A portable aggregate-owner case also removes the authoritative
+  anchor after segment-1 reclamation, twice requires the exact absent-base corruption with ownership
+  release, and preserves segment 2; packaged missing-anchor qualification remains deferred.
+  Companion portable cases retain the valid anchor, corrupt either
   one covered segment-2 header field or the first complete checkpoint-record payload, or truncate
   that checkpoint record by one byte while repair is authorized. Each twice rejects the exact
   corruption without rewriting either file or recreating segment 1; other record fields, truncation

@@ -55,9 +55,10 @@ retained checkpoint segment byte-for-byte.
 Portable qualification truncates the authoritative anchor by one byte. Two owner reopens return the
 exact invalid-size corruption, release ownership, preserve the truncated anchor and retained
 segment, and never fall back to reclaimed segment 1.
-A semantic-field companion sets one required-zero anchor byte and recomputes CRC32C. Two owner
-reopens return the exact invalid-fields corruption and preserve both files, proving reclamation
-authority requires the complete anchor contract rather than checksum validity alone.
+A ten-case semantic matrix recomputes CRC32C after independently invalidating anchor magic,
+versions, layout, filename-bound base, checkpoint range/count, and reserved bytes. Two owner reopens
+per image preserve both files and return the exact corruption or unsupported-version classification,
+proving reclamation authority requires the complete format contract.
 Portable aggregate-owner qualification separately removes the synchronized authoritative anchor
 after segment 1 is reclaimed. Two database reopens require the exact absent-base corruption, release
 ownership, and leave segment 2 unchanged, proving a retained segment number cannot substitute for

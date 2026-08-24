@@ -48,12 +48,12 @@ packaged startup fails before listening and does not remove the entry. This incl
 which recovery classifies without following. A damaged highest Raft recovery anchor is likewise
 terminal, including when truncated: do not recreate it or restore an older anchor alone, because the
 selected retained base and anchor are one authority. An anchor with a valid checksum but invalid
-reserved or identity fields is equally damaged. A missing highest anchor after prefix reclamation is
-also terminal; do not adopt the lowest visible segment as a new base. An intact anchor with a
-damaged retained segment is also terminal and must not trigger fallback or repair. This includes a
-structurally incomplete record inside the anchored checkpoint even when ordinary final-tail repair
-is explicitly authorized. Restore an identity-consistent root. To serve one durable row-preserving
-plan, supply
+magic, version, layout, identity, checkpoint-range, count, or reserved fields is equally terminal.
+A missing highest anchor after prefix reclamation is also terminal; do not adopt the lowest visible
+segment as a new base. An intact anchor with a damaged retained segment is also terminal and must not
+trigger fallback or repair. This includes a structurally incomplete record inside the anchored
+checkpoint even when ordinary final-tail repair is explicitly authorized. Restore a root with
+consistent identity. To serve one durable row-preserving plan, supply
 the paired `--subscription-sql SQL` and `--subscription-key-file PATH` options. The table must
 already exist.
 The key file must contain exactly 32 nonzero bytes and be inaccessible to group/other; preserve the

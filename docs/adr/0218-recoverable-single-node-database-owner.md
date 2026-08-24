@@ -82,9 +82,10 @@ its checksum corruption before projection without falling back or rewriting reta
 Portable owner coverage also truncates the authoritative anchor by one byte. Repeated startup fails
 on its invalid size before projection, releases ownership, preserves both authority files, and does
 not reconstruct reclaimed history.
-A semantic-field case changes a required-zero byte and recomputes CRC32C. Repeated startup reaches
-field validation, fails before projection, releases ownership, and preserves the malformed anchor
-and retained checkpoint instead of accepting checksum validity as sufficient authority.
+A ten-case semantic matrix recomputes CRC32C after independently invalidating anchor magic,
+versions, layout, base identity, checkpoint range/count, and reserved bytes. Repeated startup returns
+the exact corruption or unsupported-version classification before projection, releases ownership,
+and preserves each malformed anchor with its retained checkpoint.
 Portable owner coverage also deletes the authoritative anchor after prefix reclamation. Startup
 rejects the otherwise valid retained segment before projection rather than inventing a new base.
 The complementary retained-history case keeps the anchor valid, damages its base segment header,

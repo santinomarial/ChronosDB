@@ -129,9 +129,10 @@ covered-byte mutation. Rejection preserves both the damaged anchor and retained 
 A portable anchor-truncation case removes the final byte of that authority. Two database reopens
 require the exact invalid-size failure, release ownership, preserve the truncated anchor and retained
 segment, and do not fall back to the reclaimed prefix.
-A semantic-field companion sets one required-zero byte, recomputes the anchor CRC32C, and requires
-the exact invalid-fields failure on two reopens. It preserves the checksum-valid malformed anchor and
-retained segment without falling back, proving CRC validity alone does not establish authority.
+A ten-case semantic companion recomputes CRC32C after independently invalidating magic, major or
+minor version, header size, filename-bound base, first or last sequence, group count, range/count
+agreement, or reserved bytes. Two reopens per image require the exact corruption or unsupported
+version classification and preserve both authority files without fallback.
 A portable aggregate-owner case removes that authoritative anchor only after segment 1 has been
 reclaimed and synchronizes the directory. Reopen reports `Raft recovery base segment is absent`
 instead of adopting segment 2 as unanchored history, and preserves the retained segment.

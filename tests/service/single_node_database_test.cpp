@@ -440,42 +440,131 @@ TEST(SingleNodeDatabaseTest, RejectsTruncatedAuthoritativeRaftAnchorWithoutFallb
   }
 }
 
-TEST(SingleNodeDatabaseTest, RejectsChecksumValidInvalidRaftAnchorFieldsWithoutFallbackOrRewrite) {
-  TemporaryDirectory directory;
-  AnchoredMetadataLog anchored;
-  provision_anchored_metadata_log(directory, anchored);
-  ASSERT_TRUE(anchored.ready);
-  const std::string pristine_anchor = read_binary_file(anchored.anchor);
-  ASSERT_EQ(pristine_anchor.size(), 64U);
-  const std::string pristine_segment = read_binary_file(anchored.retained_segment);
+TEST(SingleNodeDatabaseTest, RejectsChecksumValidInvalidRaftAnchorSemanticsWithoutFallback) {
+  enum class AnchorMutation : std::uint8_t {
+    kMagic,
+    kMajorVersion,
+    kMinorVersion,
+    kHeaderSize,
+    kBaseSegment,
+    kFirstSequence,
+    kLastSequence,
+    kGroupCount,
+    kRangeCount,
+    kReserved
+  };
+  struct SemanticCase {
+    const char* name;
+    AnchorMutation mutation;
+    common::StatusCode expected_code;
+    std::string_view expected_diagnostic;
+  };
+  constexpr std::array cases{
+      SemanticCase{"magic", AnchorMutation::kMagic, common::StatusCode::kCorruption,
+                   "Raft recovery anchor is invalid"},
+      SemanticCase{"major version", AnchorMutation::kMajorVersion,
+                   common::StatusCode::kNotSupported,
+                   "Raft recovery-anchor version is unsupported"},
+      SemanticCase{"minor version", AnchorMutation::kMinorVersion,
+                   common::StatusCode::kNotSupported,
+                   "Raft recovery-anchor version is unsupported"},
+      SemanticCase{"header size", AnchorMutation::kHeaderSize, common::StatusCode::kCorruption,
+                   "Raft recovery-anchor fields are invalid"},
+      SemanticCase{"base segment", AnchorMutation::kBaseSegment, common::StatusCode::kCorruption,
+                   "Raft recovery-anchor fields are invalid"},
+      SemanticCase{"first sequence", AnchorMutation::kFirstSequence,
+                   common::StatusCode::kCorruption, "Raft recovery-anchor fields are invalid"},
+      SemanticCase{"last sequence", AnchorMutation::kLastSequence, common::StatusCode::kCorruption,
+                   "Raft recovery-anchor fields are invalid"},
+      SemanticCase{"zero group count", AnchorMutation::kGroupCount, common::StatusCode::kCorruption,
+                   "Raft recovery-anchor fields are invalid"},
+      SemanticCase{"range count", AnchorMutation::kRangeCount, common::StatusCode::kCorruption,
+                   "Raft recovery-anchor fields are invalid"},
+      SemanticCase{"reserved", AnchorMutation::kReserved, common::StatusCode::kCorruption,
+                   "Raft recovery-anchor fields are invalid"}};
 
-  std::string malformed_anchor = pristine_anchor;
-  common::MutableByteView anchor_bytes =
-      std::as_writable_bytes(std::span{malformed_anchor.data(), malformed_anchor.size()});
-  anchor_bytes[52U] = std::byte{1U};
-  std::fill(anchor_bytes.begin() + 48, anchor_bytes.begin() + 52, std::byte{0U});
-  common::ByteWriter checksum_writer{anchor_bytes.subspan(48U, 4U)};
-  ASSERT_TRUE(checksum_writer.write_u32_le(common::crc32c(common::ByteView{anchor_bytes})).is_ok());
-  ASSERT_TRUE(checksum_writer.full());
+  for (const SemanticCase& test_case : cases) {
+    SCOPED_TRACE(test_case.name);
+    TemporaryDirectory directory;
+    AnchoredMetadataLog anchored;
+    provision_anchored_metadata_log(directory, anchored);
+    ASSERT_TRUE(anchored.ready);
+    const std::string pristine_anchor = read_binary_file(anchored.anchor);
+    ASSERT_EQ(pristine_anchor.size(), 64U);
+    const std::string pristine_segment = read_binary_file(anchored.retained_segment);
 
-  const int anchor_file = ::open(anchored.anchor.c_str(), O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
-  ASSERT_GE(anchor_file, 0);
-  ASSERT_EQ(::pwrite(anchor_file, malformed_anchor.data(), malformed_anchor.size(), 0),
-            static_cast<ssize_t>(malformed_anchor.size()));
-  ASSERT_EQ(::fsync(anchor_file), 0);
-  ASSERT_EQ(::close(anchor_file), 0);
-  ASSERT_EQ(read_binary_file(anchored.anchor), malformed_anchor);
+    std::string malformed_anchor = pristine_anchor;
+    common::MutableByteView anchor_bytes =
+        std::as_writable_bytes(std::span{malformed_anchor.data(), malformed_anchor.size()});
+    const auto write_u16 = [&anchor_bytes](const std::size_t offset, const std::uint16_t value) {
+      common::ByteWriter writer{anchor_bytes.subspan(offset, sizeof(value))};
+      return writer.write_u16_le(value);
+    };
+    const auto write_u32 = [&anchor_bytes](const std::size_t offset, const std::uint32_t value) {
+      common::ByteWriter writer{anchor_bytes.subspan(offset, sizeof(value))};
+      return writer.write_u32_le(value);
+    };
+    const auto write_u64 = [&anchor_bytes](const std::size_t offset, const std::uint64_t value) {
+      common::ByteWriter writer{anchor_bytes.subspan(offset, sizeof(value))};
+      return writer.write_u64_le(value);
+    };
+    switch (test_case.mutation) {
+    case AnchorMutation::kMagic:
+      anchor_bytes[0U] ^= std::byte{1U};
+      break;
+    case AnchorMutation::kMajorVersion:
+      ASSERT_TRUE(write_u16(8U, 2U).is_ok());
+      break;
+    case AnchorMutation::kMinorVersion:
+      ASSERT_TRUE(write_u16(10U, 1U).is_ok());
+      break;
+    case AnchorMutation::kHeaderSize:
+      ASSERT_TRUE(write_u32(12U, 63U).is_ok());
+      break;
+    case AnchorMutation::kBaseSegment:
+      ASSERT_TRUE(write_u64(16U, 3U).is_ok());
+      break;
+    case AnchorMutation::kFirstSequence:
+      ASSERT_TRUE(write_u64(24U, 0U).is_ok());
+      break;
+    case AnchorMutation::kLastSequence:
+      ASSERT_TRUE(write_u64(32U, 0U).is_ok());
+      break;
+    case AnchorMutation::kGroupCount:
+      ASSERT_TRUE(write_u64(40U, 0U).is_ok());
+      break;
+    case AnchorMutation::kRangeCount:
+      ASSERT_TRUE(write_u64(40U, 2U).is_ok());
+      break;
+    case AnchorMutation::kReserved:
+      anchor_bytes[52U] = std::byte{1U};
+      break;
+    }
+    std::fill(anchor_bytes.begin() + 48, anchor_bytes.begin() + 52, std::byte{0U});
+    common::ByteWriter checksum_writer{anchor_bytes.subspan(48U, 4U)};
+    ASSERT_TRUE(
+        checksum_writer.write_u32_le(common::crc32c(common::ByteView{anchor_bytes})).is_ok());
+    ASSERT_TRUE(checksum_writer.full());
 
-  for (std::size_t attempt = 0U; attempt < 2U; ++attempt) {
-    SCOPED_TRACE(attempt);
-    auto rejected = SingleNodeDatabase::open_or_create(config(directory));
-    ASSERT_FALSE(rejected.has_value());
-    EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
-    EXPECT_NE(rejected.error().to_string().find("Raft recovery-anchor fields are invalid"),
-              std::string::npos);
-    EXPECT_EQ(read_binary_file(anchored.anchor), malformed_anchor);
-    EXPECT_EQ(read_binary_file(anchored.retained_segment), pristine_segment);
-    EXPECT_FALSE(std::filesystem::exists(anchored.reclaimed_segment));
+    const int anchor_file = ::open(anchored.anchor.c_str(), O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+    ASSERT_GE(anchor_file, 0);
+    ASSERT_EQ(::pwrite(anchor_file, malformed_anchor.data(), malformed_anchor.size(), 0),
+              static_cast<ssize_t>(malformed_anchor.size()));
+    ASSERT_EQ(::fsync(anchor_file), 0);
+    ASSERT_EQ(::close(anchor_file), 0);
+    ASSERT_EQ(read_binary_file(anchored.anchor), malformed_anchor);
+
+    for (std::size_t attempt = 0U; attempt < 2U; ++attempt) {
+      SCOPED_TRACE(attempt);
+      auto rejected = SingleNodeDatabase::open_or_create(config(directory));
+      ASSERT_FALSE(rejected.has_value());
+      EXPECT_EQ(rejected.error().code(), test_case.expected_code);
+      EXPECT_NE(rejected.error().to_string().find(test_case.expected_diagnostic),
+                std::string::npos);
+      EXPECT_EQ(read_binary_file(anchored.anchor), malformed_anchor);
+      EXPECT_EQ(read_binary_file(anchored.retained_segment), pristine_segment);
+      EXPECT_FALSE(std::filesystem::exists(anchored.reclaimed_segment));
+    }
   }
 }
 
