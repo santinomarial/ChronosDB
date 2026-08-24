@@ -800,6 +800,9 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
 
   auto mutable_snapshot = database->acquire_query_snapshot(barriers);
   ASSERT_TRUE(mutable_snapshot.has_value()) << mutable_snapshot.error().to_string();
+  ASSERT_NE(mutable_snapshot->cluster_node(1U), nullptr);
+  EXPECT_EQ(*mutable_snapshot->cluster_node(1U), (raft::ClusterNodeMetadata{1U, "127.0.0.1:7411"}));
+  EXPECT_EQ(mutable_snapshot->cluster_node(2U), nullptr);
   const auto first_publication =
       database->ingest_runtime()->tablet_application()->snapshot(tablet_group());
   const auto second_publication =

@@ -10,9 +10,11 @@
 #include "chronos/service/native_protocol_service.hpp"
 #include "chronos/service/native_server_principal_authority.hpp"
 #include "chronos/service/native_server_principal_config.hpp"
+#include "chronos/service/replicated_distributed_mutable_vector_query_tcp_server.hpp"
 #include "chronos/service/replicated_group_config.hpp"
 #include "chronos/service/replicated_ingest_database.hpp"
 #include "chronos/service/replicated_ingest_service.hpp"
+#include "chronos/service/replicated_peer_authority.hpp"
 #include "chronos/service/replicated_peer_config.hpp"
 #include "chronos/service/replicated_raft_transport_runtime.hpp"
 #include "chronos/service/replicated_read_barrier.hpp"
@@ -57,6 +59,7 @@ using chronos::network::Reactor;
 using chronos::network::ReactorBackend;
 using chronos::network::SpscNetworkTaskQueue;
 using chronos::service::NativeProtocolService;
+using chronos::service::ReplicatedDistributedMutableVectorQueryTcpServer;
 using chronos::service::ReplicatedIngestDatabase;
 using chronos::service::ReplicatedIngestService;
 using chronos::service::ReplicatedRaftTransportRuntime;
@@ -682,6 +685,103 @@ validate_transport_membership(const chronos::raft::NodeId local_node_id,
   return chronos::common::Status::ok();
 }
 
+// Heap ownership keeps every borrowed worker, authority, and TLS-context address stable. Field
+// order closes the listener before releasing the local worker, TLS contexts, or node authority.
+struct DaemonDistributedMutableQuery {
+  std::optional<chronos::service::ReplicatedPeerAuthority> authority;
+  std::vector<chronos::network::TlsClientContext> client_contexts;
+  std::vector<chronos::cluster::DistributedQueryNodeTlsContext> tls_contexts;
+  std::optional<chronos::service::ReplicatedDistributedMutableVectorQueryWorker> local_worker;
+  std::optional<ReplicatedDistributedMutableVectorQueryTcpServer> server;
+  chronos::service::NativeDistributedMutableVectorRowsQueryConfig native_config;
+};
+
+[[nodiscard]] chronos::common::Result<std::unique_ptr<DaemonDistributedMutableQuery>>
+configure_distributed_mutable_query(
+    ReplicatedIngestDatabase& database, const std::vector<chronos::service::ReplicatedPeer>& peers,
+    const std::shared_ptr<const chronos::network::TlsPemCredentials>& credentials) {
+  if (credentials == nullptr)
+    return chronos::common::make_unexpected(
+        invalid("distributed query TLS credentials are absent"));
+  auto snapshot = database.acquire_query_snapshot();
+  if (!snapshot.has_value())
+    return chronos::common::make_unexpected(snapshot.error());
+  const chronos::raft::NodeId local_node_id = database.bootstrap().local_node_id;
+  std::optional<chronos::network::Ipv4Endpoint> local_query_endpoint;
+  for (const chronos::service::ReplicatedPeer& peer : peers) {
+    const chronos::raft::ClusterNodeMetadata* const advertised =
+        snapshot->cluster_node(peer.node_id);
+    if (advertised == nullptr) {
+      return chronos::common::make_unexpected(
+          invalid("committed metadata omits a distributed query peer endpoint"));
+    }
+    auto endpoint = chronos::network::parse_ipv4_endpoint(advertised->endpoint);
+    if (!endpoint.has_value()) {
+      return chronos::common::make_unexpected(chronos::common::Status{
+          endpoint.error().code(),
+          "distributed query peer endpoint is invalid: " + endpoint.error().to_string()});
+    }
+    if (endpoint->address != peer.endpoint.address) {
+      return chronos::common::make_unexpected(
+          invalid("Raft and distributed query peer advertisements use different addresses"));
+    }
+    if (peer.node_id == local_node_id)
+      local_query_endpoint.emplace(*endpoint);
+  }
+  if (!local_query_endpoint.has_value())
+    return chronos::common::make_unexpected(
+        invalid("distributed query peer configuration omits the local node"));
+
+  try {
+    auto owner = std::make_unique<DaemonDistributedMutableQuery>();
+    auto authority = chronos::service::ReplicatedPeerAuthority::create(local_node_id, peers);
+    if (!authority.has_value())
+      return chronos::common::make_unexpected(authority.error());
+    owner->authority.emplace(std::move(*authority));
+    owner->client_contexts.reserve(peers.size());
+    for (const chronos::service::ReplicatedPeer& peer : peers) {
+      auto context = chronos::network::TlsClientContext::create(
+          {.expected_server_identity = peer.tls_server_identity, .pem_credentials = credentials});
+      if (!context.has_value())
+        return chronos::common::make_unexpected(context.error());
+      owner->client_contexts.push_back(std::move(*context));
+    }
+    owner->tls_contexts.reserve(peers.size());
+    for (std::size_t index = 0U; index < peers.size(); ++index) {
+      owner->tls_contexts.push_back(
+          {.node_id = peers[index].node_id, .tls_context = &owner->client_contexts[index]});
+    }
+
+    auto local_worker = chronos::service::ReplicatedDistributedMutableVectorQueryWorker::create(
+        {.local_node_id = local_node_id, .context_provider = &database});
+    if (!local_worker.has_value())
+      return chronos::common::make_unexpected(local_worker.error());
+    owner->local_worker.emplace(std::move(*local_worker));
+    auto server = ReplicatedDistributedMutableVectorQueryTcpServer::start(
+        {.worker = {.local_node_id = local_node_id, .context_provider = &database},
+         .listener = {.bind_endpoint = *local_query_endpoint},
+         .tls = {.pem_credentials = credentials},
+         .authenticator = &*owner->authority,
+         .node_authorizer = &*owner->authority});
+    if (!server.has_value())
+      return chronos::common::make_unexpected(server.error());
+    owner->server.emplace(std::move(*server));
+    owner->native_config = {.source_node_id = local_node_id,
+                            .authenticator = &*owner->authority,
+                            .node_authorizer = &*owner->authority,
+                            .local_worker = &*owner->local_worker,
+                            .tls_contexts = owner->tls_contexts};
+    return owner;
+  } catch (const std::bad_alloc&) {
+    return chronos::common::make_unexpected(
+        chronos::common::Status{chronos::common::StatusCode::kResourceExhausted,
+                                "distributed query ownership allocation failed"});
+  } catch (const std::length_error&) {
+    return chronos::common::make_unexpected(
+        invalid("distributed query ownership exceeds process limits"));
+  }
+}
+
 [[nodiscard]] chronos::common::Status
 elect_single_node_groups(ReplicatedIngestDatabase& database,
                          const std::vector<chronos::raft::RaftGroupConfiguration>& groups) {
@@ -1242,6 +1342,55 @@ private:
   std::thread thread_;
 };
 
+// A mutable fragment executes synchronously inside server polling, so this listener cannot share
+// the Raft transport thread without letting a bounded scan delay heartbeats and elections.
+class DistributedMutableQueryWorker {
+public:
+  explicit DistributedMutableQueryWorker(
+      ReplicatedDistributedMutableVectorQueryTcpServer& server) noexcept
+      : server_(&server) {}
+  DistributedMutableQueryWorker(const DistributedMutableQueryWorker&) = delete;
+  DistributedMutableQueryWorker& operator=(const DistributedMutableQueryWorker&) = delete;
+
+  [[nodiscard]] bool start() noexcept {
+    try {
+      thread_ = std::thread{[this] { run(); }};
+      return true;
+    } catch (const std::bad_alloc&) {
+      return false;
+    } catch (const std::system_error&) {
+      return false;
+    }
+  }
+
+  void request_stop() noexcept {
+    stopping_.store(true, std::memory_order_release);
+  }
+  void join() noexcept {
+    if (thread_.joinable())
+      thread_.join();
+  }
+  [[nodiscard]] bool failed() const noexcept {
+    return failed_.load(std::memory_order_acquire);
+  }
+
+private:
+  void run() noexcept {
+    while (!stopping_.load(std::memory_order_acquire)) {
+      const chronos::common::Status polled = server_->poll_once(std::chrono::milliseconds{10});
+      if (!polled.is_ok()) {
+        failed_.store(true, std::memory_order_release);
+        return;
+      }
+    }
+  }
+
+  ReplicatedDistributedMutableVectorQueryTcpServer* server_{};
+  std::atomic<bool> stopping_{false};
+  std::atomic<bool> failed_{false};
+  std::thread thread_;
+};
+
 // NOLINTNEXTLINE(modernize-avoid-c-arrays)
 int run_daemon(const int argc, const char* const argv[]) {
   const std::string_view program = argc > 0 ? std::string_view{argv[0]} : "chronosd";
@@ -1338,6 +1487,7 @@ int run_daemon(const int argc, const char* const argv[]) {
   std::optional<ReplicatedIngestDatabase> replicated_database;
   std::optional<ReplicatedRaftTransportRuntime> raft_transport;
   std::optional<ReplicatedReadBarrier> replicated_read_barrier;
+  std::unique_ptr<DaemonDistributedMutableQuery> distributed_query;
   std::optional<NativeProtocolService> service;
   std::unique_ptr<DaemonSubscription> subscription;
   if (!options->data_directory.empty()) {
@@ -1418,7 +1568,24 @@ int run_daemon(const int argc, const char* const argv[]) {
         }
         replicated_read_barrier.emplace(std::move(*read_barrier));
       }
-      service.emplace(*replicated_database, *replicated_read_barrier);
+      if (replicated_peers.has_value()) {
+        auto configured = configure_distributed_mutable_query(
+            *replicated_database, *replicated_peers, raft_tls_credentials);
+        if (!configured.has_value()) {
+          if (raft_transport.has_value())
+            static_cast<void>(raft_transport->shutdown());
+          static_cast<void>(replicated_read_barrier->shutdown());
+          static_cast<void>(replicated_database->shutdown());
+          logger.error("distributed_query_start_failed",
+                       "distributed query start failed: " + configured.error().to_string());
+          return 1;
+        }
+        distributed_query = std::move(*configured);
+        service.emplace(*replicated_database, *replicated_read_barrier,
+                        distributed_query->native_config);
+      } else {
+        service.emplace(*replicated_database, *replicated_read_barrier);
+      }
     } else {
       auto descriptor = new_database_descriptor(identities);
       if (!descriptor.has_value()) {
@@ -1458,6 +1625,8 @@ int run_daemon(const int argc, const char* const argv[]) {
   if (!requests.has_value() || !responses.has_value()) {
     const auto& error = !requests.has_value() ? requests.error() : responses.error();
     logger.error("queue_creation_failed", "queue creation failed: " + error.to_string());
+    service.reset();
+    distributed_query.reset();
     if (raft_transport.has_value())
       static_cast<void>(raft_transport->shutdown());
     if (replicated_database.has_value())
@@ -1473,6 +1642,8 @@ int run_daemon(const int argc, const char* const argv[]) {
          .requests = std::addressof(*requests),
          .responses = std::addressof(*responses)});
     if (!created.has_value()) {
+      service.reset();
+      distributed_query.reset();
       if (raft_transport.has_value())
         static_cast<void>(raft_transport->shutdown());
       static_cast<void>(replicated_database->shutdown());
@@ -1503,6 +1674,8 @@ int run_daemon(const int argc, const char* const argv[]) {
   if (!reactor.has_value()) {
     logger.error("server_start_failed", "server start failed: " + reactor.error().to_string());
     replicated_service.reset();
+    service.reset();
+    distributed_query.reset();
     if (raft_transport.has_value())
       static_cast<void>(raft_transport->shutdown());
     if (replicated_database.has_value())
@@ -1514,6 +1687,8 @@ int run_daemon(const int argc, const char* const argv[]) {
   RaftTransportWorker* raft_worker{};
   if (raft_transport.has_value()) {
     if (!replicated_read_barrier.has_value() || !replicated_database.has_value()) {
+      service.reset();
+      distributed_query.reset();
       static_cast<void>(raft_transport->shutdown());
       static_cast<void>(reactor->shutdown());
       logger.error("raft_transport_owner_invalid", "Raft transport owners are incomplete");
@@ -1524,9 +1699,51 @@ int run_daemon(const int argc, const char* const argv[]) {
     if (!raft_worker->start()) {
       static_cast<void>(reactor->shutdown());
       replicated_service.reset();
+      service.reset();
+      distributed_query.reset();
       static_cast<void>(raft_transport->shutdown());
       static_cast<void>(replicated_database->shutdown());
       logger.error("raft_transport_worker_start_failed", "Raft transport worker start failed");
+      return 1;
+    }
+  }
+
+  std::optional<DistributedMutableQueryWorker> distributed_query_worker_owner;
+  DistributedMutableQueryWorker* distributed_query_worker{};
+  if (distributed_query != nullptr) {
+    if (!distributed_query->server.has_value()) {
+      if (raft_worker != nullptr) {
+        raft_worker->request_stop();
+        raft_worker->join();
+      }
+      static_cast<void>(reactor->shutdown());
+      replicated_service.reset();
+      service.reset();
+      distributed_query.reset();
+      if (raft_transport.has_value())
+        static_cast<void>(raft_transport->shutdown());
+      static_cast<void>(replicated_database->shutdown());
+      logger.error("distributed_query_owner_invalid",
+                   "distributed query listener owner is incomplete");
+      return 1;
+    }
+    distributed_query_worker =
+        std::addressof(distributed_query_worker_owner.emplace(*distributed_query->server));
+    if (!distributed_query_worker->start()) {
+      if (raft_worker != nullptr) {
+        raft_worker->request_stop();
+        raft_worker->join();
+      }
+      static_cast<void>(distributed_query->server->shutdown());
+      static_cast<void>(reactor->shutdown());
+      replicated_service.reset();
+      service.reset();
+      distributed_query.reset();
+      if (raft_transport.has_value())
+        static_cast<void>(raft_transport->shutdown());
+      static_cast<void>(replicated_database->shutdown());
+      logger.error("distributed_query_worker_start_failed",
+                   "distributed query worker start failed");
       return 1;
     }
   }
@@ -1546,6 +1763,11 @@ int run_daemon(const int argc, const char* const argv[]) {
        .subscription_responses =
            subscription != nullptr ? std::addressof(subscription->responses) : nullptr}};
   if (!worker.start()) {
+    if (distributed_query_worker != nullptr) {
+      distributed_query_worker->request_stop();
+      distributed_query_worker->join();
+      static_cast<void>(distributed_query->server->shutdown());
+    }
     if (raft_worker != nullptr) {
       raft_worker->request_stop();
       raft_worker->join();
@@ -1555,6 +1777,8 @@ int run_daemon(const int argc, const char* const argv[]) {
     static_cast<void>(reactor->shutdown());
     subscription.reset();
     replicated_service.reset();
+    service.reset();
+    distributed_query.reset();
     if (database.has_value())
       static_cast<void>(database->shutdown());
     if (replicated_database.has_value())
@@ -1572,6 +1796,11 @@ int run_daemon(const int argc, const char* const argv[]) {
     while (!worker.stopped())
       static_cast<void>(reactor->poll_once(std::chrono::milliseconds{10}));
     worker.join();
+    if (distributed_query_worker != nullptr) {
+      distributed_query_worker->request_stop();
+      distributed_query_worker->join();
+      static_cast<void>(distributed_query->server->shutdown());
+    }
     if (replicated_read_barrier.has_value())
       static_cast<void>(replicated_read_barrier->shutdown());
     if (raft_worker != nullptr) {
@@ -1583,6 +1812,8 @@ int run_daemon(const int argc, const char* const argv[]) {
     static_cast<void>(reactor->shutdown());
     subscription.reset();
     replicated_service.reset();
+    service.reset();
+    distributed_query.reset();
     if (database.has_value())
       static_cast<void>(database->shutdown());
     if (replicated_database.has_value())
@@ -1602,6 +1833,9 @@ int run_daemon(const int argc, const char* const argv[]) {
                                  : (replicated_service.has_value() ? "local" : "disabled");
   const std::string_view native_transport =
       native_principal_authority != nullptr ? "tls" : "plaintext";
+  const std::string_view distributed_query_state =
+      distributed_query != nullptr ? "configured"
+                                   : (replicated_service.has_value() ? "local" : "disabled");
   std::string startup{"chronosd listening on "};
   startup.append(options->listen_address_text);
   startup.push_back(':');
@@ -1616,6 +1850,8 @@ int run_daemon(const int argc, const char* const argv[]) {
   startup.append(raft_transport_state);
   startup.append(" native_transport=");
   startup.append(native_transport);
+  startup.append(" distributed_query=");
+  startup.append(distributed_query_state);
   const std::array startup_fields{
       chronos::common::LogField{"address", options->listen_address_text},
       chronos::common::LogField{"port", port},
@@ -1623,13 +1859,15 @@ int run_daemon(const int argc, const char* const argv[]) {
       chronos::common::LogField{"data_plane", data_plane},
       chronos::common::LogField{"subscriptions", subscriptions},
       chronos::common::LogField{"raft_transport", raft_transport_state},
-      chronos::common::LogField{"native_transport", native_transport}};
+      chronos::common::LogField{"native_transport", native_transport},
+      chronos::common::LogField{"distributed_query", distributed_query_state}};
   logger.info("server_listening", startup, startup_fields);
 
   int exit_code = 0;
   std::uint64_t native_security_generation = native_principal_authority != nullptr ? 1U : 0U;
   while (stop_requested == 0 && !worker.failed() &&
-         (raft_worker == nullptr || !raft_worker->failed())) {
+         (raft_worker == nullptr || !raft_worker->failed()) &&
+         (distributed_query_worker == nullptr || !distributed_query_worker->failed())) {
     if (native_security_reload_requested != 0) {
       native_security_reload_requested = 0;
       if (native_principal_authority == nullptr) {
@@ -1683,6 +1921,10 @@ int run_daemon(const int argc, const char* const argv[]) {
     logger.error("raft_transport_worker_failed", "Raft transport worker failed");
     exit_code = 1;
   }
+  if (distributed_query_worker != nullptr && distributed_query_worker->failed()) {
+    logger.error("distributed_query_worker_failed", "distributed query worker failed");
+    exit_code = 1;
+  }
 
   worker.request_stop();
   bool reactor_drain_failed = false;
@@ -1701,6 +1943,16 @@ int run_daemon(const int argc, const char* const argv[]) {
     }
   }
   worker.join();
+  if (distributed_query_worker != nullptr) {
+    distributed_query_worker->request_stop();
+    distributed_query_worker->join();
+    const auto query_shutdown = distributed_query->server->shutdown();
+    if (!query_shutdown.is_ok()) {
+      logger.error("distributed_query_shutdown_failed",
+                   "distributed query shutdown failed: " + query_shutdown.to_string());
+      exit_code = 1;
+    }
+  }
   const auto shutdown = reactor->shutdown();
   if (!shutdown.is_ok()) {
     logger.error("reactor_shutdown_failed", "shutdown failed: " + shutdown.to_string());
@@ -1708,6 +1960,8 @@ int run_daemon(const int argc, const char* const argv[]) {
   }
   subscription.reset();
   replicated_service.reset();
+  service.reset();
+  distributed_query.reset();
   if (replicated_read_barrier.has_value()) {
     const auto barrier_shutdown = replicated_read_barrier->shutdown();
     if (!barrier_shutdown.is_ok()) {

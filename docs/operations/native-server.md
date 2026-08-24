@@ -143,10 +143,10 @@ constructs one client context per route, and publishes the complete borrowed map
 still supply request-specific group/initial-node/placement authority. `chronosctl quorum-sync`
 supplies that command composition and can target packaged `chronosd` when its mutual-TLS server
 bundle authorizes the client's leaf certificate. Multi-group SELECT is not redirected to one
-arbitrary group leader. A negotiated finite SELECT is redirectable only when its table has one
-exact group/epoch/replica route and ordered observations show that every group in the packaged read
-gate has the same stable remote leader. Split leadership and multi-group table placement fail
-closed pending remote fragments.
+arbitrary group leader. With the authenticated peer bundle, ordinary supported direct-column
+SELECT instead uses correlated all-group authority: self-led tablet fragments execute locally,
+remote tablet fragments use the private mutual-TLS worker endpoints committed in cluster-node
+metadata, and one coordinator applies global ordering and LIMIT before any result is published.
 
 For multi-voter groups, configure the complete transport bundle:
 
@@ -166,13 +166,22 @@ only exact local single-voter groups were accepted. Non-replicated modes report
 bounded query gate; Raft snapshot installation remains a fail-closed gap rather than a silently
 discarded completion.
 
+The same bundle configures the private mutable-query plane. Committed metadata must advertise each
+node's canonical IPv4 data endpoint; the local endpoint address must equal the address in its peer
+entry, but the port is separate from the Raft listener. The daemon binds it before reporting
+`distributed_query=configured`, constructs one client TLS context per peer identity, and polls the
+listener on a thread distinct from Raft transport. Missing/inconsistent advertisements and bind or
+TLS failures stop startup. `distributed_query=local` names replicated single-node mode without this
+private carrier; `disabled` names non-replicated modes. Endpoint and peer-certificate changes
+require an orderly restart.
+
 The repository's Linux process qualification uses one CA and a distinct certificate/key for each
-of three loopback nodes. It proves authenticated election, QUORUM_SYNC application, abrupt tablet-
-leader loss, higher-term retry deduplication, orderly survivor shutdown, and identical recovery from
-all retained roots. It does not qualify deployment DNS, certificate rotation, packet faults,
-failover latency, snapshot transfer, rolling upgrades, or native SELECT when metadata and tablet
-groups have different leaders. Operators must not treat `raft_transport=configured` as evidence
-that those broader gates have passed.
+of three loopback nodes. It proves authenticated election, QUORUM_SYNC application, remote SELECT
+from a nonleader, abrupt tablet-leader loss, higher-term retry deduplication, remote SELECT through
+the replacement leader, orderly survivor shutdown, and identical recovery from all retained roots.
+It does not qualify deployment DNS, certificate rotation, packet faults, failover latency, snapshot
+transfer, rolling upgrades, globally atomic cross-group time, or dynamic endpoint replacement.
+Operators must not treat `raft_transport=configured` as evidence that those broader gates passed.
 
 Set finite connection, event, frame, buffered-byte, queued-frame, in-flight request, handshake, and
 idle limits. Defaults are development bounds, not capacity guidance. Monitor accepted, rejected,

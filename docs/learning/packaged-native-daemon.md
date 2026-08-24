@@ -43,9 +43,17 @@ Replicated mode keeps that same single queue consumer. Its adapter sends canonic
 nonblocking Raft coordinator and sends native SELECT to the synchronous query dispatcher over a
 fresh owning applied read-barrier snapshot. Local one-voter startup commits a current-term no-op;
 multi-voter mode lets the authenticated transport poll owner submit and exactly correlate the
-barriers. A finite query sequence is emitted before another request or coordinator completion is
-polled. Every table placement must be resident. The barrier result is a per-group vector rather
-than a globally atomic cross-group instant, and remote fragments are not inferred from local state.
+barriers. With the peer/TLS bundle, committed metadata supplies a distinct private data endpoint per
+node. Self-led fragments use the direct production worker; remote fragments use a dedicated
+mutual-TLS listener and one client context per authenticated peer. One complete coordinator merges
+both subsets before global ordering, LIMIT, and Native encoding. The barrier result remains a
+stable per-group vector rather than a globally atomic cross-group instant.
+
+The private query listener has its own joined poll thread because worker execution is synchronous
+and must not delay Raft transport polling. The heap-owned query bundle keeps the peer authority,
+TLS contexts, local worker, listener, and borrowed Native config address-stable. Its release/acquire
+stop and failure flags have the same publication argument as the existing worker threads: stop is
+visible before loop exit, and failure is visible before the main thread reports termination.
 
 The subscription composition uses a stable committed-append router as the database's pre-open
 observer address. After recovery and before socket admission, one per-plan runtime binds its fan-out
@@ -72,6 +80,12 @@ before the startup banner. Worker publication or reactor failures terminate the 
 nonzero status. A native reload failure is observable but nonterminal because the complete previous
 generation remains installed; its diagnostic names that `retained_generation`. A successful reload
 reports its monotonic process-local generation.
+
+Authenticated multi-voter startup also requires the committed local query endpoint to be canonical
+IPv4 and to share the local Raft peer's address. It binds that exact port before the public listening
+banner and reports `distributed_query=configured`; any missing advertisement, inconsistent address,
+TLS-context error, bind error, or query poll failure fails closed. Peer/query credentials and the
+private listener are fixed until restart and are not changed by public Native `SIGHUP` reload.
 
 The startup banner reports `data_plane=configured` or `data_plane=replicated` only after the
 corresponding database path and reactor both start; otherwise the explicit unconfigured mode
@@ -147,10 +161,12 @@ non-regular entry. A recovery-anchor case proves no fallback from a damaged high
 replicated case negotiates Protocol 2,
 applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact
 retry, and queries the same recovered row count. A separate replicated gate provisions three
-retained roots and distinct mutual-TLS identities, starts three actual daemon processes, obtains an
-applied quorum acknowledgement, kills the acknowledged tablet leader, observes a higher-term
-replacement, and requires an exact matching retry. Reopening each root then proves that all three
-applications recover the same two visible rows and one retry entry. A packaged-client gate starts
+retained roots, committed query endpoints, and distinct mutual-TLS identities, starts three actual
+daemon processes, obtains an applied quorum acknowledgement, executes a distributed SELECT from a
+nonleader, kills the acknowledged tablet leader, observes a higher-term replacement, requires an
+exact matching retry, and executes the same SELECT from the remaining nonleader through the new
+leader. Reopening each root then proves that all three applications recover the same two visible
+rows and one retry entry. A packaged-client gate starts
 `chronosd` with mutual TLS and a strict client-principal allowlist, invokes the actual `chronosctl`
 binary, and requires APPLIED followed by MATCHING_RETRY for the same canonical append. It then
 rotates the server certificate/key, trust store, and allowlist through `SIGHUP`. The process matrix
@@ -158,9 +174,9 @@ rejects a malformed generation while the old client still receives MATCHING_RETR
 generation two, then restores the original bundle as generation three. It rejects each superseded
 client and requires each installed generation to receive the same MATCHING_RETRY. Reactor coverage
 separately proves failed reload rollback, incomplete-handshake closure, and established-session
-continuity. It deliberately does not claim native multi-group query failover: SELECT still needs one
-daemon to lead every barrier group because client leader routing and remote fragments are not
-packaged. On non-Linux hosts,
+continuity. It qualifies one-tablet remote-fragment query routing and leader failover, not globally
+atomic cross-group time, dynamic endpoint changes, aggregate distribution, or mid-query
+cancellation. On non-Linux hosts,
 daemon/service build and durable-root initialization run, but the socket subprocess is not
 registered because the server reactor is Linux-only.
 

@@ -617,7 +617,8 @@ route_outbound(std::array<std::unique_ptr<raft::DurableMultiRaftRuntime>, 3U>& r
   return true;
 }
 
-void provision_replicated_cluster(const std::array<std::string, 3U>& roots) {
+void provision_replicated_cluster(const std::array<std::string, 3U>& roots,
+                                  const std::array<std::uint16_t, 3U>& query_ports) {
   std::array<std::unique_ptr<runtime::DatabaseBootstrap>, 3U> bootstraps;
   std::array<std::unique_ptr<raft::DurableMultiRaftRuntime>, 3U> runtimes;
   const auto groups = replicated_cluster_groups();
@@ -679,10 +680,23 @@ void provision_replicated_cluster(const std::array<std::string, 3U>& roots) {
       raft::kRaftTabletGroupBindingEntryType,
       raft::encode_tablet_group_binding_v1({replicated_tablet_id(), replicated_tablet_group()})
           .value()};
-  auto metadata = runtimes.front()->execute_batch({{replicated_metadata_group(), schema},
-                                                   {replicated_metadata_group(), policy},
-                                                   {replicated_metadata_group(), placement},
-                                                   {replicated_metadata_group(), binding}});
+  std::vector<raft::DurableRaftRequest> metadata_requests;
+  metadata_requests.reserve(7U);
+  for (std::size_t index = 0U; index < query_ports.size(); ++index) {
+    metadata_requests.push_back(
+        {replicated_metadata_group(),
+         raft::ProposeOperation{
+             raft::kRaftMetadataCommandEntryType,
+             raft::encode_metadata_command_v1(
+                 raft::ClusterNodeMetadata{static_cast<raft::NodeId>(index + 1U),
+                                           "127.0.0.1:" + std::to_string(query_ports[index])})
+                 .value()}});
+  }
+  metadata_requests.push_back({replicated_metadata_group(), schema});
+  metadata_requests.push_back({replicated_metadata_group(), policy});
+  metadata_requests.push_back({replicated_metadata_group(), placement});
+  metadata_requests.push_back({replicated_metadata_group(), binding});
+  auto metadata = runtimes.front()->execute_batch(std::move(metadata_requests));
   ASSERT_TRUE(enqueue_outbound(metadata, outbound));
   ASSERT_TRUE(route_outbound(runtimes, outbound));
   auto heartbeat =
@@ -691,7 +705,7 @@ void provision_replicated_cluster(const std::array<std::string, 3U>& roots) {
   ASSERT_TRUE(route_outbound(runtimes, outbound));
   for (const auto& runtime : runtimes) {
     ASSERT_NE(runtime, nullptr);
-    ASSERT_EQ(runtime->find_group(replicated_metadata_group())->commit_index(), 4U);
+    ASSERT_EQ(runtime->find_group(replicated_metadata_group())->commit_index(), 7U);
   }
 
   for (auto& runtime : runtimes) {
@@ -1054,6 +1068,26 @@ void expect_recovered_replicated_cluster(const std::array<std::string, 3U>& root
   auto response = network::decode_frame(receive_frame(client));
   EXPECT_TRUE(response.has_value());
   return response.value_or(network::Frame{});
+}
+
+void expect_replicated_rows(const int client, const std::uint64_t request_id) {
+  auto response = send_replicated_query(client, request_id,
+                                        "SELECT ts, tag FROM events ORDER BY ts ASC, tag ASC");
+  if (response.header.message_type == network::MessageType::kError) {
+    auto decoded = network::decode_error_message(response.payload);
+    ASSERT_TRUE(decoded.has_value());
+    ADD_FAILURE() << "distributed query failed: " << byte_string(decoded->message);
+    return;
+  }
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
+  auto batch = network::decode_query_result_batch(response.payload);
+  ASSERT_TRUE(batch.has_value()) << batch.error().to_string();
+  EXPECT_EQ(batch->row_count(), 2U);
+  ASSERT_EQ(batch->columns().size(), 2U);
+  EXPECT_EQ(batch->columns()[0].name, "ts");
+  EXPECT_EQ(batch->columns()[1].name, "tag");
+  response = network::decode_frame(receive_frame(client)).value_or(network::Frame{});
+  EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
 }
 
 [[nodiscard]] network::Frame send_query(const int client, const std::uint64_t request_id,
@@ -2041,18 +2075,22 @@ TEST(ChronosdProcessTest, ReplicatesRetriesAndFailsOverAcrossThreeAuthenticatedD
   ASSERT_FALSE(directory.path().empty());
   const std::array<std::string, 3U> roots{
       directory.path() + "/node-1", directory.path() + "/node-2", directory.path() + "/node-3"};
-  provision_replicated_cluster(roots);
-
-  std::array<std::uint16_t, 3U> raft_ports{};
-  for (std::size_t index = 0U; index < raft_ports.size(); ++index) {
+  std::array<std::uint16_t, 6U> reserved_ports{};
+  for (std::size_t index = 0U; index < reserved_ports.size(); ++index) {
     do {
-      raft_ports[index] = reserve_loopback_port();
-    } while (raft_ports[index] != 0U &&
-             std::ranges::find(
-                 raft_ports.begin(), raft_ports.begin() + static_cast<std::ptrdiff_t>(index),
-                 raft_ports[index]) != raft_ports.begin() + static_cast<std::ptrdiff_t>(index));
-    ASSERT_NE(raft_ports[index], 0U);
+      reserved_ports[index] = reserve_loopback_port();
+    } while (reserved_ports[index] != 0U &&
+             std::ranges::find(reserved_ports.begin(),
+                               reserved_ports.begin() + static_cast<std::ptrdiff_t>(index),
+                               reserved_ports[index]) !=
+                 reserved_ports.begin() + static_cast<std::ptrdiff_t>(index));
+    ASSERT_NE(reserved_ports[index], 0U);
   }
+  const std::array<std::uint16_t, 3U> raft_ports{reserved_ports[0], reserved_ports[1],
+                                                 reserved_ports[2]};
+  const std::array<std::uint16_t, 3U> query_ports{reserved_ports[3], reserved_ports[4],
+                                                  reserved_ports[5]};
+  provision_replicated_cluster(roots, query_ports);
   const ReplicatedClusterFiles files = write_replicated_cluster_files(directory.path(), raft_ports);
   ASSERT_FALSE(files.groups.empty());
   ASSERT_FALSE(files.peers.empty());
@@ -2068,6 +2106,7 @@ TEST(ChronosdProcessTest, ReplicatesRetriesAndFailsOverAcrossThreeAuthenticatedD
     const std::string startup = children[index].read_startup_line();
     EXPECT_NE(startup.find("data_plane=replicated"), std::string::npos) << startup;
     EXPECT_NE(startup.find("raft_transport=configured"), std::string::npos) << startup;
+    EXPECT_NE(startup.find("distributed_query=configured"), std::string::npos) << startup;
     const std::uint16_t port = parse_port(startup);
     ASSERT_NE(port, 0U) << startup;
     clients[index] = connect_client(port);
@@ -2086,6 +2125,10 @@ TEST(ChronosdProcessTest, ReplicatesRetriesAndFailsOverAcrossThreeAuthenticatedD
   EXPECT_EQ(first_result.acknowledgement.leader_node_id, first_result.node_index + 1U);
   EXPECT_GT(first_result.acknowledgement.leader_term, 0U);
   EXPECT_GT(first_result.acknowledgement.log_index, 0U);
+
+  const std::size_t first_remote_query_node = (first_result.node_index + 1U) % clients.size();
+  ASSERT_NE(first_remote_query_node, first_result.node_index);
+  expect_replicated_rows(clients[first_remote_query_node], 10'000U);
 
   const std::size_t failed_leader = first_result.node_index;
   ::close(clients[failed_leader]);
@@ -2107,6 +2150,16 @@ TEST(ChronosdProcessTest, ReplicatesRetriesAndFailsOverAcrossThreeAuthenticatedD
   EXPECT_GT(retry_result.acknowledgement.log_index, first_result.acknowledgement.log_index);
   EXPECT_EQ(retry_result.acknowledgement.entry_term, retry_result.acknowledgement.leader_term);
   EXPECT_GT(retry_result.acknowledgement.entry_term, first_result.acknowledgement.entry_term);
+
+  std::size_t remote_after_failover = clients.size();
+  for (std::size_t index = 0U; index < clients.size(); ++index) {
+    if (active[index] && index != retry_result.node_index) {
+      remote_after_failover = index;
+      break;
+    }
+  }
+  ASSERT_LT(remote_after_failover, clients.size());
+  expect_replicated_rows(clients[remote_after_failover], 10'001U);
 
   for (std::size_t index = 0U; index < children.size(); ++index) {
     if (!active[index])

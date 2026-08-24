@@ -116,6 +116,9 @@ public:
   // The catalog and all resident tablet publications are retained by this owner and remain valid
   // independently of later Raft application or database shutdown.
   [[nodiscard]] const std::shared_ptr<const query::QueryCatalogSnapshot>& catalog() const noexcept;
+  // Returns the exact committed node advertisement retained by this snapshot. The pointer remains
+  // valid for the snapshot lifetime and is null when the node is not advertised.
+  [[nodiscard]] const raft::ClusterNodeMetadata* cluster_node(raft::NodeId node_id) const noexcept;
   // Returns a borrowed route only when every committed placement for the table maps to one group,
   // one placement epoch, and one replica set. The pointer remains valid for this snapshot's life.
   [[nodiscard]] const ReplicatedSingleGroupQueryRoute*

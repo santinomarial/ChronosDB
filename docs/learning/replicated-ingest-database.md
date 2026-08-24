@@ -96,6 +96,11 @@ pins the immutable publications available from the resident tablet application. 
 `ReplicatedQuerySnapshot` owns all of those objects, so binding and vector execution use the same
 catalog generation and execution can outlive the database owner.
 
+The snapshot also exposes a borrowed exact cluster-node advertisement by node ID. The packaged
+daemon validates every configured peer entry from one startup snapshot and uses the local entry to
+bind its private mutable-query listener; the pointer remains valid only with that snapshot, while
+the daemon copies the parsed local endpoint into the listener owner.
+
 The no-argument overload remains a stable local-applied vector. The barrier overload accepts exactly
 one leader-confirmed read index for the metadata group and every resident data group, then fails
 unless the immutable catalog and matching tablet publications cover those indexes. The packaged

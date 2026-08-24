@@ -463,6 +463,17 @@ ReplicatedQuerySnapshot::catalog() const noexcept {
   return impl_->catalog;
 }
 
+const raft::ClusterNodeMetadata*
+ReplicatedQuerySnapshot::cluster_node(const raft::NodeId node_id) const noexcept {
+  if (impl_ == nullptr)
+    return nullptr;
+  const auto node = std::ranges::lower_bound(impl_->metadata->cluster_nodes, node_id, {},
+                                             &raft::ClusterNodeMetadata::node_id);
+  return node != impl_->metadata->cluster_nodes.end() && node->node_id == node_id
+             ? std::addressof(*node)
+             : nullptr;
+}
+
 const ReplicatedSingleGroupQueryRoute*
 ReplicatedQuerySnapshot::single_group_route(const schema::TableId& table_id) const noexcept {
   const auto table = std::ranges::find_if(impl_->tables, [&](const Impl::Table& candidate) {

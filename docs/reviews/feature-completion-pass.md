@@ -968,8 +968,9 @@ were deliberately not run.
   table residency, and now require every metadata/tablet publication to cover an exactly correlated
   current-term quorum read barrier before bounded native SELECT dispatch. Bounded Linux evidence now
   covers three authenticated daemon processes, quorum ingest, tablet-leader loss, a higher-term
-  matching retry, and identical retained-root recovery. A globally atomic cross-group instant,
-  remote mutable-tablet fragments, and three-process query failover remain absent. Strict native
+  matching retry, remote mutable-tablet SELECT before and after failover, and identical retained-
+  root recovery. A globally atomic cross-group instant and broader distributed relational and
+  aggregate execution remain absent. Strict native
   endpoint/certificate-principal configuration, secure TLS-route/context ownership, redirect
   selection, exact QUORUM_SYNC body/session replay, the deadline-bound authenticated TCP/TLS
   reconnect carrier, single-operation poll scheduling, and the packaged `chronosctl quorum-sync`
@@ -1014,8 +1015,10 @@ were deliberately not run.
   metadata/tablet snapshot and exact fragment matching. Self-led fragments now execute through
   that same production worker while remote fragments retain mutual-TLS scheduling, and one
   all-tablet coordinator withholds global finalization and Native output until both subsets close.
-  Reactor-aware cancellation and fresh authority rebinding, daemon composition, and multi-process
-  split-leader qualification remain absent.
+  The packaged daemon now binds the committed local private query endpoint, reuses the immutable
+  authenticated peer bundle for inbound/outbound query TLS, polls synchronous workers separately
+  from Raft, and extends its three-process gate through remote SELECT before and after tablet-leader
+  failover. Reactor-aware cancellation and fresh authority rebinding remain absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
@@ -1033,9 +1036,8 @@ were deliberately not run.
 The exact subsystem/category ledger is
 [`deferred-validation.md`](../development/deferred-validation.md). Recommended order:
 
-1. Compose daemon configuration and reactor-aware cancellation/fresh-authority rebinding, then
-   extend the existing three-process quorum-ingest/failover gate through
-   applied read-barrier distributed Native SELECT and the remaining real data-plane sequence.
+1. Compose reactor-aware cancellation/fresh-authority rebinding and extend distributed SQL beyond
+   the direct-column row subset while preserving the applied read-barrier data-plane sequence.
 2. Specify database namespaces/catalog tombstones and placement-driven membership orchestration
    without changing Metadata Command v1 or Metadata Application Snapshot 1.0 bytes in place.
 3. Finish direct vector temporal winner lowering, mixed WAL/Raft recovery, durable retention

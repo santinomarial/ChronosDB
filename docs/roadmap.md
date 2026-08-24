@@ -1094,23 +1094,27 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   the original connection/principal/request route. The replicated database now supplies the real
   worker context by atomically reobserving the named local leader term, pinning one committed
   metadata/tablet snapshot, and exact-matching the fragment proof before execution. Reactor-aware
-  cancellation and authority rebinding, daemon configuration, and multi-process split-leader
-  qualification remain. Self-led fragments now execute through the same production
-  proof-revalidating worker while remote fragments retain mutual-TLS scheduling; one complete
-  coordinator merges both sets before global ordering, LIMIT, and Native publication.
+  cancellation and authority rebinding remain. Self-led fragments now execute through the same
+  production proof-revalidating worker while remote fragments retain mutual-TLS scheduling; one
+  complete coordinator merges both sets before global ordering, LIMIT, and Native publication.
   The packaged daemon now accepts an atomic native-server TLS credential
   and strict client-certificate-principal bundle, owns the immutable authority beyond its reactor
   borrow, permits non-loopback canonical IPv4 binding only in that mode, and fails closed instead of
   downgrading io_uring or partial configuration. A Linux-only gate invokes the actual client against
   the actual mutually authenticated daemon and proves APPLIED followed by MATCHING_RETRY for one
-  exact append. Multi-group query routing remains. A separate Linux-only gate now provisions
+  exact append. A separate Linux-only gate now provisions
   three retained roots, starts three actual daemons with distinct mTLS identities, proves quorum
   ingest, kills the acknowledged tablet leader, proves higher-term matching retry, and reopens
-  identical applied/retry state from every root. General provisioning, remote query fragments,
-  snapshot installation handling, and three-process query failover remain external.
+  identical applied/retry state from every root. That daemon gate now also commits distinct private
+  query endpoints, reuses the authenticated peer identities for a separately polled mutable-query
+  listener, executes SELECT from a nonleader before leader loss, and executes it again through the
+  replacement leader after failover. General provisioning, snapshot installation handling, dynamic
+  endpoint/credential replacement, and broader distributed SQL remain external.
 
 - **Scope:** map tablets to Raft groups; multiplex logical records over physical logs, threads, timers, and connections; lifecycle, placement, snapshot transfer, fairness, and safe per-group reclamation.
-- **Explicit non-scope:** globally ordered logs, cross-tablet atomic transactions, distributed query execution, automatic rebalancing beyond scoped placement mechanics, and conflating physical offsets with logical indexes.
+- **Explicit non-scope:** globally ordered logs, cross-tablet atomic transactions, general
+  distributed relational/aggregate query execution, automatic rebalancing beyond scoped placement
+  mechanics, and conflating physical offsets with logical indexes.
 - **Required artifacts:** tablet/multi-Raft architecture and log format; scheduling/fairness/reclamation ADRs; placement metadata; production integration; deterministic cluster harness; operations and learning documents.
 - **Correctness exit gate:** each tablet preserves independent ordered commit and identity through crash/leadership changes; multiplexed storage cannot cross-apply or prematurely reclaim another group's entries; snapshots and resume positions remain unambiguous.
 - **Testing exit gate:** thousands of simulated groups, hot/cold skew, group creation/deletion, physical-log corruption, node loss, snapshot/install, leadership churn, starvation, and recovery are checked against per-group models.

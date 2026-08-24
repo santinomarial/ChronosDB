@@ -479,3 +479,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0442](0442-bounded-native-distributed-row-request-wiring.md) | Bounded Native distributed row request wiring | accepted |
 | [0443](0443-database-owned-mutable-worker-context.md) | Database-owned mutable worker context | accepted |
 | [0444](0444-proof-revalidated-local-and-remote-native-row-merge.md) | Proof-revalidated local and remote Native row merge | accepted |
+| [0445](0445-committed-daemon-mutable-query-plane.md) | Committed daemon mutable query plane | accepted |
