@@ -12,6 +12,7 @@
 #include <new>
 #include <optional>
 #include <ranges>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -156,6 +157,52 @@ validate_observation_shape(const raft::RaftGroupObservation& observation,
   }
   return found ? common::Status::ok()
                : corruption("replicated query resident group has no committed tablet binding");
+}
+
+[[nodiscard]] common::Status validate_mutable_group_authorities(
+    const std::span<const query::DistributedVectorGroupReadAuthority> authorities) {
+  if (authorities.empty() ||
+      authorities.size() > query::DistributedPlanLimits{}.maximum_fragments ||
+      !std::ranges::is_sorted(
+          authorities, {}, [](const auto& authority) { return authority.observation.group_id; }) ||
+      std::ranges::adjacent_find(authorities, {}, [](const auto& authority) {
+        return authority.observation.group_id;
+      }) != authorities.end()) {
+    return invalid("mutable query group authority order is invalid");
+  }
+  for (const query::DistributedVectorGroupReadAuthority& authority : authorities) {
+    const raft::RaftGroupObservation& observation = authority.observation;
+    if (authority.barrier.group_id != observation.group_id || observation.group_id.is_nil() ||
+        authority.barrier.barrier.term == 0U || authority.barrier.barrier.context == 0U ||
+        authority.barrier.barrier.read_index == 0U || observation.node_id == 0U ||
+        observation.role != raft::Role::kLeader || observation.leader_id != observation.node_id ||
+        observation.current_term != authority.barrier.barrier.term ||
+        observation.last_log_index < observation.commit_index ||
+        observation.commit_index < observation.applied_index ||
+        observation.commit_index < authority.barrier.barrier.read_index ||
+        observation.joint_membership_active || observation.joint_membership_can_finalize ||
+        observation.final_membership_pending || observation.voters.empty() ||
+        observation.voters != observation.committed_voters ||
+        !observation.joint_old_voters.empty() || !observation.joint_new_voters.empty() ||
+        !std::ranges::is_sorted(observation.voters) || observation.voters.front() == 0U ||
+        std::ranges::adjacent_find(observation.voters) != observation.voters.end() ||
+        !std::ranges::binary_search(observation.voters, observation.node_id)) {
+      return unavailable("mutable query group authority is invalid or reconfiguring");
+    }
+  }
+  return common::Status::ok();
+}
+
+[[nodiscard]] const query::DistributedVectorGroupReadAuthority*
+find_authority(const std::span<const query::DistributedVectorGroupReadAuthority> authorities,
+               const raft::GroupId& group_id) noexcept {
+  const auto found = std::ranges::lower_bound(
+      authorities, group_id, {}, [](const query::DistributedVectorGroupReadAuthority& authority) {
+        return authority.observation.group_id;
+      });
+  return found != authorities.end() && found->observation.group_id == group_id
+             ? std::addressof(*found)
+             : nullptr;
 }
 
 [[nodiscard]] common::Result<raft::RaftGroupObservation>
@@ -389,11 +436,16 @@ public:
     bool complete_residency{};
   };
 
-  Impl(std::shared_ptr<const query::QueryCatalogSnapshot> configured_catalog,
+  Impl(const manifest::DatabaseId configured_database_id,
+       std::shared_ptr<const query::QueryCatalogSnapshot> configured_catalog,
+       std::shared_ptr<const raft::MetadataCatalogSnapshot> configured_metadata,
        std::vector<Table> configured_tables) noexcept
-      : catalog(std::move(configured_catalog)), tables(std::move(configured_tables)) {}
+      : database_id(configured_database_id), catalog(std::move(configured_catalog)),
+        metadata(std::move(configured_metadata)), tables(std::move(configured_tables)) {}
 
+  manifest::DatabaseId database_id;
   std::shared_ptr<const query::QueryCatalogSnapshot> catalog;
+  std::shared_ptr<const raft::MetadataCatalogSnapshot> metadata;
   std::vector<Table> tables;
 };
 
@@ -442,6 +494,102 @@ ReplicatedQuerySnapshot::instantiate_table_pipeline(
     return common::make_unexpected(invalid("replicated query table has no tablet publication"));
   return query::instantiate_tablet_states_pipeline(resources, table->tablets, table->lineage,
                                                    destination_schema_id, pipeline, limits);
+}
+
+common::Result<std::vector<query::DistributedMutableVectorFragment>>
+ReplicatedQuerySnapshot::bind_linearizable_mutable_vector_fragments(
+    const ReplicatedMutableVectorQueryBinding& binding) const {
+  if (impl_ == nullptr)
+    return common::make_unexpected(invalid("replicated query snapshot was moved from"));
+  const query::DistributedVectorQueryPlan& plan = binding.plan.get();
+  if (plan.read_policy.consistency != query::DistributedReadConsistency::kLeaderLinearizable ||
+      plan.query_id.is_nil() || plan.fragments.empty() ||
+      plan.fragments.size() > query::DistributedPlanLimits{}.maximum_fragments) {
+    return common::make_unexpected(
+        invalid("mutable query snapshot binding requires a linearizable nonempty plan"));
+  }
+  const common::Status authorities = validate_mutable_group_authorities(binding.group_authorities);
+  if (!authorities.is_ok())
+    return common::make_unexpected(authorities);
+  const auto table = std::ranges::find_if(impl_->tables, [&](const Impl::Table& candidate) {
+    return candidate.lineage.table_id() == binding.table_id;
+  });
+  if (table == impl_->tables.end())
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotFound, "mutable query table is not catalogued"});
+  if (table->lineage.current() == nullptr)
+    return common::make_unexpected(corruption("mutable query table lineage has no current schema"));
+
+  try {
+    std::vector<query::DistributedMutableVectorFragment> fragments;
+    fragments.reserve(plan.fragments.size());
+    std::set<schema::TabletId> seen;
+    for (const query::DistributedTablet& planned : plan.fragments) {
+      if (!seen.insert(planned.tablet_id).second)
+        return common::make_unexpected(invalid("mutable query plan repeats a tablet"));
+      const auto snapshot = std::ranges::lower_bound(table->tablets, planned.tablet_id, {},
+                                                     &ingest::TabletSnapshot::tablet_id);
+      if (snapshot == table->tablets.end() || snapshot->tablet_id() != planned.tablet_id) {
+        return common::make_unexpected(
+            unavailable("mutable query selected tablet has no resident pinned publication"));
+      }
+      const auto placement =
+          std::ranges::lower_bound(impl_->metadata->tablet_placements, planned.tablet_id, {},
+                                   &raft::TabletPlacementMetadata::tablet_id);
+      const auto group =
+          std::ranges::lower_bound(impl_->metadata->tablet_group_bindings, planned.tablet_id, {},
+                                   &raft::TabletGroupBindingMetadata::tablet_id);
+      if (placement == impl_->metadata->tablet_placements.end() ||
+          group == impl_->metadata->tablet_group_bindings.end() ||
+          placement->tablet_id != planned.tablet_id || group->tablet_id != planned.tablet_id ||
+          placement->table_id != binding.table_id) {
+        return common::make_unexpected(
+            corruption("mutable query tablet metadata is incomplete or inconsistent"));
+      }
+      const query::DistributedVectorGroupReadAuthority* const authority =
+          find_authority(binding.group_authorities, group->group_id);
+      if (authority == nullptr)
+        return common::make_unexpected(unavailable("mutable query tablet authority is missing"));
+      if (authority->observation.voters != placement->replicas)
+        return common::make_unexpected(
+            unavailable("mutable query group membership differs from committed placement"));
+      const std::optional<head::HeadCommitPosition>& position = snapshot->applied_position();
+      if (!position.has_value() || position->source != head::CommitSource::kRaft ||
+          position->raft_group_id != group->group_id ||
+          position->record_sequence < authority->barrier.barrier.read_index ||
+          planned.leader_node != authority->observation.node_id ||
+          planned.local_applied_position != position->record_sequence ||
+          planned.known_leader_commit_position != authority->observation.commit_index) {
+        return common::make_unexpected(
+            unavailable("mutable query plan differs from pinned publication authority"));
+      }
+      const query::DistributedReadAdmission admission{
+          .tablet_id = planned.tablet_id,
+          .serving_node = authority->observation.node_id,
+          .applied_position = position->record_sequence,
+          .observed_leader_commit_position = authority->observation.commit_index,
+          .linearizable_barrier = authority->barrier.barrier};
+      auto fragment = query::bind_distributed_mutable_vector_fragment(
+          {.plan = std::cref(plan),
+           .admission = std::cref(admission),
+           .database_id = impl_->database_id,
+           .snapshot = std::cref(*snapshot),
+           .lineage = std::cref(table->lineage),
+           .raft_group_id = group->group_id,
+           .placement = std::cref(*placement),
+           .destination_column_ordinals = binding.destination_column_ordinals,
+           .event_time_predicate = binding.event_time_predicate,
+           .result_schema = binding.result_schema});
+      if (!fragment.has_value())
+        return common::make_unexpected(fragment.error());
+      fragments.push_back(std::move(*fragment));
+    }
+    return fragments;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("mutable query snapshot binding allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("mutable query snapshot binding exceeds limits"));
+  }
 }
 
 class ReplicatedIngestDatabase::Impl {
@@ -580,6 +728,10 @@ common::Result<ReplicatedQuerySnapshot> ReplicatedIngestDatabase::acquire_query_
   ingest::AsyncRaftTabletApplication* const tablets = impl_->runtime.tablet_application();
   if (metadata == nullptr || tablets == nullptr)
     return common::make_unexpected(invalid("replicated query applications are unavailable"));
+  auto database_id =
+      manifest::DatabaseId::from_uuid(impl_->bootstrap_owner.descriptor().database_id);
+  if (!database_id.has_value())
+    return common::make_unexpected(corruption("replicated query database identity is invalid"));
   auto catalog = metadata->catalog_snapshot();
   if (!catalog.has_value())
     return common::make_unexpected(catalog.error());
@@ -666,7 +818,7 @@ common::Result<ReplicatedQuerySnapshot> ReplicatedIngestDatabase::acquire_query_
     auto shared_catalog =
         std::make_shared<const query::QueryCatalogSnapshot>(std::move(*query_catalog));
     return ReplicatedQuerySnapshot{std::make_unique<ReplicatedQuerySnapshot::Impl>(
-        std::move(shared_catalog), std::move(tables))};
+        *database_id, std::move(shared_catalog), std::move(*catalog), std::move(tables))};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("replicated query snapshot allocation failed"));
   } catch (const std::length_error&) {

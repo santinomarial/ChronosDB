@@ -1076,8 +1076,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   client per tablet, rotates finite same-node addresses, enforces whole-query deadlines, and tears
   down all clients on failure. Explicit bounded rebinding now replaces retryable failures only with
   freshly constructed fragments that preserve exact logical query/tablet/group identity while
-  allowing leader/position/placement/barrier authority to advance. Automatic authority acquisition
-  and split-leader native composition remain.
+  allowing leader/position/placement/barrier authority to advance. The replicated snapshot now
+  retains its committed metadata publication and database identity and binds a complete
+  plan-ordered mutable fragment vector only after exact-correlating every selected resident
+  publication with stable placement/group metadata and its leader barrier observation. Native SQL
+  lowering, node TLS route resolution, scheduler/finalizer request ownership, and split-leader
+  process composition remain.
   The packaged daemon now accepts an atomic native-server TLS credential
   and strict client-certificate-principal bundle, owns the immutable authority beyond its reactor
   borrow, permits non-loopback canonical IPv4 binding only in that mode, and fails closed instead of

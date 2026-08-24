@@ -114,3 +114,14 @@ All-local leadership proceeds to the normal barrier snapshot. Only a common stab
 across the entire vector becomes a Protocol 2 redirect for the table group. Split, candidate,
 reconfiguring, or changed authority fails closed, leaving remote fragments as the required design
 for independently led groups.
+
+For split-leader fragment construction, `ReplicatedQuerySnapshot` also retains the exact committed
+metadata publication and durable database identity used to build its catalog and tablet pins. Its
+leader-linearizable mutable binder consumes the correlated authority vector returned by
+`ReplicatedReadBarrier::await_authority`. For every plan-ordered tablet it joins the resident
+immutable publication to committed placement and group binding, requires stable observed voters
+equal to placement, proves the publication covers that group's barrier, and exact-matches the
+planner's leader/applied/commit copies before delegating to the proof-bound fragment binder. The
+call returns every owning fragment or none. A target worker still reacquires and exact-matches its
+current publication, so ordinary Raft progress can make a fragment unavailable but cannot make it
+read a different boundary; the coordinator must then use whole-query authority rebinding.

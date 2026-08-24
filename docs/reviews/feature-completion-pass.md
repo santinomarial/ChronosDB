@@ -995,8 +995,12 @@ were deliberately not run.
   drives one bounded mutual-TLS client per tablet, rotates finite same-node addresses, enforces
   whole-query deadlines, and releases all clients on terminal failure. Explicit bounded rebinding
   now accepts only a freshly constructed execution with identical logical query and tablet/group
-  identity while permitting new leader/position/placement/barrier authority. Automatic authority
-  acquisition and native composition remain absent.
+  identity while permitting new leader/position/placement/barrier authority. The replicated query
+  snapshot now retains the committed metadata publication and database identity and performs the
+  complete plan-ordered join from correlated leader barriers/observations to resident immutable
+  publications, placements, group bindings, projection, plan, and result schema. Native SQL
+  lowering, node TLS route resolution, scheduler/finalizer ownership, and process composition
+  remain absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

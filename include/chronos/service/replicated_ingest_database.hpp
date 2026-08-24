@@ -4,6 +4,8 @@
 #include "chronos/common/result.hpp"
 #include "chronos/ingest/raft_tablet_snapshot_storage.hpp"
 #include "chronos/query/catalog.hpp"
+#include "chronos/query/distributed_fragment_binding.hpp"
+#include "chronos/query/distributed_mutable_vector_fragment.hpp"
 #include "chronos/query/physical_operator.hpp"
 #include "chronos/query/physical_plan.hpp"
 #include "chronos/query/resource_context.hpp"
@@ -13,6 +15,7 @@
 #include "chronos/service/replicated_ingest_runtime.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -38,6 +41,17 @@ struct ReplicatedQueryLeaderRoute {
 
   friend bool operator==(const ReplicatedQueryLeaderRoute&,
                          const ReplicatedQueryLeaderRoute&) = default;
+};
+
+struct ReplicatedMutableVectorQueryBinding {
+  std::reference_wrapper<const query::DistributedVectorQueryPlan> plan;
+  schema::TableId table_id;
+  // Canonical unique order by observation.group_id. The metadata-group authority may be present;
+  // every selected tablet's immutable group authority must be present.
+  std::span<const query::DistributedVectorGroupReadAuthority> group_authorities;
+  std::span<const std::uint32_t> destination_column_ordinals;
+  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::reference_wrapper<const query::DistributedVectorResultSchema> result_schema;
 };
 
 enum class ReplicatedIngestDatabaseStartupStage : std::uint8_t {
@@ -97,6 +111,12 @@ public:
       const query::QueryResourceContext& resources, const schema::TableId& table_id,
       const schema::SchemaId& destination_schema_id, const query::PhysicalPipelinePlan& pipeline,
       query::TabletStatePipelineLimits limits = {}) const;
+  // Binds every plan-ordered tablet to one pinned committed/applied publication and the exact
+  // correlated current-leader authority for its immutable group. This path accepts only
+  // leader-linearizable plans and returns no fragments unless the complete set is valid.
+  [[nodiscard]] common::Result<std::vector<query::DistributedMutableVectorFragment>>
+  bind_linearizable_mutable_vector_fragments(
+      const ReplicatedMutableVectorQueryBinding& binding) const;
 
 private:
   class Impl;

@@ -16,11 +16,13 @@
 #include "columnar/columnar_test_support.hpp"
 #include "ingest/ingest_test_support.hpp"
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -737,6 +739,104 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   ASSERT_TRUE(second_acknowledgement.has_value());
   EXPECT_EQ(second_acknowledgement->outcome, network::IngestOutcome::kMatchingRetry);
   EXPECT_EQ(second_acknowledgement->log_index, 2U);
+
+  auto metadata_election = database->ingest_runtime()->runtime()->try_submit(
+      {{metadata_group(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(metadata_election.has_value()) << metadata_election.error().to_string();
+  ASSERT_TRUE(metadata_election->wait().has_value());
+  auto read_barrier = ReplicatedReadBarrier::create_local(
+      database->ingest_runtime()->runtime(),
+      {database->query_barrier_groups().begin(), database->query_barrier_groups().end()});
+  ASSERT_TRUE(read_barrier.has_value()) << read_barrier.error().to_string();
+  auto authorities = read_barrier->await_authority();
+  ASSERT_TRUE(authorities.has_value()) << authorities.error().to_string();
+  std::vector<raft::GroupReadBarrier> barriers;
+  for (const ReplicatedReadAuthority& authority : *authorities)
+    barriers.push_back(authority.barrier);
+
+  auto mutable_snapshot = database->acquire_query_snapshot(barriers);
+  ASSERT_TRUE(mutable_snapshot.has_value()) << mutable_snapshot.error().to_string();
+  const auto first_publication =
+      database->ingest_runtime()->tablet_application()->snapshot(tablet_group());
+  const auto second_publication =
+      database->ingest_runtime()->tablet_application()->snapshot(second_tablet_group());
+  ASSERT_TRUE(first_publication.has_value());
+  ASSERT_TRUE(second_publication.has_value());
+  ASSERT_TRUE(first_publication->applied_position().has_value());
+  ASSERT_TRUE(second_publication->applied_position().has_value());
+  const auto first_authority_iterator =
+      std::ranges::find(*authorities, tablet_group(), [](const ReplicatedReadAuthority& authority) {
+        return authority.observation.group_id;
+      });
+  const auto second_authority_iterator = std::ranges::find(
+      *authorities, second_tablet_group(),
+      [](const ReplicatedReadAuthority& authority) { return authority.observation.group_id; });
+  ASSERT_NE(first_authority_iterator, authorities->end());
+  ASSERT_NE(second_authority_iterator, authorities->end());
+  const ReplicatedReadAuthority& first_authority = *first_authority_iterator;
+  const ReplicatedReadAuthority& second_authority = *second_authority_iterator;
+  query::DistributedVectorQueryPlan mutable_plan{
+      .query_id = id(0x79U),
+      .read_policy = {.consistency = query::DistributedReadConsistency::kLeaderLinearizable},
+      .fragments = {{.tablet_id = second_tablet_id(),
+                     .minimum_event_time = 0,
+                     .maximum_event_time = 0,
+                     .leader_node = second_authority.observation.node_id,
+                     .local_applied_position =
+                         second_publication->applied_position()->record_sequence,
+                     .known_leader_commit_position = second_authority.observation.commit_index},
+                    {.tablet_id = tablet_id(),
+                     .minimum_event_time = 0,
+                     .maximum_event_time = 0,
+                     .leader_node = first_authority.observation.node_id,
+                     .local_applied_position =
+                         first_publication->applied_position()->record_sequence,
+                     .known_leader_commit_position = first_authority.observation.commit_index}},
+      .intent = {.mode = query::DistributedVectorPlanMode::kRows, .row_output_indices = {0U, 1U}}};
+  const std::array<std::uint32_t, 2U> projection{0U, 1U};
+  const query::DistributedVectorResultSchema result_schema{
+      .columns = {{.name = "ts",
+                   .type = columnar::test::type(schema::LogicalTypeKind::kTimestampNs),
+                   .nullable = false},
+                  {.name = "tag",
+                   .type = columnar::test::type(schema::LogicalTypeKind::kString),
+                   .nullable = true}}};
+  auto mutable_fragments = mutable_snapshot->bind_linearizable_mutable_vector_fragments(
+      {.plan = std::cref(mutable_plan),
+       .table_id = columnar::test::batch_schema()->table_id(),
+       .group_authorities = *authorities,
+       .destination_column_ordinals = projection,
+       .result_schema = std::cref(result_schema)});
+  ASSERT_TRUE(mutable_fragments.has_value()) << mutable_fragments.error().to_string();
+  ASSERT_EQ(mutable_fragments->size(), 2U);
+  EXPECT_EQ((*mutable_fragments)[0].tablet_id, second_tablet_id());
+  EXPECT_EQ((*mutable_fragments)[0].raft_group_id, second_tablet_group());
+  EXPECT_EQ((*mutable_fragments)[0].database_id.uuid(), descriptor().database_id);
+  EXPECT_EQ((*mutable_fragments)[1].tablet_id, tablet_id());
+  EXPECT_EQ((*mutable_fragments)[1].raft_group_id, tablet_group());
+  EXPECT_EQ((*mutable_fragments)[1].linearizable_barrier, first_authority.barrier.barrier);
+
+  ++mutable_plan.fragments.front().local_applied_position;
+  auto mixed_publication = mutable_snapshot->bind_linearizable_mutable_vector_fragments(
+      {.plan = std::cref(mutable_plan),
+       .table_id = columnar::test::batch_schema()->table_id(),
+       .group_authorities = *authorities,
+       .destination_column_ordinals = projection,
+       .result_schema = std::cref(result_schema)});
+  ASSERT_FALSE(mixed_publication.has_value());
+  EXPECT_EQ(mixed_publication.error().code(), common::StatusCode::kUnavailable);
+  --mutable_plan.fragments.front().local_applied_position;
+  std::vector<ReplicatedReadAuthority> incomplete_authorities = *authorities;
+  incomplete_authorities.pop_back();
+  auto incomplete_fragments = mutable_snapshot->bind_linearizable_mutable_vector_fragments(
+      {.plan = std::cref(mutable_plan),
+       .table_id = columnar::test::batch_schema()->table_id(),
+       .group_authorities = incomplete_authorities,
+       .destination_column_ordinals = projection,
+       .result_schema = std::cref(result_schema)});
+  ASSERT_FALSE(incomplete_fragments.has_value());
+  EXPECT_EQ(incomplete_fragments.error().code(), common::StatusCode::kUnavailable);
+  ASSERT_TRUE(read_barrier->shutdown().is_ok());
 
   auto snapshot = database->acquire_query_snapshot();
   ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();

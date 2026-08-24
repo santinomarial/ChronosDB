@@ -471,3 +471,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0434](0434-proof-bound-mutable-vector-query-execution.md) | Proof-bound mutable vector query execution | accepted |
 | [0435](0435-bounded-mutable-vector-query-tcp-scheduling.md) | Bounded mutable vector query TCP scheduling | accepted |
 | [0436](0436-compatible-mutable-query-authority-rebinding.md) | Compatible mutable query authority rebinding | accepted |
+| [0437](0437-correlated-replicated-mutable-fragment-binding.md) | Correlated replicated mutable fragment binding | accepted |
