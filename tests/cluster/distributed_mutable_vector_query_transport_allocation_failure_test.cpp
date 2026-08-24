@@ -1,3 +1,4 @@
+#include "chronos/cluster/distributed_mutable_vector_query_execution.hpp"
 #include "chronos/cluster/distributed_mutable_vector_query_tcp.hpp"
 #include "chronos/cluster/distributed_mutable_vector_query_tls.hpp"
 #include "chronos/cluster/distributed_mutable_vector_query_transport.hpp"
@@ -191,6 +192,32 @@ TEST(DistributedMutableVectorQuerySenderAllocationFailureTest,
     EXPECT_FALSE(sender->result().has_value());
   }
   EXPECT_TRUE(success);
+}
+
+TEST(DistributedMutableVectorQueryExecutionAllocationFailureTest,
+     ClassifiesMultiTabletOwnerConstructionAllocations) {
+  bool saw_failure = false;
+  bool saw_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
+    SCOPED_TRACE(testing::Message{} << "fail_after=" << fail_after);
+    auto second = fragment();
+    second.tablet_id = id<schema::TabletId>(8U);
+    second.raft_group_id = uuid(9U);
+    second.serving_node = 10U;
+    std::vector fragments{fragment(), std::move(second)};
+    auto result = run_failure(fail_after, [&] {
+      return DistributedMutableVectorQueryExecution::create(1U, std::move(fragments));
+    });
+    if (!result.has_value()) {
+      saw_failure = true;
+      EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+      continue;
+    }
+    saw_success = true;
+    break;
+  }
+  EXPECT_TRUE(saw_failure);
+  EXPECT_TRUE(saw_success);
 }
 
 TEST(DistributedMutableVectorQueryTlsAllocationFailureTest,

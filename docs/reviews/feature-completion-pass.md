@@ -989,7 +989,10 @@ were deliberately not run.
   lifetimes, metrics, and idempotent shutdown. A packaged request-local mutable worker now
   reacquires and pins the exact TabletSnapshot/schema/placement/group/barrier authority, emits only
   a complete bounded Native result stream, and is composed with the receiver/TCP server in
-  reverse-safe lifetime order. Split-leader native composition remains absent.
+  reverse-safe lifetime order. A portable multi-tablet mutable execution owner now validates one
+  common plan/schema authority, retains finite senders, exposes fresh-authority hints without
+  rewriting fragments, and publishes only a complete plan-ordered result. TCP scheduling, fresh
+  rebinding, and native composition remain absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
@@ -1007,9 +1010,10 @@ were deliberately not run.
 The exact subsystem/category ledger is
 [`deferred-validation.md`](../development/deferred-validation.md). Recommended order:
 
-1. Compose the implemented packaged mutable-tablet inbound service with the native split-leader
-   scheduler, then extend the existing three-process quorum-ingest/failover gate through applied
-   read-barrier native SELECT and the remaining real data-plane sequence.
+1. Add TCP scheduling and fresh-authority rebinding around the portable mutable multi-tablet owner,
+   then compose it with native SQL/result handling and extend the existing three-process quorum-
+   ingest/failover gate through applied read-barrier native SELECT and the remaining real data-plane
+   sequence.
 2. Specify database namespaces/catalog tombstones and placement-driven membership orchestration
    without changing Metadata Command v1 or Metadata Application Snapshot 1.0 bytes in place.
 3. Finish direct vector temporal winner lowering, mixed WAL/Raft recovery, durable retention

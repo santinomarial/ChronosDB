@@ -93,6 +93,10 @@ placement, group, and local barrier for every exact fragment. Its worker reuses 
 Native batch collector, retains the snapshot through vectorized head execution, and returns only a
 complete terminal stream. A heap-stable owner composes worker, authenticated receiver, and TCP
 server in reverse-safe lifetime order.
+The portable mutable execution owner validates one common query/database/table/schema/policy/plan/
+result-schema authority across unique tablet fragments, owns one finite sender per tablet, and
+delivers each complete stream exactly once to the plan-ordered bounded coordinator. A leader hint
+is retained only as evidence that fresh fragment binding is required; it never mutates authority.
 Distributed Query Transport v1 wraps the dispatch and terminal exchange in correlated cluster
 request/response frames. `DistributedQueryReceiver` authenticates and authorizes the source before
 an embedding-owned worker service can execute the dispatch. `ReplicatedDistributedQueryWorker`
