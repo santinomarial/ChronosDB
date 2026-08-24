@@ -39,9 +39,9 @@ struct DistributedVectorRowsSqlPlan {
 };
 
 // Lowers the executable distributed row subset: one current table, direct source-column outputs,
-// an optional AND-conjunction of event-time/TIMESTAMP comparisons, output-backed ORDER BY, and
-// LIMIT. Unsupported local-only SQL fails with its source span; no scalar or relational fallback
-// is inferred.
+// an optional AND-conjunction of event-time/TIMESTAMP comparisons or inclusive BETWEEN leaves,
+// output-backed ORDER BY, and LIMIT. Unsupported local-only SQL fails with its source span; no
+// scalar or relational fallback is inferred.
 [[nodiscard]] SqlResult<DistributedVectorRowsSqlPlan>
 lower_bound_sql_select_to_distributed_vector_rows(
     const BoundSqlSelect& select, DistributedVectorRowsSqlLoweringLimits limits = {});

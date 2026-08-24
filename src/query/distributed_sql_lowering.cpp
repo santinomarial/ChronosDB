@@ -53,6 +53,26 @@ void apply_upper(cseg::EventTimePredicate& predicate, const cseg::EventTimeBound
     predicate.upper->inclusive = predicate.upper->inclusive && candidate.inclusive;
 }
 
+[[nodiscard]] bool event_time_reference(const BoundColumnReference* const reference,
+                                        const schema::TableSchema& schema) noexcept {
+  return reference != nullptr && reference->source_ordinal == 0U &&
+         reference->column_id == schema.event_time_column();
+}
+
+[[nodiscard]] std::int64_t timestamp_literal(const SqlExpression& literal) {
+  if (literal.kind() != SqlExpressionKind::kLiteral ||
+      literal.literal_kind() != SqlLiteralKind::kTimestamp) {
+    unsupported(literal.span(), "Distributed event-time bounds must be TIMESTAMP literals");
+  }
+  const auto parsed = parse_sql_timestamp_ns_literal(literal.text());
+  if (!parsed.has_value()) {
+    throw LoweringFailure{diagnostic(SqlDiagnosticCode::kExecutionFailure, literal.span(),
+                                     common::StatusCode::kInternal,
+                                     "Bound TIMESTAMP literal could not be lowered")};
+  }
+  return *parsed;
+}
+
 void apply_comparison(cseg::EventTimePredicate& predicate, const SqlOperator operation,
                       const std::int64_t value, const bool column_on_left, const SourceSpan span) {
   SqlOperator normalized = operation;
@@ -104,9 +124,24 @@ void lower_event_time_leaf(const BoundSqlSelect& select, const schema::TableSche
     lower_event_time_leaf(select, schema, expression.children()[1], predicate);
     return;
   }
+  if (expression.kind() == SqlExpressionKind::kBetween) {
+    if (expression.operation() != SqlOperator::kBetween || expression.children().size() != 3U) {
+      unsupported(expression.span(),
+                  "Distributed WHERE supports inclusive event-time BETWEEN only");
+    }
+    const SqlExpression& value = expression.children()[0];
+    if (!event_time_reference(select.find_column_reference(value.span()), schema)) {
+      unsupported(value.span(), "Distributed WHERE can filter only the source event-time column");
+    }
+    apply_lower(predicate,
+                {.value = timestamp_literal(expression.children()[1]), .inclusive = true});
+    apply_upper(predicate,
+                {.value = timestamp_literal(expression.children()[2]), .inclusive = true});
+    return;
+  }
   if (expression.kind() != SqlExpressionKind::kBinary || expression.children().size() != 2U) {
     unsupported(expression.span(),
-                "Distributed WHERE requires event-time/TIMESTAMP comparisons joined by AND");
+                "Distributed WHERE requires event-time comparisons or BETWEEN joined by AND");
   }
   const SqlExpression& left = expression.children()[0];
   const SqlExpression& right = expression.children()[1];
@@ -123,18 +158,13 @@ void lower_event_time_leaf(const BoundSqlSelect& select, const schema::TableSche
                 "Distributed WHERE requires one event-time column and one TIMESTAMP literal");
   }
   const BoundColumnReference& reference = column_on_left ? *left_reference : *right_reference;
-  if (reference.source_ordinal != 0U || reference.column_id != schema.event_time_column()) {
+  if (!event_time_reference(&reference, schema)) {
     unsupported(expression.span(),
                 "Distributed WHERE can filter only the source event-time column");
   }
   const SqlExpression& literal = column_on_left ? right : left;
-  const auto parsed = parse_sql_timestamp_ns_literal(literal.text());
-  if (!parsed.has_value()) {
-    throw LoweringFailure{diagnostic(SqlDiagnosticCode::kExecutionFailure, literal.span(),
-                                     common::StatusCode::kInternal,
-                                     "Bound TIMESTAMP literal could not be lowered")};
-  }
-  apply_comparison(predicate, expression.operation(), *parsed, column_on_left, expression.span());
+  apply_comparison(predicate, expression.operation(), timestamp_literal(literal), column_on_left,
+                   expression.span());
 }
 
 [[nodiscard]] ScalarNullPlacement null_placement(const SqlOrderItem& item) noexcept {

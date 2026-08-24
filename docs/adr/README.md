@@ -482,3 +482,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0445](0445-committed-daemon-mutable-query-plane.md) | Committed daemon mutable query plane | accepted |
 | [0446](0446-reactor-visible-native-query-cancellation.md) | Reactor-visible Native query cancellation | accepted |
 | [0447](0447-fresh-all-group-native-query-rebinding.md) | Fresh all-group Native query rebinding | accepted |
+| [0448](0448-distributed-event-time-between-lowering.md) | Distributed event-time BETWEEN lowering | accepted |

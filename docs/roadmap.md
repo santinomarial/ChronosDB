@@ -1083,9 +1083,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   fragments now enter the shared committed-node/TLS resolver, and a snapshot package returns the
   complete owning fragment and deduplicated finite route sets from that same metadata publication.
   Bound direct-column SQL now lowers into one schema-bound distributed row product with unique
-  projection, exact normalized event-time truth, canonical global order/limit, and result
-  descriptors while rejecting unsupported local-only semantics. The retained snapshot now joins
-  that product to the complete canonical tablet set and correlated current-leader authorities,
+  projection, exact normalized event-time comparison and inclusive `BETWEEN` truth, canonical
+  global order/limit, and result descriptors while rejecting unsupported local-only semantics. The
+  retained snapshot now joins that product to the complete canonical tablet set and correlated
+  current-leader authorities,
   then binds and routes the whole query without caller-built tablet authority. A move-only request
   owner now drives that routed fragment set through bounded mutual-TLS scheduling, consumes the
   all-tablet result exactly once, and retains only globally finalized Native row payloads. The

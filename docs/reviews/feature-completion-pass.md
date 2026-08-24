@@ -1003,10 +1003,11 @@ were deliberately not run.
   fragments now use the shared committed-node/TLS resolver, and one snapshot call returns the
   complete owning fragment set plus deduplicated bounded routes from the same metadata
   publication. Bound direct-column SQL now lowers to the exact schema identity, unique projection,
-  normalized event-time predicate, global row order/limit intent, and result descriptors required
-  by that fragment path; computed/aggregate/relational semantics fail closed. The retained snapshot
-  now constructs the canonical tablet plan from those SQL semantics plus correlated current-leader
-  authorities and returns the all-or-none bound/routed package. A move-only request owner now
+  normalized event-time comparisons and inclusive `BETWEEN`, global row order/limit intent, and
+  result descriptors required by that fragment path; computed/aggregate/relational semantics fail
+  closed. The retained snapshot now constructs the canonical tablet plan from those SQL semantics
+  plus correlated current-leader authorities and returns the all-or-none bound/routed package. A
+  move-only request owner now
   composes bounded mutual-TLS scheduling with exact-once all-tablet result transfer and global
   Native row finalization. The replicated Native service now joins a real request to correlated
   read authorities, snapshot binding/lowering, fragment/route preparation, finite TCP execution,

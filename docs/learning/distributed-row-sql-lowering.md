@@ -40,10 +40,13 @@ remain one per SQL output, so aliases and repeated values retain distinct visibl
 
 ## Exact event-time normalization
 
-The accepted WHERE grammar is an AND tree whose leaves compare the schema's declared event-time
-column with a `TIMESTAMP` literal. Operand order is normalized first. Lower bounds retain the
-greatest endpoint; upper bounds retain the least endpoint. Equal endpoints combine inclusivity
-with logical AND, so any strict comparison keeps the combined endpoint strict.
+The accepted WHERE grammar is an AND tree whose leaves either compare the schema's declared event-
+time column with a `TIMESTAMP` literal or use positive `event_time BETWEEN lower AND upper` with two
+`TIMESTAMP` literals. Comparison operand order is normalized first. `BETWEEN` contributes inclusive
+bounds and never reorders a reversed range. Lower bounds retain the greatest endpoint; upper bounds
+retain the least endpoint. Equal endpoints combine inclusivity with logical AND, so any strict
+comparison keeps the combined endpoint strict. `NOT BETWEEN` fails closed because one range cannot
+represent its generally disjoint truth set.
 
 No endpoint is incremented or decremented. `INT64_MIN` and `INT64_MAX` are therefore safe. Reversed
 or equal-open bounds are retained as valid empty predicates and evaluated exactly by the worker's

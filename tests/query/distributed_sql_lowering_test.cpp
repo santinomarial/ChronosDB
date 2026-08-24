@@ -115,12 +115,39 @@ TEST(DistributedSqlLoweringTest, ExpandsStarsAndNormalizesTightestOpenBounds) {
   EXPECT_FALSE(lowered->intent.limit.has_value());
 }
 
+TEST(DistributedSqlLoweringTest, NormalizesInclusiveBetweenWithComparisonBounds) {
+  BoundSqlSelect select = bind("SELECT value FROM metrics WHERE ts BETWEEN "
+                               "TIMESTAMP '1970-01-01 00:00:00.000000002Z' AND "
+                               "TIMESTAMP '1970-01-01 00:00:00.000000009Z' AND "
+                               "ts > TIMESTAMP '1970-01-01 00:00:00.000000003Z'");
+  auto lowered = lower_bound_sql_select_to_distributed_vector_rows(select);
+  ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
+  ASSERT_TRUE(lowered->event_time_predicate.has_value());
+  EXPECT_EQ(lowered->event_time_predicate->lower,
+            (cseg::EventTimeBound{.value = 3, .inclusive = false}));
+  EXPECT_EQ(lowered->event_time_predicate->upper,
+            (cseg::EventTimeBound{.value = 9, .inclusive = true}));
+
+  BoundSqlSelect reversed = bind("SELECT value FROM metrics WHERE ts BETWEEN "
+                                 "TIMESTAMP '1970-01-01 00:00:00.000000009Z' AND "
+                                 "TIMESTAMP '1970-01-01 00:00:00.000000002Z'");
+  auto empty = lower_bound_sql_select_to_distributed_vector_rows(reversed);
+  ASSERT_TRUE(empty.has_value()) << empty.error().status().to_string();
+  EXPECT_EQ(empty->event_time_predicate->lower,
+            (cseg::EventTimeBound{.value = 9, .inclusive = true}));
+  EXPECT_EQ(empty->event_time_predicate->upper,
+            (cseg::EventTimeBound{.value = 2, .inclusive = true}));
+}
+
 TEST(DistributedSqlLoweringTest, RejectsEveryUnsupportedSemanticWithoutFallback) {
   const std::vector<std::string_view> statements{
       "SELECT value + 1 AS v FROM metrics",
       "SELECT value FROM metrics WHERE value > 1",
       "SELECT value FROM metrics ORDER BY ts",
       "SELECT count(*) AS n FROM metrics",
+      "SELECT value FROM metrics WHERE ts NOT BETWEEN "
+      "TIMESTAMP '1970-01-01 00:00:00Z' AND TIMESTAMP '1970-01-01 00:00:01Z'",
+      "SELECT value FROM metrics WHERE value BETWEEN 1 AND 2",
       "SELECT value FROM metrics LATEST BY (value) ON ts",
       "SELECT value FROM metrics FOR SYSTEM_TIME AS OF "
       "TIMESTAMP '1970-01-01 00:00:00Z'"};

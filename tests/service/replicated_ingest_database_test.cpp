@@ -1110,6 +1110,18 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
             native_distributed->responses[0].frame.payload);
   EXPECT_EQ(native_local->responses[1].frame.header.message_type, network::MessageType::kQueryEnd);
 
+  auto native_between = local_distributed_native.execute_query(
+      query_request("SELECT tag AS label, ts, tag AS repeated FROM events "
+                    "WHERE ts BETWEEN TIMESTAMP '1970-01-01 00:00:00Z' "
+                    "AND TIMESTAMP '1970-01-01 00:00:00Z' "
+                    "ORDER BY label ASC, ts LIMIT 1"));
+  ASSERT_TRUE(native_between.has_value()) << native_between.error().to_string();
+  ASSERT_EQ(native_between->responses.size(), 2U);
+  EXPECT_EQ(native_between->responses[0].frame.payload,
+            native_distributed->responses[0].frame.payload);
+  EXPECT_EQ(native_between->responses[1].frame.header.message_type,
+            network::MessageType::kQueryEnd);
+
   AdvancingFailOnceMutableWorker rebinding_worker{*database, *local_worker};
   auto rebinding_config = local_distributed_config;
   rebinding_config.local_worker = &rebinding_worker;
