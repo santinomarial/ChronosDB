@@ -143,6 +143,9 @@ validity as permission to skip retained-history validation or fall back.
 The matching complete-record case damages the first checkpoint payload. Two startup attempts return
 the exact payload-checksum failure before projection, release ownership, preserve both authority
 files, and do not recreate reclaimed segment 1.
+A truncation companion cuts that checkpoint record one byte short and explicitly enables Raft tail
+repair. Two startup attempts still return the exact incomplete-checkpoint failure before projection,
+release ownership, and preserve the anchor, truncated segment, and absent segment 1.
 
 Malformed transport/command bytes become client-invalid protocol errors. Database corruption stays
 distinguishable as an internal error; I/O, unavailability, and unsupported operations are execution

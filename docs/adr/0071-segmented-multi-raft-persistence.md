@@ -135,6 +135,9 @@ files without falling back to the reclaimed prefix.
 A third portable case damages the first complete checkpoint-record payload in that retained segment.
 Two database reopens require the exact payload-checksum failure, release ownership, preserve the
 anchor and damaged segment, and do not recreate the reclaimed prefix.
+A fourth case truncates that first checkpoint record by one byte at its encoded boundary and
+explicitly authorizes ordinary final-tail repair. Two reopens instead require the exact incomplete
+checkpoint failure and preserve the anchor and truncated segment while keeping segment 1 absent.
 
 A separate 24-case recovery matrix fixes the encoded record size at 213 bytes and crosses segment
 targets `277`, `278`, `489`, `490`, `491`, `702`, `703`, and `1024` with 1, 3, and 8 logical groups.

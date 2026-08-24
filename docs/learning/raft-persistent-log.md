@@ -151,6 +151,10 @@ owner, and preserves both images; anchor selection cannot bypass retained-byte i
 A retained-record companion damages the first complete checkpoint payload instead. Repeated
 recovery rejects the exact payload checksum, releases ownership, preserves both images, and does not
 recreate segment 1; anchor selection cannot turn complete record corruption into repairable tail.
+The incomplete-record companion derives that checkpoint's encoded end, truncates it by one byte,
+and explicitly authorizes ordinary final-tail repair. Recovery still returns the exact incomplete
+checkpoint corruption twice and preserves the image, because discarding any anchor-required record
+would destroy the only retained state for its logical group.
 
 The recovery-layout matrix checks a different dimension: target-size arithmetic and latest-state
 selection. A canonical state encodes to 213 bytes. Eight targets straddle the exact one-, two-,

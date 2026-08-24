@@ -88,6 +88,11 @@ A retained-record companion flips one payload byte in the first complete checkpo
 database starts report `multiplexed log payload checksum mismatch`, release ownership, preserve the
 anchor and damaged segment, and do not recreate reclaimed segment 1.
 
+An incomplete-checkpoint companion truncates that record by one byte at its encoded boundary and
+sets `repair_incomplete_final_tail`. Two database starts report `Raft recovery checkpoint contains
+an incomplete record`, release ownership, preserve both authority files, and do not recreate
+segment 1. Tail-repair authorization never applies inside the anchor's checkpoint range.
+
 Unknown files, nonregular entries, a damaged authoritative anchor, or damage in retained history
 remain corruption. Recovery does not fall back to an older anchor after the newest authority is
 damaged.

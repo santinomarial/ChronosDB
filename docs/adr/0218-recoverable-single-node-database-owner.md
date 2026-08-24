@@ -86,6 +86,9 @@ and proves repeated startup fails before projection without fallback or rewritin
 A second retained-history case damages the first complete checkpoint-record payload. Repeated
 startup fails on its payload checksum before projection, releases ownership, preserves both files,
 and does not recreate reclaimed history.
+A third truncates that authoritative record by one byte and enables Raft final-tail repair. Repeated
+startup still fails on the incomplete checkpoint before projection, releases ownership, and leaves
+the anchor, truncated segment, and reclaimed history unchanged.
 
 ## References
 

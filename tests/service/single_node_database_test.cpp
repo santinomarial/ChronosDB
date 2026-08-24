@@ -483,6 +483,49 @@ TEST(SingleNodeDatabaseTest, RejectsCorruptAnchoredRaftRecordWithoutFallbackOrRe
   }
 }
 
+TEST(SingleNodeDatabaseTest, RejectsTruncatedAnchoredRaftRecordEvenWhenTailRepairIsAuthorized) {
+  TemporaryDirectory directory;
+  AnchoredMetadataLog anchored;
+  provision_anchored_metadata_log(directory, anchored);
+  ASSERT_TRUE(anchored.ready);
+  const std::string pristine_anchor = read_binary_file(anchored.anchor);
+  ASSERT_EQ(pristine_anchor.size(), 64U);
+  const std::string pristine_segment = read_binary_file(anchored.retained_segment);
+  const auto segment_bytes =
+      std::as_bytes(std::span{pristine_segment.data(), pristine_segment.size()});
+  ASSERT_GE(segment_bytes.size(), raft::kRaftSegmentHeaderSize + raft::kMultiplexedLogHeaderSize);
+  auto checkpoint_header = raft::inspect_multiplexed_log_record_header_v1(
+      segment_bytes.subspan(raft::kRaftSegmentHeaderSize, raft::kMultiplexedLogHeaderSize));
+  ASSERT_TRUE(checkpoint_header.has_value()) << checkpoint_header.error().to_string();
+  const std::size_t checkpoint_record_end =
+      raft::kRaftSegmentHeaderSize + checkpoint_header->encoded_size;
+  ASSERT_LE(checkpoint_record_end, pristine_segment.size());
+
+  const std::string truncated_segment = pristine_segment.substr(0U, checkpoint_record_end - 1U);
+  const int segment_file =
+      ::open(anchored.retained_segment.c_str(), O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+  ASSERT_GE(segment_file, 0);
+  ASSERT_EQ(::ftruncate(segment_file, static_cast<off_t>(truncated_segment.size())), 0);
+  ASSERT_EQ(::fsync(segment_file), 0);
+  ASSERT_EQ(::close(segment_file), 0);
+  ASSERT_EQ(read_binary_file(anchored.retained_segment), truncated_segment);
+
+  auto repair_authorized = config(directory);
+  repair_authorized.raft_recovery.repair_incomplete_final_tail = true;
+  for (std::size_t attempt = 0U; attempt < 2U; ++attempt) {
+    SCOPED_TRACE(attempt);
+    auto rejected = SingleNodeDatabase::open_or_create(repair_authorized);
+    ASSERT_FALSE(rejected.has_value());
+    EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
+    EXPECT_NE(
+        rejected.error().to_string().find("Raft recovery checkpoint contains an incomplete record"),
+        std::string::npos);
+    EXPECT_EQ(read_binary_file(anchored.anchor), pristine_anchor);
+    EXPECT_EQ(read_binary_file(anchored.retained_segment), truncated_segment);
+    EXPECT_FALSE(std::filesystem::exists(anchored.reclaimed_segment));
+  }
+}
+
 TEST(SingleNodeDatabaseTest, MoveAssignmentClosesTheReplacedDatabaseBeforeTakingOwnership) {
   TemporaryDirectory replaced_directory;
   TemporaryDirectory incoming_directory;

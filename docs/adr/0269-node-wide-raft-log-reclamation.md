@@ -63,3 +63,6 @@ validation.
 A retained-record companion damages the first complete checkpoint payload in segment 2. Two owner
 reopens return the exact payload-checksum corruption, release ownership, preserve both authority
 files, and never reconstruct reclaimed segment 1.
+An incomplete-checkpoint companion truncates that record by one byte and authorizes ordinary tail
+repair. Two owner reopens still fail closed, preserve the anchor and truncated segment, and never
+reconstruct segment 1; an authoritative checkpoint is not a discardable final suffix.
