@@ -67,6 +67,21 @@ again under the derived stable voters.
 The separate `ReplicatedIngestService` borrows the coordinator and queue pair. It must be destroyed
 or drained before this owner shuts down; the eventual packaged lifecycle owns that ordering.
 
+The database also implements the mutable vector worker's request-local context-provider boundary.
+An authenticated fragment first enters the durable runtime with an atomic required-leader-term
+observation. The database then pins one complete query snapshot and exact-matches the fragment's
+database, table, tablet, schema, group, placement, voters, applied position, and barrier coverage.
+The returned value owns its `TabletSnapshot` and a copied immutable schema lineage. The observation
+does not recreate the coordinator's barrier; it proves that the named local leader term and
+authority have not already become stale before the existing worker revalidates the complete proof.
+
+This provider currently acquires the complete retained query snapshot per worker request. That is
+linear in catalogued tables and resident tablets and deliberately favors one already-reviewed
+consistency boundary over a faster specialized lookup. A future optimization needs measurements
+and must preserve the same metadata/publication ownership contract.
+
 Likely review questions: why must the runtime address stabilize before coordinator creation, why
 must every resident group have an application owner, why is coordinator destruction first, and why
-does this owner not automatically elect a group during recovery?
+does this owner not automatically elect a group during recovery? For query workers, also ask why a
+fresh local observation cannot replace the coordinator's correlated read barrier, and why the
+provider pins a full snapshot before returning a single tablet context.

@@ -168,6 +168,10 @@ public:
       const ReplicatedDistributedMutableVectorQueryWorkerContextProvider&) = delete;
   ReplicatedDistributedMutableVectorQueryWorkerContextProvider&
   operator=(const ReplicatedDistributedMutableVectorQueryWorkerContextProvider&) = delete;
+  ReplicatedDistributedMutableVectorQueryWorkerContextProvider(
+      ReplicatedDistributedMutableVectorQueryWorkerContextProvider&&) noexcept = default;
+  ReplicatedDistributedMutableVectorQueryWorkerContextProvider&
+  operator=(ReplicatedDistributedMutableVectorQueryWorkerContextProvider&&) noexcept = default;
   virtual ~ReplicatedDistributedMutableVectorQueryWorkerContextProvider() = default;
 
   [[nodiscard]] virtual common::Result<ReplicatedDistributedMutableVectorQueryWorkerContext>

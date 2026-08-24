@@ -1091,9 +1091,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   all-tablet result exactly once, and retains only globally finalized Native row payloads. The
   replicated Native service now retains the correlated read authority and snapshot, lowers a real
   request, drives that owner under a finite deadline, and moves only its terminal payloads back into
-  the original connection/principal/request route. Production worker-context provision,
-  reactor-aware cancellation and authority rebinding, local-fragment execution, daemon
-  configuration, and multi-process split-leader qualification remain.
+  the original connection/principal/request route. The replicated database now supplies the real
+  worker context by atomically reobserving the named local leader term, pinning one committed
+  metadata/tablet snapshot, and exact-matching the fragment proof before execution. Reactor-aware
+  cancellation and authority rebinding, local-fragment execution, daemon configuration, and
+  multi-process split-leader qualification remain.
   The packaged daemon now accepts an atomic native-server TLS credential
   and strict client-certificate-principal bundle, owns the immutable authority beyond its reactor
   borrow, permits non-loopback canonical IPv4 binding only in that mode, and fails closed instead of

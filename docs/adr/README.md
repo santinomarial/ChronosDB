@@ -477,3 +477,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0440](0440-correlated-sql-mutable-query-preparation.md) | Correlated SQL mutable query preparation | accepted |
 | [0441](0441-bounded-native-mutable-row-query-ownership.md) | Bounded Native mutable row query ownership | accepted |
 | [0442](0442-bounded-native-distributed-row-request-wiring.md) | Bounded Native distributed row request wiring | accepted |
+| [0443](0443-database-owned-mutable-worker-context.md) | Database-owned mutable worker context | accepted |

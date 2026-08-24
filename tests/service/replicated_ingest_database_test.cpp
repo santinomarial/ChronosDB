@@ -74,36 +74,6 @@ public:
   }
 };
 
-class DistributedTestContextProvider final
-    : public ReplicatedDistributedMutableVectorQueryWorkerContextProvider {
-public:
-  explicit DistributedTestContextProvider(
-      std::vector<ReplicatedDistributedMutableVectorQueryWorkerContext> contexts)
-      : contexts_(std::move(contexts)) {}
-
-  common::Result<ReplicatedDistributedMutableVectorQueryWorkerContext>
-  acquire(const query::DistributedMutableVectorFragment& fragment) override {
-    const auto context = std::ranges::find_if(
-        contexts_, [&](const ReplicatedDistributedMutableVectorQueryWorkerContext& candidate) {
-          return candidate.snapshot.tablet_id() == fragment.tablet_id &&
-                 candidate.raft_group_id == fragment.raft_group_id;
-        });
-    if (context == contexts_.end()) {
-      return common::make_unexpected(
-          common::Status{common::StatusCode::kNotFound, "test worker context is unavailable"});
-    }
-    ++calls;
-    ReplicatedDistributedMutableVectorQueryWorkerContext result = *context;
-    result.local_linearizable_barrier = fragment.linearizable_barrier;
-    return result;
-  }
-
-  std::size_t calls{};
-
-private:
-  std::vector<ReplicatedDistributedMutableVectorQueryWorkerContext> contexts_;
-};
-
 class RecordingStartupObserver final : public ReplicatedIngestDatabaseStartupObserver {
 public:
   void on_startup_stage(const ReplicatedIngestDatabaseStartupStage stage) noexcept override {
@@ -938,27 +908,26 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   }
   ASSERT_EQ(prepared_sql_query->routes.size(), 1U);
   EXPECT_EQ(prepared_sql_query->routes.front().node_id, 1U);
+  auto production_worker_context = database->acquire(prepared_sql_query->fragments.front());
+  ASSERT_TRUE(production_worker_context.has_value())
+      << production_worker_context.error().to_string();
+  EXPECT_EQ(production_worker_context->snapshot.tablet_id(), tablet_id());
+  EXPECT_EQ(production_worker_context->raft_group_id, tablet_group());
+  EXPECT_EQ(production_worker_context->local_linearizable_barrier,
+            prepared_sql_query->fragments.front().linearizable_barrier);
+  auto wrong_worker_term = prepared_sql_query->fragments.front();
+  ASSERT_TRUE(wrong_worker_term.linearizable_barrier.has_value());
+  ++wrong_worker_term.linearizable_barrier->term;
+  EXPECT_EQ(database->acquire(wrong_worker_term).error().code(), common::StatusCode::kUnavailable);
+  auto wrong_worker_position = prepared_sql_query->fragments.front();
+  ++wrong_worker_position.applied_position;
+  EXPECT_EQ(database->acquire(wrong_worker_position).error().code(),
+            common::StatusCode::kUnavailable);
+  auto wrong_worker_database = prepared_sql_query->fragments.front();
+  wrong_worker_database.database_id = manifest::DatabaseId::from_uuid(id(0x7bU)).value();
+  EXPECT_EQ(database->acquire(wrong_worker_database).error().code(),
+            common::StatusCode::kUnavailable);
 
-  auto lineage = schema::SchemaLineage::create(*columnar::test::batch_schema());
-  ASSERT_TRUE(lineage.has_value()) << lineage.error().to_string();
-  auto retained_lineage = std::make_shared<const schema::SchemaLineage>(std::move(*lineage));
-  DistributedTestContextProvider context_provider{
-      {{.snapshot = *first_publication,
-        .lineage = retained_lineage,
-        .placement = {.table_id = columnar::test::batch_schema()->table_id(),
-                      .tablet_id = tablet_id(),
-                      .placement_epoch = 1U,
-                      .replicas = {1U},
-                      .leader_hint = 1U},
-        .raft_group_id = tablet_group()},
-       {.snapshot = *second_publication,
-        .lineage = retained_lineage,
-        .placement = {.table_id = columnar::test::batch_schema()->table_id(),
-                      .tablet_id = second_tablet_id(),
-                      .placement_epoch = 1U,
-                      .replicas = {1U},
-                      .leader_hint = 1U},
-        .raft_group_id = second_tablet_group()}}};
   DistributedTestNodeAuthorizer node_authorizer;
   DistributedTestAuthenticator inbound_authenticator{91U};
   const cluster::DistributedMutableVectorQueryTlsLimits distributed_carrier{
@@ -967,7 +936,7 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
       .maximum_response_frames = 4U,
       .maximum_response_bytes = std::size_t{1024U} * 1024U};
   auto distributed_server = ReplicatedDistributedMutableVectorQueryTcpServer::start(
-      {.worker = {.local_node_id = 1U, .context_provider = &context_provider},
+      {.worker = {.local_node_id = 1U, .context_provider = &*database},
        .listener = {.bind_endpoint = {{127U, 0U, 0U, 1U}, 7411U}},
        .tls = distributed_server_tls(),
        .authenticator = &inbound_authenticator,
@@ -1059,7 +1028,6 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   EXPECT_EQ(*timestamp_value, 0);
   EXPECT_EQ(native_distributed->responses[1].frame.header.message_type,
             network::MessageType::kQueryEnd);
-  EXPECT_EQ(context_provider.calls, 2U);
   ASSERT_TRUE(distributed_server->shutdown().is_ok());
   auto nil_sql_query = mutable_snapshot->prepare_linearizable_mutable_vector_rows_query(
       {.query_id = {}, .sql_plan = std::cref(*distributed_sql), .group_authorities = *authorities},

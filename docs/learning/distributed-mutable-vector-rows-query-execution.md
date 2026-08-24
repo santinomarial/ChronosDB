@@ -66,8 +66,10 @@ Allocation injection covers construction and the finalizer separately.
 The Native integration gate uses a replicated two-tablet snapshot and a real production worker TCP
 server over mutual TLS. It submits projected, filtered, globally ordered and limited SQL, then
 decodes the returned Native payload and checks its schema, row, and `QUERY_END`. The test context
-provider is a controlled authority seam for that integration; production database-to-worker
-context provision and daemon composition remain explicit follow-on boundaries.
+is now the actual `ReplicatedIngestDatabase`: it reobserves the named local leader term, pins one
+committed metadata/tablet snapshot, and exact-matches the fragment before the worker performs its
+independent proof gates. Local-fragment coordinator handling and daemon composition remain explicit
+follow-on boundaries.
 
 Useful interview questions include:
 

@@ -448,6 +448,8 @@ int main() {
       &chronos::cluster::DistributedMutableVectorRowsQueryTcpExecution::take_result;
   const auto native_distributed_rows_config_size =
       sizeof(chronos::service::NativeDistributedMutableVectorRowsQueryConfig);
+  const auto acquire_mutable_worker_context =
+      &chronos::service::ReplicatedIngestDatabase::acquire;
   const auto create_replicated_vector_aggregate_query_worker_v2 =
       &chronos::service::ReplicatedDistributedVectorAggregateQueryWorkerV2::create;
   const auto create_replicated_grouped_query_receiver =
@@ -701,6 +703,7 @@ int main() {
   (void)create_mutable_vector_rows_query_tcp_execution;
   (void)take_mutable_vector_rows_query_result;
   (void)native_distributed_rows_config_size;
+  (void)acquire_mutable_worker_context;
   (void)create_replicated_vector_aggregate_query_worker_v2;
   (void)create_replicated_grouped_query_receiver;
   (void)start_replicated_grouped_query_server;

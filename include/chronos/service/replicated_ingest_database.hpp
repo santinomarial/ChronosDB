@@ -14,6 +14,7 @@
 #include "chronos/query/tablet_state_pipeline.hpp"
 #include "chronos/raft/metadata_snapshot_storage.hpp"
 #include "chronos/runtime/database_bootstrap.hpp"
+#include "chronos/service/replicated_distributed_query_worker.hpp"
 #include "chronos/service/replicated_ingest_runtime.hpp"
 
 #include <cstdint>
@@ -175,10 +176,11 @@ struct ReplicatedIngestDatabaseConfig {
 // configuration supplies exact group membership; committed metadata supplies tablet routing,
 // schemas, policies, and local application ownership. Shutdown drains the replicated runtime before
 // releasing the database-root lock.
-class ReplicatedIngestDatabase {
+class ReplicatedIngestDatabase final
+    : public ReplicatedDistributedMutableVectorQueryWorkerContextProvider {
 public:
   ReplicatedIngestDatabase() = delete;
-  ~ReplicatedIngestDatabase();
+  ~ReplicatedIngestDatabase() override;
   ReplicatedIngestDatabase(const ReplicatedIngestDatabase&) = delete;
   ReplicatedIngestDatabase& operator=(const ReplicatedIngestDatabase&) = delete;
   ReplicatedIngestDatabase(ReplicatedIngestDatabase&&) noexcept;
@@ -198,6 +200,11 @@ public:
   // corresponding leader-confirmed read index.
   [[nodiscard]] common::Result<ReplicatedQuerySnapshot>
   acquire_query_snapshot(std::span<const raft::GroupReadBarrier> barriers) const;
+  // Production mutable-fragment worker boundary. It atomically confirms the fragment's serving
+  // leader term, pins current committed metadata and the exact applied TabletState publication,
+  // and returns one coherent context only when every proof field still matches.
+  [[nodiscard]] common::Result<ReplicatedDistributedMutableVectorQueryWorkerContext>
+  acquire(const query::DistributedMutableVectorFragment& fragment) override;
   [[nodiscard]] std::span<const raft::GroupId> query_barrier_groups() const noexcept;
   // Obtains ordered observations for the complete packaged query-barrier group vector. It returns
   // a redirect only when every group has the same stable remote leader and committed placement is

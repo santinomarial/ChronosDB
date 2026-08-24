@@ -926,6 +926,119 @@ common::Result<ReplicatedQuerySnapshot> ReplicatedIngestDatabase::acquire_query_
   }
 }
 
+common::Result<ReplicatedDistributedMutableVectorQueryWorkerContext>
+ReplicatedIngestDatabase::acquire(const query::DistributedMutableVectorFragment& fragment) {
+  if (!is_running())
+    return common::make_unexpected(invalid("replicated mutable worker database is unavailable"));
+  const common::Status structural = query::validate_distributed_mutable_vector_fragment(fragment);
+  if (!structural.is_ok())
+    return common::make_unexpected(structural);
+  auto database_id =
+      manifest::DatabaseId::from_uuid(impl_->bootstrap_owner.descriptor().database_id);
+  if (!database_id.has_value())
+    return common::make_unexpected(
+        corruption("replicated mutable worker database identity is invalid"));
+  if (fragment.serving_node != impl_->bootstrap_owner.descriptor().local_node_id ||
+      fragment.database_id != *database_id ||
+      fragment.read_policy.consistency != query::DistributedReadConsistency::kLeaderLinearizable ||
+      !fragment.linearizable_barrier.has_value()) {
+    return common::make_unexpected(
+        unavailable("replicated mutable worker fragment does not name the local leader"));
+  }
+
+  auto observed =
+      impl_->runtime.runtime()->try_submit({{fragment.raft_group_id, raft::ObserveGroupOperation{},
+                                             fragment.linearizable_barrier->term}});
+  if (!observed.has_value())
+    return common::make_unexpected(observed.error());
+  auto observation_results = observed->wait();
+  if (!observation_results.has_value())
+    return common::make_unexpected(observation_results.error());
+  if (observation_results->size() != 1U) {
+    return common::make_unexpected(
+        corruption("replicated mutable worker group observation count is invalid"));
+  }
+  if (!observation_results->front().status.is_ok())
+    return common::make_unexpected(observation_results->front().status);
+  if (observation_results->front().transition.has_value() ||
+      !observation_results->front().observation.has_value()) {
+    return common::make_unexpected(
+        corruption("replicated mutable worker group observation is invalid"));
+  }
+  const raft::RaftGroupObservation& observation = *observation_results->front().observation;
+  if (observation.group_id != fragment.raft_group_id || observation.node_id == 0U ||
+      observation.last_log_index < observation.commit_index ||
+      observation.commit_index < observation.applied_index) {
+    return common::make_unexpected(
+        corruption("replicated mutable worker group observation shape is invalid"));
+  }
+  if (observation.node_id != fragment.serving_node || observation.role != raft::Role::kLeader ||
+      observation.leader_id != fragment.serving_node ||
+      observation.current_term != fragment.linearizable_barrier->term ||
+      observation.commit_index < fragment.linearizable_barrier->read_index ||
+      observation.commit_index < fragment.observed_leader_commit_position ||
+      observation.applied_index < fragment.linearizable_barrier->read_index) {
+    return common::make_unexpected(
+        unavailable("replicated mutable worker leader authority has changed"));
+  }
+
+  auto pinned = acquire_query_snapshot();
+  if (!pinned.has_value())
+    return common::make_unexpected(pinned.error());
+  const auto table = std::ranges::find_if(
+      pinned->impl_->tables, [&](const ReplicatedQuerySnapshot::Impl::Table& candidate) {
+        return candidate.lineage.table_id() == fragment.table_id;
+      });
+  if (table == pinned->impl_->tables.end()) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kNotFound, "replicated mutable worker table is not catalogued"});
+  }
+  const auto tablet = std::ranges::lower_bound(table->tablets, fragment.tablet_id, {},
+                                               &ingest::TabletSnapshot::tablet_id);
+  const auto placement =
+      std::ranges::lower_bound(pinned->impl_->metadata->tablet_placements, fragment.tablet_id, {},
+                               &raft::TabletPlacementMetadata::tablet_id);
+  const auto binding =
+      std::ranges::lower_bound(pinned->impl_->metadata->tablet_group_bindings, fragment.tablet_id,
+                               {}, &raft::TabletGroupBindingMetadata::tablet_id);
+  if (tablet == table->tablets.end() || tablet->tablet_id() != fragment.tablet_id ||
+      placement == pinned->impl_->metadata->tablet_placements.end() ||
+      placement->tablet_id != fragment.tablet_id ||
+      binding == pinned->impl_->metadata->tablet_group_bindings.end() ||
+      binding->tablet_id != fragment.tablet_id || binding->group_id != fragment.raft_group_id) {
+    return common::make_unexpected(
+        unavailable("replicated mutable worker publication authority is unavailable"));
+  }
+  const std::shared_ptr<const schema::TableSchema> current = table->lineage.current();
+  const std::optional<head::HeadCommitPosition>& position = tablet->applied_position();
+  if (current == nullptr || current->schema_id() != fragment.destination_schema_id ||
+      placement->table_id != fragment.table_id ||
+      placement->placement_epoch != fragment.placement_epoch ||
+      observation.joint_membership_active || placement->replicas != observation.voters ||
+      placement->replicas != observation.committed_voters ||
+      !std::ranges::binary_search(placement->replicas, fragment.serving_node) ||
+      !position.has_value() || position->source != head::CommitSource::kRaft ||
+      position->raft_group_id != fragment.raft_group_id ||
+      position->record_sequence != fragment.applied_position ||
+      position->record_sequence < fragment.linearizable_barrier->read_index) {
+    return common::make_unexpected(
+        unavailable("replicated mutable worker proof no longer matches publication"));
+  }
+  try {
+    return ReplicatedDistributedMutableVectorQueryWorkerContext{
+        .snapshot = *tablet,
+        .lineage = std::make_shared<const schema::SchemaLineage>(table->lineage),
+        .placement = *placement,
+        .raft_group_id = binding->group_id,
+        .local_linearizable_barrier = fragment.linearizable_barrier};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("replicated mutable worker context allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("replicated mutable worker context exceeds limits"));
+  }
+}
+
 std::span<const raft::GroupId> ReplicatedIngestDatabase::query_barrier_groups() const noexcept {
   return is_running() ? std::span<const raft::GroupId>{impl_->query_groups}
                       : std::span<const raft::GroupId>{};
