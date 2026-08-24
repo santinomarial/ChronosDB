@@ -73,6 +73,10 @@ provider contract executable.
 - Native CREATE composition fails the fifth generated candidate through both an injected entropy
   source and a Linux test-only link wrapper. It returns one execution failure before durable table
   creation; a clean restart observes no table or metadata prefix and a fresh CREATE is non-resumed.
+- The Linux wrapper also fails the third generated candidate during packaged startup, after the
+  final database bootstrap is durable but before a WAL identity is installed. The process reports
+  the exact entropy error, and two ordinary daemon starts recover the same root to configured
+  Protocol v1 service.
 - Header self-containment, installed-consumer, static-analysis, sanitizer, and full-suite gates cover
   the refactored public boundary and unchanged service/WAL consumers.
 

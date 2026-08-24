@@ -23,7 +23,10 @@ reports `data_plane=configured`; native CREATE TABLE, single-local-tablet SQL IN
 canonical ingest, and supported vector SELECT execute. Without subscription options, subscriptions
 fail explicitly. CREATE obtains its complete nonnil, unique identity set before the first metadata
 proposal. Operating-system entropy failure returns an execution error and leaves no partial durable
-table prefix; retry is a new operation. To serve one durable row-preserving plan, supply the paired
+table prefix; retry is a new operation. During initial root startup, an entropy failure after the
+final bootstrap is installed but before the WAL identity exists terminates startup with an error.
+Leave the root intact: the next normal start reuses the checksummed bootstrap and completes the empty
+WAL/Manifest initialization. To serve one durable row-preserving plan, supply the paired
 `--subscription-sql SQL` and `--subscription-key-file PATH` options. The table must already exist.
 The key file must contain exactly 32 nonzero bytes and be inaccessible to group/other; preserve the
 same secret across restarts or old resume tokens will fail authentication. The daemon reports

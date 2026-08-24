@@ -53,8 +53,12 @@ restarts the same data directory, and queries the recovered catalog. A test-only
 the same `chronosd` source link-wraps only its 16-byte `getrandom` calls. A trigger armed after
 startup fails the fifth CREATE identity read, returns an execution error over the real socket, and
 then normal packaged-daemon restarts prove that no metadata prefix or table was installed before a
-fresh non-resumed CREATE and another successful restart. The shipped daemon has no entropy-fault
-option. The existing unconfigured PING/rejection subprocess case remains.
+fresh non-resumed CREATE and another successful restart. The same child can fail the third qualified
+read: the WAL identity allocation after durable Bootstrap v1 installation and metadata-Raft
+startup. The process exits with its contextual startup error while the final bootstrap and
+`wal/`/`raft/` directories remain; two starts of the shipped daemon then reopen the same root,
+negotiate Protocol v1, and answer PING. The shipped daemon has no entropy-fault option. The existing
+unconfigured PING/rejection subprocess case remains.
 
 ## References
 

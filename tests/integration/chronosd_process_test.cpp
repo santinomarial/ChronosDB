@@ -98,7 +98,9 @@ public:
   }
 
   [[nodiscard]] bool start_with_entropy_failure(const std::string& data_directory,
-                                                const std::string& trigger_file) {
+                                                const std::string& trigger_file,
+                                                const std::uint64_t failing_qualified_call) {
+    const std::string failure_ordinal = std::to_string(failing_qualified_call);
     std::array<int, 2U> output{};
     if (::pipe(output.data()) != 0)
       return false;
@@ -111,9 +113,11 @@ public:
     pid_ = ::fork();
     if (pid_ == 0) {
       static_cast<void>(::dup2(output[1], STDOUT_FILENO));
+      static_cast<void>(::dup2(output[1], STDERR_FILENO));
       ::close(output[0]);
       ::close(output[1]);
-      if (::setenv("CHRONOS_TEST_GETRANDOM_FAILURE_TRIGGER", trigger_file.c_str(), 1) != 0)
+      if (::setenv("CHRONOS_TEST_GETRANDOM_FAILURE_TRIGGER", trigger_file.c_str(), 1) != 0 ||
+          ::setenv("CHRONOS_TEST_GETRANDOM_FAILURE_ORDINAL", failure_ordinal.c_str(), 1) != 0)
         std::_Exit(126);
       ::execl(CHRONOSD_ENTROPY_FAILURE_PATH, CHRONOSD_ENTROPY_FAILURE_PATH, "--port", "0",
               "--data-dir", data_directory.c_str(), nullptr);
@@ -225,6 +229,33 @@ public:
     static_cast<void>(::waitpid(pid_, &status, 0));
     pid_ = -1;
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+  }
+
+  [[nodiscard]] int wait_for_exit() noexcept {
+    if (output_ >= 0) {
+      ::close(output_);
+      output_ = -1;
+    }
+    if (pid_ <= 0)
+      return -1;
+    constexpr auto kPollInterval = std::chrono::milliseconds{10};
+    constexpr std::size_t kMaximumPolls = 500U;
+    int status{};
+    for (std::size_t poll = 0U; poll < kMaximumPolls; ++poll) {
+      const pid_t result = ::waitpid(pid_, &status, WNOHANG);
+      if (result == pid_) {
+        pid_ = -1;
+        return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+      }
+      if (result < 0 && errno == EINTR)
+        continue;
+      if (result < 0) {
+        pid_ = -1;
+        return -1;
+      }
+      std::this_thread::sleep_for(kPollInterval);
+    }
+    return stop();
   }
 
   [[nodiscard]] bool request_native_security_reload() const noexcept {
@@ -1076,7 +1107,7 @@ TEST(ChronosdProcessTest, RejectsCreateEntropyFailureWithoutDurableMetadata) {
   const std::string trigger = directory.path() + "/fail-create-entropy";
 
   ChildProcess child;
-  ASSERT_TRUE(child.start_with_entropy_failure(directory.path(), trigger));
+  ASSERT_TRUE(child.start_with_entropy_failure(directory.path(), trigger, 5U));
   const std::string injected_startup = child.read_startup_line();
   EXPECT_NE(injected_startup.find("data_plane=configured"), std::string::npos);
   std::uint16_t port = parse_port(injected_startup);
@@ -1143,6 +1174,70 @@ TEST(ChronosdProcessTest, RejectsCreateEntropyFailureWithoutDurableMetadata) {
   EXPECT_EQ(rows.read_i64_le().value(), 0);
   response = network::decode_frame(receive_frame(client)).value();
   EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
+  ::close(client);
+  EXPECT_EQ(child.stop(), 0);
+}
+
+TEST(ChronosdProcessTest, RecoversDurableBootstrapAfterWalIdentityEntropyFailure) {
+  TemporaryDirectory directory;
+  TemporaryDirectory controls;
+  ASSERT_FALSE(directory.path().empty());
+  ASSERT_FALSE(controls.path().empty());
+  const std::string trigger = controls.path() + "/fail-wal-identity-entropy";
+  const int trigger_file = ::open(trigger.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  ASSERT_GE(trigger_file, 0);
+  ASSERT_EQ(::close(trigger_file), 0);
+
+  ChildProcess child;
+  ASSERT_TRUE(child.start_with_entropy_failure(directory.path(), trigger, 3U));
+  const std::string failure = child.read_startup_line();
+  EXPECT_NE(failure.find("database start failed"), std::string::npos);
+  EXPECT_NE(failure.find("generate WAL identity"), std::string::npos);
+  EXPECT_NE(failure.find("system entropy read failed"), std::string::npos);
+  EXPECT_NE(failure.find("(errno " + std::to_string(EIO) + ")"), std::string::npos);
+  EXPECT_EQ(child.wait_for_exit(), 1);
+
+  const std::filesystem::path database_root{directory.path()};
+  EXPECT_TRUE(
+      std::filesystem::is_regular_file(database_root / runtime::kDatabaseBootstrapFileName));
+  EXPECT_FALSE(
+      std::filesystem::exists(database_root / runtime::kDatabaseBootstrapTemporaryFileName));
+  EXPECT_TRUE(std::filesystem::is_directory(database_root / runtime::kDatabaseWalDirectoryName));
+  EXPECT_TRUE(std::filesystem::is_empty(database_root / runtime::kDatabaseWalDirectoryName));
+  EXPECT_TRUE(std::filesystem::is_directory(database_root / runtime::kDatabaseRaftDirectoryName));
+
+  std::error_code remove_error;
+  EXPECT_TRUE(std::filesystem::remove(trigger, remove_error));
+  EXPECT_FALSE(remove_error);
+  ASSERT_TRUE(child.start(directory.path()));
+  std::string startup = child.read_startup_line();
+  EXPECT_NE(startup.find("data_plane=configured"), std::string::npos);
+  std::uint16_t port = parse_port(startup);
+  ASSERT_NE(port, 0U);
+  int client = connect_client(port);
+  ASSERT_GE(client, 0);
+  handshake(client);
+  ASSERT_TRUE(send_all(
+      client, network::encode_frame({.message_type = network::MessageType::kPing}, {}).value()));
+  auto response = network::decode_frame(receive_frame(client));
+  ASSERT_TRUE(response.has_value());
+  EXPECT_EQ(response->header.message_type, network::MessageType::kPong);
+  ::close(client);
+  EXPECT_EQ(child.stop(), 0);
+
+  ASSERT_TRUE(child.start(directory.path()));
+  startup = child.read_startup_line();
+  EXPECT_NE(startup.find("data_plane=configured"), std::string::npos);
+  port = parse_port(startup);
+  ASSERT_NE(port, 0U);
+  client = connect_client(port);
+  ASSERT_GE(client, 0);
+  handshake(client);
+  ASSERT_TRUE(send_all(
+      client, network::encode_frame({.message_type = network::MessageType::kPing}, {}).value()));
+  response = network::decode_frame(receive_frame(client));
+  ASSERT_TRUE(response.has_value());
+  EXPECT_EQ(response->header.message_type, network::MessageType::kPong);
   ::close(client);
   EXPECT_EQ(child.stop(), 0);
 }

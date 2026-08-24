@@ -77,7 +77,10 @@ The startup banner reports `data_plane=configured` or `data_plane=replicated` on
 corresponding database path and reactor both start; otherwise the explicit unconfigured mode
 remains distinguishable. Configured single-node ingest acknowledges
 the exact requested/effective ASYNC or LOCAL_SYNC mode. Bootstrap and native DDL/DML identities use
-the common nonnil system UUID source; deterministic service tests inject the same interface.
+the common nonnil system UUID source; deterministic service tests inject the same interface. If
+initial WAL identity allocation fails after the final bootstrap becomes durable, the daemon reports
+a contextual startup error and never emits a listening banner. A later ordinary start must reuse
+that bootstrap rather than propose a replacement database.
 
 ## Complexity and tradeoffs
 
@@ -96,10 +99,13 @@ checks that the binary is packaged and its help path runs. A Linux-only fault ch
 same daemon source wraps its exact 16-byte `getrandom` calls without changing the shipped binary.
 After normal startup, its trigger fails the fifth CREATE identity candidate. The socket receives one
 execution error; a normal restart observes no table, the next CREATE reports non-resumed completion,
-and a second restart queries that cleanly installed table. Its replicated case negotiates Protocol
-2, applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact retry, and queries the
-same recovered row count. A separate replicated gate provisions three retained roots and distinct
-mutual-TLS identities, starts three actual daemon processes, obtains an applied quorum
+and a second restart queries that cleanly installed table. A second trigger mode fails the third
+candidate during initial WAL creation, after final bootstrap installation. That process reports the
+entropy failure; the final bootstrap and subsystem directories remain, and two ordinary daemon
+starts negotiate Protocol v1 and answer PING from the same root. Its replicated case negotiates
+Protocol 2, applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact retry, and
+queries the same recovered row count. A separate replicated gate provisions three retained roots
+and distinct mutual-TLS identities, starts three actual daemon processes, obtains an applied quorum
 acknowledgement, kills the acknowledged tablet leader, observes a higher-term replacement, and
 requires an exact matching retry. Reopening each root then proves that all three applications
 recover the same two visible rows and one retry entry. A packaged-client gate starts `chronosd`

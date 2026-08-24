@@ -105,6 +105,12 @@ Unknown WAL tablets, damaged log bytes, inconsistent lineage tails, missing acti
 and nonlocal placement all fail startup. Incomplete metadata-only table prefixes remain invisible.
 No fallback schema, policy, durability downgrade, or empty-success response exists.
 
+A new root can fail after Bootstrap v1 and metadata Raft are ready but before the initial WAL
+identity is installed. The owner returns that contextual entropy error without exposing a service.
+On the next start, the final bootstrap remains authoritative; the owner reopens metadata, creates
+the still-empty WAL and Manifest namespace, and enters the ordinary recovery path. Linux process
+coverage requires that recovery and a second established-root reopen through the shipped daemon.
+
 Malformed transport/command bytes become client-invalid protocol errors. Database corruption stays
 distinguishable as an internal error; I/O, unavailability, and unsupported operations are execution
 failures. The adapter is synchronous and thread-affine: it retains a complete result sequence within
