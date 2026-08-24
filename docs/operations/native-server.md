@@ -47,12 +47,13 @@ directory entry is corruption, not cleanup residue: preserve the root for diagno
 packaged startup fails before listening and does not remove the entry. This includes symlinks,
 which recovery classifies without following. A damaged highest Raft recovery anchor is likewise
 terminal, including when truncated: do not recreate it or restore an older anchor alone, because the
-selected retained base and anchor are one authority. A missing highest anchor after prefix
-reclamation is equally terminal; do not adopt the lowest visible segment as a new base. An intact
-anchor with a damaged retained segment is also terminal and must not trigger fallback or repair.
-This includes a structurally incomplete record inside the anchored checkpoint even when ordinary
-final-tail repair is explicitly authorized. Restore an identity-consistent root. To serve one
-durable row-preserving plan, supply
+selected retained base and anchor are one authority. An anchor with a valid checksum but invalid
+reserved or identity fields is equally damaged. A missing highest anchor after prefix reclamation is
+also terminal; do not adopt the lowest visible segment as a new base. An intact anchor with a
+damaged retained segment is also terminal and must not trigger fallback or repair. This includes a
+structurally incomplete record inside the anchored checkpoint even when ordinary final-tail repair
+is explicitly authorized. Restore an identity-consistent root. To serve one durable row-preserving
+plan, supply
 the paired `--subscription-sql SQL` and `--subscription-key-file PATH` options. The table must
 already exist.
 The key file must contain exactly 32 nonzero bytes and be inaccessible to group/other; preserve the

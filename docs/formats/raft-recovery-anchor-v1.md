@@ -78,6 +78,11 @@ A portable `SingleNodeDatabase` case truncates that anchor to 63 bytes. Two data
 `Raft recovery anchor has an invalid size`, release ownership, preserve the truncated anchor and
 retained checkpoint segment, and do not fall back to reclaimed segment 1.
 
+A semantic-field companion sets the first required-zero byte and recomputes the complete anchor
+CRC32C. Two database starts report `Raft recovery-anchor fields are invalid`, release ownership,
+preserve the malformed anchor and retained checkpoint, and do not fall back. A valid checksum does
+not relax any field invariant in this format.
+
 A portable `SingleNodeDatabase` case removes the authoritative anchor only after the public
 checkpoint path has reclaimed segment 1 and a clean database reopen has accepted the new base. The
 next two startups report `Raft recovery base segment is absent`, release ownership, do not infer an

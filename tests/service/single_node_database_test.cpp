@@ -1,4 +1,6 @@
 #include "chronos/common/byte_reader.hpp"
+#include "chronos/common/byte_writer.hpp"
+#include "chronos/common/crc32c.hpp"
 #include "chronos/common/uuid_generator.hpp"
 #include "chronos/ingest/columnar_append_executor.hpp"
 #include "chronos/manifest/naming.hpp"
@@ -433,6 +435,45 @@ TEST(SingleNodeDatabaseTest, RejectsTruncatedAuthoritativeRaftAnchorWithoutFallb
     EXPECT_NE(rejected.error().to_string().find("Raft recovery anchor has an invalid size"),
               std::string::npos);
     EXPECT_EQ(read_binary_file(anchored.anchor), truncated_anchor);
+    EXPECT_EQ(read_binary_file(anchored.retained_segment), pristine_segment);
+    EXPECT_FALSE(std::filesystem::exists(anchored.reclaimed_segment));
+  }
+}
+
+TEST(SingleNodeDatabaseTest, RejectsChecksumValidInvalidRaftAnchorFieldsWithoutFallbackOrRewrite) {
+  TemporaryDirectory directory;
+  AnchoredMetadataLog anchored;
+  provision_anchored_metadata_log(directory, anchored);
+  ASSERT_TRUE(anchored.ready);
+  const std::string pristine_anchor = read_binary_file(anchored.anchor);
+  ASSERT_EQ(pristine_anchor.size(), 64U);
+  const std::string pristine_segment = read_binary_file(anchored.retained_segment);
+
+  std::string malformed_anchor = pristine_anchor;
+  common::MutableByteView anchor_bytes =
+      std::as_writable_bytes(std::span{malformed_anchor.data(), malformed_anchor.size()});
+  anchor_bytes[52U] = std::byte{1U};
+  std::fill(anchor_bytes.begin() + 48, anchor_bytes.begin() + 52, std::byte{0U});
+  common::ByteWriter checksum_writer{anchor_bytes.subspan(48U, 4U)};
+  ASSERT_TRUE(checksum_writer.write_u32_le(common::crc32c(common::ByteView{anchor_bytes})).is_ok());
+  ASSERT_TRUE(checksum_writer.full());
+
+  const int anchor_file = ::open(anchored.anchor.c_str(), O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+  ASSERT_GE(anchor_file, 0);
+  ASSERT_EQ(::pwrite(anchor_file, malformed_anchor.data(), malformed_anchor.size(), 0),
+            static_cast<ssize_t>(malformed_anchor.size()));
+  ASSERT_EQ(::fsync(anchor_file), 0);
+  ASSERT_EQ(::close(anchor_file), 0);
+  ASSERT_EQ(read_binary_file(anchored.anchor), malformed_anchor);
+
+  for (std::size_t attempt = 0U; attempt < 2U; ++attempt) {
+    SCOPED_TRACE(attempt);
+    auto rejected = SingleNodeDatabase::open_or_create(config(directory));
+    ASSERT_FALSE(rejected.has_value());
+    EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
+    EXPECT_NE(rejected.error().to_string().find("Raft recovery-anchor fields are invalid"),
+              std::string::npos);
+    EXPECT_EQ(read_binary_file(anchored.anchor), malformed_anchor);
     EXPECT_EQ(read_binary_file(anchored.retained_segment), pristine_segment);
     EXPECT_FALSE(std::filesystem::exists(anchored.reclaimed_segment));
   }
