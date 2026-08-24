@@ -485,3 +485,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0448](0448-distributed-event-time-between-lowering.md) | Distributed event-time BETWEEN lowering | accepted |
 | [0449](0449-hidden-distributed-row-order-outputs.md) | Hidden distributed row order outputs | accepted |
 | [0450](0450-schema-bound-distributed-global-aggregate-sql-lowering.md) | Schema-bound distributed global aggregate SQL lowering | accepted |
+| [0451](0451-bounded-mutable-row-global-aggregate-finalization.md) | Bounded mutable-row global aggregate finalization | accepted |

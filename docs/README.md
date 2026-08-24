@@ -332,6 +332,9 @@ existence of a design document alone is not implementation evidence.
 - [Distributed aggregate SQL lowering](learning/distributed-aggregate-sql-lowering.md): checked
   bound-SQL construction of schema-neutral global aggregate projection, sufficient-state intent,
   event-time truth, result descriptors, limits, and fail-closed semantics.
+- [Mutable-row aggregate finalization](learning/mutable-row-aggregate-finalization.md): bounded
+  coordinator accumulation over complete replicated tablet row streams using the shared aggregate
+  kernel and existing all-or-none Native finalizer.
 - [Native protocol request lifecycle](learning/native-protocol-request-lifecycle.md): negotiated
   limits, bounded active requests, monotonic identities, cancellation, and durability-explicit
   acknowledgements.

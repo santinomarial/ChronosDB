@@ -1008,8 +1008,10 @@ were deliberately not run.
   bounded hidden worker outputs under Plan Intent minor 1 and are removed only after global
   sort/limit; computed/relational row semantics fail closed. A separate checked global-aggregate
   lowering now emits direct aggregate sufficient-state intent, unique projection, event-time truth,
-  LIMIT, and exact result descriptors, while its Native/process routing remains unwired. The
-  retained snapshot now constructs the canonical tablet plan from the row SQL semantics
+  LIMIT, and exact result descriptors. A bounded transitional finalizer now consumes complete
+  mutable all-tablet row streams through the shared aggregate kernel and emits one all-or-none
+  Native payload; service routing remains unwired and worker-side state pushdown remains deferred.
+  The retained snapshot now constructs the canonical tablet plan from the row SQL semantics
   plus correlated current-leader authorities and returns the all-or-none bound/routed package. A
   move-only request owner now
   composes bounded mutual-TLS scheduling with exact-once all-tablet result transfer and global
