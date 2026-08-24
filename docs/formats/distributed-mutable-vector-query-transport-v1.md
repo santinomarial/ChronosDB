@@ -23,8 +23,9 @@ before allocating the bounded frame and leaves coalesced successor bytes with th
 
 The request CRCs provide integrity, not authentication. `DistributedMutableVectorQueryReceiver`
 requires a previously authenticated peer result, authorizes its principal for the claimed source
-node, validates the local target, and only then invokes an embedding-owned worker. A subsequent TLS
-carrier is responsible for producing that peer result before exposing request bytes.
+node, validates the local target, and only then invokes an embedding-owned worker. The implemented
+mutable mutual-TLS server produces that peer result before reading request bytes; its client also
+authenticates and node-authorizes the server before writing them.
 
 Responses use `CHDVRSP2` unchanged because the response already carries query/tablet correlation,
 typed result-schema validation, optional leader hints, terminal sequencing, bounded payloads,
@@ -35,4 +36,3 @@ request decoder.
 Unknown request versions return `NOT_SUPPORTED`; damaged request bytes return `CORRUPTION`;
 invalid encoder input returns `INVALID_ARGUMENT`; bounded-reader exhaustion returns
 `RESOURCE_EXHAUSTED`.
-

@@ -1063,8 +1063,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   binds and locally executes one exact committed/applied TabletState publication without
   reinterpreting Manifest-fragment positions. Its distinct checksummed request transport now
   authenticates and authorizes the claimed source before worker execution, bounds terminal typed
-  responses, and retains exact authority through finite retries; TLS/socket ownership, packaged
-  worker integration, and split-leader native composition remain.
+  responses, and retains exact authority through finite retries. Its nonblocking mutual-TLS
+  carrier authenticates and node-authorizes both certificate roles before request bytes or worker
+  execution; TCP connect/listen ownership, packaged worker integration, and split-leader native
+  composition remain.
   The packaged daemon now accepts an atomic native-server TLS credential
   and strict client-certificate-principal bundle, owns the immutable authority beyond its reactor
   borrow, permits non-loopback canonical IPv4 binding only in that mode, and fails closed instead of

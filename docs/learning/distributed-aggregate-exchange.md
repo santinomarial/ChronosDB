@@ -81,6 +81,9 @@ Mutable Query Transport v1 wraps that value in the distinct `CHDMREQ1` request. 
 requires an authenticated principal, authorizes the claimed source node before worker execution,
 and returns only complete bounded schema-valid `CHDVRSP2` streams. The finite sender retains the
 exact fragment through retries and accepts no correlation, schema, or terminal-sequence drift.
+The mutable mutual-TLS client authenticates and node-authorizes the server certificate before any
+request byte, while the server authenticates the client certificate before reading the distinct
+request. Both enforce exact handshake/exchange deadlines and discard incomplete output.
 Distributed Query Transport v1 wraps the dispatch and terminal exchange in correlated cluster
 request/response frames. `DistributedQueryReceiver` authenticates and authorizes the source before
 an embedding-owned worker service can execute the dispatch. `ReplicatedDistributedQueryWorker`

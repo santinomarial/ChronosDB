@@ -1,3 +1,4 @@
+#include "chronos/cluster/distributed_mutable_vector_query_tls.hpp"
 #include "chronos/cluster/distributed_mutable_vector_query_transport.hpp"
 #include "support/failing_allocator.hpp"
 
@@ -65,6 +66,14 @@ public:
   common::Result<bool> authorize_node(const std::uint64_t principal_id,
                                       const raft::NodeId claimed_node_id) const override {
     return principal_id == 91U && claimed_node_id == 1U;
+  }
+};
+
+class Authenticator final : public network::ConnectionAuthenticator {
+public:
+  common::Result<network::PeerAuthenticationResult>
+  authenticate(const network::PeerAuthenticationRequest&) override {
+    return network::PeerAuthenticationResult{.authorized = true, .principal_id = 91U};
   }
 };
 
@@ -168,6 +177,53 @@ TEST(DistributedMutableVectorQuerySenderAllocationFailureTest,
     EXPECT_FALSE(sender->result().has_value());
   }
   EXPECT_TRUE(success);
+}
+
+TEST(DistributedMutableVectorQueryTlsAllocationFailureTest,
+     ClassifiesClientOwnerConstructionAllocations) {
+  Authorizer authorizer;
+  Authenticator authenticator;
+  const DistributedMutableVectorQueryTlsClientConfig client_config{
+      .authenticator = &authenticator,
+      .node_authorizer = &authorizer,
+      .limits = {.maximum_response_frames = 2U, .maximum_response_bytes = 1024U}};
+  bool client_failure = false;
+  bool client_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
+    auto encoded = encode_distributed_mutable_vector_query_request({1U, 7U, fragment()});
+    ASSERT_TRUE(encoded.has_value());
+    DistributedMutableVectorQueryAttempt attempt{1U, 7U, std::move(*encoded)};
+    auto result = run_failure(fail_after, [&] {
+      return DistributedMutableVectorQueryTlsClient::create(network::TlsSocket{},
+                                                            std::move(attempt), client_config, {});
+    });
+    if (result.has_value()) {
+      client_success = true;
+      break;
+    }
+    client_failure = true;
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(client_failure);
+  EXPECT_TRUE(client_success);
+}
+
+TEST(DistributedMutableVectorQueryTlsAllocationFailureTest,
+     ClassifiesServerOwnerConstructionAllocations) {
+  Authorizer authorizer;
+  Authenticator authenticator;
+  Worker worker;
+  auto receiver = DistributedMutableVectorQueryReceiver::create(
+      {.local_node_id = 7U, .authorizer = &authorizer, .worker = &worker});
+  ASSERT_TRUE(receiver.has_value());
+  expect_eventual_success("TLS server", [&] {
+    return DistributedMutableVectorQueryTlsServer::create(
+        network::TlsSocket{},
+        {.authenticator = &authenticator,
+         .receiver = &*receiver,
+         .limits = {.maximum_response_frames = 2U, .maximum_response_bytes = 1024U}},
+        {});
+  });
 }
 
 } // namespace

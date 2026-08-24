@@ -982,8 +982,10 @@ were deliberately not run.
   fragment now binds and locally executes one exact committed/applied TabletState publication with
   complete route, placement, barrier, schema, projection, and result-shape revalidation. Its
   distinct bounded request carrier now adds authenticated source authorization, exact response
-  schema validation, terminal publication, leader hints, and finite retries. TLS/socket ownership,
-  packaged worker integration, and split-leader native composition remain absent.
+  schema validation, terminal publication, leader hints, and finite retries. A nonblocking
+  mutual-TLS client/server carrier now authenticates and node-authorizes certificates before
+  request bytes or worker execution. TCP connect/listen ownership, packaged worker integration, and
+  split-leader native composition remain absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
