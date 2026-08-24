@@ -822,6 +822,45 @@ struct QuorumSyncInvocation {
   std::string suffix;
 };
 
+[[nodiscard]] CommandResult run_sql(const std::string& directory, const std::string_view suffix,
+                                    const std::uint16_t port, const std::string_view sql) {
+  const std::string stdout_path = directory + "/chronosctl-sql-" + std::string{suffix} + ".out";
+  const std::string stderr_path = directory + "/chronosctl-sql-" + std::string{suffix} + ".err";
+  const int standard_output =
+      ::open(stdout_path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  const int standard_error =
+      ::open(stderr_path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  if (standard_output < 0 || standard_error < 0) {
+    if (standard_output >= 0)
+      ::close(standard_output);
+    if (standard_error >= 0)
+      ::close(standard_error);
+    return {};
+  }
+  const std::string port_text = std::to_string(port);
+  const std::string statement{sql};
+  const pid_t process = ::fork();
+  if (process == 0) {
+    static_cast<void>(::dup2(standard_output, STDOUT_FILENO));
+    static_cast<void>(::dup2(standard_error, STDERR_FILENO));
+    ::close(standard_output);
+    ::close(standard_error);
+    ::execl(CHRONOSCTL_PATH, CHRONOSCTL_PATH, "sql", "--host", "127.0.0.1", "--port",
+            port_text.c_str(), "--execute", statement.c_str(), nullptr);
+    std::_Exit(127);
+  }
+  ::close(standard_output);
+  ::close(standard_error);
+  if (process < 0)
+    return {};
+  int status{};
+  if (::waitpid(process, &status, 0) != process)
+    return {};
+  return {.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1,
+          .standard_output = read_text_file(stdout_path),
+          .standard_error = read_text_file(stderr_path)};
+}
+
 [[nodiscard]] CommandResult run_quorum_sync(const std::string& directory,
                                             const QuorumSyncInvocation& invocation) {
   const std::string stdout_path = directory + "/chronosctl-" + invocation.suffix + ".out";
@@ -1063,6 +1102,60 @@ TEST(ChronosdProcessTest, NegotiatesPongsAndRejectsUnconfiguredDataPlane) {
   EXPECT_EQ(byte_string(error->message), "chronosd data plane is not configured");
 
   ::close(client);
+  EXPECT_EQ(child.stop(), 0);
+}
+
+TEST(ChronosdProcessTest, ChronosctlExecutesSqlAndReadsRowsAfterRestart) {
+  constexpr std::string_view create_sql =
+      "CREATE TABLE trades (ts TIMESTAMP_NS NOT NULL, symbol SYMBOL NOT NULL, price "
+      "DECIMAL(20, 8) NOT NULL, note STRING) EVENT TIME ts ORDER KEY (symbol, ts) "
+      "PARTITION BY time_bucket(INTERVAL '1 day', ts) SHARD KEY (symbol) DEDUP KEY "
+      "(symbol, ts) RETENTION INTERVAL '30 days' SYSTEM HISTORY RETENTION INTERVAL "
+      "'7 days' ALLOWED LATENESS INTERVAL '0 seconds'";
+  constexpr std::string_view insert_sql =
+      "INSERT INTO trades VALUES "
+      "(TIMESTAMP '2026-08-24 12:00:00Z', CAST('AAPL' AS SYMBOL), "
+      "CAST(227.16000000 AS DECIMAL(20,8)), 'opening row'), "
+      "(TIMESTAMP '2026-08-24 12:00:01Z', CAST('MSFT' AS SYMBOL), "
+      "CAST(504.26000000 AS DECIMAL(20,8)), NULL)";
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  ChildProcess child;
+  ASSERT_TRUE(child.start(directory.path()));
+  std::uint16_t port = parse_port(child.read_startup_line());
+  ASSERT_NE(port, 0U);
+
+  CommandResult command = run_sql(directory.path(), "create", port, create_sql);
+  ASSERT_EQ(command.exit_code, 0) << command.standard_error;
+  EXPECT_TRUE(command.standard_error.empty());
+  EXPECT_TRUE(command.standard_output.starts_with(
+      "table_id\tschema_id\ttablet_id\tmetadata_index\tresumed_incomplete_creation\n"));
+
+  command = run_sql(directory.path(), "insert", port, insert_sql);
+  ASSERT_EQ(command.exit_code, 0) << command.standard_error;
+  EXPECT_TRUE(command.standard_error.empty());
+  EXPECT_TRUE(command.standard_output.starts_with(
+      "applied_rows\trecord_sequence\tsegment_number\tbyte_offset\tmatching_retry\n2\t"));
+
+  command = run_sql(directory.path(), "select", port, "SELECT count(*) AS rows FROM trades");
+  ASSERT_EQ(command.exit_code, 0) << command.standard_error;
+  EXPECT_EQ(command.standard_output, "rows\n2\n");
+  EXPECT_TRUE(command.standard_error.empty());
+
+  command = run_sql(directory.path(), "error", port, "SELECT count(*) AS rows FROM missing_table");
+  EXPECT_EQ(command.exit_code, 1);
+  EXPECT_TRUE(command.standard_output.empty());
+  EXPECT_NE(command.standard_error.find("chronosctl: server invalid_request:"), std::string::npos);
+
+  EXPECT_EQ(child.stop(), 0);
+  ASSERT_TRUE(child.start(directory.path()));
+  port = parse_port(child.read_startup_line());
+  ASSERT_NE(port, 0U);
+  command =
+      run_sql(directory.path(), "recovered-select", port, "SELECT count(*) AS rows FROM trades");
+  ASSERT_EQ(command.exit_code, 0) << command.standard_error;
+  EXPECT_EQ(command.standard_output, "rows\n2\n");
+  EXPECT_TRUE(command.standard_error.empty());
   EXPECT_EQ(child.stop(), 0);
 }
 

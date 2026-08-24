@@ -2229,7 +2229,7 @@ if(CHRONOS_BUILD_TESTS)
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/chronosd_cli_test.cmake"
     )
     add_test(
-      NAME ChronosctlCliTest.QuorumSyncContract
+      NAME ChronosctlCliTest.CommandContracts
       COMMAND
         "${CMAKE_COMMAND}"
         "-DCHRONOSCTL=$<TARGET_FILE:chronosctl>"

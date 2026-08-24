@@ -70,6 +70,48 @@ Successful reload diagnostics name the installed `generation`; failures name the
 Active configured subscriptions receive resumable server-shutdown termination while the reactor is
 still draining responses.
 
+## Single-node SQL quickstart
+
+The following copy/paste sequence uses the development build, a fresh root, and the plaintext
+loopback server. It creates a table, inserts two `LOCAL_SYNC` rows, reads them, stops and restarts the
+daemon, and reads the recovered rows:
+
+```sh
+cmake --build build --target chronosd chronosctl
+CHRONOS_DEMO_DIR=$(mktemp -d /tmp/chronosdb-sql-demo.XXXXXX)
+CHRONOS_DEMO_PORT=7777
+./build/chronosd --data-dir "$CHRONOS_DEMO_DIR" --port "$CHRONOS_DEMO_PORT" \
+  >"$CHRONOS_DEMO_DIR/chronosd.log" 2>&1 &
+CHRONOS_DEMO_PID=$!
+until grep -q "chronosd listening" "$CHRONOS_DEMO_DIR/chronosd.log"; do sleep 0.1; done
+
+./build/chronosctl sql --host 127.0.0.1 --port "$CHRONOS_DEMO_PORT" --execute \
+  "CREATE TABLE trades (ts TIMESTAMP_NS NOT NULL, symbol SYMBOL NOT NULL, price DECIMAL(20, 8) NOT NULL, note STRING) EVENT TIME ts ORDER KEY (symbol, ts) PARTITION BY time_bucket(INTERVAL '1 day', ts) SHARD KEY (symbol) DEDUP KEY (symbol, ts) RETENTION INTERVAL '30 days' SYSTEM HISTORY RETENTION INTERVAL '7 days' ALLOWED LATENESS INTERVAL '0 seconds'"
+./build/chronosctl sql --host 127.0.0.1 --port "$CHRONOS_DEMO_PORT" --execute \
+  "INSERT INTO trades VALUES (TIMESTAMP '2026-08-24 12:00:00Z', CAST('AAPL' AS SYMBOL), CAST(227.16000000 AS DECIMAL(20,8)), 'opening row'), (TIMESTAMP '2026-08-24 12:00:01Z', CAST('MSFT' AS SYMBOL), CAST(504.26000000 AS DECIMAL(20,8)), NULL)"
+./build/chronosctl sql --host 127.0.0.1 --port "$CHRONOS_DEMO_PORT" --execute \
+  "SELECT count(*) AS rows FROM trades"
+
+kill -TERM "$CHRONOS_DEMO_PID"
+wait "$CHRONOS_DEMO_PID"
+./build/chronosd --data-dir "$CHRONOS_DEMO_DIR" --port "$CHRONOS_DEMO_PORT" \
+  >"$CHRONOS_DEMO_DIR/chronosd-restarted.log" 2>&1 &
+CHRONOS_DEMO_PID=$!
+until grep -q "chronosd listening" "$CHRONOS_DEMO_DIR/chronosd-restarted.log"; do sleep 0.1; done
+./build/chronosctl sql --host 127.0.0.1 --port "$CHRONOS_DEMO_PORT" --execute \
+  "SELECT count(*) AS rows FROM trades"
+kill -TERM "$CHRONOS_DEMO_PID"
+wait "$CHRONOS_DEMO_PID"
+```
+
+`chronosctl sql` executes exactly one statement per process through the existing Protocol v1 client
+session and prints tab-separated column names and rows. Tabs, newlines, carriage returns,
+backslashes, and other ASCII control bytes in text are escaped; binary values use lowercase hex.
+The command is intentionally limited to the literal plaintext address `127.0.0.1`, uses a five
+second timeout for each socket send or receive, and does not expose the mutual-TLS, distributed
+routing, subscription, or retry-safe canonical-ingest surfaces. A SQL INSERT response lost after
+the server commits remains ambiguous and must not be blindly retried.
+
 For an already provisioned replicated root, add `--replicated-groups FILE`. The strict file format
 is documented in [Replicated Group Configuration](replicated-group-config.md). This mode reports
 `data_plane=replicated`, reconstructs resident tablet owners from committed metadata, automatically

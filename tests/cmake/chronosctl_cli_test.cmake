@@ -14,6 +14,56 @@ endif()
 if(NOT help_stdout MATCHES "quorum-sync.*--group UUID")
   message(FATAL_ERROR "chronosctl --help omits the quorum-sync contract")
 endif()
+if(NOT help_stdout MATCHES
+   "sql --host 127.0.0.1 --port PORT --execute \"SQL\""
+)
+  message(FATAL_ERROR "chronosctl --help omits the SQL contract")
+endif()
+
+execute_process(
+  COMMAND "${CHRONOSCTL}" sql --help
+  RESULT_VARIABLE sql_help_result
+  OUTPUT_VARIABLE sql_help_stdout
+  ERROR_VARIABLE sql_help_stderr
+)
+if(NOT sql_help_result EQUAL 0 OR NOT sql_help_stderr STREQUAL "")
+  message(FATAL_ERROR "chronosctl sql --help failed")
+endif()
+if(NOT sql_help_stdout MATCHES "tab-separated column names and rows")
+  message(FATAL_ERROR "SQL help omits its result format")
+endif()
+
+function(expect_sql_option_failure case_name expected_error)
+  execute_process(
+    COMMAND "${CHRONOSCTL}" sql ${ARGN}
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE stdout
+    ERROR_VARIABLE stderr
+  )
+  if(NOT result EQUAL 2 OR NOT stdout STREQUAL "")
+    message(FATAL_ERROR "${case_name} changed its SQL option exit/output contract")
+  endif()
+  if(NOT stderr MATCHES "^chronosctl: ${expected_error}\nUsage:")
+    message(FATAL_ERROR "${case_name} returned an unexpected SQL diagnostic: ${stderr}")
+  endif()
+endfunction()
+
+expect_sql_option_failure(missing_sql_options "sql requires --host, --port, and --execute")
+expect_sql_option_failure(
+  non_loopback_sql_host
+  "--host must be the plaintext loopback address 127.0.0.1"
+  --host localhost
+)
+expect_sql_option_failure(
+  invalid_sql_port
+  "--port requires a canonical decimal in the range 1..65535"
+  --port 0
+)
+expect_sql_option_failure(
+  empty_sql
+  "--execute requires a nonempty SQL statement"
+  --execute ""
+)
 
 execute_process(
   COMMAND "${CHRONOSCTL}" quorum-sync --help

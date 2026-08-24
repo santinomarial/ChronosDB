@@ -1,28 +1,38 @@
+#include "chronos/common/byte_reader.hpp"
 #include "chronos/common/status.hpp"
 #include "chronos/common/uuid.hpp"
 #include "chronos/common/version.hpp"
 #include "chronos/ingest/columnar_append.hpp"
 #include "chronos/ingest/columnar_append_format.hpp"
+#include "chronos/network/client_session.hpp"
 #include "chronos/network/messages.hpp"
 #include "chronos/network/native_quorum_ingest_tcp_execution.hpp"
 #include "chronos/service/native_client_tls_route_owner.hpp"
 
+#include <algorithm>
+#include <arpa/inet.h>
 #include <array>
 #include <cerrno>
 #include <charconv>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <fcntl.h>
 #include <iostream>
+#include <limits>
+#include <netinet/in.h>
 #include <new>
 #include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <system_error>
+#include <type_traits>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -32,6 +42,19 @@ namespace {
 constexpr std::uint64_t kMaximumTimeoutMilliseconds = 3'600'000U;
 constexpr std::size_t kMaximumRedirects = 8U;
 constexpr std::chrono::milliseconds kMaximumPollWait{100};
+constexpr int kSqlSocketTimeoutSeconds = 5;
+
+struct SqlOptions {
+  std::string host;
+  std::uint16_t port{};
+  std::string execute;
+};
+
+struct SqlParseResult {
+  std::optional<SqlOptions> options;
+  std::string error;
+  bool help{};
+};
 
 struct QuorumSyncOptions {
   chronos::common::Uuid group_id;
@@ -67,6 +90,12 @@ public:
     return descriptor_;
   }
 
+  [[nodiscard]] int release() noexcept {
+    const int descriptor = descriptor_;
+    descriptor_ = -1;
+    return descriptor;
+  }
+
 private:
   int descriptor_;
 };
@@ -85,9 +114,17 @@ private:
 void print_usage(const std::string_view program, std::ostream& output) {
   output << "Usage:\n"
          << "  " << program << " version [--json]\n"
+         << "  " << program << " sql --host 127.0.0.1 --port PORT --execute \"SQL\"\n"
          << "  " << program << " quorum-sync [--json] --group UUID --initial-node NODE_ID\\\n"
          << "      --minimum-placement-epoch EPOCH --routes FILE --tls-cert FILE\\\n"
          << "      --tls-key FILE --tls-ca FILE --append-file FILE --timeout-ms MILLISECONDS\n";
+}
+
+void print_sql_usage(const std::string_view program, std::ostream& output) {
+  output << "Usage: " << program << " sql --host 127.0.0.1 --port PORT --execute \"SQL\"\n"
+         << "\n"
+         << "Executes one SQL statement through the plaintext loopback native-protocol server.\n"
+         << "Results are printed as tab-separated column names and rows.\n";
 }
 
 void print_quorum_sync_usage(const std::string_view program, std::ostream& output) {
@@ -143,6 +180,73 @@ parse_uuid(const std::string_view text) noexcept {
   }
   const auto parsed = std::from_chars(text.data(), text.data() + text.size(), output);
   return parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size() && output != 0U;
+}
+
+[[nodiscard]] SqlParseResult parse_sql_options(const std::span<const char* const> arguments) {
+  SqlOptions options;
+  bool host_seen{};
+  bool port_seen{};
+  bool execute_seen{};
+
+  auto value = [&arguments](std::size_t& index) -> std::optional<std::string_view> {
+    if (++index >= arguments.size()) {
+      return std::nullopt;
+    }
+    return std::string_view{arguments[index]};
+  };
+
+  for (std::size_t index = 2U; index < arguments.size(); ++index) {
+    const std::string_view argument{arguments[index]};
+    if (argument == "--help") {
+      if (arguments.size() != 3U) {
+        return {.error = "--help cannot be combined with sql options"};
+      }
+      return {.help = true};
+    }
+    if (argument == "--host") {
+      if (host_seen) {
+        return {.error = "--host was specified more than once"};
+      }
+      const auto parsed = value(index);
+      if (!parsed.has_value() || *parsed != "127.0.0.1") {
+        return {.error = "--host must be the plaintext loopback address 127.0.0.1"};
+      }
+      options.host = *parsed;
+      host_seen = true;
+      continue;
+    }
+    if (argument == "--port") {
+      if (port_seen) {
+        return {.error = "--port was specified more than once"};
+      }
+      const auto text = value(index);
+      std::uint64_t parsed{};
+      if (!text.has_value() || !parse_positive_decimal(*text, parsed) || parsed > 65'535U) {
+        return {.error = "--port requires a canonical decimal in the range 1..65535"};
+      }
+      options.port = static_cast<std::uint16_t>(parsed);
+      port_seen = true;
+      continue;
+    }
+    if (argument == "--execute") {
+      if (execute_seen) {
+        return {.error = "--execute was specified more than once"};
+      }
+      const auto parsed = value(index);
+      if (!parsed.has_value() || parsed->empty()) {
+        return {.error = "--execute requires a nonempty SQL statement"};
+      }
+      options.execute = *parsed;
+      execute_seen = true;
+      continue;
+    }
+    return {.error = "unknown sql option: " + std::string{argument}};
+  }
+
+  if (!host_seen || !port_seen || !execute_seen) {
+    return {.error = "sql requires --host, --port, and --execute"};
+  }
+  return {.options = std::move(options)};
 }
 
 [[nodiscard]] ParseResult parse_quorum_sync_options(const std::span<const char* const> arguments) {
@@ -338,6 +442,422 @@ read_append_file(const std::string& path) {
   return output;
 }
 
+[[nodiscard]] std::string escaped_text(const std::string_view value) {
+  constexpr std::array<char, 16> kHex{'0', '1', '2', '3', '4', '5', '6', '7',
+                                      '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+  std::string output;
+  output.reserve(value.size());
+  for (const char character : value) {
+    const auto byte = static_cast<unsigned char>(character);
+    switch (byte) {
+    case '\\':
+      output.append("\\\\");
+      break;
+    case '\t':
+      output.append("\\t");
+      break;
+    case '\n':
+      output.append("\\n");
+      break;
+    case '\r':
+      output.append("\\r");
+      break;
+    default:
+      if (byte < 0x20U || byte == 0x7fU) {
+        output.append("\\x");
+        output.push_back(kHex[byte >> 4U]);
+        output.push_back(kHex[byte & 0x0fU]);
+      } else {
+        output.push_back(static_cast<char>(byte));
+      }
+      break;
+    }
+  }
+  return output;
+}
+
+template <typename Value>
+[[nodiscard]] chronos::common::Result<std::string>
+format_number(const chronos::common::Result<Value>& value) {
+  if (!value.has_value()) {
+    return chronos::common::make_unexpected(value.error());
+  }
+  std::array<char, 128U> buffer{};
+  std::to_chars_result formatted{};
+  if constexpr (std::is_floating_point_v<Value>) {
+    formatted = std::to_chars(buffer.data(), buffer.data() + buffer.size(), *value,
+                              std::chars_format::general, std::numeric_limits<Value>::max_digits10);
+  } else {
+    formatted = std::to_chars(buffer.data(), buffer.data() + buffer.size(), *value);
+  }
+  if (formatted.ec != std::errc{}) {
+    return chronos::common::make_unexpected(invalid("formatting a query result number failed"));
+  }
+  return std::string{buffer.data(), formatted.ptr};
+}
+
+[[nodiscard]] chronos::common::Result<std::string>
+format_decimal(const chronos::common::ByteView bytes, const std::uint16_t scale) {
+  if (bytes.size() != 16U) {
+    return chronos::common::make_unexpected(invalid("query result decimal has an invalid width"));
+  }
+  std::array<std::uint8_t, 16U> magnitude{};
+  const bool negative = (std::to_integer<std::uint8_t>(bytes.back()) & 0x80U) != 0U;
+  std::uint16_t carry = negative ? 1U : 0U;
+  for (std::size_t index = 0U; index < magnitude.size(); ++index) {
+    std::uint16_t limb = std::to_integer<std::uint8_t>(bytes[index]);
+    if (negative) {
+      limb = static_cast<std::uint16_t>(~limb) & 0xffU;
+      limb = static_cast<std::uint16_t>(limb + carry);
+      carry = static_cast<std::uint16_t>(limb >> 8U);
+    }
+    magnitude[index] = static_cast<std::uint8_t>(limb & 0xffU);
+  }
+
+  std::string digits;
+  do {
+    carry = 0U;
+    bool nonzero{};
+    for (std::size_t index = magnitude.size(); index > 0U; --index) {
+      const std::uint16_t dividend =
+          static_cast<std::uint16_t>((carry << 8U) | magnitude[index - 1U]);
+      magnitude[index - 1U] = static_cast<std::uint8_t>(dividend / 10U);
+      carry = static_cast<std::uint16_t>(dividend % 10U);
+      nonzero = nonzero || magnitude[index - 1U] != 0U;
+    }
+    digits.push_back(static_cast<char>('0' + carry));
+    if (!nonzero) {
+      break;
+    }
+  } while (true);
+  std::ranges::reverse(digits);
+
+  if (scale != 0U) {
+    if (digits.size() <= scale) {
+      digits.insert(0U, static_cast<std::size_t>(scale) - digits.size() + 1U, '0');
+    }
+    digits.insert(digits.size() - scale, 1U, '.');
+  }
+  const bool zero =
+      std::ranges::all_of(digits, [](const char value) { return value == '0' || value == '.'; });
+  if (negative && !zero) {
+    digits.insert(digits.begin(), '-');
+  }
+  return digits;
+}
+
+[[nodiscard]] chronos::common::Result<std::string>
+format_query_cell(const chronos::network::QueryResultCell& cell,
+                  const chronos::schema::LogicalType type) {
+  using chronos::schema::LogicalTypeKind;
+  if (cell.is_null) {
+    return std::string{"NULL"};
+  }
+  chronos::common::ByteReader reader{cell.value};
+  switch (type.kind()) {
+  case LogicalTypeKind::kBool: {
+    auto value = reader.read_u8();
+    if (!value.has_value()) {
+      return chronos::common::make_unexpected(value.error());
+    }
+    return *value == 0U ? std::string{"false"} : std::string{"true"};
+  }
+  case LogicalTypeKind::kInt8:
+    return format_number(reader.read_i8());
+  case LogicalTypeKind::kInt16:
+    return format_number(reader.read_i16_le());
+  case LogicalTypeKind::kInt32:
+  case LogicalTypeKind::kDate:
+    return format_number(reader.read_i32_le());
+  case LogicalTypeKind::kInt64:
+  case LogicalTypeKind::kTimestampNs:
+    return format_number(reader.read_i64_le());
+  case LogicalTypeKind::kUInt8:
+    return format_number(reader.read_u8());
+  case LogicalTypeKind::kUInt16:
+    return format_number(reader.read_u16_le());
+  case LogicalTypeKind::kUInt32:
+    return format_number(reader.read_u32_le());
+  case LogicalTypeKind::kUInt64:
+    return format_number(reader.read_u64_le());
+  case LogicalTypeKind::kFloat32:
+    return format_number(reader.read_float32_le());
+  case LogicalTypeKind::kFloat64:
+    return format_number(reader.read_float64_le());
+  case LogicalTypeKind::kDecimal:
+    return format_decimal(cell.value, type.parameter_1());
+  case LogicalTypeKind::kSymbol:
+  case LogicalTypeKind::kString: {
+    std::string text(cell.value.size(), '\0');
+    if (!cell.value.empty()) {
+      std::memcpy(text.data(), cell.value.data(), cell.value.size());
+    }
+    return escaped_text(text);
+  }
+  case LogicalTypeKind::kBinary: {
+    constexpr std::array<char, 16> kHex{'0', '1', '2', '3', '4', '5', '6', '7',
+                                        '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+    std::string output{"0x"};
+    output.reserve(2U + (cell.value.size() * 2U));
+    for (const std::byte byte : cell.value) {
+      const std::uint8_t value = std::to_integer<std::uint8_t>(byte);
+      output.push_back(kHex[value >> 4U]);
+      output.push_back(kHex[value & 0x0fU]);
+    }
+    return output;
+  }
+  case LogicalTypeKind::kUuid: {
+    if (cell.value.size() != chronos::common::Uuid::kSize) {
+      return chronos::common::make_unexpected(invalid("query result UUID has an invalid width"));
+    }
+    chronos::common::Uuid::Bytes bytes{};
+    std::ranges::copy(cell.value, bytes.begin());
+    const auto formatted = format_uuid(chronos::common::Uuid{bytes});
+    return std::string{formatted.data()};
+  }
+  }
+  return chronos::common::make_unexpected(invalid("query result logical type is unsupported"));
+}
+
+struct PrintedColumn {
+  std::string name;
+  chronos::schema::LogicalType type;
+  bool nullable{};
+};
+
+[[nodiscard]] chronos::common::Status
+print_query_batch(const chronos::network::QueryResultBatchView& batch,
+                  std::vector<PrintedColumn>& schema) {
+  const auto columns = batch.columns();
+  if (schema.empty()) {
+    schema.reserve(columns.size());
+    for (std::size_t index = 0U; index < columns.size(); ++index) {
+      if (index != 0U) {
+        std::cout << '\t';
+      }
+      std::cout << escaped_text(columns[index].name);
+      schema.push_back({.name = std::string{columns[index].name},
+                        .type = columns[index].type,
+                        .nullable = columns[index].nullable});
+    }
+    std::cout << '\n';
+  } else {
+    if (columns.size() != schema.size()) {
+      return invalid("query result schema changed between batches");
+    }
+    for (std::size_t index = 0U; index < columns.size(); ++index) {
+      if (columns[index].name != schema[index].name || columns[index].type != schema[index].type ||
+          columns[index].nullable != schema[index].nullable) {
+        return invalid("query result schema changed between batches");
+      }
+    }
+  }
+
+  for (std::uint32_t row = 0U; row < batch.row_count(); ++row) {
+    for (std::size_t column = 0U; column < columns.size(); ++column) {
+      if (column != 0U) {
+        std::cout << '\t';
+      }
+      const auto* const cell = batch.cell(row, column);
+      if (cell == nullptr) {
+        return invalid("query result cell is missing");
+      }
+      auto formatted = format_query_cell(*cell, columns[column].type);
+      if (!formatted.has_value()) {
+        return formatted.error();
+      }
+      std::cout << *formatted;
+    }
+    std::cout << '\n';
+  }
+  if (!std::cout) {
+    return io_error("writing SQL result", EIO);
+  }
+  return chronos::common::Status::ok();
+}
+
+[[nodiscard]] chronos::common::Result<int> connect_sql_socket(const SqlOptions& options) {
+  const int socket = ::socket(AF_INET, SOCK_STREAM, 0);
+  if (socket < 0) {
+    return chronos::common::make_unexpected(io_error("creating SQL client socket"));
+  }
+  Descriptor descriptor{socket};
+  if (::fcntl(socket, F_SETFD, FD_CLOEXEC) != 0) {
+    return chronos::common::make_unexpected(io_error("setting SQL client close-on-exec"));
+  }
+  const timeval timeout{.tv_sec = kSqlSocketTimeoutSeconds, .tv_usec = 0};
+  if (::setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0 ||
+      ::setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0) {
+    return chronos::common::make_unexpected(io_error("setting SQL client socket timeout"));
+  }
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_port = htons(options.port);
+  if (::inet_pton(AF_INET, options.host.c_str(), &address.sin_addr) != 1) {
+    return chronos::common::make_unexpected(invalid("SQL host is not a valid IPv4 address"));
+  }
+  // POSIX requires the generic sockaddr view of the initialized IPv4 address.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  if (::connect(socket, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0) {
+    return chronos::common::make_unexpected(io_error("connecting to chronosd"));
+  }
+  return descriptor.release();
+}
+
+[[nodiscard]] chronos::common::Status send_pending(const int socket,
+                                                   chronos::network::NativeClientSession& session) {
+  while (!session.pending_write().empty()) {
+    const chronos::common::ByteView bytes = session.pending_write();
+    const ssize_t sent = ::send(socket, bytes.data(), bytes.size(), MSG_NOSIGNAL);
+    if (sent < 0 && errno == EINTR) {
+      continue;
+    }
+    if (sent <= 0) {
+      return io_error("sending native protocol bytes", sent == 0 ? EPIPE : errno);
+    }
+    if (const chronos::common::Status consumed =
+            session.consume_written(static_cast<std::size_t>(sent));
+        !consumed.is_ok()) {
+      return consumed;
+    }
+  }
+  return chronos::common::Status::ok();
+}
+
+[[nodiscard]] chronos::common::Result<std::vector<chronos::network::Frame>>
+receive_frames(const int socket, chronos::network::NativeClientSession& session) {
+  std::array<std::byte, std::size_t{64U} * 1024U> buffer{};
+  ssize_t received{};
+  do {
+    received = ::recv(socket, buffer.data(), buffer.size(), 0);
+  } while (received < 0 && errno == EINTR);
+  if (received <= 0) {
+    return chronos::common::make_unexpected(
+        io_error("receiving native protocol bytes", received == 0 ? ECONNRESET : errno));
+  }
+  return session.receive(
+      chronos::common::ByteView{buffer.data(), static_cast<std::size_t>(received)});
+}
+
+[[nodiscard]] std::string_view
+protocol_error_name(const chronos::network::ProtocolErrorCode code) noexcept {
+  using chronos::network::ProtocolErrorCode;
+  switch (code) {
+  case ProtocolErrorCode::kMalformedFrame:
+    return "malformed_frame";
+  case ProtocolErrorCode::kUnsupportedVersion:
+    return "unsupported_version";
+  case ProtocolErrorCode::kInvalidState:
+    return "invalid_state";
+  case ProtocolErrorCode::kDuplicateRequest:
+    return "duplicate_request";
+  case ProtocolErrorCode::kUnknownRequest:
+    return "unknown_request";
+  case ProtocolErrorCode::kOverloaded:
+    return "overloaded";
+  case ProtocolErrorCode::kCancelled:
+    return "cancelled";
+  case ProtocolErrorCode::kInvalidRequest:
+    return "invalid_request";
+  case ProtocolErrorCode::kExecutionFailure:
+    return "execution_failure";
+  case ProtocolErrorCode::kUnauthorized:
+    return "unauthorized";
+  case ProtocolErrorCode::kInternal:
+    return "internal";
+  }
+  return "unknown";
+}
+
+[[nodiscard]] int run_sql(const SqlOptions& options) {
+  auto socket_result = connect_sql_socket(options);
+  if (!socket_result.has_value()) {
+    std::cerr << "chronosctl: " << socket_result.error().to_string() << '\n';
+    return 1;
+  }
+  Descriptor socket{*socket_result};
+  auto session_result =
+      chronos::network::NativeClientSession::create({.maximum_in_flight_requests = 1U});
+  if (!session_result.has_value()) {
+    std::cerr << "chronosctl: " << session_result.error().to_string() << '\n';
+    return 1;
+  }
+  auto session = std::move(*session_result);
+  if (const chronos::common::Status status = session.queue_handshake(); !status.is_ok()) {
+    std::cerr << "chronosctl: " << status.to_string() << '\n';
+    return 1;
+  }
+  if (const chronos::common::Status status = send_pending(socket.get(), session); !status.is_ok()) {
+    std::cerr << "chronosctl: " << status.to_string() << '\n';
+    return 1;
+  }
+  while (session.phase() == chronos::network::ClientSessionPhase::kAwaitingServerHello) {
+    auto frames = receive_frames(socket.get(), session);
+    if (!frames.has_value()) {
+      std::cerr << "chronosctl: " << frames.error().to_string() << '\n';
+      return 1;
+    }
+  }
+  if (session.phase() != chronos::network::ClientSessionPhase::kActive) {
+    std::cerr << "chronosctl: invalid_state: native protocol handshake did not become active\n";
+    return 1;
+  }
+
+  auto request_id = session.queue_query(options.execute);
+  if (!request_id.has_value()) {
+    std::cerr << "chronosctl: " << request_id.error().to_string() << '\n';
+    return 1;
+  }
+  if (const chronos::common::Status status = send_pending(socket.get(), session); !status.is_ok()) {
+    std::cerr << "chronosctl: " << status.to_string() << '\n';
+    return 1;
+  }
+
+  std::vector<PrintedColumn> result_schema;
+  bool ended{};
+  while (session.in_flight_requests() != 0U) {
+    auto frames = receive_frames(socket.get(), session);
+    if (!frames.has_value()) {
+      std::cerr << "chronosctl: " << frames.error().to_string() << '\n';
+      return 1;
+    }
+    for (const chronos::network::Frame& frame : *frames) {
+      if (frame.header.message_type == chronos::network::MessageType::kQueryResult) {
+        auto batch = chronos::network::decode_query_result_batch(frame.payload);
+        if (!batch.has_value()) {
+          std::cerr << "chronosctl: " << batch.error().to_string() << '\n';
+          return 1;
+        }
+        if (const chronos::common::Status status = print_query_batch(*batch, result_schema);
+            !status.is_ok()) {
+          std::cerr << "chronosctl: " << status.to_string() << '\n';
+          return 1;
+        }
+      } else if (frame.header.message_type == chronos::network::MessageType::kError) {
+        auto error = chronos::network::decode_error_message(frame.payload);
+        if (!error.has_value()) {
+          std::cerr << "chronosctl: " << error.error().to_string() << '\n';
+          return 1;
+        }
+        std::string message(error->message.size(), '\0');
+        if (!error->message.empty()) {
+          std::memcpy(message.data(), error->message.data(), error->message.size());
+        }
+        std::cerr << "chronosctl: server " << protocol_error_name(error->code) << ": " << message
+                  << '\n';
+        return 1;
+      } else if (frame.header.message_type == chronos::network::MessageType::kQueryEnd) {
+        ended = true;
+      }
+    }
+  }
+  if (!ended) {
+    std::cerr << "chronosctl: invalid_state: SQL request completed without QUERY_END\n";
+    return 1;
+  }
+  return 0;
+}
+
 [[nodiscard]] std::string_view
 outcome_name(const chronos::network::IngestOutcome outcome) noexcept {
   return outcome == chronos::network::IngestOutcome::kApplied ? "APPLIED" : "MATCHING_RETRY";
@@ -436,7 +956,9 @@ void print_receipt(const chronos::network::QuorumSyncIngestAcknowledgement& rece
 
 } // namespace
 
-int main(const int argc, const char* const argv[]) {
+namespace {
+
+[[nodiscard]] int run_main(const int argc, const char* const* const argv) {
   const std::string_view program =
       argc > 0 ? std::string_view{argv[0]} : std::string_view{"chronosctl"};
   if (argc == 2 && std::string_view{argv[1]} == "version") {
@@ -451,6 +973,28 @@ int main(const int argc, const char* const argv[]) {
   if (argc == 2 && std::string_view{argv[1]} == "--help") {
     print_usage(program, std::cout);
     return 0;
+  }
+  if (argc >= 2 && std::string_view{argv[1]} == "sql") {
+    try {
+      SqlParseResult parsed =
+          parse_sql_options(std::span<const char* const>{argv, static_cast<std::size_t>(argc)});
+      if (parsed.help) {
+        print_sql_usage(program, std::cout);
+        return 0;
+      }
+      if (!parsed.options.has_value()) {
+        std::cerr << "chronosctl: " << parsed.error << '\n';
+        print_sql_usage(program, std::cerr);
+        return 2;
+      }
+      return run_sql(*parsed.options);
+    } catch (const std::bad_alloc&) {
+      std::cerr << "chronosctl: resource_exhausted: SQL command allocation failed\n";
+      return 1;
+    } catch (const std::length_error&) {
+      std::cerr << "chronosctl: resource_exhausted: SQL command exceeds container limits\n";
+      return 1;
+    }
   }
   if (argc >= 2 && std::string_view{argv[1]} == "quorum-sync") {
     try {
@@ -477,4 +1021,21 @@ int main(const int argc, const char* const argv[]) {
 
   print_usage(program, std::cerr);
   return 2;
+}
+
+} // namespace
+
+int main(const int argc, const char* const argv[]) noexcept {
+  try {
+    return run_main(argc, argv);
+  } catch (const std::bad_alloc&) {
+    std::cerr << "chronosctl: resource_exhausted: command allocation failed\n";
+  } catch (const std::length_error&) {
+    std::cerr << "chronosctl: resource_exhausted: command exceeds container limits\n";
+  } catch (const std::exception& error) {
+    std::cerr << "chronosctl: internal: unhandled command failure: " << error.what() << '\n';
+  } catch (...) {
+    std::cerr << "chronosctl: internal: unhandled non-standard command failure\n";
+  }
+  return 1;
 }
