@@ -1072,8 +1072,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   bounded Native result batches, and is composed with the authenticated receiver and TCP server in
   one reverse-safe owner. A portable multi-tablet mutable execution owner now validates one common
   plan/schema authority, retains one finite sender per tablet, preserves fresh-authority hints, and
-  publishes only a complete plan-ordered result. TCP scheduling, rebinding, and split-leader native
-  composition remain.
+  publishes only a complete plan-ordered result. A bounded TCP scheduler now drives one mutual-TLS
+  client per tablet, rotates finite same-node addresses, enforces whole-query deadlines, and tears
+  down all clients on failure. Fresh-authority rebinding and split-leader native composition remain.
   The packaged daemon now accepts an atomic native-server TLS credential
   and strict client-certificate-principal bundle, owns the immutable authority beyond its reactor
   borrow, permits non-loopback canonical IPv4 binding only in that mode, and fails closed instead of

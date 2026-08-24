@@ -469,3 +469,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0432](0432-bounded-mutable-vector-query-tcp-ownership.md) | Bounded mutable vector query TCP ownership | accepted |
 | [0433](0433-request-local-mutable-vector-query-service.md) | Request-local mutable vector query service | accepted |
 | [0434](0434-proof-bound-mutable-vector-query-execution.md) | Proof-bound mutable vector query execution | accepted |
+| [0435](0435-bounded-mutable-vector-query-tcp-scheduling.md) | Bounded mutable vector query TCP scheduling | accepted |

@@ -97,6 +97,10 @@ The portable mutable execution owner validates one common query/database/table/s
 result-schema authority across unique tablet fragments, owns one finite sender per tablet, and
 delivers each complete stream exactly once to the plan-ordered bounded coordinator. A leader hint
 is retained only as evidence that fresh fragment binding is required; it never mutates authority.
+The mutable TCP scheduler validates complete route coverage before I/O, owns at most one
+nonblocking mutual-TLS client per tablet, rotates only finite addresses for the immutable target,
+bounds poll waits by query and backoff deadlines, and tears down every client before publishing a
+terminal failure or cancellation.
 Distributed Query Transport v1 wraps the dispatch and terminal exchange in correlated cluster
 request/response frames. `DistributedQueryReceiver` authenticates and authorizes the source before
 an embedding-owned worker service can execute the dispatch. `ReplicatedDistributedQueryWorker`
@@ -187,9 +191,9 @@ carrier before its borrowed descriptor on completion, failure, and shutdown.
 `DistributedMutableVectorQueryTcpClient` validates and exact-decodes the immutable attempt before
 opening a socket, confirms nonblocking connect completion, and then transfers the attempt into the
 authenticated mutable carrier. The companion server applies the same bounded stable-record polling
-model. The production service above supplies worker acquisition on the inbound side; neither TCP
-owner performs retry, so outbound failures remain explicit inputs to a future split-leader
-execution owner.
+model. The production service above supplies worker acquisition on the inbound side, while the
+multi-tablet scheduler above supplies outbound retry and complete-result ownership. Fresh authority
+still requires an outer rebinding owner.
 `ReplicatedDistributedGroupedQueryTcpServer` then establishes stable worker/receiver/server
 addresses and reverse dependency destruction for the complete production inbound real-CSEG stack.
 `DistributedGroupedQuerySender` independently constructs immutable attempts, validates the complete
