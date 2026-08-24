@@ -31,11 +31,14 @@ later subsystem directories/files; reopen validates only the bootstrap and requi
 The bootstrap intentionally stores a small set of operational limits because they affect replay and
 admission reproducibility. It does not duplicate table policy or format ceilings. A failed creation
 can leave a valid intent and partial directories, but those are resumable; no destructive cleanup is
-performed. Failure can also occur immediately after the final bootstrap is ready: WAL identity
-allocation is a later boundary. Linux process qualification injects that exact failure, observes the
-final descriptor plus both subsystem directories, and then requires two ordinary daemon starts to
-reopen the same root and reach configured service. This complements, but does not replace, the
-deferred crash matrix at each bootstrap synchronization boundary.
+performed. Candidate database and metadata-group identities are generated before this owner is
+called; Linux process qualification fails each read independently, requires the root to remain
+empty, and then initializes it with the ordinary daemon. Failure can also occur immediately after
+the final bootstrap is ready: WAL identity allocation is a later boundary. The same qualification
+injects that exact failure, observes the final descriptor plus both subsystem directories, and then
+requires two ordinary daemon starts to reopen the same root and reach configured service. This
+complements, but does not replace, the deferred crash matrix at each bootstrap synchronization
+boundary.
 
 ## Review and measurement questions
 

@@ -1178,6 +1178,50 @@ TEST(ChronosdProcessTest, RejectsCreateEntropyFailureWithoutDurableMetadata) {
   EXPECT_EQ(child.stop(), 0);
 }
 
+class ChronosdPreBootstrapEntropyFailureTest : public testing::TestWithParam<std::uint64_t> {};
+
+TEST_P(ChronosdPreBootstrapEntropyFailureTest, LeavesDatabaseRootUntouchedAndAllowsCleanStartup) {
+  TemporaryDirectory directory;
+  TemporaryDirectory controls;
+  ASSERT_FALSE(directory.path().empty());
+  ASSERT_FALSE(controls.path().empty());
+  const std::string trigger = controls.path() + "/fail-bootstrap-identity-entropy";
+  const int trigger_file = ::open(trigger.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  ASSERT_GE(trigger_file, 0);
+  ASSERT_EQ(::close(trigger_file), 0);
+
+  ChildProcess child;
+  ASSERT_TRUE(child.start_with_entropy_failure(directory.path(), trigger, GetParam()));
+  const std::string failure = child.read_startup_line();
+  EXPECT_NE(failure.find("secure identity setup failed"), std::string::npos);
+  EXPECT_NE(failure.find("system entropy read failed"), std::string::npos);
+  EXPECT_NE(failure.find("(errno " + std::to_string(EIO) + ")"), std::string::npos);
+  EXPECT_EQ(child.wait_for_exit(), 1);
+  EXPECT_TRUE(std::filesystem::is_empty(directory.path()));
+
+  std::error_code remove_error;
+  EXPECT_TRUE(std::filesystem::remove(trigger, remove_error));
+  EXPECT_FALSE(remove_error);
+  ASSERT_TRUE(child.start(directory.path()));
+  const std::string startup = child.read_startup_line();
+  EXPECT_NE(startup.find("data_plane=configured"), std::string::npos);
+  const std::uint16_t port = parse_port(startup);
+  ASSERT_NE(port, 0U);
+  const int client = connect_client(port);
+  ASSERT_GE(client, 0);
+  handshake(client);
+  ASSERT_TRUE(send_all(
+      client, network::encode_frame({.message_type = network::MessageType::kPing}, {}).value()));
+  const auto response = network::decode_frame(receive_frame(client));
+  ASSERT_TRUE(response.has_value());
+  EXPECT_EQ(response->header.message_type, network::MessageType::kPong);
+  ::close(client);
+  EXPECT_EQ(child.stop(), 0);
+}
+
+INSTANTIATE_TEST_SUITE_P(DatabaseAndMetadataGroupIdentities, ChronosdPreBootstrapEntropyFailureTest,
+                         testing::Values(1U, 2U));
+
 TEST(ChronosdProcessTest, RecoversDurableBootstrapAfterWalIdentityEntropyFailure) {
   TemporaryDirectory directory;
   TemporaryDirectory controls;

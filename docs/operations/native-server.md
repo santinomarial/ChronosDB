@@ -26,7 +26,9 @@ proposal. Operating-system entropy failure returns an execution error and leaves
 table prefix; retry is a new operation. During initial root startup, an entropy failure after the
 final bootstrap is installed but before the WAL identity exists terminates startup with an error.
 Leave the root intact: the next normal start reuses the checksummed bootstrap and completes the empty
-WAL/Manifest initialization. To serve one durable row-preserving plan, supply the paired
+WAL/Manifest initialization. If startup instead fails while proposing the database or metadata-group
+identity, no bootstrap work has begun and the dedicated root remains empty; a normal retry may
+initialize it. To serve one durable row-preserving plan, supply the paired
 `--subscription-sql SQL` and `--subscription-key-file PATH` options. The table must already exist.
 The key file must contain exactly 32 nonzero bytes and be inaccessible to group/other; preserve the
 same secret across restarts or old resume tokens will fail authentication. The daemon reports

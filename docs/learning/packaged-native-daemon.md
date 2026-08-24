@@ -80,7 +80,8 @@ the exact requested/effective ASYNC or LOCAL_SYNC mode. Bootstrap and native DDL
 the common nonnil system UUID source; deterministic service tests inject the same interface. If
 initial WAL identity allocation fails after the final bootstrap becomes durable, the daemon reports
 a contextual startup error and never emits a listening banner. A later ordinary start must reuse
-that bootstrap rather than propose a replacement database.
+that bootstrap rather than propose a replacement database. Failure while generating either proposed
+bootstrap identity occurs earlier and must leave the supplied root empty.
 
 ## Complexity and tradeoffs
 
@@ -102,7 +103,9 @@ execution error; a normal restart observes no table, the next CREATE reports non
 and a second restart queries that cleanly installed table. A second trigger mode fails the third
 candidate during initial WAL creation, after final bootstrap installation. That process reports the
 entropy failure; the final bootstrap and subsystem directories remain, and two ordinary daemon
-starts negotiate Protocol v1 and answer PING from the same root. Its replicated case negotiates
+starts negotiate Protocol v1 and answer PING from the same root. Parameterized first- and
+second-candidate cases prove database and metadata-group identity errors leave the root untouched;
+the shipped daemon can then initialize it and answer PING. Its replicated case negotiates
 Protocol 2, applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact retry, and
 queries the same recovered row count. A separate replicated gate provisions three retained roots
 and distinct mutual-TLS identities, starts three actual daemon processes, obtains an applied quorum

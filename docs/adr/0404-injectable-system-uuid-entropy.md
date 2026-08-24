@@ -77,6 +77,9 @@ provider contract executable.
   final database bootstrap is durable but before a WAL identity is installed. The process reports
   the exact entropy error, and two ordinary daemon starts recover the same root to configured
   Protocol v1 service.
+- Parameterized Linux process cases fail the first and second generated candidates, proving that
+  proposed database and metadata-group identity failures leave the supplied root empty and that a
+  later ordinary daemon start can initialize and serve it.
 - Header self-containment, installed-consumer, static-analysis, sanitizer, and full-suite gates cover
   the refactored public boundary and unchanged service/WAL consumers.
 

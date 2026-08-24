@@ -941,9 +941,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   malformed SIGHUP rollback and two complete certificate/trust/principal rotations with monotonic
   generations and superseded-client rejection. Focused reactor coverage proves malformed reload
   rollback, straddling-handshake closure, and established-principal continuity. The
-  fault child now covers both the post-startup fifth-candidate CREATE failure and the initial
-  third-candidate WAL identity failure after final Bootstrap v1 installation; the other startup,
-  subsystem, and crash boundaries in this list remain deferred. The
+  fault child now covers the first- and second-candidate pre-bootstrap failures, the initial
+  third-candidate WAL identity failure after final Bootstrap v1 installation, and the post-startup
+  fifth-candidate CREATE failure; the other startup, subsystem, and crash boundaries in this list
+  remain deferred. The
   process target remains intentionally unregistered on non-Linux hosts because the server reactor
   is Linux-only.
 - Native ingest service adapter allocation/fault injection, event-time and ancestor-schema retry

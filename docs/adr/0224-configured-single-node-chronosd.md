@@ -57,8 +57,10 @@ fresh non-resumed CREATE and another successful restart. The same child can fail
 read: the WAL identity allocation after durable Bootstrap v1 installation and metadata-Raft
 startup. The process exits with its contextual startup error while the final bootstrap and
 `wal/`/`raft/` directories remain; two starts of the shipped daemon then reopen the same root,
-negotiate Protocol v1, and answer PING. The shipped daemon has no entropy-fault option. The existing
-unconfigured PING/rejection subprocess case remains.
+negotiate Protocol v1, and answer PING. Failures of the first or second qualified read cover the
+proposed database and metadata-group identities: each exits before root mutation, after which the
+shipped daemon initializes that untouched directory and answers PING. The shipped daemon has no
+entropy-fault option. The existing unconfigured PING/rejection subprocess case remains.
 
 ## References
 

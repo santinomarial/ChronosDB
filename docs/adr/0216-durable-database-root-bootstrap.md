@@ -47,10 +47,12 @@ state rejection. A packaged replicated-database subprocess additionally reaches 
 `kRootOwnerReady` startup observation with the validated root lock live, dies by `SIGKILL`, and
 proves that the next owner reacquires the root and recovers the exact committed state. Crash
 injection at every bootstrap synchronization boundary and cross-platform persistence qualification
-remain deferred. A separate packaged-daemon fault child fails the first WAL identity read after the
-final bootstrap and subsystem directories are durable. The failed process installs no WAL identity;
-two ordinary `chronosd` starts reopen that exact root and reach configured socket service, covering
-this post-bootstrap handoff without claiming the remaining synchronization-boundary matrix.
+remain deferred. A separate packaged-daemon fault child proves that failure of either proposed
+bootstrap UUID occurs before root mutation and that an ordinary retry can initialize the untouched
+directory. It also fails the first WAL identity read after the final bootstrap and subsystem
+directories are durable. The failed process installs no WAL identity; two ordinary `chronosd`
+starts reopen that exact root and reach configured socket service. These cases cover the two
+identity handoffs without claiming the remaining synchronization-boundary matrix.
 
 ## References
 
