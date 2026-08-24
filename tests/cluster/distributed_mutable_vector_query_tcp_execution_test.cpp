@@ -1,4 +1,5 @@
 #include "chronos/cluster/distributed_mutable_vector_query_tcp_execution.hpp"
+#include "chronos/cluster/distributed_mutable_vector_rows_query_tcp_execution.hpp"
 
 #include <array>
 #include <chrono>
@@ -219,6 +220,87 @@ TEST(DistributedMutableVectorQueryTcpExecutionTest,
   EXPECT_TRUE(second_server->shutdown().is_ok());
 }
 
+TEST(DistributedMutableVectorRowsQueryTcpExecutionTest,
+     OwnsSchedulerCompletionAndFinalNativeRowPayloads) {
+  Authorizer authorizer;
+  Worker worker;
+  auto receiver = DistributedMutableVectorQueryReceiver::create(
+      {.local_node_id = 7U, .authorizer = &authorizer, .worker = &worker});
+  ASSERT_TRUE(receiver.has_value()) << receiver.error().to_string();
+  Authenticator client_authenticator{91U};
+  auto server = start_server(client_authenticator, *receiver);
+  ASSERT_TRUE(server.has_value()) << server.error().to_string();
+  auto context = network::TlsClientContext::create(client_tls());
+  ASSERT_TRUE(context.has_value()) << context.error().to_string();
+  Authenticator server_authenticator{92U};
+  auto execution = DistributedMutableVectorRowsQueryTcpExecution::create(
+      {fragment(4U, 7U)},
+      {.source_node_id = 1U,
+       .execution = {.sender = {.retry = {.maximum_attempts = 1U},
+                                .maximum_response_frames = 4U,
+                                .maximum_response_bytes = std::size_t{1024U} * 1024U}},
+       .tcp = {.authenticator = &server_authenticator,
+               .node_authorizer = &authorizer,
+               .routes = {{.node_id = 7U,
+                           .endpoints = {server->bound_endpoint()},
+                           .tls_context = std::addressof(*context)}},
+               .carrier_limits = carrier_limits(),
+               .connect_timeout = std::chrono::milliseconds{1000},
+               .execution_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5}},
+       .finalization = {.output_batch = {.maximum_rows = 2U}}});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 2048U &&
+       execution->state() == DistributedMutableVectorRowsQueryTcpExecutionState::kRunning;
+       ++iteration) {
+    ASSERT_TRUE(execution->poll_once(std::chrono::milliseconds{1}).is_ok())
+        << execution->failure().to_string();
+    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{0}).is_ok());
+  }
+  ASSERT_EQ(execution->state(), DistributedMutableVectorRowsQueryTcpExecutionState::kComplete)
+      << execution->failure().to_string();
+  ASSERT_TRUE(execution->result().has_value());
+  EXPECT_EQ(execution->result()->row_count, 0U);
+  ASSERT_EQ(execution->result()->encoded_batches.size(), 1U);
+  auto decoded = network::decode_query_result_batch(execution->result()->encoded_batches.front());
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(decoded->row_count(), 0U);
+  ASSERT_EQ(decoded->columns().size(), 1U);
+  EXPECT_EQ(decoded->columns().front().name, "value");
+  EXPECT_EQ(worker.calls, 1U);
+  EXPECT_EQ(execution->metrics().transport_completed_attempts, 1U);
+
+  auto rejected_finalization = DistributedMutableVectorRowsQueryTcpExecution::create(
+      {fragment(4U, 7U)},
+      {.source_node_id = 1U,
+       .execution = {.sender = {.retry = {.maximum_attempts = 1U},
+                                .maximum_response_frames = 4U,
+                                .maximum_response_bytes = std::size_t{1024U} * 1024U}},
+       .tcp = {.authenticator = &server_authenticator,
+               .node_authorizer = &authorizer,
+               .routes = {{.node_id = 7U,
+                           .endpoints = {server->bound_endpoint()},
+                           .tls_context = std::addressof(*context)}},
+               .carrier_limits = carrier_limits(),
+               .connect_timeout = std::chrono::milliseconds{1000},
+               .execution_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5}},
+       .finalization = {.maximum_output_batches = 0U}});
+  ASSERT_TRUE(rejected_finalization.has_value()) << rejected_finalization.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 2048U && rejected_finalization->state() ==
+                                DistributedMutableVectorRowsQueryTcpExecutionState::kRunning;
+       ++iteration) {
+    static_cast<void>(rejected_finalization->poll_once(std::chrono::milliseconds{1}));
+    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{0}).is_ok());
+  }
+  EXPECT_EQ(rejected_finalization->state(),
+            DistributedMutableVectorRowsQueryTcpExecutionState::kFailed);
+  EXPECT_EQ(rejected_finalization->failure().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_FALSE(rejected_finalization->result().has_value());
+  EXPECT_EQ(worker.calls, 2U);
+  EXPECT_TRUE(server->shutdown().is_ok());
+}
+
 TEST(DistributedMutableVectorQueryTcpExecutionTest,
      RejectsIncompleteRoutesAndOwnsDeadlineAndExplicitCancellation) {
   Authorizer authorizer;
@@ -350,6 +432,11 @@ TEST(DistributedMutableVectorQueryTcpExecutionTest,
   }
   ASSERT_EQ(scheduled->state(), DistributedMutableVectorQueryTcpExecutionState::kComplete)
       << scheduled->failure().to_string();
+  auto completed = scheduled->take_result();
+  ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
+  EXPECT_EQ(completed->result.messages.size(), 1U);
+  EXPECT_FALSE(scheduled->result().has_value());
+  EXPECT_EQ(scheduled->take_result().error().code(), common::StatusCode::kUnavailable);
   EXPECT_EQ(worker.calls, 1U);
   const auto metrics = scheduled->metrics();
   EXPECT_EQ(metrics.attempts_started, 2U);

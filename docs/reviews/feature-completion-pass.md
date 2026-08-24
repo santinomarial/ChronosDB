@@ -1005,8 +1005,9 @@ were deliberately not run.
   normalized event-time predicate, global row order/limit intent, and result descriptors required
   by that fragment path; computed/aggregate/relational semantics fail closed. The retained snapshot
   now constructs the canonical tablet plan from those SQL semantics plus correlated current-leader
-  authorities and returns the all-or-none bound/routed package. Scheduler/finalizer Native
-  ownership and process composition remain absent.
+  authorities and returns the all-or-none bound/routed package. A move-only request owner now
+  composes bounded mutual-TLS scheduling with exact-once all-tablet result transfer and global
+  Native row finalization; request-envelope/reactor wiring and process composition remain absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

@@ -656,6 +656,7 @@ add_library(
   src/cluster/distributed_mutable_vector_query_tls.cpp
   src/cluster/distributed_mutable_vector_query_transport.cpp
   src/cluster/distributed_mutable_vector_query_tcp_execution.cpp
+  src/cluster/distributed_mutable_vector_rows_query_tcp_execution.cpp
   src/cluster/distributed_vector_aggregate_finalization_v2.cpp
   src/cluster/distributed_vector_aggregate_query_execution_v2.cpp
   src/cluster/distributed_vector_aggregate_query_tcp_client_v2.cpp
@@ -1391,6 +1392,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/distributed_mutable_vector_query_execution_test.cpp
     tests/cluster/distributed_mutable_vector_query_tcp_execution_header_self_contained.cpp
     tests/cluster/distributed_mutable_vector_query_tcp_execution_test.cpp
+    tests/cluster/distributed_mutable_vector_rows_query_tcp_execution_header_self_contained.cpp
     tests/cluster/distributed_mutable_vector_query_tcp_test.cpp
     tests/cluster/distributed_mutable_vector_query_tls_header_self_contained.cpp
     tests/cluster/distributed_mutable_vector_query_tls_test.cpp

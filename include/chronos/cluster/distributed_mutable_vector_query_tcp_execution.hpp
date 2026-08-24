@@ -70,6 +70,8 @@ public:
   [[nodiscard]] DistributedMutableVectorQueryTcpExecutionMetrics metrics() const noexcept;
   [[nodiscard]] const std::optional<DistributedVectorQueryExecutionResultV2>&
   result() const noexcept;
+  // Transfers the complete all-tablet result exactly once. The execution remains terminal.
+  [[nodiscard]] common::Result<DistributedVectorQueryExecutionResultV2> take_result();
   [[nodiscard]] const common::Status& failure() const noexcept;
   [[nodiscard]] common::Result<std::optional<DistributedQueryLeaderHint>>
   suggested_leader(const schema::TabletId& tablet_id) const;

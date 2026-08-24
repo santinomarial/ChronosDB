@@ -3,6 +3,7 @@
 #include "chronos/cluster/distributed_mutable_vector_query_tcp_execution.hpp"
 #include "chronos/cluster/distributed_mutable_vector_query_tls.hpp"
 #include "chronos/cluster/distributed_mutable_vector_query_transport.hpp"
+#include "chronos/cluster/distributed_mutable_vector_rows_query_tcp_execution.hpp"
 #include "support/failing_allocator.hpp"
 
 #include <chrono>
@@ -335,6 +336,57 @@ TEST(DistributedMutableVectorQueryTcpExecutionAllocationFailureTest,
     auto result = run_failure(fail_after, [&] {
       return DistributedMutableVectorQueryTcpExecution::create(std::move(*portable),
                                                                std::move(config));
+    });
+    if (!result.has_value()) {
+      saw_failure = true;
+      EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted)
+          << result.error().to_string();
+      continue;
+    }
+    saw_success = true;
+    break;
+  }
+  EXPECT_TRUE(saw_failure);
+  EXPECT_TRUE(saw_success);
+
+  auto portable = DistributedMutableVectorQueryExecution::create(1U, {fragment()});
+  ASSERT_TRUE(portable.has_value()) << portable.error().to_string();
+  auto scheduler = DistributedMutableVectorQueryTcpExecution::create(
+      std::move(*portable), {.authenticator = &authenticator,
+                             .node_authorizer = &authorizer,
+                             .routes = {{.node_id = 7U,
+                                         .endpoints = {listener->bound_endpoint()},
+                                         .tls_context = std::addressof(*tls_context)}}});
+  ASSERT_TRUE(scheduler.has_value()) << scheduler.error().to_string();
+  auto transfer_failure = run_failure(0U, [&] { return scheduler->take_result(); });
+  ASSERT_FALSE(transfer_failure.has_value());
+  EXPECT_EQ(transfer_failure.error().code(), common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(scheduler->take_result().error().code(), common::StatusCode::kUnavailable);
+}
+
+TEST(DistributedMutableVectorRowsQueryTcpExecutionAllocationFailureTest,
+     ClassifiesNativeRowOwnerConstructionAllocations) {
+  auto listener = network::TcpListener::bind();
+  auto tls_context = network::TlsClientContext::create(client_tls());
+  ASSERT_TRUE(listener.has_value()) << listener.error().to_string();
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  Authorizer authorizer;
+  Authenticator authenticator;
+  bool saw_failure = false;
+  bool saw_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    SCOPED_TRACE(testing::Message{} << "fail_after=" << fail_after);
+    std::vector fragments{fragment()};
+    DistributedMutableVectorRowsQueryTcpExecutionConfig config{
+        .source_node_id = 1U,
+        .tcp = {.authenticator = &authenticator,
+                .node_authorizer = &authorizer,
+                .routes = {{.node_id = 7U,
+                            .endpoints = {listener->bound_endpoint()},
+                            .tls_context = std::addressof(*tls_context)}}}};
+    auto result = run_failure(fail_after, [&] {
+      return DistributedMutableVectorRowsQueryTcpExecution::create(std::move(fragments),
+                                                                   std::move(config));
     });
     if (!result.has_value()) {
       saw_failure = true;

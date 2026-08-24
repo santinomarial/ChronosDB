@@ -80,6 +80,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cluster/distributed_mutable_vector_query_tcp.hpp>
 #include <chronos/cluster/distributed_mutable_vector_query_execution.hpp>
 #include <chronos/cluster/distributed_mutable_vector_query_tcp_execution.hpp>
+#include <chronos/cluster/distributed_mutable_vector_rows_query_tcp_execution.hpp>
 #include <chronos/cluster/distributed_query_transport.hpp>
 #include <chronos/cluster/distributed_query_execution.hpp>
 #include <chronos/cluster/distributed_query_tls_client.hpp>
@@ -440,6 +441,8 @@ int main() {
       &chronos::cluster::DistributedMutableVectorQueryTcpExecution::create;
   const auto rebind_mutable_vector_query_tcp_execution =
       &chronos::cluster::DistributedMutableVectorQueryTcpExecution::rebind;
+  const auto create_mutable_vector_rows_query_tcp_execution =
+      &chronos::cluster::DistributedMutableVectorRowsQueryTcpExecution::create;
   const auto create_replicated_vector_aggregate_query_worker_v2 =
       &chronos::service::ReplicatedDistributedVectorAggregateQueryWorkerV2::create;
   const auto create_replicated_grouped_query_receiver =
@@ -690,6 +693,7 @@ int main() {
   (void)create_mutable_vector_query_execution;
   (void)create_mutable_vector_query_tcp_execution;
   (void)rebind_mutable_vector_query_tcp_execution;
+  (void)create_mutable_vector_rows_query_tcp_execution;
   (void)create_replicated_vector_aggregate_query_worker_v2;
   (void)create_replicated_grouped_query_receiver;
   (void)start_replicated_grouped_query_server;

@@ -472,6 +472,27 @@ DistributedMutableVectorQueryTcpExecution::result() const noexcept {
   return implementation_ ? implementation_->execution_result : empty;
 }
 
+common::Result<DistributedVectorQueryExecutionResultV2>
+DistributedMutableVectorQueryTcpExecution::take_result() {
+  try {
+    if (!implementation_) {
+      return common::make_unexpected(invalid("mutable vector query TCP execution is empty"));
+    }
+    if (implementation_->execution_state !=
+            DistributedMutableVectorQueryTcpExecutionState::kComplete ||
+        !implementation_->execution_result.has_value()) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kUnavailable,
+                         "mutable vector query TCP execution result is unavailable"});
+    }
+    DistributedVectorQueryExecutionResultV2 result = std::move(*implementation_->execution_result);
+    implementation_->execution_result.reset();
+    return result;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("mutable vector query result transfer failed"));
+  }
+}
+
 const common::Status& DistributedMutableVectorQueryTcpExecution::failure() const noexcept {
   static const common::Status empty{common::StatusCode::kInvalidArgument,
                                     "mutable vector query TCP execution is empty"};
