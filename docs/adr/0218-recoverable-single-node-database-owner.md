@@ -61,9 +61,10 @@ idempotent recovery, retry identity, reference lifetime, and versioned-format in
 tests cover empty create/reopen and a catalog + `LOCAL_SYNC` append + shutdown + semantic WAL replay
 + vector SQL count lifecycle. A packaged-daemon process case corrupts the established Bootstrap v1
 checksum, requires startup to return that exact corruption before service admission, and proves the
-descriptor is not rewritten. Broader crash injection, incomplete-DDL matrices, corruption/fault
-injection, concurrent workload shutdown, Manifest/CSEG recovery, and process qualification remain
-deferred.
+descriptor is not rewritten. A second packaged case corrupts a covered WAL segment-header byte,
+requires the exact CRC32C failure after bootstrap/metadata recovery, and proves the complete segment
+is unchanged. Broader crash injection, incomplete-DDL matrices, corruption/fault injection,
+concurrent workload shutdown, Manifest/CSEG recovery, and process qualification remain deferred.
 
 ## References
 

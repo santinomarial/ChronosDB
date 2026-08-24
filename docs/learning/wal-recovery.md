@@ -166,7 +166,10 @@ Named suites cover discovery and reserved names, active-lock rejection, clean an
 both permitted incomplete-tail shapes, complete-record corruption, segment/record/identity gaps,
 preflight-before-replay, deterministic cross-segment replay, explicit and repeated repair, injected
 sync failure, temporary cleanup, exact reopen state, subsequent rotation, writer lock lifetime, and
-the inspector's output and exit codes. Public recovery headers also compile independently.
+the inspector's output and exit codes. Public recovery headers also compile independently. A
+Linux-only packaged-daemon case damages one CRC-covered identity byte in the established active
+segment header, requires the exact header-checksum failure before socket admission, and proves the
+complete segment is not rewritten by the failed startup.
 
 The subprocess crash harness interrupts initial and successor installation, complete/short append,
 data synchronization, grouped completion, repair/reopen, and locking on real host files, then runs

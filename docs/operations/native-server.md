@@ -31,7 +31,10 @@ identity, no bootstrap work has begun and the dedicated root remains empty; a no
 initialize it. A checksum failure in an established `BOOTSTRAP` is not restartable creation:
 startup preserves the damaged descriptor and fails before listening. Do not delete it or allow newly
 proposed identities to replace it; diagnose the storage failure and recover the database root from a
-trusted, identity-consistent backup. To serve one durable row-preserving plan, supply the paired
+trusted, identity-consistent backup. A WAL segment-header checksum failure is also terminal and is
+never eligible for incomplete-tail repair. Startup preserves that segment; diagnose and restore an
+identity-consistent root rather than editing a checksum or deleting WAL history. To serve one
+durable row-preserving plan, supply the paired
 `--subscription-sql SQL` and `--subscription-key-file PATH` options. The table must already exist.
 The key file must contain exactly 32 nonzero bytes and be inaccessible to group/other; preserve the
 same secret across restarts or old resume tokens will fail authentication. The daemon reports

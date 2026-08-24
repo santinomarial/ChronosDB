@@ -87,6 +87,10 @@ An established `BOOTSTRAP` checksum failure is terminal for that start. `chronos
 database-start corruption before reactor admission and leaves the complete damaged descriptor
 unchanged; it does not turn proposed startup identities into an implicit repair.
 
+An established WAL segment-header CRC32C failure has the same admission result but belongs to WAL
+recovery after bootstrap and metadata startup. It is complete corruption, not an incomplete final
+tail: `chronosd` preserves the entire damaged segment and exits before listening.
+
 ## Complexity and tradeoffs
 
 Each dispatch and response handoff is amortized O(1); protocol parsing remains linear in frame size.
@@ -111,23 +115,24 @@ starts negotiate Protocol v1 and answer PING from the same root. Parameterized f
 second-candidate cases prove database and metadata-group identity errors leave the root untouched;
 the shipped daemon can then initialize it and answer PING. An ordinary-daemon corruption case flips
 one covered bootstrap byte, requires the checksum diagnostic and nonzero exit, and compares the
-complete damaged image after rejection. Its replicated case negotiates
-Protocol 2, applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact retry, and
-queries the same recovered row count. A separate replicated gate provisions three retained roots
-and distinct mutual-TLS identities, starts three actual daemon processes, obtains an applied quorum
-acknowledgement, kills the acknowledged tablet leader, observes a higher-term replacement, and
-requires an exact matching retry. Reopening each root then proves that all three applications
-recover the same two visible rows and one retry entry. A packaged-client gate starts `chronosd`
-with mutual TLS and a strict client-principal allowlist, invokes the actual `chronosctl` binary, and
-requires APPLIED followed by MATCHING_RETRY for the same canonical append. It then rotates the
-server certificate/key, trust store, and allowlist through `SIGHUP`. The process matrix rejects a
-malformed generation while the old client still receives MATCHING_RETRY, installs generation two,
-then restores the original bundle as generation three. It rejects each superseded client and
-requires each installed generation to receive the same MATCHING_RETRY. Reactor coverage separately
-proves failed reload rollback, incomplete-handshake closure, and established-session continuity. It
-deliberately does not claim native multi-group query failover: SELECT still needs one daemon to lead
-every barrier group because client leader routing and remote fragments are not packaged. On non-
-Linux hosts,
+complete damaged image after rejection. The adjacent WAL case corrupts a covered active-header byte
+and requires the exact CRC32C diagnostic plus complete-segment preservation. Its replicated case
+negotiates Protocol 2, applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact
+retry, and queries the same recovered row count. A separate replicated gate provisions three
+retained roots and distinct mutual-TLS identities, starts three actual daemon processes, obtains an
+applied quorum acknowledgement, kills the acknowledged tablet leader, observes a higher-term
+replacement, and requires an exact matching retry. Reopening each root then proves that all three
+applications recover the same two visible rows and one retry entry. A packaged-client gate starts
+`chronosd` with mutual TLS and a strict client-principal allowlist, invokes the actual `chronosctl`
+binary, and requires APPLIED followed by MATCHING_RETRY for the same canonical append. It then
+rotates the server certificate/key, trust store, and allowlist through `SIGHUP`. The process matrix
+rejects a malformed generation while the old client still receives MATCHING_RETRY, installs
+generation two, then restores the original bundle as generation three. It rejects each superseded
+client and requires each installed generation to receive the same MATCHING_RETRY. Reactor coverage
+separately proves failed reload rollback, incomplete-handshake closure, and established-session
+continuity. It deliberately does not claim native multi-group query failover: SELECT still needs one
+daemon to lead every barrier group because client leader routing and remote fragments are not
+packaged. On non-Linux hosts,
 daemon/service build and durable-root initialization run, but the socket subprocess is not
 registered because the server reactor is Linux-only.
 

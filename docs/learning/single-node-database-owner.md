@@ -113,6 +113,9 @@ coverage requires that recovery and a second established-root reopen through the
 If the final bootstrap instead fails checksum validation, the owner stops before opening later
 subsystems. It neither substitutes newly proposed identities nor rewrites the damaged descriptor;
 packaged process coverage verifies the exact 128 bytes are preserved.
+If bootstrap is valid but the active WAL segment header fails CRC32C validation, recovery stops
+before replay or service publication. It does not invoke incomplete-tail repair or patch the header;
+packaged process coverage verifies the entire damaged segment is preserved.
 
 Malformed transport/command bytes become client-invalid protocol errors. Database corruption stays
 distinguishable as an internal error; I/O, unavailability, and unsupported operations are execution

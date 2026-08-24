@@ -931,7 +931,7 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   atomic cross-group policy beyond the implemented applied read-barrier vector, live delivery,
   flush/CSEG/Manifest, failover query, movement, and object storage remain.
 - Configured `chronosd` Linux subprocess execution in CI, daemon ingest over real sockets, remaining
-  corrupt root plus WAL/Raft startup cases, signals during ingest/query, queue saturation with
+  corrupt root/WAL plus Raft startup cases, signals during ingest/query, queue saturation with
   multi-frame responses, cancellation, concurrent clients, Raft and native-client route credential
   rotation,
   immediate established-session revocation, remaining secure UUID entropy-failure points, metrics,
@@ -947,7 +947,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   fifth-candidate CREATE failure; the other startup, subsystem, and crash boundaries in this list
   remain deferred. A shipped-daemon case also rejects one checksum-covered corruption in an
   established final Bootstrap v1 image and preserves its exact damaged bytes; other corrupt-root
-  matrices remain deferred. The
+  matrices remain deferred. An adjacent case rejects a CRC-covered active WAL segment-header
+  corruption and preserves the complete segment; WAL record/tail and Raft corruption matrices
+  remain deferred. The
   process target remains intentionally unregistered on non-Linux hosts because the server reactor
   is Linux-only.
 - Native ingest service adapter allocation/fault injection, event-time and ancestor-schema retry

@@ -63,7 +63,9 @@ shipped daemon initializes that untouched directory and answers PING. The shippe
 entropy-fault option. A separate shipped-daemon case first creates an established root, durably
 damages one checksum-covered bootstrap byte, and then requires startup to report the exact checksum
 corruption, exit before its listening banner, and preserve the complete damaged image byte-for-byte.
-The existing unconfigured PING/rejection subprocess case remains.
+Another case damages the active WAL segment header, requires its exact CRC32C diagnostic and the
+same pre-listen exit, and preserves the complete segment byte-for-byte. The existing unconfigured
+PING/rejection subprocess case remains.
 
 ## References
 

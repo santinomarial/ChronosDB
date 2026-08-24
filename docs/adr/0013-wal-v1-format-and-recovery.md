@@ -159,6 +159,12 @@ reclamation.
 - Verify unknown versions/types are reported unsupported before replay and that corruption is never
   bypassed by magic resynchronization.
 
+Current packaged-daemon qualification creates an ordinary empty database, corrupts one
+checksum-covered WAL identity byte in its active segment header, and requires the next startup to
+report the exact segment-header CRC32C mismatch before socket admission. It then compares the
+complete damaged segment before and after rejection, proving that this corruption is neither
+rewritten nor treated as a repairable tail.
+
 ## Deferred decisions
 
 Application kind/body formats, group-commit count/byte/delay parameters, default durability mode,

@@ -10,6 +10,7 @@
 #include "chronos/runtime/database_bootstrap.hpp"
 #include "chronos/service/replicated_ingest_database.hpp"
 #include "chronos/service/replicated_ingest_runtime.hpp"
+#include "chronos/wal/wal_paths.hpp"
 #include "columnar/columnar_test_support.hpp"
 #include "ingest/ingest_test_support.hpp"
 
@@ -1151,6 +1152,42 @@ TEST(ChronosdProcessTest, RejectsCorruptBootstrapWithoutRewritingDurableAuthorit
   EXPECT_NE(failure.find("database bootstrap checksum mismatch"), std::string::npos);
   EXPECT_EQ(child.wait_for_exit(), 1);
   EXPECT_EQ(read_text_file(bootstrap), corrupted);
+}
+
+TEST(ChronosdProcessTest, RejectsCorruptWalHeaderWithoutRewritingDurableSegment) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  ChildProcess child;
+  ASSERT_TRUE(child.start(directory.path()));
+  const std::string startup = child.read_startup_line();
+  EXPECT_NE(startup.find("data_plane=configured"), std::string::npos);
+  EXPECT_EQ(child.stop(), 0);
+
+  const auto segment_name = wal::wal_segment_file_name(1U);
+  ASSERT_TRUE(segment_name.has_value()) << segment_name.error().to_string();
+  const std::string segment =
+      directory.path() + "/" + runtime::kDatabaseWalDirectoryName + "/" + *segment_name;
+  const std::string pristine = read_text_file(segment);
+  ASSERT_GE(pristine.size(), wal::kSegmentHeaderSize);
+  constexpr std::size_t kCoveredHeaderByte = 16U;
+  std::string corrupted = pristine;
+  corrupted.at(kCoveredHeaderByte) =
+      static_cast<char>(static_cast<unsigned char>(corrupted.at(kCoveredHeaderByte)) ^ 1U);
+  const int segment_file = ::open(segment.c_str(), O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+  ASSERT_GE(segment_file, 0);
+  ASSERT_EQ(::pwrite(segment_file, corrupted.data() + kCoveredHeaderByte, 1U,
+                     static_cast<off_t>(kCoveredHeaderByte)),
+            static_cast<ssize_t>(1));
+  ASSERT_EQ(::fsync(segment_file), 0);
+  ASSERT_EQ(::close(segment_file), 0);
+  ASSERT_EQ(read_text_file(segment), corrupted);
+
+  ASSERT_TRUE(child.start_with_captured_errors(directory.path()));
+  const std::string failure = child.read_startup_line();
+  EXPECT_NE(failure.find("database start failed"), std::string::npos);
+  EXPECT_NE(failure.find("WAL segment header CRC32C mismatch"), std::string::npos);
+  EXPECT_EQ(child.wait_for_exit(), 1);
+  EXPECT_EQ(read_text_file(segment), corrupted);
 }
 
 TEST(ChronosdProcessTest, RejectsCreateEntropyFailureWithoutDurableMetadata) {
