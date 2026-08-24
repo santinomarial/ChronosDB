@@ -72,7 +72,8 @@ process qualification remain deferred. The packaged matrix also corrupts a check
 metadata-Raft segment-header byte, requires its exact diagnostic before WAL recovery or service
 admission, and proves the complete durable segment is unchanged. A companion case corrupts the
 first complete metadata-record payload and proves the owner fails on its checksum before catalog
-projection without rewriting the segment.
+projection without rewriting the segment. The incomplete-tail case proves the owner's packaged
+no-repair configuration rejects the suffix before catalog projection and preserves it unchanged.
 
 ## References
 

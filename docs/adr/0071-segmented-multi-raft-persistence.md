@@ -116,6 +116,10 @@ recovers the exact checkpoint. Linux power-loss qualification remains required. 
 test covers both benchmark modes and exact artifact/recovery status; a clean controlled-host
 measurement campaign remains required before making performance claims.
 
+Packaged-daemon qualification appends the minimal one-byte suffix after an otherwise complete active
+metadata-Raft segment. Because the daemon does not authorize repair, startup reports `Raft final
+record is incomplete`, exits before socket admission, and preserves the entire segment and suffix.
+
 A separate 24-case recovery matrix fixes the encoded record size at 213 bytes and crosses segment
 targets `277`, `278`, `489`, `490`, `491`, `702`, `703`, and `1024` with 1, 3, and 8 logical groups.
 Those targets straddle exact capacities of one through four records after the 64-byte header. An

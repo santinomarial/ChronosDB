@@ -66,7 +66,8 @@ next startup to report the exact header-checksum corruption before socket admiss
 complete segment before and after rejection, proving startup does not patch or rewrite the damaged
 metadata authority. A companion case damages the first complete multiplexed record payload while
 leaving its headers intact, requires the payload-checksum failure, and preserves the complete
-segment.
+segment. A third appends a one-byte incomplete final suffix and proves packaged startup's strict
+no-repair policy preserves it.
 
 ## Deferred decisions
 

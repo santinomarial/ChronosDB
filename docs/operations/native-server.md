@@ -40,8 +40,10 @@ an explicit recovery workflow; packaged `chronosd` does not authorize that mutat
 the suffix while refusing startup. A metadata-Raft segment checksum failure also aborts before
 listening and is never repaired automatically. Preserve the root and restore a complete
 identity-consistent database rather than editing or deleting Raft history. The same applies to a
-complete multiplexed record payload checksum failure; it is not a repairable tail. To serve one
-durable row-preserving plan, supply the paired
+complete multiplexed record payload checksum failure; it is not a repairable tail. A genuinely
+incomplete final Raft suffix is repairable only with explicit log-open authorization; packaged
+`chronosd` does not opt in and preserves that suffix while refusing startup. To serve one durable
+row-preserving plan, supply the paired
 `--subscription-sql SQL` and `--subscription-key-file PATH` options. The table must already exist.
 The key file must contain exactly 32 nonzero bytes and be inaccessible to group/other; preserve the
 same secret across restarts or old resume tokens will fail authentication. The daemon reports

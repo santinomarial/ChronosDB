@@ -129,7 +129,9 @@ checksum-covered segment-number byte in the established metadata-Raft segment he
 exact header-checksum failure before native socket admission, and compares the complete segment
 after process rejection. The database owner does not patch the segment or proceed to WAL recovery.
 A companion case damages the first complete multiplexed record payload after its headers, requires
-the payload-checksum failure, and proves the complete segment is still unchanged.
+the payload-checksum failure, and proves the complete segment is still unchanged. A third appends
+the minimal one-byte incomplete suffix; packaged startup has no repair authorization, reports the
+incomplete final record, and preserves the segment byte-for-byte.
 
 The recovery-layout matrix checks a different dimension: target-size arithmetic and latest-state
 selection. A canonical state encodes to 213 bytes. Eight targets straddle the exact one-, two-,

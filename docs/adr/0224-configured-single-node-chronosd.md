@@ -72,7 +72,8 @@ active end and requires the explicit-repair diagnostic, nonzero exit, and unchan
 the packaged configuration does not authorize truncation. A metadata-Raft case damages the active
 segment header, requires its exact checksum diagnostic and pre-listen exit, and preserves the
 complete segment byte-for-byte. A complete metadata-record case damages the multiplexed payload,
-requires its exact checksum diagnostic and the same pre-listen exit, and preserves the segment.
+requires its exact checksum diagnostic and the same pre-listen exit, and preserves the segment. A
+one-byte Raft tail case requires the exact incomplete-record diagnostic and proves no truncation.
 
 ## References
 
