@@ -106,7 +106,8 @@ multiplexed header valid, damages its payload, and requires the payload-checksum
 same segment preservation. The adjacent one-byte suffix case requires `Raft final record is
 incomplete`; the packaged no-repair policy exits without truncation. An unrecognized synchronized
 regular file in the Raft directory produces the exact unknown-entry failure; startup leaves that
-file and the established segment unchanged.
+file and the established segment unchanged. A symlink to the established segment produces the
+non-regular-entry failure and remains an unchanged link after process rejection.
 
 ## Complexity and tradeoffs
 
@@ -138,7 +139,8 @@ corrupts a packaged SQL INSERT body and proves the active segment is not truncat
 incomplete-tail case proves the packaged no-repair policy preserves the suffix. A metadata-Raft
 header and complete-record pair prove the complete segment remains unchanged. A one-byte Raft-tail
 case proves the no-repair policy preserves the suffix. An unknown-entry case proves the packaged
-owner performs no speculative namespace cleanup. Its replicated case negotiates Protocol 2,
+owner performs no speculative namespace cleanup; a symlink case proves it does not follow a
+non-regular entry. Its replicated case negotiates Protocol 2,
 applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact
 retry, and queries the same recovered row count. A separate replicated gate provisions three
 retained roots and distinct mutual-TLS identities, starts three actual daemon processes, obtains an

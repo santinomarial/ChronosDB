@@ -69,7 +69,8 @@ leaving its headers intact, requires the payload-checksum failure, and preserves
 segment. A third appends a one-byte incomplete final suffix and proves packaged startup's strict
 no-repair policy preserves it. A fourth adds one durable unrecognized regular file to the Raft
 directory, requires the exact unknown-entry failure before socket admission, and preserves both
-that entry and the established segment.
+that entry and the established segment. A fifth installs a symlink to that segment, requires the
+non-regular-entry failure, and proves startup neither follows nor removes the link.
 
 ## Deferred decisions
 

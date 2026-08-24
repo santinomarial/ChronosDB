@@ -130,7 +130,8 @@ segment preservation. A structurally incomplete final Raft suffix could be repai
 caller opts in; the packaged owner does not, so it rejects and preserves the suffix before catalog
 projection. An unrecognized regular file in the metadata-Raft directory also stops startup before
 catalog projection. Packaged coverage proves the owner does not classify it as cleanup residue and
-preserves both the entry and established Raft segment.
+preserves both the entry and established Raft segment. A symlink to that segment also fails before
+projection, remains a symlink, and cannot redirect recovery into following or rewriting its target.
 
 Malformed transport/command bytes become client-invalid protocol errors. Database corruption stays
 distinguishable as an internal error; I/O, unavailability, and unsupported operations are execution

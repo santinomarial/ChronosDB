@@ -135,7 +135,9 @@ incomplete final record, and preserves the segment byte-for-byte.
 The adjacent namespace case synchronizes one unrecognized regular file beside the established
 segment. Packaged startup reports the exact unknown-entry corruption before native socket admission
 and preserves both files, proving cleanup remains limited to recognized temporary and obsolete
-artifacts.
+artifacts. A second namespace case synchronizes a symlink to the established segment. Directory
+enumeration classifies it without following; packaged recovery reports the exact non-regular-entry
+corruption and preserves both the link target text and segment bytes.
 
 The recovery-layout matrix checks a different dimension: target-size arithmetic and latest-state
 selection. A canonical state encodes to 213 bytes. Eight targets straddle the exact one-, two-,

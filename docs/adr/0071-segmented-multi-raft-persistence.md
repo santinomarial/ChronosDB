@@ -121,7 +121,8 @@ metadata-Raft segment. Because the daemon does not authorize repair, startup rep
 record is incomplete`, exits before socket admission, and preserves the entire segment and suffix.
 An adjacent namespace case installs one synchronized unrecognized regular file, requires `Raft
 directory contains an unknown entry`, and proves startup neither removes that file nor rewrites the
-established segment.
+established segment. A non-regular companion synchronizes a symlink to that segment, requires `Raft
+directory contains a non-regular entry`, and proves recovery neither follows nor removes it.
 
 A separate 24-case recovery matrix fixes the encoded record size at 213 bytes and crosses segment
 targets `277`, `278`, `489`, `490`, `491`, `702`, `703`, and `1024` with 1, 3, and 8 logical groups.
