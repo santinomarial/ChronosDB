@@ -10,15 +10,19 @@ query to that vocabulary.
 Its owned `DistributedVectorAggregateSqlPlan` contains an exact unlimited identity `input_rows`
 plan plus the ungrouped aggregate intent and named client result schema. The input plan owns table
 and schema IDs, unique source projection ordinals, source descriptors, and the optional event-time
-predicate. The aggregate intent alone owns global LIMIT. The product contains no tablet list, query
+predicate. A separate optional coordinator predicate owns the checked general Boolean expression
+program. The aggregate intent alone owns global LIMIT. The product contains no tablet list, query
 ID, Manifest pin, Raft read proof, route, TLS context, socket, or final Native payload. Later owners
 must add and independently validate those authorities.
 
 ## Projection and definitions
 
 Each SELECT output must be one aggregate call. `COUNT(*)` carries no input; every other supported
-operation names one direct source column. First use appends the source ordinal to the fragment
-projection. Repeated uses point at the same projected index but remain separate aggregate outputs.
+operation names one direct source column. Without a source-dependent coordinator predicate, first
+use appends the source ordinal to the fragment projection. Repeated uses point at the same projected
+index but remain separate aggregate outputs. A source-dependent predicate instead causes the input
+row plan to carry the complete source schema in ordinal order, and aggregate inputs refer to those
+full-row positions.
 
 For:
 
@@ -46,10 +50,17 @@ reconstructed from result descriptors alone.
 
 ## Predicate, cardinality, and finalization
 
-The WHERE subset is identical to distributed row lowering: an AND tree of direct event-time versus
-TIMESTAMP comparisons or positive inclusive BETWEEN. It is exact row truth at every worker, not
-only storage pruning. LIMIT remains a coordinator operation. A global aggregate has one semantic
-row even for empty input; LIMIT zero removes that row while retaining its schema.
+The WHERE subset is identical to distributed row lowering. An AND tree made entirely of direct
+event-time/TIMESTAMP comparisons or positive inclusive BETWEEN remains exact row truth at every
+worker, not only storage pruning. Every other checked Boolean expression is retained as one
+coordinator program and evaluated before any aggregate state sees the row. TRUE admits a row;
+FALSE and NULL discard it. Mixed event-time/general predicates currently remain wholly at the
+coordinator. A source-independent predicate such as `FALSE` keeps the sparse aggregate projection
+and the real COUNT(*) row-count anchor.
+
+LIMIT remains a coordinator operation after final aggregate construction. A global aggregate has
+one semantic row even for empty or fully filtered input; LIMIT zero removes that row while retaining
+its schema.
 
 ORDER BY currently fails closed. Although ordering cannot reorder one global row, evaluating a
 computed order expression could fail, so silently dropping the clause would broaden semantics.
@@ -64,7 +75,7 @@ never exceed the network hard limits. Owned allocation and container-growth fail
 `RESOURCE_EXHAUSTED`; invalid limit configurations become `INVALID_ARGUMENT`; unsupported SQL keeps
 the relevant source span and returns `NOT_SUPPORTED`. No partial product escapes.
 
-Work is `O(source columns + outputs + WHERE leaves)` and retained memory is
+Work is `O(source columns + outputs + WHERE instructions)` and retained memory is
 `O(source columns + unique inputs + outputs)`. One thread constructs the immutable product.
 
 ## Tradeoffs and interview questions
@@ -83,3 +94,8 @@ scan only with a versioned decision and worker evidence.
 **What prevents partial distributed results?** This lowering has no execution side effects. The
 replicated service discards failed whole attempts and accumulates only after every exact tablet
 stream terminates; Native finalization then publishes one all-or-none result.
+
+**Why carry a full row for a predicate?** Expression input ordinals are bound to the source schema.
+Keeping that exact ordinal mapping avoids a second rewrite language. This is a bounded correctness
+baseline; versioned worker predicate pushdown can later reduce transfer volume without changing
+truth.

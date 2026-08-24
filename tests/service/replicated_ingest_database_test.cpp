@@ -1038,10 +1038,10 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
                     "ORDER BY label ASC, ts LIMIT 1"));
   auto native_distributed_hidden = distributed_native.execute_query(
       query_request("SELECT tag AS label FROM events ORDER BY ts, label LIMIT 1"));
-  auto native_distributed_aggregate = distributed_native.execute_query(query_request(
-      "SELECT count(*) AS rows, count(tag) AS tags, min(tag) AS first_tag, "
-      "max(enabled) AS any_enabled FROM events WHERE ts BETWEEN "
-      "TIMESTAMP '1970-01-01 00:00:00Z' AND TIMESTAMP '1970-01-01 00:00:00Z' LIMIT 1"));
+  auto native_distributed_aggregate = distributed_native.execute_query(
+      query_request("SELECT count(*) AS rows, count(tag) AS tags, min(tag) AS first_tag, "
+                    "max(enabled) AS any_enabled FROM events "
+                    "WHERE enabled AND lower(tag) = 'x' LIMIT 1"));
   auto native_distributed_constants = distributed_native.execute_query(
       query_request("SELECT 7 AS marker, upper('ok') AS word FROM events LIMIT 1"));
   auto native_distributed_expressions = distributed_native.execute_query(
@@ -1132,7 +1132,7 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   ASSERT_NE(aggregate_any_enabled, nullptr);
   common::ByteReader aggregate_rows_reader{aggregate_rows->value};
   common::ByteReader aggregate_tags_reader{aggregate_tags->value};
-  EXPECT_EQ(aggregate_rows_reader.read_i64_le().value(), 4);
+  EXPECT_EQ(aggregate_rows_reader.read_i64_le().value(), 2);
   EXPECT_EQ(aggregate_tags_reader.read_i64_le().value(), 2);
   ASSERT_EQ(aggregate_first_tag->value.size(), 1U);
   EXPECT_EQ(aggregate_first_tag->value.front(), std::byte{'x'});
@@ -1196,10 +1196,10 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
             native_distributed->responses[0].frame.payload);
   EXPECT_EQ(native_local->responses[1].frame.header.message_type, network::MessageType::kQueryEnd);
 
-  auto native_local_aggregate = local_distributed_native.execute_query(query_request(
-      "SELECT count(*) AS rows, count(tag) AS tags, min(tag) AS first_tag, "
-      "max(enabled) AS any_enabled FROM events WHERE ts BETWEEN "
-      "TIMESTAMP '1970-01-01 00:00:00Z' AND TIMESTAMP '1970-01-01 00:00:00Z' LIMIT 1"));
+  auto native_local_aggregate = local_distributed_native.execute_query(
+      query_request("SELECT count(*) AS rows, count(tag) AS tags, min(tag) AS first_tag, "
+                    "max(enabled) AS any_enabled FROM events "
+                    "WHERE enabled AND lower(tag) = 'x' LIMIT 1"));
   ASSERT_TRUE(native_local_aggregate.has_value()) << native_local_aggregate.error().to_string();
   ASSERT_EQ(native_local_aggregate->responses.size(), 2U);
   EXPECT_EQ(native_local_aggregate->result_rows, native_distributed_aggregate->result_rows);

@@ -124,6 +124,41 @@ execution_result(std::vector<DistributedVectorResultExchangeMessage> messages) {
   return bits.value_or(0U);
 }
 
+[[nodiscard]] query::VectorExpression label_equals(const std::string_view expected) {
+  const schema::LogicalType string_type = type(schema::LogicalTypeKind::kString);
+  std::vector<query::VectorExpressionInstruction> instructions;
+  instructions.emplace_back(query::VectorInputExpression{
+      .input_column_ordinal = 1U, .type = string_type, .nullable = true});
+  instructions.emplace_back(query::VectorConstantExpression{
+      query::ScalarValue::text(string_type, std::string{expected}).value()});
+  instructions.emplace_back(
+      query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kEqual,
+                                    .left_instruction = 0U,
+                                    .right_instruction = 1U});
+  return query::VectorExpression::create(std::move(instructions)).value();
+}
+
+[[nodiscard]] query::VectorExpression divide_score_predicate(const std::int64_t divisor) {
+  std::vector<query::VectorExpressionInstruction> instructions;
+  instructions.emplace_back(
+      query::VectorInputExpression{.input_column_ordinal = 0U,
+                                   .type = type(schema::LogicalTypeKind::kInt64),
+                                   .nullable = false});
+  instructions.emplace_back(query::VectorConstantExpression{
+      query::ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), divisor).value()});
+  instructions.emplace_back(
+      query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kDivide,
+                                    .left_instruction = 0U,
+                                    .right_instruction = 1U});
+  instructions.emplace_back(query::VectorConstantExpression{
+      query::ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), 0).value()});
+  instructions.emplace_back(
+      query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kGreater,
+                                    .left_instruction = 2U,
+                                    .right_instruction = 3U});
+  return query::VectorExpression::create(std::move(instructions)).value();
+}
+
 TEST(DistributedVectorAggregateRowsFinalizationV2Test,
      AggregatesCompleteTabletRowsAndPublishesOneCanonicalResult) {
   auto input =
@@ -170,6 +205,58 @@ TEST(DistributedVectorAggregateRowsFinalizationV2Test,
     EXPECT_TRUE(cell->is_null);
     EXPECT_TRUE(cell->value.empty());
   }
+}
+
+TEST(DistributedVectorAggregateRowsFinalizationV2Test,
+     AppliesBooleanPredicateBeforeEveryAggregateState) {
+  auto input = execution_result({message(2U, 1U, true, encode_rows({{1, "z"}, {3, std::nullopt}})),
+                                 message(3U, 1U, true, encode_rows({{5, "a"}}))});
+  auto plan = aggregate_plan();
+  const query::VectorExpression predicate = label_equals("a");
+  auto finalized = finalize_distributed_vector_aggregate_rows_with_predicate_v2(
+      std::move(input), plan, output_schema(), predicate);
+  ASSERT_TRUE(finalized.has_value()) << finalized.error().to_string();
+  auto batch = network::decode_query_result_batch(finalized->encoded_batch);
+  ASSERT_TRUE(batch.has_value()) << batch.error().to_string();
+  EXPECT_EQ(std::bit_cast<std::int64_t>(bits_cell(*batch, 0U)), 1);
+  EXPECT_EQ(std::bit_cast<std::int64_t>(bits_cell(*batch, 1U)), 1);
+  EXPECT_EQ(std::bit_cast<std::int64_t>(bits_cell(*batch, 2U)), 5);
+  EXPECT_DOUBLE_EQ(std::bit_cast<double>(bits_cell(*batch, 3U)), 5.0);
+  EXPECT_DOUBLE_EQ(std::bit_cast<double>(bits_cell(*batch, 5U)), 0.0);
+
+  auto stale_input = execution_result({message(2U, 1U, true, encode_rows({{1, "a"}}))});
+  const query::VectorExpression stale =
+      query::VectorExpression::create(
+          {query::VectorInputExpression{.input_column_ordinal = 2U,
+                                        .type = type(schema::LogicalTypeKind::kBool),
+                                        .nullable = false}})
+          .value();
+  EXPECT_EQ(finalize_distributed_vector_aggregate_rows_with_predicate_v2(
+                std::move(stale_input), plan, output_schema(), stale)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  auto non_boolean_input = execution_result({message(2U, 1U, true, encode_rows({{1, "a"}}))});
+  const query::VectorExpression non_boolean =
+      query::VectorExpression::create(
+          {query::VectorInputExpression{.input_column_ordinal = 0U,
+                                        .type = type(schema::LogicalTypeKind::kInt64),
+                                        .nullable = false}})
+          .value();
+  EXPECT_EQ(finalize_distributed_vector_aggregate_rows_with_predicate_v2(
+                std::move(non_boolean_input), plan, output_schema(), non_boolean)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  auto failing_input = execution_result({message(2U, 1U, true, encode_rows({{1, "a"}}))});
+  const query::VectorExpression failing = divide_score_predicate(0);
+  EXPECT_EQ(finalize_distributed_vector_aggregate_rows_with_predicate_v2(
+                std::move(failing_input), plan, output_schema(), failing)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
 }
 
 TEST(DistributedVectorAggregateRowsFinalizationV2Test,

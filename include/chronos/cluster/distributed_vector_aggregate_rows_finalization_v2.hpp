@@ -8,6 +8,7 @@
 #include "chronos/query/aggregate.hpp"
 #include "chronos/query/distributed_vector_plan.hpp"
 #include "chronos/query/distributed_vector_result_schema.hpp"
+#include "chronos/query/vector_expression.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -45,6 +46,16 @@ finalize_distributed_vector_aggregate_rows_v2(
     DistributedVectorQueryExecutionResultV2&& input,
     const query::DistributedVectorPlanIntent& aggregate_plan,
     query::DistributedVectorResultSchema&& aggregate_result_schema,
+    DistributedVectorAggregateRowsFinalizationLimitsV2 limits = {});
+
+// Applies the checked Boolean predicate to each complete canonical input row before it enters any
+// aggregate state. SQL FALSE and NULL discard the row. The expression is synchronously borrowed.
+[[nodiscard]] common::Result<DistributedVectorAggregateFinalizedResultV2>
+finalize_distributed_vector_aggregate_rows_with_predicate_v2(
+    DistributedVectorQueryExecutionResultV2&& input,
+    const query::DistributedVectorPlanIntent& aggregate_plan,
+    query::DistributedVectorResultSchema&& aggregate_result_schema,
+    const query::VectorExpression& predicate,
     DistributedVectorAggregateRowsFinalizationLimitsV2 limits = {});
 
 } // namespace chronos::cluster

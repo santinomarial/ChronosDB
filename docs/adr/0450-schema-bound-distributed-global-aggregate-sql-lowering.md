@@ -37,6 +37,9 @@ computed final expressions, and arbitrary predicates fail closed. ORDER BY is no
 even though one global group ordinarily produces at most one pre-LIMIT row, because evaluating an
 order expression may itself have observable failure semantics.
 
+[ADR 0456](0456-bounded-coordinator-global-aggregate-predicates.md) subsequently extends this
+boundary with checked coordinator predicates while preserving the event-time worker specialization.
+
 ## Consequences
 
 Bound SQL can now produce the exact authority-neutral input consumed by the implemented compatible

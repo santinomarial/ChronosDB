@@ -1,5 +1,6 @@
 #include "chronos/cluster/distributed_vector_aggregate_rows_finalization_v2.hpp"
 
+#include "../query/vector_expression_internal.hpp"
 #include "chronos/columnar/column_vector.hpp"
 #include "chronos/common/byte_reader.hpp"
 #include "chronos/common/byte_writer.hpp"
@@ -211,13 +212,46 @@ canonical_cell_view(const schema::LogicalType type, const bool nullable,
   return *total;
 }
 
+[[nodiscard]] common::Status
+validate_predicate_sources(const query::VectorExpression& predicate,
+                           const query::DistributedVectorResultSchema& input_schema) {
+  if (predicate.result_shape().type.kind() != schema::LogicalTypeKind::kBool)
+    return invalid("aggregate row predicate result is not Boolean");
+  for (const query::VectorExpressionInstruction& instruction : predicate.instructions()) {
+    const auto* source = std::get_if<query::VectorInputExpression>(&instruction);
+    if (source == nullptr)
+      continue;
+    if (source->input_column_ordinal >= input_schema.columns.size())
+      return invalid("aggregate row predicate source is out of bounds");
+    const auto& input = input_schema.columns[source->input_column_ordinal];
+    if (source->type != input.type || source->nullable != input.nullable)
+      return invalid("aggregate row predicate source shape differs from its input");
+  }
+  return common::Status::ok();
+}
+
+[[nodiscard]] common::Result<bool>
+predicate_matches(const query::VectorExpression& predicate,
+                  const std::span<const query::detail::CanonicalVectorExpressionCell> input) {
+  auto value = query::detail::evaluate_canonical_vector_expression_row(predicate, input);
+  if (!value.has_value())
+    return common::make_unexpected(value.error());
+  if (value->is_null())
+    return false;
+  const auto* boolean = std::get_if<bool>(&value->storage());
+  if (boolean == nullptr)
+    return common::make_unexpected(corruption("aggregate row predicate produced non-Boolean"));
+  return *boolean;
+}
+
 } // namespace
 
-common::Result<DistributedVectorAggregateFinalizedResultV2>
-finalize_distributed_vector_aggregate_rows_v2(
+static common::Result<DistributedVectorAggregateFinalizedResultV2>
+finalize_distributed_vector_aggregate_rows_impl_v2(
     DistributedVectorQueryExecutionResultV2&& input,
     const query::DistributedVectorPlanIntent& aggregate_plan,
     query::DistributedVectorResultSchema&& aggregate_result_schema,
+    const query::VectorExpression* const predicate,
     const DistributedVectorAggregateRowsFinalizationLimitsV2 limits) {
   try {
     if (!valid_limits(limits))
@@ -239,6 +273,11 @@ finalize_distributed_vector_aggregate_rows_v2(
         query::validate_distributed_vector_result_schema_value(input_schema);
     if (!input_schema_status.is_ok())
       return common::make_unexpected(input_schema_status);
+    if (predicate != nullptr) {
+      const common::Status predicate_status = validate_predicate_sources(*predicate, input_schema);
+      if (!predicate_status.is_ok())
+        return common::make_unexpected(predicate_status);
+    }
     const common::Status row_plan_status = query::validate_distributed_vector_plan_intent(
         input.plan, static_cast<std::uint32_t>(input_schema.columns.size()),
         static_cast<std::uint32_t>(input_schema.columns.size()));
@@ -261,6 +300,19 @@ finalize_distributed_vector_aggregate_rows_v2(
                          .width = sizeof(query::PhysicalColumnShape) * 2U});
     if (!configuration_working.has_value())
       return common::make_unexpected(configuration_working.error());
+    if (predicate != nullptr) {
+      configuration_working =
+          add_product(*configuration_working,
+                      {.count = predicate->retained_configuration_bytes(), .width = 2U});
+      if (!configuration_working.has_value())
+        return common::make_unexpected(configuration_working.error());
+      configuration_working =
+          add_product(*configuration_working,
+                      {.count = input_schema.columns.size(),
+                       .width = sizeof(query::detail::CanonicalVectorExpressionCell) * 2U});
+      if (!configuration_working.has_value())
+        return common::make_unexpected(configuration_working.error());
+    }
     configuration_working = add_product(
         *configuration_working,
         {.count = aggregate_plan.aggregates.size(),
@@ -398,6 +450,9 @@ finalize_distributed_vector_aggregate_rows_v2(
         return common::make_unexpected(state.error());
       states.push_back(std::move(*state));
     }
+    std::vector<query::detail::CanonicalVectorExpressionCell> canonical_row;
+    if (predicate != nullptr)
+      canonical_row.resize(input_schema.columns.size());
 
     for (const DistributedVectorResultExchangeMessage& message : input.result.messages) {
       if (message.encoded_result_batch.empty())
@@ -409,6 +464,19 @@ finalize_distributed_vector_aggregate_rows_v2(
       if (!descriptors_match(*batch, input_schema))
         return common::make_unexpected(corruption("aggregate input descriptors differ"));
       for (std::uint32_t row = 0U; row < batch->row_count(); ++row) {
+        if (predicate != nullptr) {
+          for (std::size_t column = 0U; column < canonical_row.size(); ++column) {
+            const network::QueryResultCell* cell = batch->cell(row, column);
+            if (cell == nullptr)
+              return common::make_unexpected(corruption("aggregate predicate cell disappeared"));
+            canonical_row[column] = {.is_null = cell->is_null, .bytes = cell->value};
+          }
+          auto matches = predicate_matches(*predicate, canonical_row);
+          if (!matches.has_value())
+            return common::make_unexpected(matches.error());
+          if (!*matches)
+            continue;
+        }
         for (std::size_t ordinal = 0U; ordinal < states.size(); ++ordinal) {
           if (definitions[ordinal].operation == query::VectorAggregateOperation::kCountStar) {
             auto accumulated = states[ordinal].accumulate_count_star();
@@ -452,6 +520,27 @@ finalize_distributed_vector_aggregate_rows_v2(
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("aggregate row finalization exceeds limits"));
   }
+}
+
+common::Result<DistributedVectorAggregateFinalizedResultV2>
+finalize_distributed_vector_aggregate_rows_v2(
+    DistributedVectorQueryExecutionResultV2&& input,
+    const query::DistributedVectorPlanIntent& aggregate_plan,
+    query::DistributedVectorResultSchema&& aggregate_result_schema,
+    const DistributedVectorAggregateRowsFinalizationLimitsV2 limits) {
+  return finalize_distributed_vector_aggregate_rows_impl_v2(
+      std::move(input), aggregate_plan, std::move(aggregate_result_schema), nullptr, limits);
+}
+
+common::Result<DistributedVectorAggregateFinalizedResultV2>
+finalize_distributed_vector_aggregate_rows_with_predicate_v2(
+    DistributedVectorQueryExecutionResultV2&& input,
+    const query::DistributedVectorPlanIntent& aggregate_plan,
+    query::DistributedVectorResultSchema&& aggregate_result_schema,
+    const query::VectorExpression& predicate,
+    const DistributedVectorAggregateRowsFinalizationLimitsV2 limits) {
+  return finalize_distributed_vector_aggregate_rows_impl_v2(
+      std::move(input), aggregate_plan, std::move(aggregate_result_schema), &predicate, limits);
 }
 
 } // namespace chronos::cluster

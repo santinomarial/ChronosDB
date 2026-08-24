@@ -41,6 +41,9 @@ terminal value, so this decision adds no memory-ordering argument or acknowledge
 This decision adds no durable or network format, worker expression bytecode, partial predicate
 pushdown, computed ORDER BY, aggregate predicate, join predicate, retry rule, or visibility rule.
 
+[ADR 0456](0456-bounded-coordinator-global-aggregate-predicates.md) subsequently applies the same
+checked coordinator predicate semantics before replicated global aggregate accumulation.
+
 ## Consequences
 
 Replicated Native row queries can execute the existing checked SQL v1 WHERE expression intersection

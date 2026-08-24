@@ -32,6 +32,8 @@ struct DistributedVectorAggregateSqlLoweringLimits {
   std::uint32_t maximum_aggregates{distributed_vector_plan_format::kMaximumAggregates};
   std::uint32_t maximum_result_name_bytes{
       distributed_vector_result_schema_format::kMaximumNameLength};
+  VectorExpressionLimits expression_limits{};
+  std::size_t maximum_expression_configuration_bytes{std::size_t{4U} * 1024U * 1024U};
 };
 
 struct DistributedVectorRowSourceOutput {
@@ -103,14 +105,16 @@ lower_bound_sql_select_to_distributed_vector_rows(
 
 // Complete schema-bound ungrouped-aggregate intent for later authority binding. input_rows is the
 // exact unlimited identity projection needed by the current replicated mutable-row carrier;
-// projection ordinals are unique and preserve first aggregate-input use. COUNT(*) uses the
-// event-time column as a bounded fragment projection anchor when no aggregate reads a source
-// column. The aggregate intent alone carries global LIMIT. A sufficient-state worker may consume
-// the same projection without using the transitional row intent.
+// projection ordinals are unique and preserve first aggregate-input use unless a source-dependent
+// coordinator predicate requires the complete source schema in ordinal order. COUNT(*) uses the
+// event-time column as a bounded fragment projection anchor when no aggregate or predicate reads a
+// source column. The aggregate intent alone carries global LIMIT. A sufficient-state worker may
+// consume the same projection without using the transitional row intent.
 struct DistributedVectorAggregateSqlPlan {
   DistributedVectorRowsSqlPlan input_rows;
   DistributedVectorPlanIntent intent;
   DistributedVectorResultSchema result_schema;
+  std::optional<VectorExpression> coordinator_predicate;
 
   friend bool operator==(const DistributedVectorAggregateSqlPlan&,
                          const DistributedVectorAggregateSqlPlan&) = default;
@@ -118,8 +122,9 @@ struct DistributedVectorAggregateSqlPlan {
 
 // Lowers the executable distributed global-aggregate subset: one current table, SELECT outputs
 // that are exactly COUNT(*), COUNT, SUM, AVG, MIN, MAX, VAR_POP, or VAR_SAMP over direct source
-// columns, the row subset's optional event-time predicate, and LIMIT. GROUP BY, ORDER BY, computed
-// aggregate inputs/final outputs, historical reads, and relational operators fail closed.
+// columns, an optional checked Boolean WHERE expression (with exact worker-side event-time range
+// specialization), and LIMIT. GROUP BY, ORDER BY, computed aggregate inputs/final outputs,
+// historical reads, and relational operators fail closed.
 [[nodiscard]] SqlResult<DistributedVectorAggregateSqlPlan>
 lower_bound_sql_select_to_distributed_vector_aggregate(
     const BoundSqlSelect& select, DistributedVectorAggregateSqlLoweringLimits limits = {});

@@ -427,7 +427,6 @@ TEST(DistributedSqlLoweringTest, AnchorsCountStarAndRejectsUnsupportedAggregateS
       "SELECT value FROM metrics",
       "SELECT sum(value + 1) FROM metrics",
       "SELECT sum(value) + 1 FROM metrics",
-      "SELECT sum(value) FROM metrics WHERE value > 1",
       "SELECT sum(value) FROM metrics GROUP BY label",
       "SELECT sum(value) AS total FROM metrics ORDER BY total",
       "SELECT sum(value) FROM metrics FOR SYSTEM_TIME AS OF "
@@ -441,6 +440,48 @@ TEST(DistributedSqlLoweringTest, AnchorsCountStarAndRejectsUnsupportedAggregateS
     EXPECT_EQ(unsupported_plan.error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
     EXPECT_EQ(unsupported_plan.error().status().code(), common::StatusCode::kNotSupported);
   }
+}
+
+TEST(DistributedSqlLoweringTest, OwnsGeneralGlobalAggregatePredicates) {
+  BoundSqlSelect select =
+      bind("SELECT count(*) AS n, sum(value) AS total, min(label) AS minimum_label FROM metrics "
+           "WHERE value > 1 AND lower(label) = 'ok'");
+  auto lowered = lower_bound_sql_select_to_distributed_vector_aggregate(select);
+  ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
+  EXPECT_EQ(lowered->input_rows.destination_column_ordinals,
+            (std::vector<std::uint32_t>{0U, 1U, 2U}));
+  EXPECT_EQ(lowered->input_rows.intent.row_output_indices,
+            (std::vector<std::uint32_t>{0U, 1U, 2U}));
+  EXPECT_FALSE(lowered->input_rows.event_time_predicate.has_value());
+  ASSERT_TRUE(lowered->coordinator_predicate.has_value());
+  EXPECT_EQ(lowered->coordinator_predicate->result_shape().type.kind(),
+            schema::LogicalTypeKind::kBool);
+  EXPECT_TRUE(lowered->coordinator_predicate->result_shape().nullable);
+  ASSERT_EQ(lowered->intent.aggregates.size(), 3U);
+  EXPECT_FALSE(lowered->intent.aggregates[0].input_index.has_value());
+  EXPECT_EQ(lowered->intent.aggregates[1].input_index, 2U);
+  EXPECT_EQ(lowered->intent.aggregates[2].input_index, 1U);
+
+  auto constant = lower_bound_sql_select_to_distributed_vector_aggregate(
+      bind("SELECT count(*) AS n FROM metrics WHERE FALSE"));
+  ASSERT_TRUE(constant.has_value()) << constant.error().status().to_string();
+  EXPECT_EQ(constant->input_rows.destination_column_ordinals, (std::vector<std::uint32_t>{0U}));
+  ASSERT_TRUE(constant->coordinator_predicate.has_value());
+  EXPECT_EQ(constant->coordinator_predicate->instructions().size(), 1U);
+
+  auto disjoint_time = lower_bound_sql_select_to_distributed_vector_aggregate(
+      bind("SELECT count(*) AS n FROM metrics WHERE ts NOT BETWEEN "
+           "TIMESTAMP '1970-01-01 00:00:00Z' AND TIMESTAMP '1970-01-01 00:00:01Z'"));
+  ASSERT_TRUE(disjoint_time.has_value()) << disjoint_time.error().status().to_string();
+  EXPECT_FALSE(disjoint_time->input_rows.event_time_predicate.has_value());
+  ASSERT_TRUE(disjoint_time->coordinator_predicate.has_value());
+  EXPECT_EQ(disjoint_time->input_rows.destination_column_ordinals,
+            (std::vector<std::uint32_t>{0U, 1U, 2U}));
+
+  const auto bounded = lower_bound_sql_select_to_distributed_vector_aggregate(
+      select, {.maximum_expression_configuration_bytes = 1U});
+  ASSERT_FALSE(bounded.has_value());
+  EXPECT_EQ(bounded.error().code(), SqlDiagnosticCode::kResourceLimit);
 }
 
 TEST(DistributedSqlLoweringTest, EnforcesGlobalAggregateCallerBounds) {
@@ -465,6 +506,11 @@ TEST(DistributedSqlLoweringTest, EnforcesGlobalAggregateCallerBounds) {
       select, {.maximum_projection_columns = 0U});
   ASSERT_FALSE(invalid.has_value());
   EXPECT_EQ(invalid.error().status().code(), common::StatusCode::kInvalidArgument);
+
+  auto invalid_expression = lower_bound_sql_select_to_distributed_vector_aggregate(
+      select, {.expression_limits = {.maximum_instructions = 0U}});
+  ASSERT_FALSE(invalid_expression.has_value());
+  EXPECT_EQ(invalid_expression.error().status().code(), common::StatusCode::kInvalidArgument);
 }
 
 } // namespace

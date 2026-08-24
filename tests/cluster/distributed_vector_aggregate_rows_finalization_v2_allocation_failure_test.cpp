@@ -65,13 +65,25 @@ TEST(DistributedVectorAggregateRowsFinalizationV2AllocationFailureTest,
       network::QueryResultCell{.value = std::as_bytes(std::span{value.data(), value.size()})}};
   const std::vector<std::byte> batch =
       network::encode_query_result_batch(1U, columns, cells).value();
+  std::vector<query::VectorExpressionInstruction> predicate_instructions;
+  predicate_instructions.emplace_back(query::VectorInputExpression{
+      .input_column_ordinal = 0U, .type = string_type, .nullable = false});
+  predicate_instructions.emplace_back(
+      query::VectorConstantExpression{query::ScalarValue::text(string_type, value).value()});
+  predicate_instructions.emplace_back(
+      query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kEqual,
+                                    .left_instruction = 0U,
+                                    .right_instruction = 1U});
+  const query::VectorExpression predicate =
+      query::VectorExpression::create(std::move(predicate_instructions)).value();
 
   bool succeeded{};
   for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
     auto value_input = input(batch, string_type);
     auto result = run_failure(fail_after, [&] {
-      return finalize_distributed_vector_aggregate_rows_v2(
-          std::move(value_input.execution), value_input.aggregate, std::move(value_input.output));
+      return finalize_distributed_vector_aggregate_rows_with_predicate_v2(
+          std::move(value_input.execution), value_input.aggregate, std::move(value_input.output),
+          predicate);
     });
     if (result.has_value()) {
       succeeded = true;

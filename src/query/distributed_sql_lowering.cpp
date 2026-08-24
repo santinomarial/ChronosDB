@@ -713,7 +713,11 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
         limits.maximum_aggregates > distributed_vector_plan_format::kMaximumAggregates ||
         limits.maximum_result_name_bytes == 0U ||
         limits.maximum_result_name_bytes >
-            distributed_vector_result_schema_format::kMaximumNameLength) {
+            distributed_vector_result_schema_format::kMaximumNameLength ||
+        limits.expression_limits.maximum_instructions == 0U ||
+        limits.expression_limits.maximum_instructions > kMaximumVectorExpressionInstructions ||
+        limits.expression_limits.maximum_retained_configuration_bytes == 0U ||
+        limits.maximum_expression_configuration_bytes == 0U) {
       return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, select.syntax().span(),
                                         common::StatusCode::kInvalidArgument,
                                         "Distributed aggregate SQL lowering limits are invalid"));
@@ -743,6 +747,11 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
     }
 
     const schema::TableSchema& source = *select.sources().front().schema_ptr();
+    const SqlExpression* const where = select.syntax().where();
+    const bool coordinator_where =
+        where != nullptr && !event_time_predicate_shape(select, source, *where);
+    const bool needs_full_source =
+        coordinator_where && where != nullptr && !source_independent(select, *where);
     DistributedVectorAggregateSqlPlan result{
         .input_rows = {.table_id = source.table_id(),
                        .destination_schema_id = source.schema_id(),
@@ -765,11 +774,33 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
                    .order_keys = {},
                    .limit = select.syntax().limit()},
         .result_schema = {},
+        .coordinator_predicate = std::nullopt,
     };
     std::vector<std::int64_t> projected_index(source.columns().size(), -1);
-    result.input_rows.destination_column_ordinals.reserve(select.outputs().size());
-    result.input_rows.intent.row_output_indices.reserve(select.outputs().size());
-    result.input_rows.result_schema.columns.reserve(select.outputs().size());
+    if (needs_full_source) {
+      if (source.columns().size() > limits.maximum_projection_columns) {
+        throw LoweringFailure{
+            diagnostic(SqlDiagnosticCode::kResourceLimit, where->span(),
+                       common::StatusCode::kResourceExhausted,
+                       "Distributed aggregate predicate source width exceeds the limit")};
+      }
+      result.input_rows.destination_column_ordinals.reserve(source.columns().size());
+      result.input_rows.intent.row_output_indices.reserve(source.columns().size());
+      result.input_rows.result_schema.columns.reserve(source.columns().size());
+      for (std::size_t ordinal = 0U; ordinal < source.columns().size(); ++ordinal) {
+        const schema::ColumnDefinition& column = source.columns()[ordinal];
+        projected_index[ordinal] = static_cast<std::int64_t>(ordinal);
+        result.input_rows.destination_column_ordinals.push_back(
+            static_cast<std::uint32_t>(ordinal));
+        result.input_rows.intent.row_output_indices.push_back(static_cast<std::uint32_t>(ordinal));
+        result.input_rows.result_schema.columns.push_back(
+            {.name = column.name(), .type = column.type(), .nullable = column.nullable()});
+      }
+    } else {
+      result.input_rows.destination_column_ordinals.reserve(select.outputs().size());
+      result.input_rows.intent.row_output_indices.reserve(select.outputs().size());
+      result.input_rows.result_schema.columns.reserve(select.outputs().size());
+    }
     result.intent.aggregates.reserve(select.outputs().size());
     result.result_schema.columns.reserve(select.outputs().size());
 
@@ -854,7 +885,7 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
           {.name = output.name, .type = output.type, .nullable = output.nullable});
     }
 
-    if (const SqlExpression* where = select.syntax().where(); where != nullptr) {
+    if (where != nullptr && !coordinator_where) {
       cseg::EventTimePredicate predicate;
       lower_event_time_leaf(select, source, *where, predicate);
       if (!predicate.lower.has_value() && !predicate.upper.has_value()) {
@@ -863,6 +894,22 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
             "Distributed aggregate WHERE produced no event-time bound")};
       }
       result.input_rows.event_time_predicate = predicate;
+    } else if (where != nullptr) {
+      auto lowered = lower_bound_sql_scalar_expression(select, *where, limits.expression_limits);
+      if (!lowered.has_value())
+        throw LoweringFailure{std::move(lowered.error())};
+      if (lowered->result_shape().type.kind() != schema::LogicalTypeKind::kBool) {
+        throw LoweringFailure{diagnostic(SqlDiagnosticCode::kExecutionFailure, where->span(),
+                                         common::StatusCode::kInternal,
+                                         "Distributed aggregate WHERE result is not Boolean")};
+      }
+      if (lowered->retained_configuration_bytes() > limits.maximum_expression_configuration_bytes) {
+        throw LoweringFailure{
+            diagnostic(SqlDiagnosticCode::kResourceLimit, where->span(),
+                       common::StatusCode::kResourceExhausted,
+                       "Distributed aggregate expression configuration bytes exceed the limit")};
+      }
+      result.coordinator_predicate.emplace(std::move(*lowered));
     }
 
     if (result.input_rows.destination_column_ordinals.empty()) {

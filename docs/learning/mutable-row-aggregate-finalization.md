@@ -28,6 +28,9 @@ identity/schema/sequence/limit validation
 decode one Native batch at a time
           |
           v
+optional checked Boolean predicate (TRUE only)
+          |
+          v
 shared MergeableVectorAggregateState instances
           |
           v
@@ -46,6 +49,11 @@ stack-owned one-row `PhysicalColumnView`: one validity byte, two 32-bit offsets 
 types, or at most sixteen fixed bytes. `PhysicalColumnView::create` independently checks the
 physical representation before the borrowed cell enters the aggregate kernel.
 
+When present, the immutable coordinator predicate is validated against the exact input schema and
+evaluated over a reusable vector of borrowed canonical cells. SQL FALSE and NULL skip the row before
+COUNT(*) or any input aggregate advances. Runtime expression failure aborts without publishing a
+partial scalar.
+
 One `MergeableVectorAggregateState` exists per SQL output. Reusing that state avoids a second COUNT,
 SUM, AVG, extrema, or variance implementation. Variable extrema retain their bytes under both a
 per-value ceiling and `QueryResourceContext` reservation. Batches and their decoded cell vectors
@@ -58,7 +66,8 @@ messages share a nonnil query ID, tablet segments are unique, and even an empty 
 one canonical terminal message. No result can be finalized while any segment remains open.
 
 The caller separately bounds input rows, messages, encoded exchange bytes, decoded batch shape,
-conservative working memory, query-accounted state, variable extrema, and final Native output.
+predicate configuration/canonical row views, conservative working memory, query-accounted state,
+variable extrema, and final Native output.
 Header shapes are checked before full decoding or cell-vector allocation. Complexity is
 `O(rows * aggregates)` time and `O(max batch cells + aggregate states + retained extrema)` extra
 memory.
@@ -94,6 +103,10 @@ variance.
 
 **Why validate terminal streams before accumulation?** It prevents expensive work from producing a
 tempting partial result. Publication still happens only after complete authority has been proved.
+
+**Why filter at the coordinator?** It closes the SQL correctness surface using the shared checked
+expression engine and existing authenticated row carrier. The cost is transferring rows that a
+future versioned worker program could reject earlier.
 
 **What should replace this at scale?** Bind the existing sufficient-state exchange to current
 TabletSnapshot/Raft proof authority and package it in the same authenticated service. The authority,

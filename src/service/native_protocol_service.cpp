@@ -1057,10 +1057,17 @@ NativeProtocolService::execute_query(network::NetworkTask request,
         if (!coordinated.has_value())
           return query_error(target, coordinated.error(), limits_.protocol);
         if (lowered_aggregate.has_value()) {
-          auto finalized = cluster::finalize_distributed_vector_aggregate_rows_v2(
-              {.plan = logical_identity->plan, .result = std::move(*coordinated)},
-              lowered_aggregate->intent, std::move(lowered_aggregate->result_schema),
-              bounded_aggregate_finalization_limits(config, limits_));
+          common::Result<cluster::DistributedVectorAggregateFinalizedResultV2> finalized =
+              lowered_aggregate->coordinator_predicate.has_value()
+                  ? cluster::finalize_distributed_vector_aggregate_rows_with_predicate_v2(
+                        {.plan = logical_identity->plan, .result = std::move(*coordinated)},
+                        lowered_aggregate->intent, std::move(lowered_aggregate->result_schema),
+                        *lowered_aggregate->coordinator_predicate,
+                        bounded_aggregate_finalization_limits(config, limits_))
+                  : cluster::finalize_distributed_vector_aggregate_rows_v2(
+                        {.plan = logical_identity->plan, .result = std::move(*coordinated)},
+                        lowered_aggregate->intent, std::move(lowered_aggregate->result_schema),
+                        bounded_aggregate_finalization_limits(config, limits_));
           if (!finalized.has_value())
             return query_error(target, finalized.error(), limits_.protocol);
           return distributed_aggregate_result(target, std::move(*finalized), limits_);
