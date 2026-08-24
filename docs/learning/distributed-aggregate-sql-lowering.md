@@ -7,11 +7,12 @@ distributed sufficient-state worker intentionally accepts a smaller schema-neutr
 `lower_bound_sql_select_to_distributed_vector_aggregate` is the checked bridge from a bound SQL
 query to that vocabulary.
 
-Its owned `DistributedVectorAggregateSqlPlan` contains the exact table and schema IDs, unique source
-projection ordinals, an optional event-time predicate, an ungrouped distributed vector intent, and
-the named result schema. It contains no tablet list, query ID, Manifest pin, Raft read proof, route,
-TLS context, socket, or final Native payload. Later owners must add and independently validate those
-authorities.
+Its owned `DistributedVectorAggregateSqlPlan` contains an exact unlimited identity `input_rows`
+plan plus the ungrouped aggregate intent and named client result schema. The input plan owns table
+and schema IDs, unique source projection ordinals, source descriptors, and the optional event-time
+predicate. The aggregate intent alone owns global LIMIT. The product contains no tablet list, query
+ID, Manifest pin, Raft read proof, route, TLS context, socket, or final Native payload. Later owners
+must add and independently validate those authorities.
 
 ## Projection and definitions
 
@@ -31,6 +32,12 @@ the projection contains only `value`; the intent contains four ordered definitio
 indices `none, 0, 0, 0`. The result schema retains all four SQL names. If every operation is
 `COUNT(*)`, lowering projects the table's event-time column solely to satisfy the current nonempty
 authority-bound fragment projection contract. That column is not an aggregate input or result.
+
+`input_rows` emits each unique projected column exactly once in projection order. Its row outputs
+are the identity vector `0..N-1`; it has no hidden visibility mapping, order, grouping, aggregate,
+or LIMIT. These properties let the mutable-row carrier provide exact aggregate inputs without
+accidentally applying the client LIMIT before accumulation. A future sufficient-state worker can
+reuse the same projection and event predicate while ignoring this transitional row intent.
 
 For each definition, lowering asks the shared vector aggregate kernel for its output type and
 nullability, compares those values with binding, then validates the complete distributed result
@@ -73,6 +80,6 @@ and preserves the simpler exact contract.
 fragment authority format, not a semantic dependency. A future format can represent a zero-column
 scan only with a versioned decision and worker evidence.
 
-**What prevents partial distributed results?** This lowering has no execution side effects. Later
-coordinators merge sufficient states only after every exact tablet stream terminates and Native
-finalization publishes one all-or-none result.
+**What prevents partial distributed results?** This lowering has no execution side effects. The
+replicated service discards failed whole attempts and accumulates only after every exact tablet
+stream terminates; Native finalization then publishes one all-or-none result.

@@ -2,6 +2,7 @@
 #define CHRONOS_SERVICE_NATIVE_PROTOCOL_SERVICE_HPP_
 
 #include "chronos/cluster/distributed_mutable_vector_rows_query_tcp_execution.hpp"
+#include "chronos/cluster/distributed_vector_aggregate_rows_finalization_v2.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/common/uuid.hpp"
 #include "chronos/common/uuid_generator.hpp"
@@ -67,7 +68,7 @@ public:
   }
 
 private:
-  std::atomic<bool> requested_{};
+  std::atomic<bool> requested_;
 };
 
 class NativeQueryDispatcher {
@@ -79,10 +80,11 @@ public:
 
 using NativeIdentityGenerator = common::UuidGenerator;
 
-// Borrowed split-leader row-query client policy. source_node_id names the coordinator transport
-// identity. Fragments led by that node execute through local_worker; all others use authenticated
-// TLS routes because the carrier rejects self-routes. The config, worker, security owners, TLS
-// contexts, and every referenced TLS client context must outlive the NativeProtocolService.
+// Borrowed split-leader mutable-query client policy for direct rows and transitional global
+// aggregates. source_node_id names the coordinator transport identity. Fragments led by that node
+// execute through local_worker; all others use authenticated TLS routes because the carrier rejects
+// self-routes. The config, worker, security owners, TLS contexts, and every referenced TLS client
+// context must outlive the NativeProtocolService.
 struct NativeDistributedMutableVectorRowsQueryConfig {
   raft::NodeId source_node_id{};
   network::ConnectionAuthenticator* authenticator{};
@@ -93,9 +95,11 @@ struct NativeDistributedMutableVectorRowsQueryConfig {
   std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts;
   cluster::DistributedQueryRouteResolutionLimits route_resolution;
   query::DistributedVectorRowsSqlLoweringLimits sql_lowering;
+  query::DistributedVectorAggregateSqlLoweringLimits aggregate_sql_lowering;
   cluster::DistributedMutableVectorQueryExecutionLimits execution;
   cluster::DistributedMutableVectorQueryTlsLimits carrier;
   cluster::DistributedVectorRowFinalizationLimitsV2 finalization;
+  cluster::DistributedVectorAggregateRowsFinalizationLimitsV2 aggregate_finalization;
   std::chrono::milliseconds connect_timeout{5000};
   std::chrono::milliseconds execution_timeout{30000};
   std::chrono::milliseconds maximum_poll_wait{10};
@@ -139,7 +143,7 @@ private:
   ReplicatedIngestDatabase* replicated_database_{};
   ReplicatedReadBarrier* replicated_read_barrier_{};
   NativeIdentityGenerator* identities_{};
-  const NativeDistributedMutableVectorRowsQueryConfig* distributed_mutable_rows_{};
+  const NativeDistributedMutableVectorRowsQueryConfig* distributed_mutable_query_{};
   NativeProtocolServiceLimits limits_;
 };
 

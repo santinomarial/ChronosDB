@@ -1088,9 +1088,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   rejecting unsupported local-only semantics. Plan Intent minor 1 carries the explicit final
   visibility vector while preserving minor-0 bytes. Bound global aggregate SQL now also produces
   exact unique projection, sufficient-state definitions, event-time truth, LIMIT, and result
-  descriptors for direct aggregate calls. A bounded transitional finalizer can now accumulate those
-  definitions over a complete mutable all-tablet row result with the shared kernel and emit one
-  all-or-none Native payload; replicated Native/process routing of that product remains external.
+  descriptors for direct aggregate calls plus an exact unlimited identity input-row plan. The
+  replicated Native service and packaged daemon now execute that input through the existing local/
+  remote proof-revalidated mutable query plane, retry only with fresh all-group authority, and use a
+  bounded transitional finalizer to emit one all-or-none Native aggregate payload. Worker-side
+  sufficient-state pushdown remains an external performance step.
   The retained snapshot now joins the row product
   to the complete canonical tablet set and correlated
   current-leader authorities,

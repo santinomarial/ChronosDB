@@ -54,15 +54,14 @@ struct DistributedVectorRowsSqlPlan {
 lower_bound_sql_select_to_distributed_vector_rows(
     const BoundSqlSelect& select, DistributedVectorRowsSqlLoweringLimits limits = {});
 
-// Complete schema-bound ungrouped-aggregate intent for later authority binding. Projection ordinals
-// are unique and preserve first aggregate-input use. COUNT(*) uses the event-time column as a
-// bounded fragment projection anchor when no aggregate reads a source column. WHERE and LIMIT keep
-// their global SQL meaning; workers receive only mergeable sufficient-state definitions.
+// Complete schema-bound ungrouped-aggregate intent for later authority binding. input_rows is the
+// exact unlimited identity projection needed by the current replicated mutable-row carrier;
+// projection ordinals are unique and preserve first aggregate-input use. COUNT(*) uses the
+// event-time column as a bounded fragment projection anchor when no aggregate reads a source
+// column. The aggregate intent alone carries global LIMIT. A sufficient-state worker may consume
+// the same projection without using the transitional row intent.
 struct DistributedVectorAggregateSqlPlan {
-  schema::TableId table_id;
-  schema::SchemaId destination_schema_id;
-  std::vector<std::uint32_t> destination_column_ordinals;
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  DistributedVectorRowsSqlPlan input_rows;
   DistributedVectorPlanIntent intent;
   DistributedVectorResultSchema result_schema;
 

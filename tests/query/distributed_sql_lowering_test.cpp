@@ -216,14 +216,22 @@ TEST(DistributedSqlLoweringTest, OwnsCanonicalGlobalAggregateProjectionPredicate
            "TIMESTAMP '1970-01-01 00:00:00.000000009Z' LIMIT 1");
   auto lowered = lower_bound_sql_select_to_distributed_vector_aggregate(select);
   ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
-  EXPECT_EQ(lowered->table_id, id<schema::TableId>(1U));
-  EXPECT_EQ(lowered->destination_schema_id, id<schema::SchemaId>(2U));
-  EXPECT_EQ(lowered->destination_column_ordinals, (std::vector<std::uint32_t>{2U, 1U}));
-  ASSERT_TRUE(lowered->event_time_predicate.has_value());
-  EXPECT_EQ(lowered->event_time_predicate->lower,
+  EXPECT_EQ(lowered->input_rows.table_id, id<schema::TableId>(1U));
+  EXPECT_EQ(lowered->input_rows.destination_schema_id, id<schema::SchemaId>(2U));
+  EXPECT_EQ(lowered->input_rows.destination_column_ordinals, (std::vector<std::uint32_t>{2U, 1U}));
+  ASSERT_TRUE(lowered->input_rows.event_time_predicate.has_value());
+  EXPECT_EQ(lowered->input_rows.event_time_predicate->lower,
             (cseg::EventTimeBound{.value = 2, .inclusive = true}));
-  EXPECT_EQ(lowered->event_time_predicate->upper,
+  EXPECT_EQ(lowered->input_rows.event_time_predicate->upper,
             (cseg::EventTimeBound{.value = 9, .inclusive = true}));
+  EXPECT_EQ(lowered->input_rows.intent.mode, DistributedVectorPlanMode::kRows);
+  EXPECT_EQ(lowered->input_rows.intent.row_output_indices, (std::vector<std::uint32_t>{0U, 1U}));
+  EXPECT_TRUE(lowered->input_rows.intent.visible_row_output_indices.empty());
+  EXPECT_TRUE(lowered->input_rows.intent.order_keys.empty());
+  EXPECT_FALSE(lowered->input_rows.intent.limit.has_value());
+  ASSERT_EQ(lowered->input_rows.result_schema.columns.size(), 2U);
+  EXPECT_EQ(lowered->input_rows.result_schema.columns[0].name, "value");
+  EXPECT_EQ(lowered->input_rows.result_schema.columns[1].name, "label");
   EXPECT_EQ(lowered->intent.mode, DistributedVectorPlanMode::kUngroupedAggregate);
   EXPECT_EQ(lowered->intent.limit, 1U);
   EXPECT_TRUE(lowered->intent.row_output_indices.empty());
@@ -270,7 +278,11 @@ TEST(DistributedSqlLoweringTest, AnchorsCountStarAndRejectsUnsupportedAggregateS
   BoundSqlSelect count = bind("SELECT count(*) AS n FROM metrics LIMIT 0");
   auto lowered = lower_bound_sql_select_to_distributed_vector_aggregate(count);
   ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
-  EXPECT_EQ(lowered->destination_column_ordinals, (std::vector<std::uint32_t>{0U}));
+  EXPECT_EQ(lowered->input_rows.destination_column_ordinals, (std::vector<std::uint32_t>{0U}));
+  EXPECT_EQ(lowered->input_rows.intent.row_output_indices, (std::vector<std::uint32_t>{0U}));
+  ASSERT_EQ(lowered->input_rows.result_schema.columns.size(), 1U);
+  EXPECT_EQ(lowered->input_rows.result_schema.columns.front().name, "ts");
+  EXPECT_FALSE(lowered->input_rows.intent.limit.has_value());
   EXPECT_EQ(lowered->intent.limit, 0U);
 
   const std::vector<std::string_view> statements{

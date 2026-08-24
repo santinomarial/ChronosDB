@@ -1010,7 +1010,9 @@ were deliberately not run.
   lowering now emits direct aggregate sufficient-state intent, unique projection, event-time truth,
   LIMIT, and exact result descriptors. A bounded transitional finalizer now consumes complete
   mutable all-tablet row streams through the shared aggregate kernel and emits one all-or-none
-  Native payload; service routing remains unwired and worker-side state pushdown remains deferred.
+  Native payload. The replicated Native service and packaged daemon now route aggregate inputs
+  through the existing proof-revalidated local/remote mutable query plane with the same all-group
+  retry, deadline, and cancellation owner; worker-side state pushdown remains deferred.
   The retained snapshot now constructs the canonical tablet plan from the row SQL semantics
   plus correlated current-leader authorities and returns the all-or-none bound/routed package. A
   move-only request owner now

@@ -1038,6 +1038,10 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
                     "ORDER BY label ASC, ts LIMIT 1"));
   auto native_distributed_hidden = distributed_native.execute_query(
       query_request("SELECT tag AS label FROM events ORDER BY ts, label LIMIT 1"));
+  auto native_distributed_aggregate = distributed_native.execute_query(query_request(
+      "SELECT count(*) AS rows, count(tag) AS tags, min(tag) AS first_tag, "
+      "max(enabled) AS any_enabled FROM events WHERE ts BETWEEN "
+      "TIMESTAMP '1970-01-01 00:00:00Z' AND TIMESTAMP '1970-01-01 00:00:00Z' LIMIT 1"));
   stop_server.store(true, std::memory_order_release);
   server_thread.join();
   ASSERT_FALSE(server_failed.load(std::memory_order_acquire));
@@ -1097,6 +1101,39 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   ASSERT_EQ(remote_hidden_batch->columns().size(), 1U);
   EXPECT_EQ(remote_hidden_batch->columns().front().name, "label");
   ASSERT_EQ(remote_hidden_batch->row_count(), 1U);
+  ASSERT_TRUE(native_distributed_aggregate.has_value())
+      << native_distributed_aggregate.error().to_string();
+  ASSERT_EQ(native_distributed_aggregate->responses.size(), 2U);
+  EXPECT_EQ(native_distributed_aggregate->result_rows, 1U);
+  ASSERT_EQ(native_distributed_aggregate->responses[0].frame.header.message_type,
+            network::MessageType::kQueryResult);
+  const auto remote_aggregate_batch =
+      network::decode_query_result_batch(native_distributed_aggregate->responses[0].frame.payload);
+  ASSERT_TRUE(remote_aggregate_batch.has_value()) << remote_aggregate_batch.error().to_string();
+  ASSERT_EQ(remote_aggregate_batch->row_count(), 1U);
+  ASSERT_EQ(remote_aggregate_batch->columns().size(), 4U);
+  EXPECT_EQ(remote_aggregate_batch->columns()[0].name, "rows");
+  EXPECT_EQ(remote_aggregate_batch->columns()[1].name, "tags");
+  EXPECT_EQ(remote_aggregate_batch->columns()[2].name, "first_tag");
+  EXPECT_EQ(remote_aggregate_batch->columns()[3].name, "any_enabled");
+  const network::QueryResultCell* aggregate_rows = remote_aggregate_batch->cell(0U, 0U);
+  const network::QueryResultCell* aggregate_tags = remote_aggregate_batch->cell(0U, 1U);
+  const network::QueryResultCell* aggregate_first_tag = remote_aggregate_batch->cell(0U, 2U);
+  const network::QueryResultCell* aggregate_any_enabled = remote_aggregate_batch->cell(0U, 3U);
+  ASSERT_NE(aggregate_rows, nullptr);
+  ASSERT_NE(aggregate_tags, nullptr);
+  ASSERT_NE(aggregate_first_tag, nullptr);
+  ASSERT_NE(aggregate_any_enabled, nullptr);
+  common::ByteReader aggregate_rows_reader{aggregate_rows->value};
+  common::ByteReader aggregate_tags_reader{aggregate_tags->value};
+  EXPECT_EQ(aggregate_rows_reader.read_i64_le().value(), 4);
+  EXPECT_EQ(aggregate_tags_reader.read_i64_le().value(), 2);
+  ASSERT_EQ(aggregate_first_tag->value.size(), 1U);
+  EXPECT_EQ(aggregate_first_tag->value.front(), std::byte{'x'});
+  ASSERT_EQ(aggregate_any_enabled->value.size(), 1U);
+  EXPECT_EQ(aggregate_any_enabled->value.front(), std::byte{1U});
+  EXPECT_EQ(native_distributed_aggregate->responses[1].frame.header.message_type,
+            network::MessageType::kQueryEnd);
   ASSERT_TRUE(distributed_server->shutdown().is_ok());
 
   auto local_worker = ReplicatedDistributedMutableVectorQueryWorker::create(
@@ -1120,6 +1157,43 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   EXPECT_EQ(native_local->responses[0].frame.payload,
             native_distributed->responses[0].frame.payload);
   EXPECT_EQ(native_local->responses[1].frame.header.message_type, network::MessageType::kQueryEnd);
+
+  auto native_local_aggregate = local_distributed_native.execute_query(query_request(
+      "SELECT count(*) AS rows, count(tag) AS tags, min(tag) AS first_tag, "
+      "max(enabled) AS any_enabled FROM events WHERE ts BETWEEN "
+      "TIMESTAMP '1970-01-01 00:00:00Z' AND TIMESTAMP '1970-01-01 00:00:00Z' LIMIT 1"));
+  ASSERT_TRUE(native_local_aggregate.has_value()) << native_local_aggregate.error().to_string();
+  ASSERT_EQ(native_local_aggregate->responses.size(), 2U);
+  EXPECT_EQ(native_local_aggregate->result_rows, native_distributed_aggregate->result_rows);
+  EXPECT_EQ(native_local_aggregate->responses[0].frame.payload,
+            native_distributed_aggregate->responses[0].frame.payload);
+
+  auto native_zero_aggregate = local_distributed_native.execute_query(
+      query_request("SELECT count(*) AS rows FROM events LIMIT 0"));
+  ASSERT_TRUE(native_zero_aggregate.has_value()) << native_zero_aggregate.error().to_string();
+  ASSERT_EQ(native_zero_aggregate->responses.size(), 2U);
+  EXPECT_EQ(native_zero_aggregate->result_rows, 0U);
+  const auto zero_aggregate_batch =
+      network::decode_query_result_batch(native_zero_aggregate->responses[0].frame.payload);
+  ASSERT_TRUE(zero_aggregate_batch.has_value()) << zero_aggregate_batch.error().to_string();
+  EXPECT_EQ(zero_aggregate_batch->row_count(), 0U);
+  ASSERT_EQ(zero_aggregate_batch->columns().size(), 1U);
+  EXPECT_EQ(zero_aggregate_batch->columns().front().name, "rows");
+
+  auto bounded_aggregate_config = local_distributed_config;
+  bounded_aggregate_config.aggregate_finalization.maximum_input_rows = 1U;
+  NativeProtocolService bounded_aggregate_native{*database, *read_barrier,
+                                                 bounded_aggregate_config};
+  auto bounded_aggregate =
+      bounded_aggregate_native.execute_query(query_request("SELECT count(*) AS rows FROM events"));
+  ASSERT_TRUE(bounded_aggregate.has_value()) << bounded_aggregate.error().to_string();
+  ASSERT_EQ(bounded_aggregate->responses.size(), 1U);
+  ASSERT_EQ(bounded_aggregate->responses.front().frame.header.message_type,
+            network::MessageType::kError);
+  const auto bounded_aggregate_error =
+      network::decode_error_message(bounded_aggregate->responses.front().frame.payload);
+  ASSERT_TRUE(bounded_aggregate_error.has_value()) << bounded_aggregate_error.error().to_string();
+  EXPECT_EQ(bounded_aggregate_error->code, network::ProtocolErrorCode::kOverloaded);
 
   auto native_between = local_distributed_native.execute_query(
       query_request("SELECT tag AS label, ts, tag AS repeated FROM events "

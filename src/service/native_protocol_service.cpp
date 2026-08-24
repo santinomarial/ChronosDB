@@ -237,6 +237,28 @@ bounded_finalization_limits(const NativeDistributedMutableVectorRowsQueryConfig&
   return limits;
 }
 
+[[nodiscard]] cluster::DistributedVectorAggregateRowsFinalizationLimitsV2
+bounded_aggregate_finalization_limits(const NativeDistributedMutableVectorRowsQueryConfig& config,
+                                      const NativeProtocolServiceLimits& service) noexcept {
+  cluster::DistributedVectorAggregateRowsFinalizationLimitsV2 limits =
+      config.aggregate_finalization;
+  limits.maximum_query_memory_bytes =
+      std::min(limits.maximum_query_memory_bytes, service.maximum_query_memory_bytes);
+  limits.output.maximum_output_encoded_bytes =
+      std::min(limits.output.maximum_output_encoded_bytes, service.maximum_response_payload_bytes);
+  limits.output.output_batch.maximum_rows = static_cast<std::uint32_t>(
+      std::min<std::uint64_t>(limits.output.output_batch.maximum_rows,
+                              std::min<std::uint64_t>(service.maximum_result_rows,
+                                                      std::numeric_limits<std::uint32_t>::max())));
+  limits.output.output_batch.maximum_columns =
+      std::min(limits.output.output_batch.maximum_columns, service.query_result.maximum_columns);
+  limits.output.output_batch.maximum_column_name_bytes =
+      std::min(limits.output.output_batch.maximum_column_name_bytes,
+               service.query_result.maximum_column_name_bytes);
+  limits.output.output_batch.protocol = service.protocol;
+  return limits;
+}
+
 [[nodiscard]] common::Result<NativeProtocolResponseSequence>
 distributed_rows_result(const ResponseRoute& target,
                         cluster::DistributedVectorRowsFinalizedResultV2&& result,
@@ -262,6 +284,31 @@ distributed_rows_result(const ResponseRoute& target,
     return common::make_unexpected(exhausted("distributed row response allocation failed"));
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("distributed row response exceeds limits"));
+  }
+}
+
+[[nodiscard]] common::Result<NativeProtocolResponseSequence>
+distributed_aggregate_result(const ResponseRoute& target,
+                             cluster::DistributedVectorAggregateFinalizedResultV2&& result,
+                             const NativeProtocolServiceLimits& limits) {
+  if (result.row_count > limits.maximum_result_rows ||
+      result.encoded_bytes > limits.maximum_response_payload_bytes ||
+      result.encoded_bytes != result.encoded_batch.size()) {
+    return query_error(target,
+                       exhausted("distributed aggregate result exceeds Native query limits"),
+                       limits.protocol);
+  }
+  try {
+    NativeProtocolResponseSequence responses;
+    responses.result_rows = result.row_count;
+    responses.payload_bytes = result.encoded_bytes;
+    responses.responses.reserve(2U);
+    responses.responses.push_back(
+        make_response(target, network::MessageType::kQueryResult, std::move(result.encoded_batch)));
+    responses.responses.push_back(make_response(target, network::MessageType::kQueryEnd));
+    return responses;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("distributed aggregate response allocation failed"));
   }
 }
 
@@ -438,7 +485,7 @@ NativeProtocolService::NativeProtocolService(
     const NativeDistributedMutableVectorRowsQueryConfig& distributed_rows,
     NativeProtocolServiceLimits limits) noexcept
     : replicated_database_(&database), replicated_read_barrier_(&read_barrier),
-      identities_(&system_identity_generator()), distributed_mutable_rows_(&distributed_rows),
+      identities_(&system_identity_generator()), distributed_mutable_query_(&distributed_rows),
       limits_(limits) {}
 NativeProtocolService::NativeProtocolService(
     ReplicatedIngestDatabase& database, ReplicatedReadBarrier& read_barrier,
@@ -446,7 +493,7 @@ NativeProtocolService::NativeProtocolService(
     const NativeDistributedMutableVectorRowsQueryConfig& distributed_rows,
     NativeProtocolServiceLimits limits) noexcept
     : replicated_database_(&database), replicated_read_barrier_(&read_barrier),
-      identities_(&identities), distributed_mutable_rows_(&distributed_rows), limits_(limits) {}
+      identities_(&identities), distributed_mutable_query_(&distributed_rows), limits_(limits) {}
 
 common::Result<network::NetworkTask>
 NativeProtocolService::execute_ingest(network::NetworkTask request) {
@@ -684,13 +731,13 @@ NativeProtocolService::execute_query(network::NetworkTask request,
     auto parsed = query::parse_sql_v1_select(sql_text, limits_.sql_parser);
     if (!parsed.has_value())
       return query_error(target, parsed.error().status(), limits_.protocol);
-    if (distributed_mutable_rows_ != nullptr &&
-        !valid_distributed_rows_config(*distributed_mutable_rows_)) {
-      return query_error(target, invalid("distributed Native row query config is invalid"),
+    if (distributed_mutable_query_ != nullptr &&
+        !valid_distributed_rows_config(*distributed_mutable_query_)) {
+      return query_error(target, invalid("distributed Native query config is invalid"),
                          limits_.protocol);
     }
     if (replicated_database_ != nullptr && replicated_read_barrier_ != nullptr &&
-        distributed_mutable_rows_ == nullptr &&
+        distributed_mutable_query_ == nullptr &&
         target.protocol.protocol_major == network::kProtocolV2Major &&
         (target.protocol.feature_bits & network::kProtocolV2LeaderRedirectFeature) != 0U) {
       auto preliminary = replicated_database_->acquire_query_snapshot();
@@ -725,7 +772,7 @@ NativeProtocolService::execute_query(network::NetworkTask request,
       common::Result<ReplicatedQuerySnapshot> acquired = [&]() {
         if (replicated_read_barrier_ == nullptr)
           return replicated_database_->acquire_query_snapshot();
-        if (distributed_mutable_rows_ == nullptr) {
+        if (distributed_mutable_query_ == nullptr) {
           auto barriers = replicated_read_barrier_->await();
           if (!barriers.has_value())
             return common::Result<ReplicatedQuerySnapshot>{
@@ -764,17 +811,31 @@ NativeProtocolService::execute_query(network::NetworkTask request,
       return query_error(target, unsupported("native FOR SYSTEM_TIME storage is not configured"),
                          limits_.protocol);
     }
-    if (distributed_mutable_rows_ != nullptr) {
-      const NativeDistributedMutableVectorRowsQueryConfig& config = *distributed_mutable_rows_;
+    if (distributed_mutable_query_ != nullptr) {
+      const NativeDistributedMutableVectorRowsQueryConfig& config = *distributed_mutable_query_;
       if (!replicated_snapshot.has_value() || !replicated_authorities.has_value()) {
         return query_error(target,
                            internal("distributed Native row query authority is unavailable"),
                            limits_.protocol);
       }
-      auto lowered =
-          query::lower_bound_sql_select_to_distributed_vector_rows(*bound, config.sql_lowering);
-      if (!lowered.has_value())
-        return query_error(target, lowered.error().status(), limits_.protocol);
+      std::optional<query::DistributedVectorRowsSqlPlan> lowered_rows;
+      std::optional<query::DistributedVectorAggregateSqlPlan> lowered_aggregate;
+      const query::DistributedVectorRowsSqlPlan* execution_sql{};
+      if (bound->aggregate_query()) {
+        auto aggregate = query::lower_bound_sql_select_to_distributed_vector_aggregate(
+            *bound, config.aggregate_sql_lowering);
+        if (!aggregate.has_value())
+          return query_error(target, aggregate.error().status(), limits_.protocol);
+        lowered_aggregate.emplace(std::move(*aggregate));
+        execution_sql = &lowered_aggregate->input_rows;
+      } else {
+        auto rows =
+            query::lower_bound_sql_select_to_distributed_vector_rows(*bound, config.sql_lowering);
+        if (!rows.has_value())
+          return query_error(target, rows.error().status(), limits_.protocol);
+        lowered_rows.emplace(std::move(*rows));
+        execution_sql = &*lowered_rows;
+      }
       if (identities_ == nullptr) {
         return query_error(target, internal("distributed Native query identity source is absent"),
                            limits_.protocol);
@@ -788,7 +849,7 @@ NativeProtocolService::execute_query(network::NetworkTask request,
       }
       auto prepared = replicated_snapshot->prepare_linearizable_mutable_vector_rows_query(
           {.query_id = *query_id,
-           .sql_plan = std::cref(*lowered),
+           .sql_plan = std::cref(*execution_sql),
            .group_authorities = *replicated_authorities},
           config.tls_contexts, config.route_resolution);
       if (!prepared.has_value())
@@ -832,7 +893,7 @@ NativeProtocolService::execute_query(network::NetworkTask request,
             } else {
               auto replacement = snapshot->prepare_linearizable_mutable_vector_rows_query(
                   {.query_id = *query_id,
-                   .sql_plan = std::cref(*lowered),
+                   .sql_plan = std::cref(*execution_sql),
                    .group_authorities = *authorities},
                   config.tls_contexts, config.route_resolution);
               if (!replacement.has_value()) {
@@ -995,6 +1056,15 @@ NativeProtocolService::execute_query(network::NetworkTask request,
         auto coordinated = std::move(*coordinator).finish();
         if (!coordinated.has_value())
           return query_error(target, coordinated.error(), limits_.protocol);
+        if (lowered_aggregate.has_value()) {
+          auto finalized = cluster::finalize_distributed_vector_aggregate_rows_v2(
+              {.plan = logical_identity->plan, .result = std::move(*coordinated)},
+              lowered_aggregate->intent, std::move(lowered_aggregate->result_schema),
+              bounded_aggregate_finalization_limits(config, limits_));
+          if (!finalized.has_value())
+            return query_error(target, finalized.error(), limits_.protocol);
+          return distributed_aggregate_result(target, std::move(*finalized), limits_);
+        }
         auto finalized = cluster::finalize_distributed_vector_rows_v2(
             {.plan = logical_identity->plan, .result = std::move(*coordinated)},
             bounded_finalization_limits(config, limits_));

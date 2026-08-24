@@ -340,12 +340,14 @@ SqlResult<DistributedVectorRowsSqlPlan> lower_bound_sql_select_to_distributed_ve
         }
         const std::size_t ordinal = reference->column_ordinal;
         if (first_worker_output[ordinal] >= 0) {
-          output = static_cast<std::size_t>(first_worker_output[ordinal]);
-          if (*output >= ordered_outputs.size()) {
+          const std::size_t existing_output =
+              static_cast<std::size_t>(first_worker_output[ordinal]);
+          if (existing_output >= ordered_outputs.size()) {
             return std::unexpected(diagnostic(SqlDiagnosticCode::kExecutionFailure,
                                               item.expression.span(), common::StatusCode::kInternal,
                                               "Distributed hidden ORDER BY output is unavailable"));
           }
+          output = existing_output;
         }
         if (!output.has_value()) {
           if (result.intent.row_output_indices.size() >= limits.maximum_output_columns) {
@@ -381,22 +383,29 @@ SqlResult<DistributedVectorRowsSqlPlan> lower_bound_sql_select_to_distributed_ve
           output = result.intent.row_output_indices.size();
           result.intent.row_output_indices.push_back(
               static_cast<std::uint32_t>(projected_index[ordinal]));
-          first_worker_output[ordinal] = static_cast<std::int64_t>(*output);
+          first_worker_output[ordinal] =
+              static_cast<std::int64_t>(result.intent.row_output_indices.size() - 1U);
           result.result_schema.columns.push_back(
               {.name = column.name(), .type = column.type(), .nullable = column.nullable()});
           ordered_outputs.push_back(false);
         }
       }
-      if (ordered_outputs[*output])
+      const std::size_t order_output = output.value_or(ordered_outputs.size());
+      if (order_output >= ordered_outputs.size()) {
+        return std::unexpected(diagnostic(SqlDiagnosticCode::kExecutionFailure,
+                                          item.expression.span(), common::StatusCode::kInternal,
+                                          "Distributed ORDER BY output is unavailable"));
+      }
+      if (ordered_outputs[order_output])
         continue;
       if (result.intent.order_keys.size() >= limits.maximum_order_keys) {
         throw LoweringFailure{diagnostic(SqlDiagnosticCode::kResourceLimit, item.expression.span(),
                                          common::StatusCode::kResourceExhausted,
                                          "Distributed ORDER BY key count exceeds the limit")};
       }
-      ordered_outputs[*output] = true;
+      ordered_outputs[order_output] = true;
       result.intent.order_keys.push_back(
-          {.output_index = static_cast<std::uint32_t>(*output),
+          {.output_index = static_cast<std::uint32_t>(order_output),
            .direction = item.direction == SqlOrderDirection::kAscending
                             ? PhysicalSortDirection::kAscending
                             : PhysicalSortDirection::kDescending,
@@ -480,10 +489,18 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
 
     const schema::TableSchema& source = *select.sources().front().schema_ptr();
     DistributedVectorAggregateSqlPlan result{
-        .table_id = source.table_id(),
-        .destination_schema_id = source.schema_id(),
-        .destination_column_ordinals = {},
-        .event_time_predicate = std::nullopt,
+        .input_rows = {.table_id = source.table_id(),
+                       .destination_schema_id = source.schema_id(),
+                       .destination_column_ordinals = {},
+                       .event_time_predicate = std::nullopt,
+                       .intent = {.mode = DistributedVectorPlanMode::kRows,
+                                  .row_output_indices = {},
+                                  .visible_row_output_indices = {},
+                                  .group_key_input_indices = {},
+                                  .aggregates = {},
+                                  .order_keys = {},
+                                  .limit = std::nullopt},
+                       .result_schema = {}},
         .intent = {.mode = DistributedVectorPlanMode::kUngroupedAggregate,
                    .row_output_indices = {},
                    .visible_row_output_indices = {},
@@ -494,7 +511,9 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
         .result_schema = {},
     };
     std::vector<std::int64_t> projected_index(source.columns().size(), -1);
-    result.destination_column_ordinals.reserve(select.outputs().size());
+    result.input_rows.destination_column_ordinals.reserve(select.outputs().size());
+    result.input_rows.intent.row_output_indices.reserve(select.outputs().size());
+    result.input_rows.result_schema.columns.reserve(select.outputs().size());
     result.intent.aggregates.reserve(select.outputs().size());
     result.result_schema.columns.reserve(select.outputs().size());
 
@@ -536,14 +555,22 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
         }
         const std::size_t ordinal = reference->column_ordinal;
         if (projected_index[ordinal] < 0) {
-          if (result.destination_column_ordinals.size() >= limits.maximum_projection_columns) {
+          if (result.input_rows.destination_column_ordinals.size() >=
+              limits.maximum_projection_columns) {
             throw LoweringFailure{diagnostic(SqlDiagnosticCode::kResourceLimit, child.span(),
                                              common::StatusCode::kResourceExhausted,
                                              "Distributed aggregate projection exceeds the limit")};
           }
           projected_index[ordinal] =
-              static_cast<std::int64_t>(result.destination_column_ordinals.size());
-          result.destination_column_ordinals.push_back(static_cast<std::uint32_t>(ordinal));
+              static_cast<std::int64_t>(result.input_rows.destination_column_ordinals.size());
+          result.input_rows.destination_column_ordinals.push_back(
+              static_cast<std::uint32_t>(ordinal));
+          result.input_rows.intent.row_output_indices.push_back(
+              static_cast<std::uint32_t>(projected_index[ordinal]));
+          const schema::ColumnDefinition& projected = source.columns()[ordinal];
+          result.input_rows.result_schema.columns.push_back({.name = projected.name(),
+                                                             .type = projected.type(),
+                                                             .nullable = projected.nullable()});
         }
         const std::uint32_t input_index = static_cast<std::uint32_t>(projected_index[ordinal]);
         const schema::ColumnDefinition& column = source.columns()[ordinal];
@@ -579,10 +606,10 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
             SqlDiagnosticCode::kExecutionFailure, where->span(), common::StatusCode::kInternal,
             "Distributed aggregate WHERE produced no event-time bound")};
       }
-      result.event_time_predicate = predicate;
+      result.input_rows.event_time_predicate = predicate;
     }
 
-    if (result.destination_column_ordinals.empty()) {
+    if (result.input_rows.destination_column_ordinals.empty()) {
       const auto anchor = std::ranges::find(source.columns(), source.event_time_column(),
                                             &schema::ColumnDefinition::id);
       if (anchor == source.columns().end()) {
@@ -590,12 +617,17 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
                                           select.syntax().span(), common::StatusCode::kInternal,
                                           "Distributed COUNT(*) projection anchor is absent"));
       }
-      result.destination_column_ordinals.push_back(
-          static_cast<std::uint32_t>(anchor - source.columns().begin()));
+      const std::uint32_t anchor_ordinal =
+          static_cast<std::uint32_t>(anchor - source.columns().begin());
+      result.input_rows.destination_column_ordinals.push_back(anchor_ordinal);
+      result.input_rows.intent.row_output_indices.push_back(0U);
+      result.input_rows.result_schema.columns.push_back(
+          {.name = anchor->name(), .type = anchor->type(), .nullable = anchor->nullable()});
     }
 
     const common::Status plan_status = validate_distributed_vector_plan_intent(
-        result.intent, static_cast<std::uint32_t>(result.destination_column_ordinals.size()),
+        result.intent,
+        static_cast<std::uint32_t>(result.input_rows.destination_column_ordinals.size()),
         limits.maximum_aggregates);
     if (!plan_status.is_ok()) {
       const SqlDiagnosticCode code = plan_status.code() == common::StatusCode::kResourceExhausted
@@ -604,10 +636,29 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
       return std::unexpected(SqlDiagnostic{code, select.syntax().span(), plan_status});
     }
     std::vector<PhysicalColumnShape> projected_shapes;
-    projected_shapes.reserve(result.destination_column_ordinals.size());
-    for (const std::uint32_t ordinal : result.destination_column_ordinals) {
+    projected_shapes.reserve(result.input_rows.destination_column_ordinals.size());
+    for (const std::uint32_t ordinal : result.input_rows.destination_column_ordinals) {
       const schema::ColumnDefinition& column = source.columns()[ordinal];
       projected_shapes.push_back({.type = column.type(), .nullable = column.nullable()});
+    }
+    const common::Status input_plan_status = validate_distributed_vector_plan_intent(
+        result.input_rows.intent, static_cast<std::uint32_t>(projected_shapes.size()),
+        limits.maximum_projection_columns);
+    if (!input_plan_status.is_ok()) {
+      const SqlDiagnosticCode code =
+          input_plan_status.code() == common::StatusCode::kResourceExhausted
+              ? SqlDiagnosticCode::kResourceLimit
+              : SqlDiagnosticCode::kExecutionFailure;
+      return std::unexpected(SqlDiagnostic{code, select.syntax().span(), input_plan_status});
+    }
+    const common::Status input_schema_status = validate_distributed_vector_result_schema(
+        result.input_rows.intent, projected_shapes, result.input_rows.result_schema);
+    if (!input_schema_status.is_ok()) {
+      const SqlDiagnosticCode code =
+          input_schema_status.code() == common::StatusCode::kResourceExhausted
+              ? SqlDiagnosticCode::kResourceLimit
+              : SqlDiagnosticCode::kExecutionFailure;
+      return std::unexpected(SqlDiagnostic{code, select.syntax().span(), input_schema_status});
     }
     const common::Status schema_status = validate_distributed_vector_result_schema(
         result.intent, projected_shapes, result.result_schema);

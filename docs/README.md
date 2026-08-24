@@ -334,7 +334,8 @@ existence of a design document alone is not implementation evidence.
   event-time truth, result descriptors, limits, and fail-closed semantics.
 - [Mutable-row aggregate finalization](learning/mutable-row-aggregate-finalization.md): bounded
   coordinator accumulation over complete replicated tablet row streams using the shared aggregate
-  kernel and existing all-or-none Native finalizer.
+  kernel and existing all-or-none Native finalizer, including production service retry,
+  cancellation, local/remote execution, and daemon composition.
 - [Native protocol request lifecycle](learning/native-protocol-request-lifecycle.md): negotiated
   limits, bounded active requests, monotonic identities, cancellation, and durability-explicit
   acknowledgements.

@@ -70,6 +70,19 @@ batch view is alive. Returned schema and payload own their memory. Every failure
 states and reservations through RAII; no partial Native response escapes. This code is
 single-thread-affine, so it has no shared-memory publication or memory-ordering requirement.
 
+## Replicated Native composition
+
+After SQL binding, the service chooses the aggregate product's `input_rows` for the same correlated
+snapshot preparation used by direct SELECT rows. Self-led fragments execute through the local
+proof-revalidating worker and remote fragments through the mutual-TLS scheduler. Both enter one
+all-tablet result coordinator. A retryable authority failure discards that entire coordinator and
+installs only a freshly barrier-covered fragment set with identical logical identity; cancellation
+and the original deadline cover both modes.
+
+The service invokes this finalizer only after the coordinator closes. It then applies Native
+response row/name/payload limits and emits QUERY_RESULT plus QUERY_END. LIMIT zero is not an empty
+response: it is one zero-row schema-bearing QUERY_RESULT followed by QUERY_END.
+
 ## Tradeoffs and interview questions
 
 **Why not calculate aggregates directly from Native bytes?** The physical column adapter lets one
@@ -83,5 +96,5 @@ variance.
 tempting partial result. Publication still happens only after complete authority has been proved.
 
 **What should replace this at scale?** Bind the existing sufficient-state exchange to current
-TabletSnapshot/Raft proof authority and package it in the same authenticated service. The final
-Native scalar stage can remain unchanged.
+TabletSnapshot/Raft proof authority and package it in the same authenticated service. The authority,
+retry, cancellation, and final Native scalar stages can remain unchanged.

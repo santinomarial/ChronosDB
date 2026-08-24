@@ -1088,6 +1088,38 @@ void expect_replicated_rows(const int client, const std::uint64_t request_id) {
   EXPECT_EQ(batch->columns()[1].name, "tag");
   response = network::decode_frame(receive_frame(client)).value_or(network::Frame{});
   EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
+
+  response = send_replicated_query(
+      client, request_id + 1U,
+      "SELECT count(*) AS rows, count(tag) AS tags, min(tag) AS first_tag FROM events");
+  if (response.header.message_type == network::MessageType::kError) {
+    auto decoded = network::decode_error_message(response.payload);
+    ASSERT_TRUE(decoded.has_value());
+    ADD_FAILURE() << "distributed aggregate query failed: " << byte_string(decoded->message);
+    return;
+  }
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
+  auto aggregate = network::decode_query_result_batch(response.payload);
+  ASSERT_TRUE(aggregate.has_value()) << aggregate.error().to_string();
+  ASSERT_EQ(aggregate->row_count(), 1U);
+  ASSERT_EQ(aggregate->columns().size(), 3U);
+  EXPECT_EQ(aggregate->columns()[0].name, "rows");
+  EXPECT_EQ(aggregate->columns()[1].name, "tags");
+  EXPECT_EQ(aggregate->columns()[2].name, "first_tag");
+  const network::QueryResultCell* rows = aggregate->cell(0U, 0U);
+  const network::QueryResultCell* tags = aggregate->cell(0U, 1U);
+  const network::QueryResultCell* first_tag = aggregate->cell(0U, 2U);
+  ASSERT_NE(rows, nullptr);
+  ASSERT_NE(tags, nullptr);
+  ASSERT_NE(first_tag, nullptr);
+  common::ByteReader rows_reader{rows->value};
+  common::ByteReader tags_reader{tags->value};
+  EXPECT_EQ(rows_reader.read_i64_le().value(), 2);
+  EXPECT_EQ(tags_reader.read_i64_le().value(), 1);
+  ASSERT_EQ(first_tag->value.size(), 1U);
+  EXPECT_EQ(first_tag->value.front(), std::byte{'x'});
+  response = network::decode_frame(receive_frame(client)).value_or(network::Frame{});
+  EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
 }
 
 [[nodiscard]] network::Frame send_query(const int client, const std::uint64_t request_id,
