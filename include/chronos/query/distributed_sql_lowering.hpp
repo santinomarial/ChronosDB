@@ -5,6 +5,7 @@
 #include "chronos/query/binder.hpp"
 #include "chronos/query/distributed_vector_plan.hpp"
 #include "chronos/query/distributed_vector_result_schema.hpp"
+#include "chronos/query/physical_lowering.hpp"
 #include "chronos/query/vector_expression.hpp"
 #include "chronos/schema/identity.hpp"
 
@@ -34,6 +35,11 @@ struct DistributedVectorAggregateSqlLoweringLimits {
       distributed_vector_result_schema_format::kMaximumNameLength};
   VectorExpressionLimits expression_limits{};
   std::size_t maximum_expression_configuration_bytes{std::size_t{4U} * 1024U * 1024U};
+};
+
+struct DistributedVectorGroupedSqlLoweringLimits {
+  DistributedVectorRowsSqlLoweringLimits rows{};
+  PhysicalSelectLoweringLimits physical{};
 };
 
 struct DistributedVectorRowSourceOutput {
@@ -153,6 +159,20 @@ struct DistributedVectorAggregateSqlPlan {
 [[nodiscard]] SqlResult<DistributedVectorAggregateSqlPlan>
 lower_bound_sql_select_to_distributed_vector_aggregate(
     const BoundSqlSelect& select, DistributedVectorAggregateSqlLoweringLimits limits = {});
+
+// Coordinator-executed distributed GROUP BY baseline. Workers return one unlimited identity
+// projection of the complete bound source schema. The coordinator then runs the ordinary checked,
+// query-accounted physical pipeline over the complete all-tablet stream, so WHERE, grouping,
+// aggregate expressions, final projection, global ORDER BY, and LIMIT retain local SQL semantics.
+struct DistributedVectorGroupedSqlPlan {
+  DistributedVectorRowsSqlPlan input_rows;
+  PhysicalPipelinePlan coordinator_pipeline;
+  DistributedVectorResultSchema result_schema;
+};
+
+[[nodiscard]] SqlResult<DistributedVectorGroupedSqlPlan>
+lower_bound_sql_select_to_distributed_vector_grouped(
+    const BoundSqlSelect& select, DistributedVectorGroupedSqlLoweringLimits limits = {});
 
 } // namespace chronos::query
 

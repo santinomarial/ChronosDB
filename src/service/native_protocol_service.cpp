@@ -259,6 +259,37 @@ bounded_aggregate_finalization_limits(const NativeDistributedMutableVectorRowsQu
   return limits;
 }
 
+[[nodiscard]] cluster::DistributedVectorPhysicalRowsFinalizationLimitsV2
+bounded_grouped_finalization_limits(const NativeDistributedMutableVectorRowsQueryConfig& config,
+                                    const NativeProtocolServiceLimits& service) noexcept {
+  cluster::DistributedVectorPhysicalRowsFinalizationLimitsV2 limits = config.grouped_finalization;
+  limits.maximum_query_memory_bytes =
+      std::min(limits.maximum_query_memory_bytes, service.maximum_query_memory_bytes);
+  limits.maximum_batch_working_bytes =
+      std::min(limits.maximum_batch_working_bytes, service.maximum_query_memory_bytes);
+  limits.maximum_output_rows = std::min(limits.maximum_output_rows, service.maximum_result_rows);
+  limits.maximum_output_batches =
+      std::min(limits.maximum_output_batches, service.maximum_result_batches);
+  limits.maximum_output_encoded_bytes =
+      std::min(limits.maximum_output_encoded_bytes, service.maximum_response_payload_bytes);
+  limits.input_batch.maximum_columns =
+      std::min(limits.input_batch.maximum_columns, service.query_result.maximum_columns);
+  limits.input_batch.maximum_column_name_bytes = std::min(
+      limits.input_batch.maximum_column_name_bytes, service.query_result.maximum_column_name_bytes);
+  limits.input_batch.protocol = service.protocol;
+  limits.output_batch.maximum_rows = static_cast<std::uint32_t>(
+      std::min<std::uint64_t>(limits.output_batch.maximum_rows,
+                              std::min<std::uint64_t>(service.maximum_result_rows,
+                                                      std::numeric_limits<std::uint32_t>::max())));
+  limits.output_batch.maximum_columns =
+      std::min(limits.output_batch.maximum_columns, service.query_result.maximum_columns);
+  limits.output_batch.maximum_column_name_bytes =
+      std::min(limits.output_batch.maximum_column_name_bytes,
+               service.query_result.maximum_column_name_bytes);
+  limits.output_batch.protocol = service.protocol;
+  return limits;
+}
+
 [[nodiscard]] common::Result<NativeProtocolResponseSequence>
 distributed_rows_result(const ResponseRoute& target,
                         cluster::DistributedVectorRowsFinalizedResultV2&& result,
@@ -820,14 +851,24 @@ NativeProtocolService::execute_query(network::NetworkTask request,
       }
       std::optional<query::DistributedVectorRowsSqlPlan> lowered_rows;
       std::optional<query::DistributedVectorAggregateSqlPlan> lowered_aggregate;
+      std::optional<query::DistributedVectorGroupedSqlPlan> lowered_grouped;
       const query::DistributedVectorRowsSqlPlan* execution_sql{};
       if (bound->aggregate_query()) {
-        auto aggregate = query::lower_bound_sql_select_to_distributed_vector_aggregate(
-            *bound, config.aggregate_sql_lowering);
-        if (!aggregate.has_value())
-          return query_error(target, aggregate.error().status(), limits_.protocol);
-        lowered_aggregate.emplace(std::move(*aggregate));
-        execution_sql = &lowered_aggregate->input_rows;
+        if (bound->syntax().group_by().empty()) {
+          auto aggregate = query::lower_bound_sql_select_to_distributed_vector_aggregate(
+              *bound, config.aggregate_sql_lowering);
+          if (!aggregate.has_value())
+            return query_error(target, aggregate.error().status(), limits_.protocol);
+          lowered_aggregate.emplace(std::move(*aggregate));
+          execution_sql = &lowered_aggregate->input_rows;
+        } else {
+          auto grouped = query::lower_bound_sql_select_to_distributed_vector_grouped(
+              *bound, config.grouped_sql_lowering);
+          if (!grouped.has_value())
+            return query_error(target, grouped.error().status(), limits_.protocol);
+          lowered_grouped.emplace(std::move(*grouped));
+          execution_sql = &lowered_grouped->input_rows;
+        }
       } else {
         auto rows =
             query::lower_bound_sql_select_to_distributed_vector_rows(*bound, config.sql_lowering);
@@ -1089,6 +1130,15 @@ NativeProtocolService::execute_query(network::NetworkTask request,
           if (!finalized.has_value())
             return query_error(target, finalized.error(), limits_.protocol);
           return distributed_aggregate_result(target, std::move(*finalized), limits_);
+        }
+        if (lowered_grouped.has_value()) {
+          auto finalized = cluster::finalize_distributed_vector_physical_rows_v2(
+              {.plan = logical_identity->plan, .result = std::move(*coordinated)},
+              lowered_grouped->coordinator_pipeline, std::move(lowered_grouped->result_schema),
+              bounded_grouped_finalization_limits(config, limits_));
+          if (!finalized.has_value())
+            return query_error(target, finalized.error(), limits_.protocol);
+          return distributed_rows_result(target, std::move(*finalized), limits_);
         }
         if (!lowered_rows.has_value())
           return query_error(target, internal("distributed row SQL plan is absent"),

@@ -1392,8 +1392,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   Coordinator-side group-key ORDER BY with explicit null placement and LIMIT now runs only after
   global cross-tablet merge, providing correct bounded top-N for the supported FLOAT64 grouping
   surface. COUNT/SUM/MIN/MAX/mean/population-variance ordering now uses those globally merged states
-  with a deterministic group-key tie-breaker before LIMIT. Multi-key/non-FLOAT64 state/transport,
-  arbitrary expression ordering, and general row ordering/LIMIT remain deferred. The distinct
+  with a deterministic group-key tie-breaker before LIMIT. Replicated Native SQL additionally has
+  a bounded row-backed coordinator baseline that feeds complete authority-proved tablet rows into
+  the existing multi-key, all-type physical GROUP BY engine, including checked WHERE, computed
+  keys and aggregate inputs, final expressions, global ordering, and LIMIT. Multi-key/non-FLOAT64
+  sufficient-state transport and shuffle remain deferred. The distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;
   a separate canonical checksummed cluster protocol now requests one group-correlated ordered

@@ -64,6 +64,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cluster/distributed_vector_query_transport_v2.hpp>
 #include <chronos/cluster/distributed_vector_aggregate_finalization_v2.hpp>
 #include <chronos/cluster/distributed_vector_aggregate_rows_finalization_v2.hpp>
+#include <chronos/cluster/distributed_vector_physical_rows_finalization_v2.hpp>
 #include <chronos/cluster/distributed_vector_aggregate_query_execution_v2.hpp>
 #include <chronos/cluster/distributed_vector_aggregate_query_tcp_client_v2.hpp>
 #include <chronos/cluster/distributed_vector_aggregate_query_tcp_execution_v2.hpp>
@@ -294,6 +295,8 @@ int main() {
   const auto validate_vector_plan = &chronos::query::validate_distributed_vector_plan_intent;
   const auto lower_distributed_vector_rows_sql =
       &chronos::query::lower_bound_sql_select_to_distributed_vector_rows;
+  const auto lower_distributed_vector_grouped_sql =
+      &chronos::query::lower_bound_sql_select_to_distributed_vector_grouped;
   const auto encode_vector_aggregate_state =
       &chronos::query::encode_mergeable_vector_aggregate_state;
   const auto decode_vector_aggregate_state =
@@ -421,6 +424,8 @@ int main() {
       &chronos::cluster::DistributedVectorQueryExecutionV2::create;
   const auto finalize_vector_rows_v2 =
       &chronos::cluster::finalize_distributed_vector_rows_v2;
+  const auto finalize_vector_physical_rows_v2 =
+      &chronos::cluster::finalize_distributed_vector_physical_rows_v2;
   const auto compare_canonical_scalar_bytes =
       &chronos::query::compare_canonical_scalar_bytes;
   const auto create_vector_query_tcp_execution_v2 =
@@ -1690,6 +1695,8 @@ int main() {
                  create_distributed_vector_result_coordinator_v2 != nullptr &&
                  create_distributed_vector_aggregate_coordinator_v2 != nullptr &&
                  finalize_distributed_vector_aggregate_v2 != nullptr &&
+                 lower_distributed_vector_grouped_sql != nullptr &&
+                 finalize_vector_physical_rows_v2 != nullptr &&
                  create_replicated_vector_query_worker_v2 != nullptr &&
                  create_replicated_mutable_vector_query_worker != nullptr &&
                  create_mutable_vector_query_execution != nullptr &&

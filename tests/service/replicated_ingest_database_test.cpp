@@ -1043,6 +1043,9 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
                     "upper(coalesce(min(tag), 'none')) AS first_tag, "
                     "max(enabled) AS any_enabled FROM events "
                     "WHERE enabled AND lower(tag) = 'x' ORDER BY rows_plus DESC LIMIT 1"));
+  auto native_distributed_grouped = distributed_native.execute_query(query_request(
+      "SELECT coalesce(lower(tag), 'missing') AS bucket, enabled, count(*) AS n FROM events "
+      "GROUP BY coalesce(lower(tag), 'missing'), enabled ORDER BY n DESC, bucket ASC LIMIT 2"));
   auto native_distributed_constants = distributed_native.execute_query(
       query_request("SELECT 7 AS marker, upper('ok') AS word FROM events LIMIT 1"));
   auto native_distributed_expressions = distributed_native.execute_query(
@@ -1142,6 +1145,28 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   EXPECT_EQ(aggregate_any_enabled->value.front(), std::byte{1U});
   EXPECT_EQ(native_distributed_aggregate->responses[1].frame.header.message_type,
             network::MessageType::kQueryEnd);
+  ASSERT_TRUE(native_distributed_grouped.has_value())
+      << native_distributed_grouped.error().to_string();
+  ASSERT_EQ(native_distributed_grouped->responses.size(), 2U);
+  EXPECT_EQ(native_distributed_grouped->result_rows, 2U);
+  const auto remote_grouped_first =
+      network::decode_query_result_batch(native_distributed_grouped->responses[0].frame.payload);
+  ASSERT_TRUE(remote_grouped_first.has_value()) << remote_grouped_first.error().to_string();
+  ASSERT_EQ(remote_grouped_first->row_count(), 2U);
+  EXPECT_EQ(
+      std::string(reinterpret_cast<const char*>(remote_grouped_first->cell(0U, 0U)->value.data()),
+                  remote_grouped_first->cell(0U, 0U)->value.size()),
+      "missing");
+  EXPECT_EQ(
+      std::string(reinterpret_cast<const char*>(remote_grouped_first->cell(1U, 0U)->value.data()),
+                  remote_grouped_first->cell(1U, 0U)->value.size()),
+      "x");
+  common::ByteReader grouped_first_count{remote_grouped_first->cell(0U, 2U)->value};
+  common::ByteReader grouped_second_count{remote_grouped_first->cell(1U, 2U)->value};
+  EXPECT_EQ(grouped_first_count.read_i64_le().value(), 2);
+  EXPECT_EQ(grouped_second_count.read_i64_le().value(), 2);
+  EXPECT_EQ(native_distributed_grouped->responses[1].frame.header.message_type,
+            network::MessageType::kQueryEnd);
   ASSERT_TRUE(native_distributed_constants.has_value())
       << native_distributed_constants.error().to_string();
   ASSERT_EQ(native_distributed_constants->responses.size(), 2U);
@@ -1208,6 +1233,15 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   EXPECT_EQ(native_local_aggregate->result_rows, native_distributed_aggregate->result_rows);
   EXPECT_EQ(native_local_aggregate->responses[0].frame.payload,
             native_distributed_aggregate->responses[0].frame.payload);
+
+  auto native_local_grouped = local_distributed_native.execute_query(query_request(
+      "SELECT coalesce(lower(tag), 'missing') AS bucket, enabled, count(*) AS n FROM events "
+      "GROUP BY coalesce(lower(tag), 'missing'), enabled ORDER BY n DESC, bucket ASC LIMIT 2"));
+  ASSERT_TRUE(native_local_grouped.has_value()) << native_local_grouped.error().to_string();
+  ASSERT_EQ(native_local_grouped->responses.size(), native_distributed_grouped->responses.size());
+  EXPECT_EQ(native_local_grouped->result_rows, native_distributed_grouped->result_rows);
+  EXPECT_EQ(native_local_grouped->responses[0].frame.payload,
+            native_distributed_grouped->responses[0].frame.payload);
 
   auto native_local_constants = local_distributed_native.execute_query(
       query_request("SELECT 7 AS marker, upper('ok') AS word FROM events LIMIT 1"));

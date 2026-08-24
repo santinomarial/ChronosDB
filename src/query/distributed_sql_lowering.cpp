@@ -1174,4 +1174,133 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
   }
 }
 
+SqlResult<DistributedVectorGroupedSqlPlan> lower_bound_sql_select_to_distributed_vector_grouped(
+    const BoundSqlSelect& select, const DistributedVectorGroupedSqlLoweringLimits limits) {
+  try {
+    if (limits.rows.maximum_projection_columns == 0U ||
+        limits.rows.maximum_projection_columns >
+            distributed_vector_plan_format::kMaximumInputColumns ||
+        limits.rows.maximum_output_columns == 0U ||
+        limits.rows.maximum_output_columns >
+            distributed_vector_plan_format::kMaximumOutputColumns ||
+        limits.rows.maximum_result_name_bytes == 0U ||
+        limits.rows.maximum_result_name_bytes >
+            distributed_vector_result_schema_format::kMaximumNameLength) {
+      return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, select.syntax().span(),
+                                        common::StatusCode::kInvalidArgument,
+                                        "Distributed grouped SQL lowering limits are invalid"));
+    }
+    if (select.syntax().mode() != SqlSelectMode::kSelect || select.sources().size() != 1U ||
+        !select.asof_joins().empty() || select.syntax().system_time().has_value() ||
+        select.latest_by().has_value() || !select.aggregate_query() ||
+        select.syntax().group_by().empty()) {
+      return std::unexpected(
+          diagnostic(SqlDiagnosticCode::kUnsupportedSyntax, select.syntax().span(),
+                     common::StatusCode::kNotSupported,
+                     "Distributed grouped lowering requires one current grouped SELECT source"));
+    }
+    const schema::TableSchema& source = *select.sources().front().schema_ptr();
+    if (source.columns().empty() ||
+        source.columns().size() > limits.rows.maximum_projection_columns ||
+        select.outputs().empty() || select.outputs().size() > limits.rows.maximum_output_columns) {
+      return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, select.syntax().span(),
+                                        common::StatusCode::kResourceExhausted,
+                                        "Distributed grouped SQL width exceeds the limit"));
+    }
+
+    auto physical = lower_bound_sql_select(select, limits.physical);
+    if (!physical.has_value())
+      return std::unexpected(std::move(physical.error()));
+    if (physical->input_columns().size() != source.columns().size() ||
+        physical->output_columns().size() != select.outputs().size()) {
+      return std::unexpected(diagnostic(SqlDiagnosticCode::kExecutionFailure,
+                                        select.syntax().span(), common::StatusCode::kInternal,
+                                        "Distributed grouped physical shape is inconsistent"));
+    }
+
+    DistributedVectorRowsSqlPlan input{
+        .table_id = source.table_id(),
+        .destination_schema_id = source.schema_id(),
+        .destination_column_ordinals = {},
+        .event_time_predicate = std::nullopt,
+        .intent = {.mode = DistributedVectorPlanMode::kRows,
+                   .row_output_indices = {},
+                   .visible_row_output_indices = {},
+                   .group_key_input_indices = {},
+                   .aggregates = {},
+                   .order_keys = {},
+                   .limit = std::nullopt},
+        .result_schema = {},
+        .coordinator_projection = std::nullopt,
+    };
+    input.destination_column_ordinals.reserve(source.columns().size());
+    input.intent.row_output_indices.reserve(source.columns().size());
+    input.result_schema.columns.reserve(source.columns().size());
+    for (std::size_t ordinal = 0U; ordinal < source.columns().size(); ++ordinal) {
+      const schema::ColumnDefinition& column = source.columns()[ordinal];
+      if (column.name().size() > limits.rows.maximum_result_name_bytes ||
+          physical->input_columns()[ordinal] !=
+              PhysicalColumnShape{.type = column.type(), .nullable = column.nullable()}) {
+        return std::unexpected(
+            diagnostic(SqlDiagnosticCode::kExecutionFailure, select.syntax().span(),
+                       common::StatusCode::kInternal,
+                       "Distributed grouped input shape disagrees with the bound schema"));
+      }
+      input.destination_column_ordinals.push_back(static_cast<std::uint32_t>(ordinal));
+      input.intent.row_output_indices.push_back(static_cast<std::uint32_t>(ordinal));
+      input.result_schema.columns.push_back(
+          {.name = column.name(), .type = column.type(), .nullable = column.nullable()});
+    }
+
+    DistributedVectorResultSchema output_schema;
+    output_schema.columns.reserve(select.outputs().size());
+    for (std::size_t ordinal = 0U; ordinal < select.outputs().size(); ++ordinal) {
+      const BoundOutputColumn& output = select.outputs()[ordinal];
+      if (output.name.empty() || output.name.size() > limits.rows.maximum_result_name_bytes) {
+        return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit,
+                                          output.expression_span.value_or(select.syntax().span()),
+                                          common::StatusCode::kResourceExhausted,
+                                          "Distributed grouped result name exceeds the limit"));
+      }
+      if (physical->output_columns()[ordinal] !=
+          PhysicalColumnShape{.type = output.type, .nullable = output.nullable}) {
+        return std::unexpected(diagnostic(
+            SqlDiagnosticCode::kExecutionFailure,
+            output.expression_span.value_or(select.syntax().span()), common::StatusCode::kInternal,
+            "Distributed grouped output shape disagrees with the bound result"));
+      }
+      output_schema.columns.push_back(
+          {.name = output.name, .type = output.type, .nullable = output.nullable});
+    }
+
+    const common::Status plan_status = validate_distributed_vector_plan_intent(
+        input.intent, static_cast<std::uint32_t>(source.columns().size()),
+        static_cast<std::uint32_t>(source.columns().size()));
+    const common::Status input_schema_status = validate_distributed_vector_result_schema(
+        input.intent, physical->input_columns(), input.result_schema);
+    const common::Status output_schema_status =
+        validate_distributed_vector_result_schema_value(output_schema);
+    if (!plan_status.is_ok() || !input_schema_status.is_ok() || !output_schema_status.is_ok()) {
+      const common::Status& failure = !plan_status.is_ok()           ? plan_status
+                                      : !input_schema_status.is_ok() ? input_schema_status
+                                                                     : output_schema_status;
+      const SqlDiagnosticCode code = failure.code() == common::StatusCode::kResourceExhausted
+                                         ? SqlDiagnosticCode::kResourceLimit
+                                         : SqlDiagnosticCode::kExecutionFailure;
+      return std::unexpected(SqlDiagnostic{code, select.syntax().span(), failure});
+    }
+    return DistributedVectorGroupedSqlPlan{.input_rows = std::move(input),
+                                           .coordinator_pipeline = std::move(*physical),
+                                           .result_schema = std::move(output_schema)};
+  } catch (const std::bad_alloc&) {
+    return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, select.syntax().span(),
+                                      common::StatusCode::kResourceExhausted,
+                                      "Distributed grouped SQL lowering allocation failed"));
+  } catch (const std::length_error&) {
+    return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, select.syntax().span(),
+                                      common::StatusCode::kResourceExhausted,
+                                      "Distributed grouped SQL lowering exceeds container limits"));
+  }
+}
+
 } // namespace chronos::query

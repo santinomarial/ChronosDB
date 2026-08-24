@@ -665,6 +665,7 @@ add_library(
   src/cluster/distributed_vector_aggregate_query_tcp_server_v2.cpp
   src/cluster/distributed_vector_aggregate_query_tls_v2.cpp
   src/cluster/distributed_vector_aggregate_query_transport_v2.cpp
+  src/cluster/distributed_vector_physical_rows_finalization_v2.cpp
   src/cluster/distributed_vector_row_finalization_v2.cpp
   src/cluster/distributed_vector_result_exchange.cpp
   src/cluster/distributed_vector_query_execution_v2.cpp
@@ -1380,6 +1381,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/distributed_vector_aggregate_finalization_v2_test.cpp
     tests/cluster/distributed_vector_aggregate_rows_finalization_v2_header_self_contained.cpp
     tests/cluster/distributed_vector_aggregate_rows_finalization_v2_test.cpp
+    tests/cluster/distributed_vector_physical_rows_finalization_v2_header_self_contained.cpp
+    tests/cluster/distributed_vector_physical_rows_finalization_v2_test.cpp
     tests/cluster/distributed_vector_aggregate_query_execution_v2_header_self_contained.cpp
     tests/cluster/distributed_vector_aggregate_query_tcp_client_v2_header_self_contained.cpp
     tests/cluster/distributed_vector_aggregate_query_tcp_execution_v2_header_self_contained.cpp
@@ -1495,6 +1498,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/distributed_mutable_vector_query_transport_allocation_failure_test.cpp
     tests/cluster/distributed_vector_aggregate_finalization_v2_allocation_failure_test.cpp
     tests/cluster/distributed_vector_aggregate_rows_finalization_v2_allocation_failure_test.cpp
+    tests/cluster/distributed_vector_physical_rows_finalization_v2_allocation_failure_test.cpp
     tests/cluster/distributed_vector_aggregate_query_transport_v2_allocation_failure_test.cpp
     tests/cluster/distributed_query_tcp_client_allocation_failure_test.cpp
     tests/cluster/distributed_vector_row_finalization_v2_allocation_failure_test.cpp

@@ -275,7 +275,10 @@ placement-backed authenticated remote observation acquisition and transfers only
 canonical authority vector into grouped execution. Retryable grouped failure now permits only a
 finite explicit whole-query replacement with identical logical shape and group-key, a nonregressing
 Manifest generation, unchanged deadline/budget, discarded old partials, and cumulative metrics.
-Multi-key/non-FLOAT64 state remains incomplete. A distinct
+Multi-key/non-FLOAT64 sufficient-state transport remains incomplete. Replicated Native SQL now
+executes that broader grouped surface through a bounded row-backed coordinator physical pipeline,
+including computed keys/inputs, global ordering, and LIMIT, while retaining the existing exchange
+bytes and all-tablet authority gate. A distinct
 canonical observation protocol, authenticated receiver, mTLS clients/servers, finite multi-address
 acquisition, correlated
 leader/follower pairs, canonical all-group batches, placement-backed construction, and packaged

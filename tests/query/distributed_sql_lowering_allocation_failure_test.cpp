@@ -182,5 +182,32 @@ TEST(DistributedSqlLoweringAllocationFailureTest,
   EXPECT_TRUE(reached_success);
 }
 
+TEST(DistributedSqlLoweringAllocationFailureTest,
+     ClassifiesEveryGroupedCoordinatorOwnedAllocationFailure) {
+  BoundSqlSelect select =
+      bound_select("SELECT value % 3 AS bucket, sum(value + 1) + count(*) AS total FROM metrics "
+                   "WHERE value >= 0 GROUP BY value % 3 ORDER BY total DESC LIMIT 2");
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 512U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    std::optional<SqlResult<DistributedVectorGroupedSqlPlan>> result;
+    std::size_t observed = 0U;
+    {
+      ::chronos::test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(lower_bound_sql_select_to_distributed_vector_grouped(select));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+    EXPECT_GT(observed, 0U);
+    if (result->has_value()) {
+      reached_success = true;
+      break;
+    }
+    EXPECT_EQ(result->error().code(), SqlDiagnosticCode::kResourceLimit);
+    EXPECT_EQ(result->error().status().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
 } // namespace
 } // namespace chronos::query

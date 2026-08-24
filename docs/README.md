@@ -336,6 +336,9 @@ existence of a design document alone is not implementation evidence.
   source-independent, and row-dependent vector-expression outputs, exact event-time specialization,
   general checked coordinator predicates, hidden direct-column global ordering inputs, bounded
   coordinator materialization, LIMIT, and fail-closed computed-order semantics.
+- [Distributed grouped SQL execution](learning/distributed-grouped-sql-execution.md): implemented
+  full-source authority-bound row exchange into the existing query-accounted multi-key/all-type
+  physical GROUP BY pipeline, with global ordering/LIMIT and all-or-none Native publication.
 - [Mutable-row aggregate finalization](learning/mutable-row-aggregate-finalization.md): bounded
   coordinator accumulation over complete replicated tablet row streams using the shared aggregate
   kernel and existing all-or-none Native finalizer, including production service retry,

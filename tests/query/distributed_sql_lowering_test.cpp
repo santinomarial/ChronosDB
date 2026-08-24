@@ -502,6 +502,39 @@ TEST(DistributedSqlLoweringTest, LowersCheckedFinalGlobalAggregateExpressions) {
   EXPECT_EQ(bounded.error().code(), SqlDiagnosticCode::kResourceLimit);
 }
 
+TEST(DistributedSqlLoweringTest, LowersCompleteSourceForCoordinatorGroupedExecution) {
+  BoundSqlSelect select =
+      bind("SELECT value % 5 AS bucket, count(*) AS rows, sum(value) AS total, "
+           "max(label) AS maximum_label FROM metrics WHERE value < 18 "
+           "GROUP BY value % 5 ORDER BY rows DESC, maximum_label ASC NULLS LAST, "
+           "bucket DESC LIMIT 11");
+  auto lowered = lower_bound_sql_select_to_distributed_vector_grouped(select);
+  ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
+  EXPECT_EQ(lowered->input_rows.destination_column_ordinals,
+            (std::vector<std::uint32_t>{0U, 1U, 2U}));
+  EXPECT_EQ(lowered->input_rows.intent.row_output_indices,
+            (std::vector<std::uint32_t>{0U, 1U, 2U}));
+  EXPECT_FALSE(lowered->input_rows.intent.limit.has_value());
+  EXPECT_FALSE(lowered->input_rows.event_time_predicate.has_value());
+  EXPECT_FALSE(lowered->input_rows.coordinator_projection.has_value());
+  ASSERT_EQ(lowered->coordinator_pipeline.input_columns().size(), 3U);
+  ASSERT_EQ(lowered->coordinator_pipeline.output_columns().size(), 4U);
+  ASSERT_EQ(lowered->result_schema.columns.size(), 4U);
+  EXPECT_EQ(lowered->result_schema.columns[0].name, "bucket");
+  EXPECT_EQ(lowered->result_schema.columns[1].name, "rows");
+  EXPECT_EQ(lowered->result_schema.columns[2].name, "total");
+  EXPECT_EQ(lowered->result_schema.columns[3].name, "maximum_label");
+
+  auto global =
+      lower_bound_sql_select_to_distributed_vector_grouped(bind("SELECT count(*) FROM metrics"));
+  ASSERT_FALSE(global.has_value());
+  EXPECT_EQ(global.error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
+  auto bounded = lower_bound_sql_select_to_distributed_vector_grouped(
+      select, {.rows = {.maximum_projection_columns = 1U}});
+  ASSERT_FALSE(bounded.has_value());
+  EXPECT_EQ(bounded.error().code(), SqlDiagnosticCode::kResourceLimit);
+}
+
 TEST(DistributedSqlLoweringTest, OwnsGeneralGlobalAggregatePredicates) {
   BoundSqlSelect select =
       bind("SELECT count(*) AS n, sum(value) AS total, min(label) AS minimum_label FROM metrics "

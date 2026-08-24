@@ -70,8 +70,9 @@ zero.
 
 ORDER BY may name a selected output because that expression is already evaluated and one global row
 cannot be reordered. Hidden ORDER BY expressions fail closed rather than adding unseen aggregate
-state or silently discarding possible errors. GROUP BY still needs its keyed state protocol in this
-SQL path, and computed aggregate inputs still require a separately accepted worker vocabulary.
+state or silently discarding possible errors. GROUP BY now uses the separate bounded row-backed
+coordinator physical-pipeline path; multi-key sufficient-state transport remains future work.
+Computed global aggregate inputs still require a separately accepted worker vocabulary.
 
 ## Ownership, limits, and failures
 
