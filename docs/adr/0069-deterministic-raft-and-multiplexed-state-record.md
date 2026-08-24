@@ -153,6 +153,10 @@ nonzero external identity tested on an empty snapshot. Randomized simulation, pa
 application snapshot codecs, coordinated fsync batching/crash testing, and production transport
 remain deferred.
 
+Packaged-daemon qualification now corrupts the first metadata record payload after its complete
+physical and multiplexed headers. Startup reports the exact payload-checksum mismatch before catalog
+projection or socket admission and preserves the complete Raft segment byte-for-byte.
+
 Dedicated allocation sweeps cover vote, append, snapshot, and read-barrier higher-term responses.
 Every observed persistent-state-copy failure preserves exact leadership and durable state, while an
 exact retry returns one follower demotion with the matching persistence transition.

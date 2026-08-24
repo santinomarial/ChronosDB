@@ -101,7 +101,9 @@ the daemon exits before listening and preserves the suffix for an intentional re
 
 A metadata-Raft segment-header checksum failure stops even earlier, after Bootstrap v1 validation
 but before catalog projection or WAL recovery. The daemon reports the exact Raft corruption, exits
-before listening, and preserves the complete damaged segment.
+before listening, and preserves the complete damaged segment. The adjacent record case leaves the
+multiplexed header valid, damages its payload, and requires the payload-checksum diagnostic with the
+same segment preservation.
 
 ## Complexity and tradeoffs
 
@@ -131,8 +133,8 @@ complete damaged image after rejection. The adjacent WAL case corrupts a covered
 and requires the exact CRC32C diagnostic plus complete-segment preservation. A complete-record case
 corrupts a packaged SQL INSERT body and proves the active segment is not truncated. A one-byte
 incomplete-tail case proves the packaged no-repair policy preserves the suffix. A metadata-Raft
-header case proves the complete segment remains unchanged. Its replicated case negotiates Protocol
-2, applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact
+header and complete-record pair prove the complete segment remains unchanged. Its replicated case
+negotiates Protocol 2, applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact
 retry, and queries the same recovered row count. A separate replicated gate provisions three
 retained roots and distinct mutual-TLS identities, starts three actual daemon processes, obtains an
 applied quorum acknowledgement, kills the acknowledged tablet leader, observes a higher-term

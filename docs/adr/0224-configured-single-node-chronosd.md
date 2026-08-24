@@ -71,7 +71,8 @@ exit, and byte-for-byte segment preservation. The incomplete-tail case appends o
 active end and requires the explicit-repair diagnostic, nonzero exit, and unchanged segment because
 the packaged configuration does not authorize truncation. A metadata-Raft case damages the active
 segment header, requires its exact checksum diagnostic and pre-listen exit, and preserves the
-complete segment byte-for-byte.
+complete segment byte-for-byte. A complete metadata-record case damages the multiplexed payload,
+requires its exact checksum diagnostic and the same pre-listen exit, and preserves the segment.
 
 ## References
 

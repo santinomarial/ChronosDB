@@ -64,7 +64,9 @@ Current packaged-daemon qualification creates an ordinary single-node metadata g
 checksum-covered physical segment-number byte in its active Raft segment header, and requires the
 next startup to report the exact header-checksum corruption before socket admission. It compares the
 complete segment before and after rejection, proving startup does not patch or rewrite the damaged
-metadata authority.
+metadata authority. A companion case damages the first complete multiplexed record payload while
+leaving its headers intact, requires the payload-checksum failure, and preserves the complete
+segment.
 
 ## Deferred decisions
 

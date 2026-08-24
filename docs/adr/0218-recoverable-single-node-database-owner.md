@@ -70,7 +70,9 @@ no-repair configuration exits while preserving it. Broader crash injection, inco
 matrices, corruption/fault injection, concurrent workload shutdown, Manifest/CSEG recovery, and
 process qualification remain deferred. The packaged matrix also corrupts a checksum-covered
 metadata-Raft segment-header byte, requires its exact diagnostic before WAL recovery or service
-admission, and proves the complete durable segment is unchanged.
+admission, and proves the complete durable segment is unchanged. A companion case corrupts the
+first complete metadata-record payload and proves the owner fails on its checksum before catalog
+projection without rewriting the segment.
 
 ## References
 

@@ -124,7 +124,9 @@ result: this owner configures no repair authorization, returns the explicit-repa
 leaves the segment unchanged. Repair remains an intentional operator/tool boundary.
 Metadata Raft opens before WAL. A checksum-invalid Raft segment header therefore stops startup at
 that earlier authority boundary: no catalog is projected and no WAL recovery or service publication
-begins. Packaged coverage proves the complete damaged segment is preserved.
+begins. Packaged coverage proves the complete damaged segment is preserved. The adjacent
+complete-record case corrupts the multiplexed payload and proves the same pre-catalog rejection and
+segment preservation.
 
 Malformed transport/command bytes become client-invalid protocol errors. Database corruption stays
 distinguishable as an internal error; I/O, unavailability, and unsupported operations are execution
