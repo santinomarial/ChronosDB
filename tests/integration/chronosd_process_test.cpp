@@ -132,6 +132,35 @@ public:
     return true;
   }
 
+  [[nodiscard]] bool start_with_captured_errors(const std::string& data_directory) {
+    std::array<int, 2U> output{};
+    if (::pipe(output.data()) != 0)
+      return false;
+    if (::fcntl(output[0], F_SETFD, FD_CLOEXEC) != 0 ||
+        ::fcntl(output[1], F_SETFD, FD_CLOEXEC) != 0) {
+      ::close(output[0]);
+      ::close(output[1]);
+      return false;
+    }
+    pid_ = ::fork();
+    if (pid_ == 0) {
+      static_cast<void>(::dup2(output[1], STDOUT_FILENO));
+      static_cast<void>(::dup2(output[1], STDERR_FILENO));
+      ::close(output[0]);
+      ::close(output[1]);
+      ::execl(CHRONOSD_PATH, CHRONOSD_PATH, "--port", "0", "--data-dir", data_directory.c_str(),
+              nullptr);
+      std::_Exit(127);
+    }
+    ::close(output[1]);
+    if (pid_ < 0) {
+      ::close(output[0]);
+      return false;
+    }
+    output_ = output[0];
+    return true;
+  }
+
   [[nodiscard]] bool start_replicated_transport(const std::string& data_directory,
                                                 const std::string& replicated_groups_file,
                                                 const std::string& replicated_peers_file,
@@ -1093,6 +1122,35 @@ TEST(ChronosdProcessTest, CreatesQueriesAndRecoversAConfiguredDatabase) {
   EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
   ::close(client);
   EXPECT_EQ(child.stop(), 0);
+}
+
+TEST(ChronosdProcessTest, RejectsCorruptBootstrapWithoutRewritingDurableAuthority) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  ChildProcess child;
+  ASSERT_TRUE(child.start(directory.path()));
+  const std::string startup = child.read_startup_line();
+  EXPECT_NE(startup.find("data_plane=configured"), std::string::npos);
+  EXPECT_EQ(child.stop(), 0);
+
+  const std::string bootstrap = directory.path() + "/" + runtime::kDatabaseBootstrapFileName;
+  const std::string pristine = read_text_file(bootstrap);
+  ASSERT_EQ(pristine.size(), runtime::kDatabaseBootstrapV1Size);
+  std::string corrupted = pristine;
+  corrupted.front() = static_cast<char>(static_cast<unsigned char>(corrupted.front()) ^ 1U);
+  const int bootstrap_file = ::open(bootstrap.c_str(), O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+  ASSERT_GE(bootstrap_file, 0);
+  ASSERT_EQ(::pwrite(bootstrap_file, corrupted.data(), 1U, 0), static_cast<ssize_t>(1));
+  ASSERT_EQ(::fsync(bootstrap_file), 0);
+  ASSERT_EQ(::close(bootstrap_file), 0);
+  ASSERT_EQ(read_text_file(bootstrap), corrupted);
+
+  ASSERT_TRUE(child.start_with_captured_errors(directory.path()));
+  const std::string failure = child.read_startup_line();
+  EXPECT_NE(failure.find("database start failed"), std::string::npos);
+  EXPECT_NE(failure.find("database bootstrap checksum mismatch"), std::string::npos);
+  EXPECT_EQ(child.wait_for_exit(), 1);
+  EXPECT_EQ(read_text_file(bootstrap), corrupted);
 }
 
 TEST(ChronosdProcessTest, RejectsCreateEntropyFailureWithoutDurableMetadata) {

@@ -83,6 +83,10 @@ a contextual startup error and never emits a listening banner. A later ordinary 
 that bootstrap rather than propose a replacement database. Failure while generating either proposed
 bootstrap identity occurs earlier and must leave the supplied root empty.
 
+An established `BOOTSTRAP` checksum failure is terminal for that start. `chronosd` reports the
+database-start corruption before reactor admission and leaves the complete damaged descriptor
+unchanged; it does not turn proposed startup identities into an implicit repair.
+
 ## Complexity and tradeoffs
 
 Each dispatch and response handoff is amortized O(1); protocol parsing remains linear in frame size.
@@ -105,7 +109,9 @@ candidate during initial WAL creation, after final bootstrap installation. That 
 entropy failure; the final bootstrap and subsystem directories remain, and two ordinary daemon
 starts negotiate Protocol v1 and answer PING from the same root. Parameterized first- and
 second-candidate cases prove database and metadata-group identity errors leave the root untouched;
-the shipped daemon can then initialize it and answer PING. Its replicated case negotiates
+the shipped daemon can then initialize it and answer PING. An ordinary-daemon corruption case flips
+one covered bootstrap byte, requires the checksum diagnostic and nonzero exit, and compares the
+complete damaged image after rejection. Its replicated case negotiates
 Protocol 2, applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact retry, and
 queries the same recovered row count. A separate replicated gate provisions three retained roots
 and distinct mutual-TLS identities, starts three actual daemon processes, obtains an applied quorum

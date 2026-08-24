@@ -52,7 +52,10 @@ bootstrap UUID occurs before root mutation and that an ordinary retry can initia
 directory. It also fails the first WAL identity read after the final bootstrap and subsystem
 directories are durable. The failed process installs no WAL identity; two ordinary `chronosd`
 starts reopen that exact root and reach configured socket service. These cases cover the two
-identity handoffs without claiming the remaining synchronization-boundary matrix.
+identity handoffs without claiming the remaining synchronization-boundary matrix. A packaged
+ordinary-daemon case also corrupts one checksum-covered byte in an established final descriptor,
+requires the exact checksum failure before socket startup, and proves all 128 corrupt bytes remain
+unchanged after the process exits. Startup does not rewrite a damaged durable authority.
 
 ## References
 

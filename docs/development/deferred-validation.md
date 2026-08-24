@@ -930,9 +930,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   complete client/server process composition now exist. Remote mutable-tablet fragments, a globally
   atomic cross-group policy beyond the implemented applied read-barrier vector, live delivery,
   flush/CSEG/Manifest, failover query, movement, and object storage remain.
-- Configured `chronosd` Linux subprocess execution in CI, daemon ingest over real sockets, corrupt
-  root/WAL/Raft startup cases, signals during ingest/query, queue saturation with multi-frame
-  responses, cancellation, concurrent clients, Raft and native-client route credential rotation,
+- Configured `chronosd` Linux subprocess execution in CI, daemon ingest over real sockets, remaining
+  corrupt root plus WAL/Raft startup cases, signals during ingest/query, queue saturation with
+  multi-frame responses, cancellation, concurrent clients, Raft and native-client route credential
+  rotation,
   immediate established-session revocation, remaining secure UUID entropy-failure points, metrics,
   privilege dropping, service-manager packaging,
   ASan/UBSan/TSan, and sustained
@@ -944,7 +945,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   fault child now covers the first- and second-candidate pre-bootstrap failures, the initial
   third-candidate WAL identity failure after final Bootstrap v1 installation, and the post-startup
   fifth-candidate CREATE failure; the other startup, subsystem, and crash boundaries in this list
-  remain deferred. The
+  remain deferred. A shipped-daemon case also rejects one checksum-covered corruption in an
+  established final Bootstrap v1 image and preserves its exact damaged bytes; other corrupt-root
+  matrices remain deferred. The
   process target remains intentionally unregistered on non-Linux hosts because the server reactor
   is Linux-only.
 - Native ingest service adapter allocation/fault injection, event-time and ancestor-schema retry

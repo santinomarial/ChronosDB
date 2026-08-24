@@ -60,7 +60,10 @@ startup. The process exits with its contextual startup error while the final boo
 negotiate Protocol v1, and answer PING. Failures of the first or second qualified read cover the
 proposed database and metadata-group identities: each exits before root mutation, after which the
 shipped daemon initializes that untouched directory and answers PING. The shipped daemon has no
-entropy-fault option. The existing unconfigured PING/rejection subprocess case remains.
+entropy-fault option. A separate shipped-daemon case first creates an established root, durably
+damages one checksum-covered bootstrap byte, and then requires startup to report the exact checksum
+corruption, exit before its listening banner, and preserve the complete damaged image byte-for-byte.
+The existing unconfigured PING/rejection subprocess case remains.
 
 ## References
 

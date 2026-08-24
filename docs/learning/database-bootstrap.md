@@ -38,7 +38,10 @@ the final bootstrap is ready: WAL identity allocation is a later boundary. The s
 injects that exact failure, observes the final descriptor plus both subsystem directories, and then
 requires two ordinary daemon starts to reopen the same root and reach configured service. This
 complements, but does not replace, the deferred crash matrix at each bootstrap synchronization
-boundary.
+boundary. An established final descriptor that fails its checksum is different from a resumable
+intent: startup fails closed and never rewrites it. The packaged-daemon corruption case compares the
+complete 128-byte damaged image before and after the rejected start to make that preservation
+contract executable.
 
 ## Review and measurement questions
 

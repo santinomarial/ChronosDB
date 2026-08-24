@@ -110,6 +110,9 @@ identity is installed. The owner returns that contextual entropy error without e
 On the next start, the final bootstrap remains authoritative; the owner reopens metadata, creates
 the still-empty WAL and Manifest namespace, and enters the ordinary recovery path. Linux process
 coverage requires that recovery and a second established-root reopen through the shipped daemon.
+If the final bootstrap instead fails checksum validation, the owner stops before opening later
+subsystems. It neither substitutes newly proposed identities nor rewrites the damaged descriptor;
+packaged process coverage verifies the exact 128 bytes are preserved.
 
 Malformed transport/command bytes become client-invalid protocol errors. Database corruption stays
 distinguishable as an internal error; I/O, unavailability, and unsupported operations are execution

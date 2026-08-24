@@ -59,8 +59,11 @@ are rejected by this explicitly single-node owner rather than silently downgrade
 This owner strengthens acknowledged durability, committed-order application, stable snapshots,
 idempotent recovery, retry identity, reference lifetime, and versioned-format invariants. Focused
 tests cover empty create/reopen and a catalog + `LOCAL_SYNC` append + shutdown + semantic WAL replay
-+ vector SQL count lifecycle. Crash injection, incomplete-DDL matrices, corruption/fault injection,
-concurrent workload shutdown, Manifest/CSEG recovery, and process qualification remain deferred.
++ vector SQL count lifecycle. A packaged-daemon process case corrupts the established Bootstrap v1
+checksum, requires startup to return that exact corruption before service admission, and proves the
+descriptor is not rewritten. Broader crash injection, incomplete-DDL matrices, corruption/fault
+injection, concurrent workload shutdown, Manifest/CSEG recovery, and process qualification remain
+deferred.
 
 ## References
 
