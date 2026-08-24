@@ -33,6 +33,7 @@ template <typename Operation>
 make_input(const std::vector<std::byte>& batch, const schema::LogicalType type) {
   return {.plan = {.mode = query::DistributedVectorPlanMode::kRows,
                    .row_output_indices = {0U},
+                   .visible_row_output_indices = {0U},
                    .order_keys = {{.output_index = 0U}}},
           .result = {.result_schema = {.columns = {{"value", type, false}}},
                      .messages = {{.query_id = uuid(1U),

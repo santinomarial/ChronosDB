@@ -1036,6 +1036,8 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
       query_request("SELECT tag AS label, ts, tag AS repeated FROM events "
                     "WHERE ts >= TIMESTAMP '1970-01-01 00:00:00Z' "
                     "ORDER BY label ASC, ts LIMIT 1"));
+  auto native_distributed_hidden = distributed_native.execute_query(
+      query_request("SELECT tag AS label FROM events ORDER BY ts, label LIMIT 1"));
   stop_server.store(true, std::memory_order_release);
   server_thread.join();
   ASSERT_FALSE(server_failed.load(std::memory_order_acquire));
@@ -1086,6 +1088,15 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   EXPECT_EQ(*timestamp_value, 0);
   EXPECT_EQ(native_distributed->responses[1].frame.header.message_type,
             network::MessageType::kQueryEnd);
+  ASSERT_TRUE(native_distributed_hidden.has_value())
+      << native_distributed_hidden.error().to_string();
+  ASSERT_EQ(native_distributed_hidden->responses.size(), 2U);
+  const auto remote_hidden_batch =
+      network::decode_query_result_batch(native_distributed_hidden->responses[0].frame.payload);
+  ASSERT_TRUE(remote_hidden_batch.has_value()) << remote_hidden_batch.error().to_string();
+  ASSERT_EQ(remote_hidden_batch->columns().size(), 1U);
+  EXPECT_EQ(remote_hidden_batch->columns().front().name, "label");
+  ASSERT_EQ(remote_hidden_batch->row_count(), 1U);
   ASSERT_TRUE(distributed_server->shutdown().is_ok());
 
   auto local_worker = ReplicatedDistributedMutableVectorQueryWorker::create(
@@ -1121,6 +1132,21 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
             native_distributed->responses[0].frame.payload);
   EXPECT_EQ(native_between->responses[1].frame.header.message_type,
             network::MessageType::kQueryEnd);
+
+  auto native_hidden_order = local_distributed_native.execute_query(
+      query_request("SELECT tag AS label FROM events ORDER BY ts, label LIMIT 1"));
+  ASSERT_TRUE(native_hidden_order.has_value()) << native_hidden_order.error().to_string();
+  ASSERT_EQ(native_hidden_order->responses.size(), 2U);
+  const auto hidden_order_batch =
+      network::decode_query_result_batch(native_hidden_order->responses[0].frame.payload);
+  ASSERT_TRUE(hidden_order_batch.has_value()) << hidden_order_batch.error().to_string();
+  ASSERT_EQ(hidden_order_batch->columns().size(), 1U);
+  EXPECT_EQ(hidden_order_batch->columns().front().name, "label");
+  ASSERT_EQ(hidden_order_batch->row_count(), 1U);
+  const network::QueryResultCell* hidden_order_label = hidden_order_batch->cell(0U, 0U);
+  ASSERT_NE(hidden_order_label, nullptr);
+  ASSERT_EQ(hidden_order_label->value.size(), 1U);
+  EXPECT_EQ(hidden_order_label->value.front(), std::byte{'x'});
 
   AdvancingFailOnceMutableWorker rebinding_worker{*database, *local_worker};
   auto rebinding_config = local_distributed_config;

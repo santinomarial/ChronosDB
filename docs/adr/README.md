@@ -483,3 +483,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0446](0446-reactor-visible-native-query-cancellation.md) | Reactor-visible Native query cancellation | accepted |
 | [0447](0447-fresh-all-group-native-query-rebinding.md) | Fresh all-group Native query rebinding | accepted |
 | [0448](0448-distributed-event-time-between-lowering.md) | Distributed event-time BETWEEN lowering | accepted |
+| [0449](0449-hidden-distributed-row-order-outputs.md) | Hidden distributed row order outputs | accepted |

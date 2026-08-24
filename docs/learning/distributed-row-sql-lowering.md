@@ -55,10 +55,13 @@ substitute for row-level truth.
 
 ## Global order and limit
 
-ORDER BY keys index visible result columns because Distributed Vector Plan Intent v1 has no hidden
-output channel. An alias or direct source reference must resolve to a projected direct-column
-output. Computed or invisible keys fail closed. Repeating the same output key is removed: once two
-rows compare equal on that value, comparing the identical value again cannot distinguish them.
+ORDER BY keys index complete worker outputs. When a direct source reference is absent from the
+SELECT list, lowering adds that source ordinal to the fragment projection, appends one hidden worker
+output, and records the original SELECT outputs in Plan Intent 1.1's visible-row vector. The global
+finalizer sorts against the complete schema and encodes only those visible positions. Repeated
+references reuse the same helper and repeated order keys are removed: once two rows compare equal
+on that value, comparing the identical value again cannot distinguish them. Computed keys still
+fail closed.
 
 Direction and explicit NULL placement are retained. Without `NULLS FIRST/LAST`, ascending uses
 NULLS LAST and descending uses NULLS FIRST, matching local physical lowering. ORDER BY and LIMIT
@@ -72,8 +75,8 @@ Unsupported SQL returns a source-spanned `NOT_SUPPORTED` diagnostic. Invalid lim
 `RESOURCE_EXHAUSTED`. No partial product is returned.
 
 The implementation is single-threaded. Time is linear in source width, outputs, WHERE leaves, and
-order keys. Retained memory is linear in unique projected columns, visible outputs, and order keys,
-all under caller-configurable bounds no greater than the network-format hard bounds.
+order keys. Retained memory is linear in unique projected columns, worker and visible outputs, and
+order keys, all under caller-configurable bounds no greater than the network-format hard bounds.
 
 ## Tradeoffs and likely interview questions
 

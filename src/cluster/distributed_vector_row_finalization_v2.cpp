@@ -150,6 +150,32 @@ working_bytes(const std::size_t messages, const std::size_t batches, const std::
   return add_product(total, maximum_output_batches, sizeof(BatchRange) * 2U);
 }
 
+[[nodiscard]] common::Result<std::size_t>
+visibility_working_bytes(const query::DistributedVectorPlanIntent& plan,
+                         const query::DistributedVectorResultSchema& schema) {
+  const std::size_t visible_columns = plan.visible_row_output_indices.empty()
+                                          ? plan.row_output_indices.size()
+                                          : plan.visible_row_output_indices.size();
+  auto total = add_product(0U, visible_columns, sizeof(std::uint32_t) * 2U);
+  if (!total.has_value())
+    return total;
+  total = add_product(*total, visible_columns, sizeof(query::DistributedVectorResultColumn) * 2U);
+  if (!total.has_value())
+    return total;
+  for (std::size_t position = 0U; position < visible_columns; ++position) {
+    const std::size_t index = plan.visible_row_output_indices.empty()
+                                  ? position
+                                  : plan.visible_row_output_indices[position];
+    if (index >= schema.columns.size())
+      return common::make_unexpected(internal("visible vector row output escaped its schema"));
+    auto next = add_product(*total, schema.columns[index].name.size(), 2U);
+    if (!next.has_value())
+      return next;
+    total = next;
+  }
+  return total;
+}
+
 [[nodiscard]] common::Result<int>
 compare_rows(const std::vector<network::QueryResultBatchView>& batches,
              const query::DistributedVectorResultSchema& schema,
@@ -235,11 +261,11 @@ descriptor_prefix_size(const query::DistributedVectorResultSchema& schema) {
 
 [[nodiscard]] common::Result<std::size_t>
 encoded_row_size(const std::vector<network::QueryResultBatchView>& batches,
-                 const std::size_t columns, const RowReference row) {
+                 const std::span<const std::uint32_t> output_indices, const RowReference row) {
   if (row.batch_index >= batches.size())
     return common::make_unexpected(internal("vector row output references an absent batch"));
   std::size_t total{};
-  for (std::size_t column = 0U; column < columns; ++column) {
+  for (const std::uint32_t column : output_indices) {
     const network::QueryResultCell* cell = batches[row.batch_index].cell(row.row, column);
     if (cell == nullptr)
       return common::make_unexpected(internal("vector row output cell disappeared"));
@@ -275,13 +301,32 @@ finalize_distributed_vector_rows_v2(DistributedVectorQueryExecutionResultV2&& in
         static_cast<std::uint32_t>(input.result.result_schema.columns.size()));
     if (!plan_status.is_ok())
       return common::make_unexpected(plan_status);
-    if (input.result.result_schema.columns.size() > limits.output_batch.maximum_columns)
+    auto visibility_bytes = visibility_working_bytes(input.plan, input.result.result_schema);
+    if (!visibility_bytes.has_value())
+      return common::make_unexpected(visibility_bytes.error());
+    if (*visibility_bytes > limits.maximum_working_bytes)
+      return common::make_unexpected(exhausted("vector row working-memory limit is exhausted"));
+    std::vector<std::uint32_t> visible_output_indices;
+    if (input.plan.visible_row_output_indices.empty()) {
+      visible_output_indices.reserve(input.plan.row_output_indices.size());
+      for (std::size_t index = 0U; index < input.plan.row_output_indices.size(); ++index)
+        visible_output_indices.push_back(static_cast<std::uint32_t>(index));
+    } else {
+      visible_output_indices = input.plan.visible_row_output_indices;
+    }
+    if (visible_output_indices.size() > limits.output_batch.maximum_columns)
       return common::make_unexpected(exhausted("vector row output column limit is exhausted"));
-    for (const auto& column : input.result.result_schema.columns) {
+    query::DistributedVectorResultSchema visible_schema;
+    visible_schema.columns.reserve(visible_output_indices.size());
+    for (const std::uint32_t index : visible_output_indices) {
+      if (index >= input.result.result_schema.columns.size())
+        return common::make_unexpected(internal("visible vector row output escaped its schema"));
+      const auto& column = input.result.result_schema.columns[index];
       if (column.name.size() > limits.output_batch.maximum_column_name_bytes)
         return common::make_unexpected(exhausted("vector row output name limit is exhausted"));
+      visible_schema.columns.push_back(column);
     }
-    auto prefix_size = descriptor_prefix_size(input.result.result_schema);
+    auto prefix_size = descriptor_prefix_size(visible_schema);
     if (!prefix_size.has_value())
       return common::make_unexpected(prefix_size.error());
     if (*prefix_size > limits.output_batch.protocol.maximum_payload_size)
@@ -295,7 +340,7 @@ finalize_distributed_vector_rows_v2(DistributedVectorQueryExecutionResultV2&& in
                                            !input.plan.order_keys.empty(), 0U);
     if (!preliminary_state.has_value())
       return common::make_unexpected(preliminary_state.error());
-    if (*preliminary_state > limits.maximum_working_bytes)
+    if (*preliminary_state > limits.maximum_working_bytes - *visibility_bytes)
       return common::make_unexpected(exhausted("vector row working-memory limit is exhausted"));
 
     std::vector<schema::TabletId> tablet_segments;
@@ -389,7 +434,7 @@ finalize_distributed_vector_rows_v2(DistributedVectorQueryExecutionResultV2&& in
                                      !input.plan.order_keys.empty(), maximum_planned_batches);
     if (!state_bytes.has_value())
       return common::make_unexpected(state_bytes.error());
-    if (*state_bytes > limits.maximum_working_bytes)
+    if (*state_bytes > limits.maximum_working_bytes - *visibility_bytes)
       return common::make_unexpected(exhausted("vector row working-memory limit is exhausted"));
 
     network::QueryResultLimits input_batch_limits;
@@ -443,8 +488,7 @@ finalize_distributed_vector_rows_v2(DistributedVectorQueryExecutionResultV2&& in
         std::size_t end = begin;
         std::size_t encoded_size = *prefix_size;
         while (end < selected_rows && end - begin < limits.output_batch.maximum_rows) {
-          auto row_size =
-              encoded_row_size(batches, input.result.result_schema.columns.size(), rows[end]);
+          auto row_size = encoded_row_size(batches, visible_output_indices, rows[end]);
           if (!row_size.has_value())
             return common::make_unexpected(row_size.error());
           const auto next = common::checked_add(encoded_size, *row_size);
@@ -473,8 +517,8 @@ finalize_distributed_vector_rows_v2(DistributedVectorQueryExecutionResultV2&& in
       return common::make_unexpected(exhausted("vector row output byte limit is exhausted"));
 
     std::vector<network::QueryResultColumn> columns;
-    columns.reserve(input.result.result_schema.columns.size());
-    for (const auto& column : input.result.result_schema.columns)
+    columns.reserve(visible_schema.columns.size());
+    for (const auto& column : visible_schema.columns)
       columns.push_back({.name = column.name, .type = column.type, .nullable = column.nullable});
     std::vector<std::vector<std::byte>> encoded_batches;
     encoded_batches.reserve(ranges.size());
@@ -482,14 +526,13 @@ finalize_distributed_vector_rows_v2(DistributedVectorQueryExecutionResultV2&& in
     for (const BatchRange& range : ranges) {
       cells.clear();
       const std::size_t row_count = range.end - range.begin;
-      const auto cell_count =
-          common::checked_multiply(row_count, input.result.result_schema.columns.size());
+      const auto cell_count = common::checked_multiply(row_count, visible_output_indices.size());
       if (!cell_count.has_value())
         return common::make_unexpected(exhausted("vector row output cell count overflowed"));
       cells.reserve(*cell_count);
       for (std::size_t index = range.begin; index < range.end; ++index) {
         const RowReference row = rows[index];
-        for (std::size_t column = 0U; column < columns.size(); ++column) {
+        for (const std::uint32_t column : visible_output_indices) {
           const network::QueryResultCell* cell = batches[row.batch_index].cell(row.row, column);
           if (cell == nullptr)
             return common::make_unexpected(internal("vector row output cell disappeared"));
@@ -504,11 +547,11 @@ finalize_distributed_vector_rows_v2(DistributedVectorQueryExecutionResultV2&& in
         return common::make_unexpected(internal("vector row output sizing changed"));
       encoded_batches.push_back(std::move(*encoded));
     }
-    return DistributedVectorRowsFinalizedResultV2{
-        .result_schema = std::move(input.result.result_schema),
-        .encoded_batches = std::move(encoded_batches),
-        .row_count = static_cast<std::uint64_t>(selected_rows),
-        .encoded_bytes = output_encoded_bytes};
+    return DistributedVectorRowsFinalizedResultV2{.result_schema = std::move(visible_schema),
+                                                  .encoded_batches = std::move(encoded_batches),
+                                                  .row_count =
+                                                      static_cast<std::uint64_t>(selected_rows),
+                                                  .encoded_bytes = output_encoded_bytes};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("vector row finalization allocation failed"));
   } catch (const std::length_error&) {

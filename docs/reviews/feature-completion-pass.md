@@ -1004,8 +1004,10 @@ were deliberately not run.
   complete owning fragment set plus deduplicated bounded routes from the same metadata
   publication. Bound direct-column SQL now lowers to the exact schema identity, unique projection,
   normalized event-time comparisons and inclusive `BETWEEN`, global row order/limit intent, and
-  result descriptors required by that fragment path; computed/aggregate/relational semantics fail
-  closed. The retained snapshot now constructs the canonical tablet plan from those SQL semantics
+  result descriptors required by that fragment path. Unselected direct order columns travel as
+  bounded hidden worker outputs under Plan Intent minor 1 and are removed only after global
+  sort/limit; computed/aggregate/relational semantics fail closed. The retained snapshot now
+  constructs the canonical tablet plan from those SQL semantics
   plus correlated current-leader authorities and returns the all-or-none bound/routed package. A
   move-only request owner now
   composes bounded mutual-TLS scheduling with exact-once all-tablet result transfer and global

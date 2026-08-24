@@ -57,6 +57,24 @@ TEST(DistributedVectorPlanTest, RoundTripsRowsAggregatesOrderingAndPresentZeroLi
   EXPECT_TRUE(decoded_rows->group_key_input_indices.empty());
   EXPECT_TRUE(decoded_rows->aggregates.empty());
 
+  const DistributedVectorPlanIntent hidden_order{
+      .mode = DistributedVectorPlanMode::kRows,
+      .row_output_indices = {2U, 0U},
+      .visible_row_output_indices = {0U},
+      .order_keys = {{.output_index = 1U, .direction = PhysicalSortDirection::kDescending}}};
+  const auto encoded_hidden = encode_distributed_vector_plan_intent(hidden_order);
+  ASSERT_TRUE(encoded_hidden.has_value()) << encoded_hidden.error().to_string();
+  EXPECT_EQ(encoded_hidden->bytes().size(), 48U + 2U * 4U + 1U * 4U + 1U * 8U + 4U);
+  EXPECT_EQ(encoded_hidden->bytes()[10U], std::byte{1U});
+  const auto decoded_hidden = decode_distributed_vector_plan_intent_exact(encoded_hidden->bytes());
+  ASSERT_TRUE(decoded_hidden.has_value()) << decoded_hidden.error().to_string();
+  EXPECT_EQ(*decoded_hidden, hidden_order);
+  EXPECT_EQ(decode_distributed_vector_plan_intent_exact(encoded_hidden->bytes(),
+                                                        {.maximum_visible_row_outputs = 0U})
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+
   const DistributedVectorPlanIntent ungrouped{
       .mode = DistributedVectorPlanMode::kUngroupedAggregate,
       .aggregates = {{.operation = VectorAggregateOperation::kCount, .input_index = 1U}}};
@@ -83,6 +101,18 @@ TEST(DistributedVectorPlanTest, RejectsDamageNoncanonicalDescriptorsAndBounds) {
   rewrite_checksums(unsupported);
   EXPECT_EQ(decode_distributed_vector_plan_intent_exact(unsupported).error().code(),
             common::StatusCode::kNotSupported);
+
+  std::vector<std::byte> unsupported_minor = bytes;
+  unsupported_minor[10U] = std::byte{2U};
+  rewrite_checksums(unsupported_minor);
+  EXPECT_EQ(decode_distributed_vector_plan_intent_exact(unsupported_minor).error().code(),
+            common::StatusCode::kNotSupported);
+
+  std::vector<std::byte> noncanonical_minor = bytes;
+  noncanonical_minor[10U] = std::byte{1U};
+  rewrite_checksums(noncanonical_minor);
+  EXPECT_EQ(decode_distributed_vector_plan_intent_exact(noncanonical_minor).error().code(),
+            common::StatusCode::kCorruption);
 
   std::vector<std::byte> absent_input_nonzero = bytes;
   absent_input_nonzero[60U] = std::byte{1U};
@@ -117,6 +147,14 @@ TEST(DistributedVectorPlanTest, RejectsDamageNoncanonicalDescriptorsAndBounds) {
   DistributedVectorPlanIntent invalid_order = grouped;
   invalid_order.order_keys.front().output_index = 5U;
   EXPECT_EQ(encode_distributed_vector_plan_intent(invalid_order).error().code(),
+            common::StatusCode::kInvalidArgument);
+  DistributedVectorPlanIntent invalid_visible{.mode = DistributedVectorPlanMode::kRows,
+                                              .row_output_indices = {0U, 1U},
+                                              .visible_row_output_indices = {0U, 0U}};
+  EXPECT_EQ(encode_distributed_vector_plan_intent(invalid_visible).error().code(),
+            common::StatusCode::kInvalidArgument);
+  invalid_visible.visible_row_output_indices = {2U};
+  EXPECT_EQ(encode_distributed_vector_plan_intent(invalid_visible).error().code(),
             common::StatusCode::kInvalidArgument);
 }
 

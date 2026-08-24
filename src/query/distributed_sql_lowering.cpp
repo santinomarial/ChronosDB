@@ -251,6 +251,7 @@ SqlResult<DistributedVectorRowsSqlPlan> lower_bound_sql_select_to_distributed_ve
         .intent = {.mode = DistributedVectorPlanMode::kRows, .limit = select.syntax().limit()},
     };
     std::vector<std::int64_t> projected_index(source.columns().size(), -1);
+    std::vector<std::int64_t> first_worker_output(source.columns().size(), -1);
     result.intent.row_output_indices.reserve(select.outputs().size());
     result.result_schema.columns.reserve(select.outputs().size());
     for (const BoundOutputColumn& output : select.outputs()) {
@@ -278,6 +279,10 @@ SqlResult<DistributedVectorRowsSqlPlan> lower_bound_sql_select_to_distributed_ve
       }
       result.intent.row_output_indices.push_back(
           static_cast<std::uint32_t>(projected_index[ordinal]));
+      if (first_worker_output[ordinal] < 0) {
+        first_worker_output[ordinal] =
+            static_cast<std::int64_t>(result.intent.row_output_indices.size() - 1U);
+      }
       result.result_schema.columns.push_back(
           {.name = output.name, .type = output.type, .nullable = output.nullable});
     }
@@ -295,10 +300,63 @@ SqlResult<DistributedVectorRowsSqlPlan> lower_bound_sql_select_to_distributed_ve
 
     std::vector<bool> ordered_outputs(select.outputs().size(), false);
     for (const SqlOrderItem& item : select.syntax().order_by()) {
-      const std::optional<std::size_t> output = order_output_ordinal(select, item);
-      if (!output.has_value() || *output >= select.outputs().size()) {
-        unsupported(item.expression.span(),
-                    "Distributed ORDER BY must reference a projected direct-column output");
+      std::optional<std::size_t> output = order_output_ordinal(select, item);
+      if (!output.has_value()) {
+        const BoundColumnReference* reference =
+            select.find_column_reference(item.expression.span());
+        if (reference == nullptr || reference->source_ordinal != 0U ||
+            reference->column_ordinal >= source.columns().size()) {
+          unsupported(item.expression.span(),
+                      "Distributed ORDER BY must reference a direct source column");
+        }
+        const std::size_t ordinal = reference->column_ordinal;
+        if (first_worker_output[ordinal] >= 0) {
+          output = static_cast<std::size_t>(first_worker_output[ordinal]);
+          if (*output >= ordered_outputs.size()) {
+            return std::unexpected(diagnostic(SqlDiagnosticCode::kExecutionFailure,
+                                              item.expression.span(), common::StatusCode::kInternal,
+                                              "Distributed hidden ORDER BY output is unavailable"));
+          }
+        }
+        if (!output.has_value()) {
+          if (result.intent.row_output_indices.size() >= limits.maximum_output_columns) {
+            throw LoweringFailure{diagnostic(SqlDiagnosticCode::kResourceLimit,
+                                             item.expression.span(),
+                                             common::StatusCode::kResourceExhausted,
+                                             "Distributed worker output width exceeds the limit")};
+          }
+          if (projected_index[ordinal] < 0) {
+            if (result.destination_column_ordinals.size() >= limits.maximum_projection_columns) {
+              throw LoweringFailure{diagnostic(SqlDiagnosticCode::kResourceLimit,
+                                               item.expression.span(),
+                                               common::StatusCode::kResourceExhausted,
+                                               "Distributed projection width exceeds the limit")};
+            }
+            projected_index[ordinal] =
+                static_cast<std::int64_t>(result.destination_column_ordinals.size());
+            result.destination_column_ordinals.push_back(static_cast<std::uint32_t>(ordinal));
+          }
+          const schema::ColumnDefinition& column = source.columns()[ordinal];
+          if (column.name().size() > limits.maximum_result_name_bytes) {
+            throw LoweringFailure{diagnostic(SqlDiagnosticCode::kResourceLimit,
+                                             item.expression.span(),
+                                             common::StatusCode::kResourceExhausted,
+                                             "Distributed hidden result name exceeds the limit")};
+          }
+          if (result.intent.visible_row_output_indices.empty()) {
+            result.intent.visible_row_output_indices.reserve(select.outputs().size());
+            for (std::size_t index = 0U; index < select.outputs().size(); ++index) {
+              result.intent.visible_row_output_indices.push_back(static_cast<std::uint32_t>(index));
+            }
+          }
+          output = result.intent.row_output_indices.size();
+          result.intent.row_output_indices.push_back(
+              static_cast<std::uint32_t>(projected_index[ordinal]));
+          first_worker_output[ordinal] = static_cast<std::int64_t>(*output);
+          result.result_schema.columns.push_back(
+              {.name = column.name(), .type = column.type(), .nullable = column.nullable()});
+          ordered_outputs.push_back(false);
+        }
       }
       if (ordered_outputs[*output])
         continue;

@@ -139,11 +139,24 @@ TEST(DistributedSqlLoweringTest, NormalizesInclusiveBetweenWithComparisonBounds)
             (cseg::EventTimeBound{.value = 2, .inclusive = true}));
 }
 
+TEST(DistributedSqlLoweringTest, CarriesAndHidesAnUnselectedDirectOrderColumn) {
+  BoundSqlSelect select = bind("SELECT label FROM metrics ORDER BY ts DESC, ts ASC");
+  auto lowered = lower_bound_sql_select_to_distributed_vector_rows(select);
+  ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
+  EXPECT_EQ(lowered->destination_column_ordinals, (std::vector<std::uint32_t>{1U, 0U}));
+  EXPECT_EQ(lowered->intent.row_output_indices, (std::vector<std::uint32_t>{0U, 1U}));
+  EXPECT_EQ(lowered->intent.visible_row_output_indices, (std::vector<std::uint32_t>{0U}));
+  ASSERT_EQ(lowered->intent.order_keys.size(), 1U);
+  EXPECT_EQ(lowered->intent.order_keys.front().output_index, 1U);
+  ASSERT_EQ(lowered->result_schema.columns.size(), 2U);
+  EXPECT_EQ(lowered->result_schema.columns[0].name, "label");
+  EXPECT_EQ(lowered->result_schema.columns[1].name, "ts");
+}
+
 TEST(DistributedSqlLoweringTest, RejectsEveryUnsupportedSemanticWithoutFallback) {
   const std::vector<std::string_view> statements{
       "SELECT value + 1 AS v FROM metrics",
       "SELECT value FROM metrics WHERE value > 1",
-      "SELECT value FROM metrics ORDER BY ts",
       "SELECT count(*) AS n FROM metrics",
       "SELECT value FROM metrics WHERE ts NOT BETWEEN "
       "TIMESTAMP '1970-01-01 00:00:00Z' AND TIMESTAMP '1970-01-01 00:00:01Z'",
@@ -184,6 +197,12 @@ TEST(DistributedSqlLoweringTest, EnforcesCallerBoundsBeforePublishingAPlan) {
       lower_bound_sql_select_to_distributed_vector_rows(select, {.maximum_result_name_bytes = 0U});
   ASSERT_FALSE(invalid.has_value());
   EXPECT_EQ(invalid.error().status().code(), common::StatusCode::kInvalidArgument);
+
+  BoundSqlSelect hidden = bind("SELECT label FROM metrics ORDER BY ts");
+  auto hidden_output =
+      lower_bound_sql_select_to_distributed_vector_rows(hidden, {.maximum_output_columns = 1U});
+  ASSERT_FALSE(hidden_output.has_value());
+  EXPECT_EQ(hidden_output.error().status().code(), common::StatusCode::kResourceExhausted);
 }
 
 } // namespace

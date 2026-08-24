@@ -48,7 +48,7 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
       QueryCatalogSnapshot::create(1U, tables).value());
   return bind_sql_v1_select(
              parse_sql_v1_select(
-                 "SELECT value AS v, ts, value AS again FROM metrics "
+                 "SELECT value AS v, value AS again FROM metrics "
                  "WHERE ts >= TIMESTAMP '1970-01-01 00:00:00Z' ORDER BY v DESC, ts LIMIT 2")
                  .value(),
              std::move(catalog))

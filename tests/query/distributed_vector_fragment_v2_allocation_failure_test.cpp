@@ -45,12 +45,13 @@ template <typename Operation>
                        .destination_column_ordinals = {0U},
                        .event_time_predicate = std::nullopt,
                        .plan = {.mode = DistributedVectorPlanMode::kRows,
-                                .row_output_indices = {0U},
+                                .row_output_indices = {0U, 0U},
+                                .visible_row_output_indices = {0U},
                                 .group_key_input_indices = {},
                                 .aggregates = {},
                                 .order_keys = {},
                                 .limit = std::nullopt}},
-          .result_schema = {.columns = {{"value", type, false}}}};
+          .result_schema = {.columns = {{"value", type, false}, {"hidden", type, false}}}};
 }
 
 TEST(DistributedVectorFragmentV2AllocationFailureTest, ClassifiesEveryOwnedCodecAllocation) {

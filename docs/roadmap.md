@@ -1084,8 +1084,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   complete owning fragment and deduplicated finite route sets from that same metadata publication.
   Bound direct-column SQL now lowers into one schema-bound distributed row product with unique
   projection, exact normalized event-time comparison and inclusive `BETWEEN` truth, canonical
-  global order/limit, and result descriptors while rejecting unsupported local-only semantics. The
-  retained snapshot now joins that product to the complete canonical tablet set and correlated
+  global order/limit including hidden direct-column sort helpers, and result descriptors while
+  rejecting unsupported local-only semantics. Plan Intent minor 1 carries the explicit final
+  visibility vector while preserving minor-0 bytes. The retained snapshot now joins that product
+  to the complete canonical tablet set and correlated
   current-leader authorities,
   then binds and routes the whole query without caller-built tablet authority. A move-only request
   owner now drives that routed fragment set through bounded mutual-TLS scheduling, consumes the

@@ -1,6 +1,7 @@
 #include "chronos/cluster/distributed_vector_row_finalization_v2.hpp"
 #include "chronos/common/byte_reader.hpp"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -185,6 +186,32 @@ TEST(DistributedVectorRowFinalizationV2Test, PreservesPlanOrderForTiesAndEmitsSc
   ASSERT_TRUE(zero_batch.has_value());
   EXPECT_EQ(zero_batch->row_count(), 0U);
   EXPECT_EQ(zero_batch->columns().size(), 2U);
+}
+
+TEST(DistributedVectorRowFinalizationV2Test, SortsByHiddenOutputAndPublishesOnlyVisibleColumns) {
+  auto plan = row_plan();
+  plan.visible_row_output_indices = {1U};
+  plan.order_keys = {{.output_index = 0U,
+                      .direction = query::PhysicalSortDirection::kDescending,
+                      .null_placement = query::ScalarNullPlacement::kLast}};
+  auto input = execution_result(std::move(plan),
+                                {message(2U, 1U, true, encode_rows({{5, "middle"}, {3, "last"}})),
+                                 message(3U, 1U, true, encode_rows({{7, "first"}}))});
+  auto finalized = finalize_distributed_vector_rows_v2(std::move(input));
+  ASSERT_TRUE(finalized.has_value()) << finalized.error().to_string();
+  ASSERT_EQ(finalized->result_schema.columns.size(), 1U);
+  EXPECT_EQ(finalized->result_schema.columns.front().name, "label");
+  ASSERT_EQ(finalized->encoded_batches.size(), 1U);
+  const auto batch = network::decode_query_result_batch(finalized->encoded_batches.front());
+  ASSERT_TRUE(batch.has_value()) << batch.error().to_string();
+  ASSERT_EQ(batch->columns().size(), 1U);
+  ASSERT_EQ(batch->row_count(), 3U);
+  const std::array<std::string_view, 3U> expected{"first", "middle", "last"};
+  for (std::uint32_t row = 0U; row < batch->row_count(); ++row) {
+    const network::QueryResultCell* cell = batch->cell(row, 0U);
+    ASSERT_NE(cell, nullptr);
+    EXPECT_TRUE(std::ranges::equal(cell->value, std::as_bytes(std::span{expected[row]})));
+  }
 }
 
 TEST(DistributedVectorRowFinalizationV2Test, RejectsDamagedStreamsSchemasAndResourceExcess) {

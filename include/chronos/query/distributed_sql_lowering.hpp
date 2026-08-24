@@ -23,9 +23,10 @@ struct DistributedVectorRowsSqlLoweringLimits {
 };
 
 // Complete schema-bound row intent for later authority binding. Source projection ordinals are
-// unique and preserve first SELECT-output use; row output indices may repeat. ORDER BY and LIMIT
-// remain global coordinator semantics. The optional event-time predicate is exact row truth, not
-// merely storage-pruning evidence.
+// unique and preserve first use; row output indices may repeat and may append hidden direct order
+// columns. A nonempty plan visibility vector retains the SELECT outputs. ORDER BY and LIMIT remain
+// global coordinator semantics. The optional event-time predicate is exact row truth, not merely
+// storage-pruning evidence.
 struct DistributedVectorRowsSqlPlan {
   schema::TableId table_id;
   schema::SchemaId destination_schema_id;
@@ -40,8 +41,8 @@ struct DistributedVectorRowsSqlPlan {
 
 // Lowers the executable distributed row subset: one current table, direct source-column outputs,
 // an optional AND-conjunction of event-time/TIMESTAMP comparisons or inclusive BETWEEN leaves,
-// output-backed ORDER BY, and LIMIT. Unsupported local-only SQL fails with its source span; no
-// scalar or relational fallback is inferred.
+// direct-column ORDER BY (including hidden helpers), and LIMIT. Unsupported local-only SQL fails
+// with its source span; no scalar or relational fallback is inferred.
 [[nodiscard]] SqlResult<DistributedVectorRowsSqlPlan>
 lower_bound_sql_select_to_distributed_vector_rows(
     const BoundSqlSelect& select, DistributedVectorRowsSqlLoweringLimits limits = {});

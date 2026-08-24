@@ -54,6 +54,8 @@ inline constexpr std::size_t kHeaderCrcOffset = 44U;
     return invalid("distributed vector plan column limits are invalid");
   }
   if (intent.row_output_indices.size() > distributed_vector_plan_format::kMaximumRowOutputs ||
+      intent.visible_row_output_indices.size() >
+          distributed_vector_plan_format::kMaximumVisibleRowOutputs ||
       intent.group_key_input_indices.size() > distributed_vector_plan_format::kMaximumGroupKeys ||
       intent.aggregates.size() > distributed_vector_plan_format::kMaximumAggregates ||
       intent.order_keys.size() > distributed_vector_plan_format::kMaximumOrderKeys) {
@@ -70,14 +72,15 @@ inline constexpr std::size_t kHeaderCrcOffset = 44U;
     output_columns = intent.row_output_indices.size();
     break;
   case DistributedVectorPlanMode::kUngroupedAggregate:
-    if (!intent.row_output_indices.empty() || !intent.group_key_input_indices.empty() ||
-        intent.aggregates.empty()) {
+    if (!intent.row_output_indices.empty() || !intent.visible_row_output_indices.empty() ||
+        !intent.group_key_input_indices.empty() || intent.aggregates.empty()) {
       return invalid("distributed vector ungrouped aggregate plan shape is invalid");
     }
     output_columns = intent.aggregates.size();
     break;
   case DistributedVectorPlanMode::kGroupedAggregate:
-    if (!intent.row_output_indices.empty() || intent.group_key_input_indices.empty())
+    if (!intent.row_output_indices.empty() || !intent.visible_row_output_indices.empty() ||
+        intent.group_key_input_indices.empty())
       return invalid("distributed vector grouped aggregate plan shape is invalid");
     output_columns = intent.group_key_input_indices.size() + intent.aggregates.size();
     break;
@@ -90,6 +93,12 @@ inline constexpr std::size_t kHeaderCrcOffset = 44U;
   for (const std::uint32_t index : intent.row_output_indices) {
     if (index >= maximum_input_columns)
       return invalid("distributed vector row output index is invalid");
+  }
+  std::bitset<distributed_vector_plan_format::kMaximumRowOutputs> seen_visible;
+  for (const std::uint32_t index : intent.visible_row_output_indices) {
+    if (index >= intent.row_output_indices.size() || seen_visible[index])
+      return invalid("distributed vector visible row output is invalid or duplicated");
+    seen_visible.set(index);
   }
   std::bitset<distributed_vector_plan_format::kMaximumInputColumns> seen_groups;
   for (const std::uint32_t index : intent.group_key_input_indices) {
@@ -121,6 +130,7 @@ inline constexpr std::size_t kHeaderCrcOffset = 44U;
 
 [[nodiscard]] std::size_t encoded_length(const DistributedVectorPlanIntent& intent) noexcept {
   return distributed_vector_plan_format::kHeaderLength + intent.row_output_indices.size() * 4U +
+         intent.visible_row_output_indices.size() * 4U +
          intent.group_key_input_indices.size() * 4U + intent.aggregates.size() * 8U +
          intent.order_keys.size() * 8U + (intent.limit.has_value() ? 8U : 0U) +
          distributed_vector_plan_format::kTrailerLength;
@@ -156,7 +166,9 @@ encode_distributed_vector_plan_intent(const DistributedVectorPlanIntent& intent)
     if (status.is_ok())
       status = writer.write_u16_le(distributed_vector_plan_format::kMajor);
     if (status.is_ok())
-      status = writer.write_u16_le(distributed_vector_plan_format::kMinor);
+      status = writer.write_u16_le(intent.visible_row_output_indices.empty()
+                                       ? distributed_vector_plan_format::kLegacyMinor
+                                       : distributed_vector_plan_format::kMinor);
     if (status.is_ok())
       status = writer.write_u32_le(distributed_vector_plan_format::kHeaderLength);
     if (status.is_ok())
@@ -166,7 +178,8 @@ encode_distributed_vector_plan_intent(const DistributedVectorPlanIntent& intent)
     if (status.is_ok())
       status = writer.write_u8(intent.limit.has_value() ? kLimitPresent : 0U);
     if (status.is_ok())
-      status = writer.zero_fill(2U);
+      status =
+          writer.write_u16_le(static_cast<std::uint16_t>(intent.visible_row_output_indices.size()));
     if (status.is_ok())
       status = writer.write_u32_le(static_cast<std::uint32_t>(intent.row_output_indices.size()));
     if (status.is_ok())
@@ -179,6 +192,10 @@ encode_distributed_vector_plan_intent(const DistributedVectorPlanIntent& intent)
     if (status.is_ok())
       status = writer.write_u32_le(common::crc32c(common::ByteView{bytes}.first(kHeaderCrcOffset)));
     for (const std::uint32_t index : intent.row_output_indices) {
+      if (status.is_ok())
+        status = writer.write_u32_le(index);
+    }
+    for (const std::uint32_t index : intent.visible_row_output_indices) {
       if (status.is_ok())
         status = writer.write_u32_le(index);
     }
@@ -235,6 +252,8 @@ decode_distributed_vector_plan_intent_exact(const common::ByteView bytes,
       limits.maximum_output_columns > distributed_vector_plan_format::kMaximumOutputColumns ||
       limits.maximum_row_outputs == 0U ||
       limits.maximum_row_outputs > distributed_vector_plan_format::kMaximumRowOutputs ||
+      limits.maximum_visible_row_outputs >
+          distributed_vector_plan_format::kMaximumVisibleRowOutputs ||
       limits.maximum_group_keys == 0U ||
       limits.maximum_group_keys > distributed_vector_plan_format::kMaximumGroupKeys ||
       limits.maximum_aggregates == 0U ||
@@ -262,7 +281,7 @@ decode_distributed_vector_plan_intent_exact(const common::ByteView bytes,
   const auto frame_length = reader.read_u64_le();
   const auto mode = reader.read_u8();
   const auto flags = reader.read_u8();
-  const auto reserved = reader.read_exact(2U);
+  const auto visible_count = reader.read_u16_le();
   const auto row_count = reader.read_u32_le();
   const auto group_count = reader.read_u32_le();
   const auto aggregate_count = reader.read_u32_le();
@@ -270,32 +289,36 @@ decode_distributed_vector_plan_intent_exact(const common::ByteView bytes,
   static_cast<void>(reader.skip(4U));
   if (!major.has_value() || !minor.has_value() || !header_length.has_value() ||
       !frame_length.has_value() || !mode.has_value() || !flags.has_value() ||
-      !reserved.has_value() || !row_count.has_value() || !group_count.has_value() ||
+      !visible_count.has_value() || !row_count.has_value() || !group_count.has_value() ||
       !aggregate_count.has_value() || !order_count.has_value()) {
     return common::make_unexpected(corruption("distributed vector plan header is truncated"));
   }
   if (*major != distributed_vector_plan_format::kMajor ||
-      *minor != distributed_vector_plan_format::kMinor) {
+      (*minor != distributed_vector_plan_format::kLegacyMinor &&
+       *minor != distributed_vector_plan_format::kMinor)) {
     return common::make_unexpected(common::Status{
         common::StatusCode::kNotSupported, "distributed vector plan version is unsupported"});
   }
   if (*header_length != distributed_vector_plan_format::kHeaderLength ||
       *frame_length != bytes.size() || (*flags & ~kLimitPresent) != 0U ||
-      !std::ranges::all_of(*reserved, [](const std::byte value) { return value == std::byte{}; }) ||
+      (*minor == distributed_vector_plan_format::kLegacyMinor) != (*visible_count == 0U) ||
       *row_count > distributed_vector_plan_format::kMaximumRowOutputs ||
+      *visible_count > distributed_vector_plan_format::kMaximumVisibleRowOutputs ||
       *group_count > distributed_vector_plan_format::kMaximumGroupKeys ||
       *aggregate_count > distributed_vector_plan_format::kMaximumAggregates ||
       *order_count > distributed_vector_plan_format::kMaximumOrderKeys) {
     return common::make_unexpected(corruption("distributed vector plan header is noncanonical"));
   }
-  if (*row_count > limits.maximum_row_outputs || *group_count > limits.maximum_group_keys ||
-      *aggregate_count > limits.maximum_aggregates || *order_count > limits.maximum_order_keys) {
+  if (*row_count > limits.maximum_row_outputs ||
+      *visible_count > limits.maximum_visible_row_outputs ||
+      *group_count > limits.maximum_group_keys || *aggregate_count > limits.maximum_aggregates ||
+      *order_count > limits.maximum_order_keys) {
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
                                                   "distributed vector plan exceeds caller limits"});
   }
   const std::size_t expected_length =
       distributed_vector_plan_format::kHeaderLength + static_cast<std::size_t>(*row_count) * 4U +
-      static_cast<std::size_t>(*group_count) * 4U +
+      static_cast<std::size_t>(*visible_count) * 4U + static_cast<std::size_t>(*group_count) * 4U +
       static_cast<std::size_t>(*aggregate_count) * 8U +
       static_cast<std::size_t>(*order_count) * 8U + ((*flags & kLimitPresent) != 0U ? 8U : 0U) +
       distributed_vector_plan_format::kTrailerLength;
@@ -309,11 +332,13 @@ decode_distributed_vector_plan_intent_exact(const common::ByteView bytes,
   try {
     DistributedVectorPlanIntent intent{.mode = static_cast<DistributedVectorPlanMode>(*mode),
                                        .row_output_indices = {},
+                                       .visible_row_output_indices = {},
                                        .group_key_input_indices = {},
                                        .aggregates = {},
                                        .order_keys = {},
                                        .limit = std::nullopt};
     intent.row_output_indices.reserve(*row_count);
+    intent.visible_row_output_indices.reserve(*visible_count);
     intent.group_key_input_indices.reserve(*group_count);
     intent.aggregates.reserve(*aggregate_count);
     intent.order_keys.reserve(*order_count);
@@ -322,6 +347,14 @@ decode_distributed_vector_plan_intent_exact(const common::ByteView bytes,
       if (!value.has_value())
         return common::make_unexpected(corruption("distributed vector row output is truncated"));
       intent.row_output_indices.push_back(*value);
+    }
+    for (std::uint32_t index = 0U; index < *visible_count; ++index) {
+      const auto value = reader.read_u32_le();
+      if (!value.has_value()) {
+        return common::make_unexpected(
+            corruption("distributed vector visible row output is truncated"));
+      }
+      intent.visible_row_output_indices.push_back(*value);
     }
     for (std::uint32_t index = 0U; index < *group_count; ++index) {
       const auto value = reader.read_u32_le();

@@ -45,7 +45,8 @@ struct DistributedVectorRowsFinalizedResultV2 {
 // Consumes one all-tablet schema-bound execution result. It independently validates the row-mode
 // plan, message-stream closure, native batch schemas, and configured bounds before allocating
 // decoded row state. ORDER BY is stable over plan-tablet/message/row input order, NULL placement is
-// independent of direction, and LIMIT is applied only after the global order is complete.
+// independent of direction, LIMIT is applied only after the global order is complete, and a
+// nonempty row-visibility vector removes helper outputs only while encoding the final batches.
 [[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2>
 finalize_distributed_vector_rows_v2(DistributedVectorQueryExecutionResultV2&& input,
                                     DistributedVectorRowFinalizationLimitsV2 limits = {});
