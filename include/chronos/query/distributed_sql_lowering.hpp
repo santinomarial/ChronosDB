@@ -22,6 +22,13 @@ struct DistributedVectorRowsSqlLoweringLimits {
       distributed_vector_result_schema_format::kMaximumNameLength};
 };
 
+struct DistributedVectorAggregateSqlLoweringLimits {
+  std::uint32_t maximum_projection_columns{distributed_vector_plan_format::kMaximumInputColumns};
+  std::uint32_t maximum_aggregates{distributed_vector_plan_format::kMaximumAggregates};
+  std::uint32_t maximum_result_name_bytes{
+      distributed_vector_result_schema_format::kMaximumNameLength};
+};
+
 // Complete schema-bound row intent for later authority binding. Source projection ordinals are
 // unique and preserve first use; row output indices may repeat and may append hidden direct order
 // columns. A nonempty plan visibility vector retains the SELECT outputs. ORDER BY and LIMIT remain
@@ -46,6 +53,30 @@ struct DistributedVectorRowsSqlPlan {
 [[nodiscard]] SqlResult<DistributedVectorRowsSqlPlan>
 lower_bound_sql_select_to_distributed_vector_rows(
     const BoundSqlSelect& select, DistributedVectorRowsSqlLoweringLimits limits = {});
+
+// Complete schema-bound ungrouped-aggregate intent for later authority binding. Projection ordinals
+// are unique and preserve first aggregate-input use. COUNT(*) uses the event-time column as a
+// bounded fragment projection anchor when no aggregate reads a source column. WHERE and LIMIT keep
+// their global SQL meaning; workers receive only mergeable sufficient-state definitions.
+struct DistributedVectorAggregateSqlPlan {
+  schema::TableId table_id;
+  schema::SchemaId destination_schema_id;
+  std::vector<std::uint32_t> destination_column_ordinals;
+  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  DistributedVectorPlanIntent intent;
+  DistributedVectorResultSchema result_schema;
+
+  friend bool operator==(const DistributedVectorAggregateSqlPlan&,
+                         const DistributedVectorAggregateSqlPlan&) = default;
+};
+
+// Lowers the executable distributed global-aggregate subset: one current table, SELECT outputs
+// that are exactly COUNT(*), COUNT, SUM, AVG, MIN, MAX, VAR_POP, or VAR_SAMP over direct source
+// columns, the row subset's optional event-time predicate, and LIMIT. GROUP BY, ORDER BY, computed
+// aggregate inputs/final outputs, historical reads, and relational operators fail closed.
+[[nodiscard]] SqlResult<DistributedVectorAggregateSqlPlan>
+lower_bound_sql_select_to_distributed_vector_aggregate(
+    const BoundSqlSelect& select, DistributedVectorAggregateSqlLoweringLimits limits = {});
 
 } // namespace chronos::query
 

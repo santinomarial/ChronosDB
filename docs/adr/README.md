@@ -484,3 +484,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0447](0447-fresh-all-group-native-query-rebinding.md) | Fresh all-group Native query rebinding | accepted |
 | [0448](0448-distributed-event-time-between-lowering.md) | Distributed event-time BETWEEN lowering | accepted |
 | [0449](0449-hidden-distributed-row-order-outputs.md) | Hidden distributed row order outputs | accepted |
+| [0450](0450-schema-bound-distributed-global-aggregate-sql-lowering.md) | Schema-bound distributed global aggregate SQL lowering | accepted |

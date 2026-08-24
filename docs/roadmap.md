@@ -1086,7 +1086,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   projection, exact normalized event-time comparison and inclusive `BETWEEN` truth, canonical
   global order/limit including hidden direct-column sort helpers, and result descriptors while
   rejecting unsupported local-only semantics. Plan Intent minor 1 carries the explicit final
-  visibility vector while preserving minor-0 bytes. The retained snapshot now joins that product
+  visibility vector while preserving minor-0 bytes. Bound global aggregate SQL now also produces
+  exact unique projection, sufficient-state definitions, event-time truth, LIMIT, and result
+  descriptors for direct aggregate calls; Native/process routing of that product remains external.
+  The retained snapshot now joins the row product
   to the complete canonical tablet set and correlated
   current-leader authorities,
   then binds and routes the whole query without caller-built tablet authority. A move-only request

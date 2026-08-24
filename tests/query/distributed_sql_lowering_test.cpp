@@ -205,5 +205,117 @@ TEST(DistributedSqlLoweringTest, EnforcesCallerBoundsBeforePublishingAPlan) {
   EXPECT_EQ(hidden_output.error().status().code(), common::StatusCode::kResourceExhausted);
 }
 
+TEST(DistributedSqlLoweringTest, OwnsCanonicalGlobalAggregateProjectionPredicateAndSchema) {
+  BoundSqlSelect select =
+      bind("SELECT count(*) AS n, count(value) AS present, sum(value) AS total, "
+           "avg(value) AS mean_value, min(label) AS minimum_label, "
+           "max(label) AS maximum_label, var_pop(value) AS population_variance, "
+           "var_samp(value) AS sample_variance, "
+           "sum(value) AS total_again FROM metrics WHERE ts BETWEEN "
+           "TIMESTAMP '1970-01-01 00:00:00.000000002Z' AND "
+           "TIMESTAMP '1970-01-01 00:00:00.000000009Z' LIMIT 1");
+  auto lowered = lower_bound_sql_select_to_distributed_vector_aggregate(select);
+  ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
+  EXPECT_EQ(lowered->table_id, id<schema::TableId>(1U));
+  EXPECT_EQ(lowered->destination_schema_id, id<schema::SchemaId>(2U));
+  EXPECT_EQ(lowered->destination_column_ordinals, (std::vector<std::uint32_t>{2U, 1U}));
+  ASSERT_TRUE(lowered->event_time_predicate.has_value());
+  EXPECT_EQ(lowered->event_time_predicate->lower,
+            (cseg::EventTimeBound{.value = 2, .inclusive = true}));
+  EXPECT_EQ(lowered->event_time_predicate->upper,
+            (cseg::EventTimeBound{.value = 9, .inclusive = true}));
+  EXPECT_EQ(lowered->intent.mode, DistributedVectorPlanMode::kUngroupedAggregate);
+  EXPECT_EQ(lowered->intent.limit, 1U);
+  EXPECT_TRUE(lowered->intent.row_output_indices.empty());
+  EXPECT_TRUE(lowered->intent.order_keys.empty());
+  ASSERT_EQ(lowered->intent.aggregates.size(), 9U);
+  EXPECT_EQ(lowered->intent.aggregates[0],
+            (DistributedVectorAggregateIntent{.operation = VectorAggregateOperation::kCountStar,
+                                              .input_index = std::nullopt}));
+  EXPECT_EQ(lowered->intent.aggregates[1],
+            (DistributedVectorAggregateIntent{.operation = VectorAggregateOperation::kCount,
+                                              .input_index = 0U}));
+  EXPECT_EQ(lowered->intent.aggregates[2],
+            (DistributedVectorAggregateIntent{.operation = VectorAggregateOperation::kSum,
+                                              .input_index = 0U}));
+  EXPECT_EQ(lowered->intent.aggregates[3],
+            (DistributedVectorAggregateIntent{.operation = VectorAggregateOperation::kAverage,
+                                              .input_index = 0U}));
+  EXPECT_EQ(lowered->intent.aggregates[4],
+            (DistributedVectorAggregateIntent{.operation = VectorAggregateOperation::kMinimum,
+                                              .input_index = 1U}));
+  EXPECT_EQ(lowered->intent.aggregates[5],
+            (DistributedVectorAggregateIntent{.operation = VectorAggregateOperation::kMaximum,
+                                              .input_index = 1U}));
+  EXPECT_EQ(lowered->intent.aggregates[6],
+            (DistributedVectorAggregateIntent{
+                .operation = VectorAggregateOperation::kVariancePopulation, .input_index = 0U}));
+  EXPECT_EQ(lowered->intent.aggregates[7],
+            (DistributedVectorAggregateIntent{
+                .operation = VectorAggregateOperation::kVarianceSample, .input_index = 0U}));
+  EXPECT_EQ(lowered->intent.aggregates[8], lowered->intent.aggregates[2]);
+  ASSERT_EQ(lowered->result_schema.columns.size(), 9U);
+  EXPECT_EQ(lowered->result_schema.columns[0].name, "n");
+  EXPECT_EQ(lowered->result_schema.columns[1].name, "present");
+  EXPECT_EQ(lowered->result_schema.columns[2].name, "total");
+  EXPECT_EQ(lowered->result_schema.columns[3].name, "mean_value");
+  EXPECT_EQ(lowered->result_schema.columns[4].name, "minimum_label");
+  EXPECT_EQ(lowered->result_schema.columns[5].name, "maximum_label");
+  EXPECT_EQ(lowered->result_schema.columns[6].name, "population_variance");
+  EXPECT_EQ(lowered->result_schema.columns[7].name, "sample_variance");
+  EXPECT_EQ(lowered->result_schema.columns[8].name, "total_again");
+}
+
+TEST(DistributedSqlLoweringTest, AnchorsCountStarAndRejectsUnsupportedAggregateSemantics) {
+  BoundSqlSelect count = bind("SELECT count(*) AS n FROM metrics LIMIT 0");
+  auto lowered = lower_bound_sql_select_to_distributed_vector_aggregate(count);
+  ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
+  EXPECT_EQ(lowered->destination_column_ordinals, (std::vector<std::uint32_t>{0U}));
+  EXPECT_EQ(lowered->intent.limit, 0U);
+
+  const std::vector<std::string_view> statements{
+      "SELECT value FROM metrics",
+      "SELECT sum(value + 1) FROM metrics",
+      "SELECT sum(value) + 1 FROM metrics",
+      "SELECT sum(value) FROM metrics WHERE value > 1",
+      "SELECT sum(value) FROM metrics GROUP BY label",
+      "SELECT sum(value) AS total FROM metrics ORDER BY total",
+      "SELECT sum(value) FROM metrics FOR SYSTEM_TIME AS OF "
+      "TIMESTAMP '1970-01-01 00:00:00Z'"};
+  for (const std::string_view statement : statements) {
+    SCOPED_TRACE(statement);
+    BoundSqlSelect unsupported_select = bind(statement);
+    const auto unsupported_plan =
+        lower_bound_sql_select_to_distributed_vector_aggregate(unsupported_select);
+    ASSERT_FALSE(unsupported_plan.has_value());
+    EXPECT_EQ(unsupported_plan.error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
+    EXPECT_EQ(unsupported_plan.error().status().code(), common::StatusCode::kNotSupported);
+  }
+}
+
+TEST(DistributedSqlLoweringTest, EnforcesGlobalAggregateCallerBounds) {
+  BoundSqlSelect select =
+      bind("SELECT sum(value) AS total, min(label) AS minimum_label FROM metrics");
+  auto projection = lower_bound_sql_select_to_distributed_vector_aggregate(
+      select, {.maximum_projection_columns = 1U});
+  ASSERT_FALSE(projection.has_value());
+  EXPECT_EQ(projection.error().status().code(), common::StatusCode::kResourceExhausted);
+
+  auto aggregates =
+      lower_bound_sql_select_to_distributed_vector_aggregate(select, {.maximum_aggregates = 1U});
+  ASSERT_FALSE(aggregates.has_value());
+  EXPECT_EQ(aggregates.error().status().code(), common::StatusCode::kResourceExhausted);
+
+  auto names = lower_bound_sql_select_to_distributed_vector_aggregate(
+      select, {.maximum_result_name_bytes = 4U});
+  ASSERT_FALSE(names.has_value());
+  EXPECT_EQ(names.error().status().code(), common::StatusCode::kResourceExhausted);
+
+  auto invalid = lower_bound_sql_select_to_distributed_vector_aggregate(
+      select, {.maximum_projection_columns = 0U});
+  ASSERT_FALSE(invalid.has_value());
+  EXPECT_EQ(invalid.error().status().code(), common::StatusCode::kInvalidArgument);
+}
+
 } // namespace
 } // namespace chronos::query

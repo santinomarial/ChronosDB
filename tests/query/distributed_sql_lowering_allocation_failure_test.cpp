@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 namespace chronos::query {
@@ -22,7 +23,7 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
   return Identifier::from_bytes(bytes).value();
 }
 
-[[nodiscard]] BoundSqlSelect bound_select() {
+[[nodiscard]] BoundSqlSelect bound_select(const std::string_view sql) {
   const schema::LogicalType timestamp =
       schema::LogicalType::create(schema::LogicalTypeKind::kTimestampNs).value();
   const schema::LogicalType integer =
@@ -46,17 +47,13 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
       {.name = "metrics", .quoted = false, .schema = std::move(table)}};
   auto catalog = std::make_shared<const QueryCatalogSnapshot>(
       QueryCatalogSnapshot::create(1U, tables).value());
-  return bind_sql_v1_select(
-             parse_sql_v1_select(
-                 "SELECT value AS v, value AS again FROM metrics "
-                 "WHERE ts >= TIMESTAMP '1970-01-01 00:00:00Z' ORDER BY v DESC, ts LIMIT 2")
-                 .value(),
-             std::move(catalog))
-      .value();
+  return bind_sql_v1_select(parse_sql_v1_select(sql).value(), std::move(catalog)).value();
 }
 
 TEST(DistributedSqlLoweringAllocationFailureTest, ClassifiesEveryOwnedAllocationFailure) {
-  BoundSqlSelect select = bound_select();
+  BoundSqlSelect select =
+      bound_select("SELECT value AS v, value AS again FROM metrics "
+                   "WHERE ts >= TIMESTAMP '1970-01-01 00:00:00Z' ORDER BY v DESC, ts LIMIT 2");
   bool reached_success = false;
   for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
     SCOPED_TRACE(fail_after);
@@ -65,6 +62,34 @@ TEST(DistributedSqlLoweringAllocationFailureTest, ClassifiesEveryOwnedAllocation
     {
       ::chronos::test::ScopedAllocationFailure failure{fail_after};
       result.emplace(lower_bound_sql_select_to_distributed_vector_rows(select));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+    EXPECT_GT(observed, 0U);
+    if (result->has_value()) {
+      reached_success = true;
+      break;
+    }
+    EXPECT_EQ(result->error().code(), SqlDiagnosticCode::kResourceLimit);
+    EXPECT_EQ(result->error().status().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(DistributedSqlLoweringAllocationFailureTest,
+     ClassifiesEveryGlobalAggregateOwnedAllocationFailure) {
+  BoundSqlSelect select = bound_select(
+      "SELECT count(*) AS n, sum(value) AS total, avg(value) AS mean_value FROM metrics "
+      "WHERE ts BETWEEN TIMESTAMP '1970-01-01 00:00:00Z' AND "
+      "TIMESTAMP '1970-01-01 00:00:01Z' LIMIT 1");
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    std::optional<SqlResult<DistributedVectorAggregateSqlPlan>> result;
+    std::size_t observed = 0U;
+    {
+      ::chronos::test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(lower_bound_sql_select_to_distributed_vector_aggregate(select));
       observed = failure.observed_allocations();
       failure.disable();
     }

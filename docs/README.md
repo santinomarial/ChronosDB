@@ -329,6 +329,9 @@ existence of a design document alone is not implementation evidence.
 - [Distributed aggregate exchange](learning/distributed-aggregate-exchange.md): canonical aggregate
   frame ownership, validation order, merge-state invariants, failure behavior, and deferred carrier
   responsibilities, plus bounded partial I/O and exact coordinator retry sequencing.
+- [Distributed aggregate SQL lowering](learning/distributed-aggregate-sql-lowering.md): checked
+  bound-SQL construction of schema-neutral global aggregate projection, sufficient-state intent,
+  event-time truth, result descriptors, limits, and fail-closed semantics.
 - [Native protocol request lifecycle](learning/native-protocol-request-lifecycle.md): negotiated
   limits, bounded active requests, monotonic identities, cancellation, and durability-explicit
   acknowledgements.
