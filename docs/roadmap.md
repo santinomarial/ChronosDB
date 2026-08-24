@@ -1093,8 +1093,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   request, drives that owner under a finite deadline, and moves only its terminal payloads back into
   the original connection/principal/request route. The replicated database now supplies the real
   worker context by atomically reobserving the named local leader term, pinning one committed
-  metadata/tablet snapshot, and exact-matching the fragment proof before execution. Fresh authority
-  rebinding remains. Reactor-routed query work now runs in one joined bounded slot,
+  metadata/tablet snapshot, and exact-matching the fragment proof before execution. Retryable local
+  or remote failure now discards the complete attempt, reacquires all-group authority and routes,
+  exact-matches the original logical tablet/group identity, and repartitions replacement work under
+  the original finite deadline. Reactor-routed query work now runs in one joined bounded slot,
   so an exact later Native cancellation can cooperatively tear down remote clients and suppress the
   whole result while mismatched requests remain isolated. Self-led fragments now execute through
   the same production proof-revalidating worker while remote fragments retain mutual-TLS

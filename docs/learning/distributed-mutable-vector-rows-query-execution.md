@@ -45,10 +45,15 @@ The service-level config is also borrowed. Its source node is the coordinator tr
 Fragments whose serving node equals that identity execute through the borrowed local production
 worker because the authenticated carrier rejects self-routes; other fragments use the configured
 TLS routes. The local worker, TLS-context span, and every referenced client context must remain
-stable for the entire service lifetime. The current service bridge is synchronous and uses bounded
-polls under one finite deadline. It disables rebinding because safe rebinding requires a fresh
-all-group read-authority acquisition and correlation policy, and it cannot observe a later Native
-cancellation request while the call owns the service thread.
+stable for the entire service lifetime. The dispatcher remains synchronous on one joined query
+thread, leaving the queue owner free to publish an exact cancellation token. Remote polls and local
+fragment boundaries observe that token and suppress the complete response.
+
+Retryable local or remote failure discards the complete coordinator and every partial message,
+reacquires all-group authority and a matching snapshot, prepares a new complete route/fragment set,
+and exact-compares its logical query plus canonical tablet/group vector. Serving nodes, positions,
+epochs, and barriers may advance, including a change between local and remote execution. The
+original deadline and finite authority-rebind budget do not reset.
 
 ## Complexity and tradeoffs
 
@@ -74,7 +79,9 @@ actual `ReplicatedIngestDatabase`: it reobserves the named local leader term, pi
 metadata/tablet snapshot, and exact-matches the fragment before the worker performs its independent
 proof gates. The same query then executes through the local production worker and must produce the
 identical result payload; a missing local worker fails before row publication. Daemon composition
-remains the next deployment boundary.
+binds committed private endpoints and qualifies remote SELECT across tablet-leader failover. A
+separate higher-term test injects one stale local authority failure and requires the freshly
+reprepared attempt to produce the same final payload.
 
 Useful interview questions include:
 
@@ -84,8 +91,8 @@ Useful interview questions include:
 4. Which objects own sockets, encoded messages, and final Native payloads, and which objects are
    borrowed?
 5. Why is the composite constructor not `noexcept`, even though moves of the owner are `noexcept`?
-6. Why does the Native bridge disable redirects and fresh-authority rebinding when distributed
-   execution is configured?
-7. Which cancellation behavior changes when a synchronous request handler owns network polling?
+6. Why must Native authority rebinding restart both local and remote subsets instead of only the
+   failed remote sender?
+7. Which cancellation work remains synchronous even after the queue owner can consume `CANCEL`?
 8. Why must local and remote tablet streams enter one global coordinator instead of being finalized
    independently?

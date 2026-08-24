@@ -99,6 +99,7 @@ struct NativeDistributedMutableVectorRowsQueryConfig {
   std::chrono::milliseconds connect_timeout{5000};
   std::chrono::milliseconds execution_timeout{30000};
   std::chrono::milliseconds maximum_poll_wait{10};
+  std::size_t maximum_authority_rebindings{3U};
 };
 
 // Thread-affine synchronous translation between an already accepted native request and one

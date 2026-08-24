@@ -1019,7 +1019,9 @@ were deliberately not run.
   authenticated peer bundle for inbound/outbound query TLS, polls synchronous workers separately
   from Raft, and extends its three-process gate through remote SELECT before and after tablet-leader
   failover. Reactor-visible exact cancellation now uses one joined query slot, cooperatively tears
-  down remote work, and suppresses the complete response. Fresh authority rebinding remains absent.
+  down remote work, and suppresses the complete response. Retryable local or remote failure now
+  discards the whole attempt and installs only a freshly barrier-covered, logically identical
+  all-group fragment/route set under the original deadline.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
@@ -1037,8 +1039,8 @@ were deliberately not run.
 The exact subsystem/category ledger is
 [`deferred-validation.md`](../development/deferred-validation.md). Recommended order:
 
-1. Compose fresh-authority rebinding and extend distributed SQL beyond
-   the direct-column row subset while preserving the applied read-barrier data-plane sequence.
+1. Extend distributed SQL beyond the direct-column row subset while preserving the applied read-
+   barrier data-plane sequence.
 2. Specify database namespaces/catalog tombstones and placement-driven membership orchestration
    without changing Metadata Command v1 or Metadata Application Snapshot 1.0 bytes in place.
 3. Finish direct vector temporal winner lowering, mixed WAL/Raft recovery, durable retention

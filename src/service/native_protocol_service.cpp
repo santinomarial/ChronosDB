@@ -26,6 +26,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -204,9 +205,14 @@ query_redirect(const ResponseRoute& target, const ReplicatedQueryLeaderRoute& ro
   constexpr std::chrono::milliseconds kMaximumPollWait{1000};
   return config.source_node_id != 0U && config.authenticator != nullptr &&
          config.node_authorizer != nullptr && !config.tls_contexts.empty() &&
-         config.execution_timeout.count() > 0 &&
+         config.maximum_authority_rebindings <= 1024U && config.execution_timeout.count() > 0 &&
          config.execution_timeout <= kMaximumExecutionTimeout &&
          config.maximum_poll_wait.count() > 0 && config.maximum_poll_wait <= kMaximumPollWait;
+}
+
+[[nodiscard]] bool retryable_authority_failure(const common::StatusCode code) noexcept {
+  return code == common::StatusCode::kUnavailable ||
+         code == common::StatusCode::kResourceExhausted || code == common::StatusCode::kIoError;
 }
 
 [[nodiscard]] cluster::DistributedVectorRowFinalizationLimitsV2
@@ -791,114 +797,211 @@ NativeProtocolService::execute_query(network::NetworkTask request,
         return query_error(target, internal("distributed Native query prepared no fragments"),
                            limits_.protocol);
       }
+      auto logical_identity = cluster::distributed_mutable_vector_query_logical_identity(
+          std::span<const query::DistributedMutableVectorFragment>{prepared->fragments});
+      if (!logical_identity.has_value())
+        return query_error(target, logical_identity.error(), limits_.protocol);
       const auto execution_deadline = std::chrono::steady_clock::now() + config.execution_timeout;
-      query::DistributedVectorPlanIntent plan = prepared->fragments.front().plan;
-      query::DistributedVectorResultSchema result_schema =
-          prepared->fragments.front().result_schema;
-      std::vector<query::DistributedMutableVectorFragment> remote_fragments;
-      remote_fragments.reserve(prepared->fragments.size());
-      std::vector<schema::TabletId> ordered_tablets;
-      ordered_tablets.reserve(prepared->fragments.size());
-      for (const query::DistributedMutableVectorFragment& fragment : prepared->fragments)
-        ordered_tablets.push_back(fragment.tablet_id);
-      auto coordinator = cluster::DistributedVectorResultCoordinatorV2::create(
-          *query_id, std::move(ordered_tablets), result_schema, config.execution.coordinator);
-      if (!coordinator.has_value())
-        return query_error(target, coordinator.error(), limits_.protocol);
-
-      for (query::DistributedMutableVectorFragment& fragment : prepared->fragments) {
-        if (cancellation != nullptr && cancellation->requested()) {
-          return query_error(target, {common::StatusCode::kCancelled, "native query was cancelled"},
-                             limits_.protocol);
-        }
-        if (fragment.serving_node != config.source_node_id) {
-          remote_fragments.push_back(std::move(fragment));
-          continue;
-        }
-        if (config.local_worker == nullptr) {
-          return query_error(target, invalid("distributed Native local fragment worker is absent"),
-                             limits_.protocol);
-        }
-        auto local_messages = config.local_worker->execute(fragment);
-        if (!local_messages.has_value())
-          return query_error(target, local_messages.error(), limits_.protocol);
-        for (const cluster::DistributedVectorResultExchangeMessage& message : *local_messages) {
-          const common::Status accepted = coordinator->accept(message);
-          if (!accepted.is_ok())
-            return query_error(target, accepted, limits_.protocol);
-        }
-        if (cancellation != nullptr && cancellation->requested()) {
-          return query_error(target, {common::StatusCode::kCancelled, "native query was cancelled"},
-                             limits_.protocol);
-        }
-        if (std::chrono::steady_clock::now() >= execution_deadline) {
-          return query_error(target,
-                             common::Status{common::StatusCode::kUnavailable,
-                                            "distributed Native query execution deadline expired"},
-                             limits_.protocol);
-        }
-      }
-
-      if (!remote_fragments.empty()) {
-        std::vector<cluster::DistributedQueryNodeRoute> remote_routes;
-        remote_routes.reserve(prepared->routes.size());
-        for (cluster::DistributedQueryNodeRoute& route : prepared->routes) {
-          if (std::ranges::any_of(remote_fragments, [&](const auto& fragment) {
-                return fragment.serving_node == route.node_id;
-              })) {
-            remote_routes.push_back(std::move(route));
+      ReplicatedRoutedMutableVectorQuery current = std::move(*prepared);
+      std::size_t authority_rebindings{};
+      auto install_fresh_authority = [&](common::Status failure) -> common::Status {
+        for (;;) {
+          if (!retryable_authority_failure(failure.code()) ||
+              authority_rebindings >= config.maximum_authority_rebindings) {
+            return failure;
           }
-        }
-        auto portable = cluster::DistributedMutableVectorQueryExecution::create(
-            config.source_node_id, std::move(remote_fragments), config.execution);
-        if (!portable.has_value())
-          return query_error(target, portable.error(), limits_.protocol);
-        auto scheduler = cluster::DistributedMutableVectorQueryTcpExecution::create(
-            std::move(*portable), {.authenticator = config.authenticator,
-                                   .node_authorizer = config.node_authorizer,
-                                   .routes = std::move(remote_routes),
-                                   .carrier_limits = config.carrier,
-                                   .connect_timeout = config.connect_timeout,
-                                   .execution_deadline = execution_deadline,
-                                   .maximum_rebindings = 0U});
-        if (!scheduler.has_value())
-          return query_error(target, scheduler.error(), limits_.protocol);
-        while (scheduler->state() ==
-               cluster::DistributedMutableVectorQueryTcpExecutionState::kRunning) {
           if (cancellation != nullptr && cancellation->requested()) {
-            static_cast<void>(scheduler->cancel());
+            return {common::StatusCode::kCancelled, "native query was cancelled"};
+          }
+          if (std::chrono::steady_clock::now() >= execution_deadline) {
+            return {common::StatusCode::kCancelled,
+                    "distributed Native query execution deadline expired"};
+          }
+          ++authority_rebindings;
+          auto authorities = replicated_read_barrier_->await_authority();
+          if (!authorities.has_value()) {
+            failure = std::move(authorities.error());
+          } else {
+            std::vector<raft::GroupReadBarrier> barriers;
+            barriers.reserve(authorities->size());
+            for (const ReplicatedReadAuthority& authority : *authorities)
+              barriers.push_back(authority.barrier);
+            auto snapshot = replicated_database_->acquire_query_snapshot(barriers);
+            if (!snapshot.has_value()) {
+              failure = std::move(snapshot.error());
+            } else {
+              auto replacement = snapshot->prepare_linearizable_mutable_vector_rows_query(
+                  {.query_id = *query_id,
+                   .sql_plan = std::cref(*lowered),
+                   .group_authorities = *authorities},
+                  config.tls_contexts, config.route_resolution);
+              if (!replacement.has_value()) {
+                failure = std::move(replacement.error());
+              } else {
+                auto replacement_identity =
+                    cluster::distributed_mutable_vector_query_logical_identity(
+                        std::span<const query::DistributedMutableVectorFragment>{
+                            replacement->fragments});
+                if (!replacement_identity.has_value())
+                  return replacement_identity.error();
+                if (*replacement_identity != *logical_identity) {
+                  return invalid(
+                      "fresh distributed Native authority changes logical query identity");
+                }
+                if (cancellation != nullptr && cancellation->requested())
+                  return {common::StatusCode::kCancelled, "native query was cancelled"};
+                if (std::chrono::steady_clock::now() >= execution_deadline) {
+                  return {common::StatusCode::kCancelled,
+                          "distributed Native query execution deadline expired"};
+                }
+                current = std::move(*replacement);
+                return common::Status::ok();
+              }
+            }
+          }
+          if (!retryable_authority_failure(failure.code()) ||
+              authority_rebindings >= config.maximum_authority_rebindings) {
+            return failure;
+          }
+          std::this_thread::sleep_for(config.maximum_poll_wait);
+        }
+      };
+
+      for (;;) {
+        std::optional<common::Status> retryable_failure;
+        std::vector<query::DistributedMutableVectorFragment> remote_fragments;
+        remote_fragments.reserve(current.fragments.size());
+        std::vector<schema::TabletId> ordered_tablets;
+        ordered_tablets.reserve(current.fragments.size());
+        for (const query::DistributedMutableVectorFragment& fragment : current.fragments)
+          ordered_tablets.push_back(fragment.tablet_id);
+        auto coordinator = cluster::DistributedVectorResultCoordinatorV2::create(
+            *query_id, std::move(ordered_tablets), logical_identity->result_schema,
+            config.execution.coordinator);
+        if (!coordinator.has_value())
+          return query_error(target, coordinator.error(), limits_.protocol);
+
+        for (query::DistributedMutableVectorFragment& fragment : current.fragments) {
+          if (cancellation != nullptr && cancellation->requested()) {
             return query_error(target,
                                {common::StatusCode::kCancelled, "native query was cancelled"},
                                limits_.protocol);
           }
-          const common::Status polled = scheduler->poll_once(config.maximum_poll_wait);
-          if (!polled.is_ok())
-            return query_error(target, polled, limits_.protocol);
+          if (std::chrono::steady_clock::now() >= execution_deadline) {
+            return query_error(target,
+                               {common::StatusCode::kCancelled,
+                                "distributed Native query execution deadline expired"},
+                               limits_.protocol);
+          }
+          if (fragment.serving_node != config.source_node_id) {
+            remote_fragments.push_back(std::move(fragment));
+            continue;
+          }
+          if (config.local_worker == nullptr) {
+            return query_error(target,
+                               invalid("distributed Native local fragment worker is absent"),
+                               limits_.protocol);
+          }
+          auto local_messages = config.local_worker->execute(fragment);
+          if (!local_messages.has_value()) {
+            if (retryable_authority_failure(local_messages.error().code())) {
+              retryable_failure.emplace(std::move(local_messages.error()));
+              break;
+            }
+            return query_error(target, local_messages.error(), limits_.protocol);
+          }
+          if (cancellation != nullptr && cancellation->requested()) {
+            return query_error(target,
+                               {common::StatusCode::kCancelled, "native query was cancelled"},
+                               limits_.protocol);
+          }
+          for (const cluster::DistributedVectorResultExchangeMessage& message : *local_messages) {
+            const common::Status accepted = coordinator->accept(message);
+            if (!accepted.is_ok())
+              return query_error(target, accepted, limits_.protocol);
+          }
+          if (std::chrono::steady_clock::now() >= execution_deadline) {
+            return query_error(target,
+                               {common::StatusCode::kCancelled,
+                                "distributed Native query execution deadline expired"},
+                               limits_.protocol);
+          }
         }
-        if (scheduler->state() !=
-            cluster::DistributedMutableVectorQueryTcpExecutionState::kComplete) {
-          return query_error(target, scheduler->failure(), limits_.protocol);
-        }
-        auto remote_result = scheduler->take_result();
-        if (!remote_result.has_value())
-          return query_error(target, remote_result.error(), limits_.protocol);
-        for (const cluster::DistributedVectorResultExchangeMessage& message :
-             remote_result->result.messages) {
-          const common::Status accepted = coordinator->accept(message);
-          if (!accepted.is_ok())
-            return query_error(target, accepted, limits_.protocol);
-        }
-      }
 
-      auto coordinated = std::move(*coordinator).finish();
-      if (!coordinated.has_value())
-        return query_error(target, coordinated.error(), limits_.protocol);
-      auto finalized = cluster::finalize_distributed_vector_rows_v2(
-          {.plan = std::move(plan), .result = std::move(*coordinated)},
-          bounded_finalization_limits(config, limits_));
-      if (!finalized.has_value())
-        return query_error(target, finalized.error(), limits_.protocol);
-      return distributed_rows_result(target, std::move(*finalized), limits_);
+        if (!retryable_failure.has_value() && !remote_fragments.empty()) {
+          std::vector<cluster::DistributedQueryNodeRoute> remote_routes;
+          remote_routes.reserve(current.routes.size());
+          for (cluster::DistributedQueryNodeRoute& route : current.routes) {
+            if (std::ranges::any_of(remote_fragments, [&](const auto& fragment) {
+                  return fragment.serving_node == route.node_id;
+                })) {
+              remote_routes.push_back(std::move(route));
+            }
+          }
+          auto portable = cluster::DistributedMutableVectorQueryExecution::create(
+              config.source_node_id, std::move(remote_fragments), config.execution);
+          if (!portable.has_value())
+            return query_error(target, portable.error(), limits_.protocol);
+          auto scheduler = cluster::DistributedMutableVectorQueryTcpExecution::create(
+              std::move(*portable), {.authenticator = config.authenticator,
+                                     .node_authorizer = config.node_authorizer,
+                                     .routes = std::move(remote_routes),
+                                     .carrier_limits = config.carrier,
+                                     .connect_timeout = config.connect_timeout,
+                                     .execution_deadline = execution_deadline,
+                                     .maximum_rebindings = 0U});
+          if (!scheduler.has_value())
+            return query_error(target, scheduler.error(), limits_.protocol);
+          while (scheduler->state() ==
+                 cluster::DistributedMutableVectorQueryTcpExecutionState::kRunning) {
+            if (cancellation != nullptr && cancellation->requested()) {
+              static_cast<void>(scheduler->cancel());
+              return query_error(target,
+                                 {common::StatusCode::kCancelled, "native query was cancelled"},
+                                 limits_.protocol);
+            }
+            const common::Status polled = scheduler->poll_once(config.maximum_poll_wait);
+            if (!polled.is_ok()) {
+              if (retryable_authority_failure(polled.code()))
+                retryable_failure.emplace(polled);
+              else
+                return query_error(target, polled, limits_.protocol);
+              break;
+            }
+          }
+          if (!retryable_failure.has_value()) {
+            if (scheduler->state() !=
+                cluster::DistributedMutableVectorQueryTcpExecutionState::kComplete) {
+              return query_error(target, scheduler->failure(), limits_.protocol);
+            }
+            auto remote_result = scheduler->take_result();
+            if (!remote_result.has_value())
+              return query_error(target, remote_result.error(), limits_.protocol);
+            for (const cluster::DistributedVectorResultExchangeMessage& message :
+                 remote_result->result.messages) {
+              const common::Status accepted = coordinator->accept(message);
+              if (!accepted.is_ok())
+                return query_error(target, accepted, limits_.protocol);
+            }
+          }
+        }
+
+        if (retryable_failure.has_value()) {
+          common::Status rebound = install_fresh_authority(std::move(*retryable_failure));
+          if (!rebound.is_ok())
+            return query_error(target, rebound, limits_.protocol);
+          continue;
+        }
+        auto coordinated = std::move(*coordinator).finish();
+        if (!coordinated.has_value())
+          return query_error(target, coordinated.error(), limits_.protocol);
+        auto finalized = cluster::finalize_distributed_vector_rows_v2(
+            {.plan = logical_identity->plan, .result = std::move(*coordinated)},
+            bounded_finalization_limits(config, limits_));
+        if (!finalized.has_value())
+          return query_error(target, finalized.error(), limits_.protocol);
+        return distributed_rows_result(target, std::move(*finalized), limits_);
+      }
     }
     auto resources = query::QueryResourceContext::create(limits_.maximum_query_memory_bytes);
     if (!resources.has_value())

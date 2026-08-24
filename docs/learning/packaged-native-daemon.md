@@ -62,6 +62,12 @@ response. A second query is rejected while the slot is occupied. Shutdown publis
 and waits for the query thread before releasing service or database owners. Local worker calls are
 bounded but remain interruptible only at fragment boundaries.
 
+Retryable local or remote authority failure now restarts the whole distributed attempt under the
+same absolute deadline. The query thread reacquires every group barrier, pins a new coherent
+publication set, and accepts replacement fragments/routes only when the full logical query and
+tablet/group vector remain exact. Old local and remote messages are discarded together; current
+serving nodes may repartition work between the direct worker and private TLS carrier.
+
 The subscription composition uses a stable committed-append router as the database's pre-open
 observer address. After recovery and before socket admission, one per-plan runtime binds its fan-out
 and borrows the database's exact snapshot storage context. The runtime owns neither the plan,

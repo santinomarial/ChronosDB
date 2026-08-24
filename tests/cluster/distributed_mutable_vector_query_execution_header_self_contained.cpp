@@ -10,4 +10,6 @@ static_assert(
 namespace {
 [[maybe_unused]] const auto kCreate =
     &chronos::cluster::DistributedMutableVectorQueryExecution::create;
-}
+[[maybe_unused]] const auto kDescribeIdentity =
+    &chronos::cluster::distributed_mutable_vector_query_logical_identity;
+} // namespace

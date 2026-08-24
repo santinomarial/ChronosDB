@@ -19,7 +19,67 @@ namespace {
   return {common::StatusCode::kResourceExhausted, message};
 }
 
+struct ValidatedLogicalIdentity {
+  DistributedMutableVectorQueryLogicalIdentity identity;
+  std::map<schema::TabletId, std::size_t> indexes;
+};
+
+[[nodiscard]] common::Result<ValidatedLogicalIdentity> validate_logical_identity(
+    const std::span<const query::DistributedMutableVectorFragment> fragments) {
+  if (fragments.empty())
+    return common::make_unexpected(invalid("mutable vector query fragment set is empty"));
+  try {
+    const query::DistributedMutableVectorFragment& first = fragments.front();
+    DistributedMutableVectorQueryLogicalIdentity identity{
+        .query_id = first.query_id,
+        .database_id = first.database_id,
+        .table_id = first.table_id,
+        .destination_schema_id = first.destination_schema_id,
+        .read_policy = first.read_policy,
+        .destination_column_ordinals = first.destination_column_ordinals,
+        .event_time_predicate = first.event_time_predicate,
+        .plan = first.plan,
+        .result_schema = first.result_schema,
+        .tablets = {}};
+    std::map<schema::TabletId, std::size_t> indexes;
+    identity.tablets.reserve(fragments.size());
+    for (std::size_t index = 0U; index < fragments.size(); ++index) {
+      const query::DistributedMutableVectorFragment& fragment = fragments[index];
+      const common::Status structural =
+          query::validate_distributed_mutable_vector_fragment(fragment);
+      if (!structural.is_ok())
+        return common::make_unexpected(structural);
+      if (fragment.query_id != identity.query_id || fragment.database_id != identity.database_id ||
+          fragment.table_id != identity.table_id ||
+          fragment.destination_schema_id != identity.destination_schema_id ||
+          fragment.read_policy != identity.read_policy || fragment.plan != identity.plan ||
+          fragment.result_schema != identity.result_schema ||
+          fragment.destination_column_ordinals != identity.destination_column_ordinals ||
+          fragment.event_time_predicate != identity.event_time_predicate ||
+          !indexes.emplace(fragment.tablet_id, index).second) {
+        return common::make_unexpected(
+            invalid("mutable vector query execution authority is mixed or duplicated"));
+      }
+      identity.tablets.push_back({fragment.tablet_id, fragment.raft_group_id});
+    }
+    return ValidatedLogicalIdentity{std::move(identity), std::move(indexes)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("mutable vector query identity allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("mutable vector query identity exceeds limits"));
+  }
+}
+
 } // namespace
+
+common::Result<DistributedMutableVectorQueryLogicalIdentity>
+distributed_mutable_vector_query_logical_identity(
+    const std::span<const query::DistributedMutableVectorFragment> fragments) {
+  auto validated = validate_logical_identity(fragments);
+  if (!validated.has_value())
+    return common::make_unexpected(validated.error());
+  return std::move(validated->identity);
+}
 
 DistributedMutableVectorQueryExecution::DistributedMutableVectorQueryExecution(
     query::DistributedVectorPlanIntent plan, DistributedVectorResultCoordinatorV2 coordinator,
@@ -35,57 +95,27 @@ DistributedMutableVectorQueryExecution::create(
     const raft::NodeId source_node_id,
     std::vector<query::DistributedMutableVectorFragment> fragments,
     const DistributedMutableVectorQueryExecutionLimits limits) {
-  if (source_node_id == 0U || fragments.empty()) {
+  if (source_node_id == 0U) {
     return common::make_unexpected(invalid("mutable vector query execution authority is invalid"));
   }
   try {
-    const common::Uuid query_id = fragments.front().query_id;
-    const manifest::DatabaseId database_id = fragments.front().database_id;
-    const schema::TableId table_id = fragments.front().table_id;
-    const schema::SchemaId destination_schema_id = fragments.front().destination_schema_id;
-    const query::DistributedReadPolicy read_policy = fragments.front().read_policy;
-    const auto destination_column_ordinals = fragments.front().destination_column_ordinals;
-    const auto event_time_predicate = fragments.front().event_time_predicate;
-    query::DistributedVectorPlanIntent plan = fragments.front().plan;
-    query::DistributedVectorResultSchema result_schema = fragments.front().result_schema;
-    DistributedMutableVectorQueryLogicalIdentity logical_identity{
-        .query_id = query_id,
-        .database_id = database_id,
-        .table_id = table_id,
-        .destination_schema_id = destination_schema_id,
-        .read_policy = read_policy,
-        .destination_column_ordinals = destination_column_ordinals,
-        .event_time_predicate = event_time_predicate,
-        .plan = plan,
-        .result_schema = result_schema};
+    auto validated = validate_logical_identity(fragments);
+    if (!validated.has_value())
+      return common::make_unexpected(validated.error());
+    const common::Uuid query_id = validated->identity.query_id;
+    query::DistributedVectorPlanIntent plan = validated->identity.plan;
+    query::DistributedVectorResultSchema result_schema = validated->identity.result_schema;
     std::vector<schema::TabletId> tablets;
     std::vector<SenderSlot> senders;
     std::vector<DistributedMutableVectorQueryTarget> targets;
-    std::map<schema::TabletId, std::size_t> indexes;
+    std::map<schema::TabletId, std::size_t> indexes = std::move(validated->indexes);
     tablets.reserve(fragments.size());
     senders.reserve(fragments.size());
     targets.reserve(fragments.size());
-    logical_identity.tablets.reserve(fragments.size());
     for (std::size_t index = 0U; index < fragments.size(); ++index) {
       query::DistributedMutableVectorFragment& fragment = fragments[index];
-      const common::Status structural =
-          query::validate_distributed_mutable_vector_fragment(fragment);
-      if (!structural.is_ok())
-        return common::make_unexpected(structural);
-      if (fragment.query_id != query_id || fragment.database_id != database_id ||
-          fragment.table_id != table_id ||
-          fragment.destination_schema_id != destination_schema_id ||
-          fragment.read_policy != read_policy || fragment.plan != plan ||
-          fragment.result_schema != result_schema ||
-          fragment.destination_column_ordinals != destination_column_ordinals ||
-          fragment.event_time_predicate != event_time_predicate ||
-          !indexes.emplace(fragment.tablet_id, index).second) {
-        return common::make_unexpected(
-            invalid("mutable vector query execution authority is mixed or duplicated"));
-      }
       const schema::TabletId tablet_id = fragment.tablet_id;
       const raft::NodeId serving_node = fragment.serving_node;
-      const raft::GroupId raft_group_id = fragment.raft_group_id;
       auto sender = DistributedMutableVectorQuerySender::create(source_node_id, std::move(fragment),
                                                                 limits.sender);
       if (!sender.has_value())
@@ -93,15 +123,14 @@ DistributedMutableVectorQueryExecution::create(
       tablets.push_back(tablet_id);
       senders.push_back({tablet_id, std::move(*sender), false, false});
       targets.push_back({tablet_id, serving_node});
-      logical_identity.tablets.push_back({tablet_id, raft_group_id});
     }
     auto coordinator = DistributedVectorResultCoordinatorV2::create(
         query_id, std::move(tablets), std::move(result_schema), limits.coordinator);
     if (!coordinator.has_value())
       return common::make_unexpected(coordinator.error());
     return DistributedMutableVectorQueryExecution{
-        std::move(plan),    std::move(*coordinator),     std::move(senders),
-        std::move(targets), std::move(logical_identity), std::move(indexes)};
+        std::move(plan),    std::move(*coordinator),        std::move(senders),
+        std::move(targets), std::move(validated->identity), std::move(indexes)};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("mutable vector query execution allocation failed"));
   } catch (const std::length_error&) {

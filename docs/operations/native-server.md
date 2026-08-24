@@ -182,6 +182,13 @@ slot drains. Shutdown publishes the same cancellation and joins the query before
 or TLS owners. Synchronous local fragment work observes cancellation between fragment calls rather
 than inside a scan.
 
+Distributed queries default to three fresh all-group authority rebindings. A retryable local or
+remote failure reacquires every read barrier and committed route under the original deadline,
+discards all prior attempt output, and retries only if query/table/schema/plan/tablet/group identity
+is unchanged. Set `maximum_authority_rebindings` to zero in an embedding for one-shot behavior;
+`chronosd` currently uses the bounded default. Repeated rebinding indicates leadership churn,
+endpoint failure, or resource pressure and should be investigated.
+
 The repository's Linux process qualification uses one CA and a distinct certificate/key for each
 of three loopback nodes. It proves authenticated election, QUORUM_SYNC application, remote SELECT
 from a nonleader, abrupt tablet-leader loss, higher-term retry deduplication, remote SELECT through

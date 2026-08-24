@@ -74,6 +74,61 @@ public:
   }
 };
 
+class AdvancingFailOnceMutableWorker final
+    : public cluster::DistributedMutableVectorQueryWorkerService {
+public:
+  AdvancingFailOnceMutableWorker(
+      ReplicatedIngestDatabase& database,
+      cluster::DistributedMutableVectorQueryWorkerService& delegate) noexcept
+      : database_(&database), delegate_(&delegate) {}
+
+  common::Result<std::vector<cluster::DistributedVectorResultExchangeMessage>>
+  execute(const query::DistributedMutableVectorFragment& fragment) override {
+    ++calls_;
+    if (calls_ == 1U) {
+      if (!fragment.linearizable_barrier.has_value()) {
+        return common::make_unexpected(common::Status{common::StatusCode::kInternal,
+                                                      "test fragment has no linearizable barrier"});
+      }
+      first_term_ = fragment.linearizable_barrier->term;
+      auto advanced = database_->ingest_runtime()->runtime()->try_submit(
+          {{fragment.raft_group_id, raft::StartElectionOperation{}},
+           {fragment.raft_group_id, raft::CommitCurrentTermOperation{}}});
+      if (!advanced.has_value())
+        return common::make_unexpected(advanced.error());
+      auto completed = advanced->wait();
+      if (!completed.has_value())
+        return common::make_unexpected(completed.error());
+      for (const raft::DurableRaftResult& result : *completed) {
+        if (!result.status.is_ok())
+          return common::make_unexpected(result.status);
+      }
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kUnavailable, "injected stale local query authority"});
+    }
+    if (second_term_ == 0U && fragment.linearizable_barrier.has_value())
+      second_term_ = fragment.linearizable_barrier->term;
+    return delegate_->execute(fragment);
+  }
+
+  [[nodiscard]] std::size_t calls() const noexcept {
+    return calls_;
+  }
+  [[nodiscard]] raft::Term first_term() const noexcept {
+    return first_term_;
+  }
+  [[nodiscard]] raft::Term second_term() const noexcept {
+    return second_term_;
+  }
+
+private:
+  ReplicatedIngestDatabase* database_{};
+  cluster::DistributedMutableVectorQueryWorkerService* delegate_{};
+  std::size_t calls_{};
+  raft::Term first_term_{};
+  raft::Term second_term_{};
+};
+
 class RecordingStartupObserver final : public ReplicatedIngestDatabaseStartupObserver {
 public:
   void on_startup_stage(const ReplicatedIngestDatabaseStartupStage stage) noexcept override {
@@ -1055,6 +1110,21 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
             native_distributed->responses[0].frame.payload);
   EXPECT_EQ(native_local->responses[1].frame.header.message_type, network::MessageType::kQueryEnd);
 
+  AdvancingFailOnceMutableWorker rebinding_worker{*database, *local_worker};
+  auto rebinding_config = local_distributed_config;
+  rebinding_config.local_worker = &rebinding_worker;
+  rebinding_config.maximum_authority_rebindings = 1U;
+  NativeProtocolService rebinding_native{*database, *read_barrier, rebinding_config};
+  auto rebound = rebinding_native.execute_query(
+      query_request("SELECT tag AS label, ts, tag AS repeated FROM events "
+                    "WHERE ts >= TIMESTAMP '1970-01-01 00:00:00Z' "
+                    "ORDER BY label ASC, ts LIMIT 1"));
+  ASSERT_TRUE(rebound.has_value()) << rebound.error().to_string();
+  ASSERT_EQ(rebound->responses.size(), 2U);
+  EXPECT_EQ(rebound->responses[0].frame.payload, native_local->responses[0].frame.payload);
+  EXPECT_EQ(rebinding_worker.calls(), 3U);
+  EXPECT_GT(rebinding_worker.second_term(), rebinding_worker.first_term());
+
   auto missing_local_worker_config = local_distributed_config;
   missing_local_worker_config.local_worker = nullptr;
   NativeProtocolService missing_local_worker_native{*database, *read_barrier,
@@ -1074,6 +1144,22 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   for (const std::byte byte : missing_local_worker_error->message)
     missing_local_worker_message.push_back(static_cast<char>(byte));
   EXPECT_EQ(missing_local_worker_message, "distributed Native local fragment worker is absent");
+
+  auto excessive_rebinding_config = local_distributed_config;
+  excessive_rebinding_config.maximum_authority_rebindings = 1025U;
+  NativeProtocolService excessive_rebinding_native{*database, *read_barrier,
+                                                   excessive_rebinding_config};
+  auto excessive_rebinding = excessive_rebinding_native.execute_query(
+      query_request("SELECT tag, ts FROM events ORDER BY tag ASC, ts LIMIT 1"));
+  ASSERT_TRUE(excessive_rebinding.has_value()) << excessive_rebinding.error().to_string();
+  ASSERT_EQ(excessive_rebinding->responses.size(), 1U);
+  ASSERT_EQ(excessive_rebinding->responses.front().frame.header.message_type,
+            network::MessageType::kError);
+  auto excessive_rebinding_error =
+      network::decode_error_message(excessive_rebinding->responses.front().frame.payload);
+  ASSERT_TRUE(excessive_rebinding_error.has_value())
+      << excessive_rebinding_error.error().to_string();
+  EXPECT_EQ(excessive_rebinding_error->code, network::ProtocolErrorCode::kInvalidRequest);
 
   auto nil_sql_query = mutable_snapshot->prepare_linearizable_mutable_vector_rows_query(
       {.query_id = {}, .sql_plan = std::cref(*distributed_sql), .group_authorities = *authorities},

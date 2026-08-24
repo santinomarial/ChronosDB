@@ -102,6 +102,33 @@ TEST(DistributedMutableVectorQueryExecutionTest,
 }
 
 TEST(DistributedMutableVectorQueryExecutionTest,
+     ExtractsCompleteLogicalIdentityAcrossLocalAndFreshRemoteAuthority) {
+  std::vector initial{fragment(4U, 1U), fragment(6U, 8U)};
+  auto identity = distributed_mutable_vector_query_logical_identity(initial);
+  ASSERT_TRUE(identity.has_value()) << identity.error().to_string();
+  ASSERT_EQ(identity->tablets.size(), 2U);
+  EXPECT_EQ(identity->tablets[0], (DistributedMutableVectorQueryLogicalTablet{
+                                      initial[0].tablet_id, initial[0].raft_group_id}));
+
+  auto fresh = initial;
+  fresh[0].serving_node = 9U;
+  ++fresh[0].applied_position;
+  ++fresh[0].observed_leader_commit_position;
+  ++fresh[0].placement_epoch;
+  auto fresh_identity = distributed_mutable_vector_query_logical_identity(fresh);
+  ASSERT_TRUE(fresh_identity.has_value()) << fresh_identity.error().to_string();
+  EXPECT_EQ(*fresh_identity, *identity);
+
+  fresh[0].raft_group_id = uuid(99U);
+  fresh_identity = distributed_mutable_vector_query_logical_identity(fresh);
+  ASSERT_TRUE(fresh_identity.has_value()) << fresh_identity.error().to_string();
+  EXPECT_NE(*fresh_identity, *identity);
+  fresh[1].plan.limit = 3U;
+  EXPECT_EQ(distributed_mutable_vector_query_logical_identity(fresh).error().code(),
+            common::StatusCode::kInvalidArgument);
+}
+
+TEST(DistributedMutableVectorQueryExecutionTest,
      PreservesFreshAuthorityHintAndPoisonsOnlyAtTerminalFailure) {
   auto value = fragment(4U, 7U);
   const schema::TabletId tablet = value.tablet_id;

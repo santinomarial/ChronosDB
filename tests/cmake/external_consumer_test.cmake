@@ -438,6 +438,8 @@ int main() {
       &chronos::service::ReplicatedDistributedMutableVectorQueryWorker::create;
   const auto create_mutable_vector_query_execution =
       &chronos::cluster::DistributedMutableVectorQueryExecution::create;
+  const auto describe_mutable_vector_query_identity =
+      &chronos::cluster::distributed_mutable_vector_query_logical_identity;
   const auto create_mutable_vector_query_tcp_execution =
       &chronos::cluster::DistributedMutableVectorQueryTcpExecution::create;
   const auto rebind_mutable_vector_query_tcp_execution =
@@ -704,6 +706,7 @@ int main() {
   (void)create_replicated_grouped_query_worker;
   (void)create_replicated_mutable_vector_query_worker;
   (void)create_mutable_vector_query_execution;
+  (void)describe_mutable_vector_query_identity;
   (void)create_mutable_vector_query_tcp_execution;
   (void)rebind_mutable_vector_query_tcp_execution;
   (void)create_mutable_vector_rows_query_tcp_execution;
@@ -1689,6 +1692,7 @@ int main() {
                  create_replicated_vector_query_worker_v2 != nullptr &&
                  create_replicated_mutable_vector_query_worker != nullptr &&
                  create_mutable_vector_query_execution != nullptr &&
+                 describe_mutable_vector_query_identity != nullptr &&
                  create_mutable_vector_query_tcp_execution != nullptr &&
                  rebind_mutable_vector_query_tcp_execution != nullptr &&
                  start_replicated_mutable_vector_query_server != nullptr &&

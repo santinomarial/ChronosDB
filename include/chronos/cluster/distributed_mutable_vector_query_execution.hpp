@@ -55,6 +55,13 @@ struct DistributedMutableVectorQueryLogicalIdentity {
                          const DistributedMutableVectorQueryLogicalIdentity&) = default;
 };
 
+// Validates one complete fragment set and returns only the logical fields that fresh authority may
+// not change. Unlike execution creation, this accepts self-led fragments because it opens no
+// carrier and constructs no sender.
+[[nodiscard]] common::Result<DistributedMutableVectorQueryLogicalIdentity>
+distributed_mutable_vector_query_logical_identity(
+    std::span<const query::DistributedMutableVectorFragment> fragments);
+
 // Portable single-owner orchestration for one proof-bound mutable publication per tablet. The
 // fragments are immutable, value-owned authority; callers own transports and clocks and serialize
 // every method. Completion reuses the schema-bound v2 result value consumed by row finalization.
