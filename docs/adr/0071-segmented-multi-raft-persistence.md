@@ -123,6 +123,9 @@ An adjacent namespace case installs one synchronized unrecognized regular file, 
 directory contains an unknown entry`, and proves startup neither removes that file nor rewrites the
 established segment. A non-regular companion synchronizes a symlink to that segment, requires `Raft
 directory contains a non-regular entry`, and proves recovery neither follows nor removes it.
+An authoritative-anchor case checkpoints the daemon's recovered metadata state through the public
+log owner, proves a clean packaged reopen, then requires the exact anchor-checksum failure after one
+covered-byte mutation. Rejection preserves both the damaged anchor and retained checkpoint segment.
 
 A separate 24-case recovery matrix fixes the encoded record size at 213 bytes and crosses segment
 targets `277`, `278`, `489`, `490`, `491`, `702`, `703`, and `1024` with 1, 3, and 8 logical groups.

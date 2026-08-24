@@ -70,7 +70,9 @@ segment. A third appends a one-byte incomplete final suffix and proves packaged 
 no-repair policy preserves it. A fourth adds one durable unrecognized regular file to the Raft
 directory, requires the exact unknown-entry failure before socket admission, and preserves both
 that entry and the established segment. A fifth installs a symlink to that segment, requires the
-non-regular-entry failure, and proves startup neither follows nor removes the link.
+non-regular-entry failure, and proves startup neither follows nor removes the link. A sixth creates
+a real node-wide checkpoint and recovery anchor, validates one packaged reopen, then corrupts a
+checksum-covered anchor field and proves startup neither falls back nor rewrites retained history.
 
 ## Deferred decisions
 

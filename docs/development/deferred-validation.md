@@ -955,8 +955,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   incomplete-tail shapes and authorized packaged repair remain deferred. The packaged matrix now
   also rejects one CRC-covered metadata-Raft segment-header corruption and preserves the complete
   segment. A companion case rejects the first complete metadata-record payload checksum failure and
-  preserves the same segment; remaining Raft record and recovery-anchor corruption matrices remain
-  deferred. A minimal one-byte Raft final-tail case now proves packaged startup does not authorize
+  preserves the same segment; remaining Raft record corruption matrices remain deferred. A real
+  recovery-anchor case now proves clean packaged reopen of a public checkpoint-and-reclaim image,
+  then rejects one covered-byte anchor checksum failure without fallback or rewrite; other anchor
+  fields, truncations, missing files, and retained-history combinations remain deferred. A minimal
+  one-byte Raft final-tail case now proves packaged startup does not authorize
   repair and preserves the suffix; other tail shapes and authorized packaged repair remain deferred.
   One synchronized unknown regular Raft-directory entry now proves startup fails before admission
   without cleaning the entry or rewriting the established segment. A synchronized symlink to that

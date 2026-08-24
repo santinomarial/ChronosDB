@@ -45,7 +45,9 @@ incomplete final Raft suffix is repairable only with explicit log-open authoriza
 `chronosd` does not opt in and preserves that suffix while refusing startup. Any unrecognized Raft
 directory entry is corruption, not cleanup residue: preserve the root for diagnosis because
 packaged startup fails before listening and does not remove the entry. This includes symlinks,
-which recovery classifies without following. To serve one durable
+which recovery classifies without following. A damaged highest Raft recovery anchor is likewise
+terminal: do not recreate it or restore an older anchor alone, because the selected retained base
+and anchor are one authority. Restore an identity-consistent root. To serve one durable
 row-preserving plan, supply the paired
 `--subscription-sql SQL` and `--subscription-key-file PATH` options. The table must already exist.
 The key file must contain exactly 32 nonzero bytes and be inaccessible to group/other; preserve the

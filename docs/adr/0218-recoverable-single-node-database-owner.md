@@ -76,7 +76,9 @@ projection without rewriting the segment. The incomplete-tail case proves the ow
 no-repair configuration rejects the suffix before catalog projection and preserves it unchanged.
 The unknown-entry case proves metadata recovery rejects an unrecognized durable namespace member
 before catalog projection without cleaning it up or changing the established segment. A symlink
-case proves the same pre-projection rejection without following or removing the link.
+case proves the same pre-projection rejection without following or removing the link. An
+authoritative-anchor case proves the owner accepts a valid checkpointed metadata base, then rejects
+its checksum corruption before projection without falling back or rewriting retained history.
 
 ## References
 

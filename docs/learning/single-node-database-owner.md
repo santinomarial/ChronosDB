@@ -132,6 +132,8 @@ projection. An unrecognized regular file in the metadata-Raft directory also sto
 catalog projection. Packaged coverage proves the owner does not classify it as cleanup residue and
 preserves both the entry and established Raft segment. A symlink to that segment also fails before
 projection, remains a symlink, and cannot redirect recovery into following or rewriting its target.
+The owner also reopens a real anchored metadata checkpoint. Once the highest anchor is damaged, it
+fails before projection and does not fall back to removed history or rewrite the retained base.
 
 Malformed transport/command bytes become client-invalid protocol errors. Database corruption stays
 distinguishable as an internal error; I/O, unavailability, and unsupported operations are execution

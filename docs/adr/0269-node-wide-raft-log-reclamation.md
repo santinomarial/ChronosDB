@@ -48,3 +48,7 @@ remain hardening work.
 Invariants 1, 4, 5, 8, 10, 11, 14, and 18 apply. Real-filesystem tests cover multi-group shared
 prefix reclamation, exact reopen and sequence continuation, stale old-segment cleanup after an
 interrupted deletion, damaged-anchor rejection, and durable-runtime composition.
+Linux packaged-daemon qualification checkpoints the recovered one-group metadata state through the
+public log owner and first proves a clean process reopen. It then damages one checksum-covered anchor
+field, requires the exact checksum failure before socket admission, and preserves the anchor and
+retained checkpoint segment byte-for-byte.

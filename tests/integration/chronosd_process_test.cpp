@@ -5,6 +5,7 @@
 #include "chronos/network/subscription_messages.hpp"
 #include "chronos/raft/durable_runtime.hpp"
 #include "chronos/raft/metadata_codec.hpp"
+#include "chronos/raft/persistent_log.hpp"
 #include "chronos/raft/schema_definition_codec.hpp"
 #include "chronos/raft/tablet_group_binding_codec.hpp"
 #include "chronos/runtime/database_bootstrap.hpp"
@@ -1337,6 +1338,62 @@ TEST(ChronosdProcessTest, RejectsRaftNamespaceSymlinkWithoutFollowingOrCleanup) 
       std::filesystem::read_symlink(unexpected, link_error);
   EXPECT_FALSE(link_error) << link_error.message();
   EXPECT_EQ(preserved_target, std::filesystem::path{kFirstRaftSegment});
+  EXPECT_EQ(read_text_file(segment), pristine_segment);
+}
+
+TEST(ChronosdProcessTest, RejectsCorruptAuthoritativeRaftAnchorWithoutFallbackOrRewrite) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  ChildProcess child;
+  ASSERT_TRUE(child.start(directory.path()));
+  std::string startup = child.read_startup_line();
+  EXPECT_NE(startup.find("data_plane=configured"), std::string::npos);
+  EXPECT_EQ(child.stop(), 0);
+
+  const std::string raft_directory = directory.path() + "/" + runtime::kDatabaseRaftDirectoryName;
+  auto log = raft::RaftPersistentLog::open_existing({.directory_path = raft_directory});
+  ASSERT_TRUE(log.has_value()) << log.error().to_string();
+  std::vector<raft::GroupPersistentState> checkpoint = log->recovery().latest_group_states;
+  ASSERT_EQ(checkpoint.size(), 1U);
+  checkpoint.front().physical_sequence = log->written_position().physical_sequence + 1U;
+  auto reclaimed = log->checkpoint_and_reclaim(checkpoint);
+  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  ASSERT_EQ(reclaimed->base_segment_number, 2U);
+  ASSERT_TRUE(log->close().is_ok());
+
+  ASSERT_TRUE(child.start(directory.path()));
+  startup = child.read_startup_line();
+  EXPECT_NE(startup.find("data_plane=configured"), std::string::npos);
+  EXPECT_EQ(child.stop(), 0);
+
+  constexpr std::string_view kRecoveryAnchor = "raft-base-00000000000000000002.rbase";
+  const std::string anchor = raft_directory + "/" + std::string{kRecoveryAnchor};
+  const std::string pristine_anchor = read_text_file(anchor);
+  ASSERT_EQ(pristine_anchor.size(), 64U);
+  constexpr std::string_view kCheckpointSegment = "raft-00000000000000000002.rlog";
+  const std::string segment = raft_directory + "/" + std::string{kCheckpointSegment};
+  const std::string pristine_segment = read_text_file(segment);
+  ASSERT_GT(pristine_segment.size(), 64U);
+
+  constexpr std::size_t kCoveredBaseSegmentByte = 16U;
+  std::string corrupted = pristine_anchor;
+  corrupted.at(kCoveredBaseSegmentByte) =
+      static_cast<char>(static_cast<unsigned char>(corrupted.at(kCoveredBaseSegmentByte)) ^ 1U);
+  const int anchor_file = ::open(anchor.c_str(), O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+  ASSERT_GE(anchor_file, 0);
+  ASSERT_EQ(::pwrite(anchor_file, corrupted.data() + kCoveredBaseSegmentByte, 1U,
+                     static_cast<off_t>(kCoveredBaseSegmentByte)),
+            static_cast<ssize_t>(1));
+  ASSERT_EQ(::fsync(anchor_file), 0);
+  ASSERT_EQ(::close(anchor_file), 0);
+  ASSERT_EQ(read_text_file(anchor), corrupted);
+
+  ASSERT_TRUE(child.start_with_captured_errors(directory.path()));
+  const std::string failure = child.read_startup_line();
+  EXPECT_NE(failure.find("database start failed"), std::string::npos);
+  EXPECT_NE(failure.find("Raft recovery-anchor checksum mismatch"), std::string::npos);
+  EXPECT_EQ(child.wait_for_exit(), 1);
+  EXPECT_EQ(read_text_file(anchor), corrupted);
   EXPECT_EQ(read_text_file(segment), pristine_segment);
 }
 

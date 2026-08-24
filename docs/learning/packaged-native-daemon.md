@@ -108,6 +108,9 @@ incomplete`; the packaged no-repair policy exits without truncation. An unrecogn
 regular file in the Raft directory produces the exact unknown-entry failure; startup leaves that
 file and the established segment unchanged. A symlink to the established segment produces the
 non-regular-entry failure and remains an unchanged link after process rejection.
+The anchor case uses the public persistence owner to checkpoint the daemon's exact recovered
+metadata state, then proves the daemon accepts that authority once. After a covered-byte mutation,
+startup reports the anchor-checksum failure and preserves both anchor and retained segment.
 
 ## Complexity and tradeoffs
 
@@ -140,7 +143,8 @@ incomplete-tail case proves the packaged no-repair policy preserves the suffix. 
 header and complete-record pair prove the complete segment remains unchanged. A one-byte Raft-tail
 case proves the no-repair policy preserves the suffix. An unknown-entry case proves the packaged
 owner performs no speculative namespace cleanup; a symlink case proves it does not follow a
-non-regular entry. Its replicated case negotiates Protocol 2,
+non-regular entry. A recovery-anchor case proves no fallback from a damaged highest authority. Its
+replicated case negotiates Protocol 2,
 applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact
 retry, and queries the same recovered row count. A separate replicated gate provisions three
 retained roots and distinct mutual-TLS identities, starts three actual daemon processes, obtains an

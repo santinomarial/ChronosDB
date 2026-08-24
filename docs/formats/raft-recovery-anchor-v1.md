@@ -69,6 +69,11 @@ turn. Both strict and repair-authorized recovery reject every image without fall
 or changing the damaged namespace. Restoring the original bytes recovers the exact two-group
 checkpoint.
 
+Linux packaged-daemon qualification creates an authoritative one-group anchor through the public
+checkpoint-and-reclaim path and proves a clean reopen before damage. Flipping one covered base-field
+byte then requires the exact anchor-checksum failure before socket admission and leaves both the
+damaged 64-byte anchor and retained checkpoint segment unchanged.
+
 Unknown files, nonregular entries, a damaged authoritative anchor, or damage in retained history
 remain corruption. Recovery does not fall back to an older anchor after the newest authority is
 damaged.

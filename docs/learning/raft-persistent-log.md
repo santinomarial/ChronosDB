@@ -138,6 +138,10 @@ and preserves both files, proving cleanup remains limited to recognized temporar
 artifacts. A second namespace case synchronizes a symlink to the established segment. Directory
 enumeration classifies it without following; packaged recovery reports the exact non-regular-entry
 corruption and preserves both the link target text and segment bytes.
+The anchor companion reopens the daemon's metadata log through `RaftPersistentLog`, checkpoints its
+exact recovered group state into a fresh retained base, and proves one clean packaged reopen. It
+then damages a checksum-covered base field; packaged startup rejects the highest anchor without
+fallback and preserves both the 64-byte image and retained checkpoint segment.
 
 The recovery-layout matrix checks a different dimension: target-size arithmetic and latest-state
 selection. A canonical state encodes to 213 bytes. Eight targets straddle the exact one-, two-,

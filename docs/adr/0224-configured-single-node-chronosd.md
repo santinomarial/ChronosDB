@@ -76,7 +76,9 @@ requires its exact checksum diagnostic and the same pre-listen exit, and preserv
 one-byte Raft tail case requires the exact incomplete-record diagnostic and proves no truncation.
 An unknown regular Raft-directory entry requires its exact namespace diagnostic and the same
 pre-listen exit while preserving both that entry and the established segment. A symlink to the
-segment requires the non-regular-entry diagnostic and proves no link following or cleanup.
+segment requires the non-regular-entry diagnostic and proves no link following or cleanup. A real
+recovery-anchor case requires its exact checksum diagnostic and preserves the damaged anchor plus
+retained checkpoint segment.
 
 ## References
 
