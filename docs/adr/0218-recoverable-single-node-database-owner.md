@@ -81,6 +81,8 @@ authoritative-anchor case proves the owner accepts a valid checkpointed metadata
 its checksum corruption before projection without falling back or rewriting retained history.
 Portable owner coverage also deletes the authoritative anchor after prefix reclamation. Startup
 rejects the otherwise valid retained segment before projection rather than inventing a new base.
+The complementary retained-history case keeps the anchor valid, damages its base segment header,
+and proves repeated startup fails before projection without fallback or rewriting either file.
 
 ## References
 

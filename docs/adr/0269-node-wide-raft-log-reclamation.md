@@ -56,3 +56,7 @@ Portable aggregate-owner qualification separately removes the synchronized autho
 after segment 1 is reclaimed. Two database reopens require the exact absent-base corruption, release
 ownership, and leave segment 2 unchanged, proving a retained segment number cannot substitute for
 anchor authority.
+The complementary portable case leaves the anchor intact and damages a checksum-covered field in
+segment 2's header. Two owner reopens return the exact header-checksum corruption, release ownership,
+and preserve the anchor and damaged segment, proving the anchor never replaces retained-byte
+validation.

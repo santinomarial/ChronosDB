@@ -79,6 +79,11 @@ checkpoint path has reclaimed segment 1 and a clean database reopen has accepted
 next two startups report `Raft recovery base segment is absent`, release ownership, do not infer an
 unanchored segment-2 history, and preserve that retained segment byte-for-byte.
 
+A complementary portable case leaves the anchor valid and corrupts a checksum-covered field in the
+retained segment-2 header. Two database starts report the exact segment-header checksum failure,
+release ownership, and preserve both anchor and damaged segment. Anchor validity never substitutes
+for validation of the retained checkpoint bytes it selects.
+
 Unknown files, nonregular entries, a damaged authoritative anchor, or damage in retained history
 remain corruption. Recovery does not fall back to an older anchor after the newest authority is
 damaged.

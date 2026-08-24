@@ -137,6 +137,9 @@ fails before projection and does not fall back to removed history or rewrite the
 If that anchor is missing after segment-1 reclamation, the owner likewise fails before projection:
 it cannot infer the retained base from segment 2 alone. Portable coverage synchronizes the removal,
 twice requires the exact absent-base diagnostic with ownership release, and preserves segment 2.
+When the anchor remains valid but segment 2's header is damaged, two startup attempts instead return
+its exact checksum failure before projection and preserve both files. The owner never treats anchor
+validity as permission to skip retained-history validation or fall back.
 
 Malformed transport/command bytes become client-invalid protocol errors. Database corruption stays
 distinguishable as an internal error; I/O, unavailability, and unsupported operations are execution

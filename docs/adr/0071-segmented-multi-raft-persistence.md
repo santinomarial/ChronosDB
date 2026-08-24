@@ -129,6 +129,9 @@ covered-byte mutation. Rejection preserves both the damaged anchor and retained 
 A portable aggregate-owner case removes that authoritative anchor only after segment 1 has been
 reclaimed and synchronizes the directory. Reopen reports `Raft recovery base segment is absent`
 instead of adopting segment 2 as unanchored history, and preserves the retained segment.
+A second portable case keeps the anchor intact but damages its retained segment header. Two database
+reopens require the exact header-checksum failure, release ownership, and preserve both authority
+files without falling back to the reclaimed prefix.
 
 A separate 24-case recovery matrix fixes the encoded record size at 213 bytes and crosses segment
 targets `277`, `278`, `489`, `490`, `491`, `702`, `703`, and `1024` with 1, 3, and 8 logical groups.
