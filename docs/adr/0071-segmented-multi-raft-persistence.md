@@ -126,6 +126,9 @@ directory contains a non-regular entry`, and proves recovery neither follows nor
 An authoritative-anchor case checkpoints the daemon's recovered metadata state through the public
 log owner, proves a clean packaged reopen, then requires the exact anchor-checksum failure after one
 covered-byte mutation. Rejection preserves both the damaged anchor and retained checkpoint segment.
+A portable aggregate-owner case removes that authoritative anchor only after segment 1 has been
+reclaimed and synchronizes the directory. Reopen reports `Raft recovery base segment is absent`
+instead of adopting segment 2 as unanchored history, and preserves the retained segment.
 
 A separate 24-case recovery matrix fixes the encoded record size at 213 bytes and crosses segment
 targets `277`, `278`, `489`, `490`, `491`, `702`, `703`, and `1024` with 1, 3, and 8 logical groups.

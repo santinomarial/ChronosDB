@@ -958,9 +958,12 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   preserves the same segment; remaining Raft record corruption matrices remain deferred. A real
   recovery-anchor case now proves clean packaged reopen of a public checkpoint-and-reclaim image,
   then rejects one covered-byte anchor checksum failure without fallback or rewrite; other anchor
-  fields, truncations, missing files, and retained-history combinations remain deferred. A minimal
-  one-byte Raft final-tail case now proves packaged startup does not authorize
-  repair and preserves the suffix; other tail shapes and authorized packaged repair remain deferred.
+  fields, truncations, and retained-history combinations remain deferred. A portable aggregate-owner
+  case also removes the authoritative anchor after segment-1 reclamation, twice requires the exact
+  absent-base corruption with ownership release, and preserves segment 2; packaged missing-anchor
+  qualification remains deferred.
+  A minimal one-byte Raft final-tail case now proves packaged startup does not authorize repair and
+  preserves the suffix; other tail shapes and authorized packaged repair remain deferred.
   One synchronized unknown regular Raft-directory entry now proves startup fails before admission
   without cleaning the entry or rewriting the established segment. A synchronized symlink to that
   segment now proves the non-regular-entry path neither follows nor removes it; directory, special-

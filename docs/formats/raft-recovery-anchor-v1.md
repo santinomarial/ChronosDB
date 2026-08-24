@@ -74,6 +74,11 @@ checkpoint-and-reclaim path and proves a clean reopen before damage. Flipping on
 byte then requires the exact anchor-checksum failure before socket admission and leaves both the
 damaged 64-byte anchor and retained checkpoint segment unchanged.
 
+A portable `SingleNodeDatabase` case removes the authoritative anchor only after the public
+checkpoint path has reclaimed segment 1 and a clean database reopen has accepted the new base. The
+next two startups report `Raft recovery base segment is absent`, release ownership, do not infer an
+unanchored segment-2 history, and preserve that retained segment byte-for-byte.
+
 Unknown files, nonregular entries, a damaged authoritative anchor, or damage in retained history
 remain corruption. Recovery does not fall back to an older anchor after the newest authority is
 damaged.

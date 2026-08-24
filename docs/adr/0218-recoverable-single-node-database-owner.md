@@ -79,6 +79,8 @@ before catalog projection without cleaning it up or changing the established seg
 case proves the same pre-projection rejection without following or removing the link. An
 authoritative-anchor case proves the owner accepts a valid checkpointed metadata base, then rejects
 its checksum corruption before projection without falling back or rewriting retained history.
+Portable owner coverage also deletes the authoritative anchor after prefix reclamation. Startup
+rejects the otherwise valid retained segment before projection rather than inventing a new base.
 
 ## References
 

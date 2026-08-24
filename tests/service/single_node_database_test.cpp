@@ -11,6 +11,7 @@
 #include "chronos/query/tablet_state_pipeline.hpp"
 #include "chronos/raft/durable_runtime.hpp"
 #include "chronos/raft/metadata_codec.hpp"
+#include "chronos/raft/persistent_log.hpp"
 #include "chronos/raft/schema_definition_codec.hpp"
 #include "chronos/service/native_protocol_service.hpp"
 #include "chronos/service/single_node_database.hpp"
@@ -20,8 +21,11 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <fcntl.h>
 #include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <span>
@@ -54,6 +58,11 @@ public:
 private:
   std::filesystem::path path_;
 };
+
+[[nodiscard]] std::string read_binary_file(const std::filesystem::path& path) {
+  std::ifstream input{path, std::ios::binary};
+  return {std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+}
 
 class DeterministicIdentityGenerator final : public NativeIdentityGenerator {
 public:
@@ -325,6 +334,58 @@ TEST(SingleNodeDatabaseTest, CreatesAndReopensAnEmptyDatabaseWithoutConfiguredTa
   ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
   EXPECT_TRUE(reopened->query_catalog()->tables().empty());
   EXPECT_TRUE(reopened->shutdown().is_ok());
+}
+
+TEST(SingleNodeDatabaseTest, RejectsMissingAuthoritativeRaftAnchorWithoutAdoptingRetainedBase) {
+  TemporaryDirectory directory;
+  auto created = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  ASSERT_TRUE(created->shutdown().is_ok());
+
+  const std::filesystem::path raft_directory =
+      directory.path() / runtime::kDatabaseRaftDirectoryName;
+  auto log = raft::RaftPersistentLog::open_existing(
+      {.directory_path = raft_directory.string(),
+       .target_segment_size = descriptor().raft_segment_target_bytes});
+  ASSERT_TRUE(log.has_value()) << log.error().to_string();
+  std::vector<raft::GroupPersistentState> checkpoint = log->recovery().latest_group_states;
+  ASSERT_EQ(checkpoint.size(), 1U);
+  checkpoint.front().physical_sequence = log->written_position().physical_sequence + 1U;
+  auto reclaimed = log->checkpoint_and_reclaim(checkpoint);
+  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  ASSERT_EQ(reclaimed->base_segment_number, 2U);
+  ASSERT_TRUE(log->close().is_ok());
+
+  auto anchored = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(anchored.has_value()) << anchored.error().to_string();
+  ASSERT_TRUE(anchored->shutdown().is_ok());
+
+  const std::filesystem::path anchor = raft_directory / "raft-base-00000000000000000002.rbase";
+  const std::filesystem::path retained_segment = raft_directory / "raft-00000000000000000002.rlog";
+  const std::filesystem::path reclaimed_segment = raft_directory / "raft-00000000000000000001.rlog";
+  ASSERT_TRUE(std::filesystem::is_regular_file(anchor));
+  ASSERT_FALSE(std::filesystem::exists(reclaimed_segment));
+  const std::string pristine_segment = read_binary_file(retained_segment);
+  ASSERT_GT(pristine_segment.size(), raft::kRaftSegmentHeaderSize);
+
+  ASSERT_EQ(::unlink(anchor.c_str()), 0);
+  const int raft_directory_file =
+      ::open(raft_directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+  ASSERT_GE(raft_directory_file, 0);
+  ASSERT_EQ(::fsync(raft_directory_file), 0);
+  ASSERT_EQ(::close(raft_directory_file), 0);
+  ASSERT_FALSE(std::filesystem::exists(anchor));
+
+  for (std::size_t attempt = 0U; attempt < 2U; ++attempt) {
+    SCOPED_TRACE(attempt);
+    auto missing = SingleNodeDatabase::open_or_create(config(directory));
+    ASSERT_FALSE(missing.has_value());
+    EXPECT_EQ(missing.error().code(), common::StatusCode::kCorruption);
+    EXPECT_NE(missing.error().to_string().find("Raft recovery base segment is absent"),
+              std::string::npos);
+    EXPECT_FALSE(std::filesystem::exists(anchor));
+    EXPECT_EQ(read_binary_file(retained_segment), pristine_segment);
+  }
 }
 
 TEST(SingleNodeDatabaseTest, MoveAssignmentClosesTheReplacedDatabaseBeforeTakingOwnership) {

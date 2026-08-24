@@ -47,8 +47,9 @@ directory entry is corruption, not cleanup residue: preserve the root for diagno
 packaged startup fails before listening and does not remove the entry. This includes symlinks,
 which recovery classifies without following. A damaged highest Raft recovery anchor is likewise
 terminal: do not recreate it or restore an older anchor alone, because the selected retained base
-and anchor are one authority. Restore an identity-consistent root. To serve one durable
-row-preserving plan, supply the paired
+and anchor are one authority. A missing highest anchor after prefix reclamation is equally terminal;
+do not adopt the lowest visible segment as a new base. Restore an identity-consistent root. To serve
+one durable row-preserving plan, supply the paired
 `--subscription-sql SQL` and `--subscription-key-file PATH` options. The table must already exist.
 The key file must contain exactly 32 nonzero bytes and be inaccessible to group/other; preserve the
 same secret across restarts or old resume tokens will fail authentication. The daemon reports
