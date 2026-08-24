@@ -45,7 +45,9 @@ handshake, and exchange separate deadlines, and destroys TLS before closing each
 `NativeQueryTcpExecution` supplies the constant-storage poll loop above that client. It bounds each
 wait by the caller maximum, active phase deadline, and optional whole-operation deadline; explicit
 cancellation destroys the client and leaves no result. Terminal metrics retain attempts, redirects,
-readiness, and the final route.
+readiness, and the final route. `chronosctl routed-sql` composes that owner with the strict route/TLS
+bundle for one caller-specified group. It produces no stdout before terminal success and then
+re-decodes the retained batches under one unchanged-schema TSV contract.
 `NativeQuorumIngestTcpClient` is that carrier boundary. It owns one nonblocking descriptor and TLS
 session at a time, authenticates the verified certificate fingerprint as a stable principal, and
 requires a node authorizer to bind that principal to the router's current node before writing the

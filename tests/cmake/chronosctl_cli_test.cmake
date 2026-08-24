@@ -19,6 +19,9 @@ if(NOT help_stdout MATCHES
 )
   message(FATAL_ERROR "chronosctl --help omits the SQL contract")
 endif()
+if(NOT help_stdout MATCHES "routed-sql --group UUID --initial-node NODE_ID")
+  message(FATAL_ERROR "chronosctl --help omits the routed-sql contract")
+endif()
 
 execute_process(
   COMMAND "${CHRONOSCTL}" sql --help
@@ -63,6 +66,60 @@ expect_sql_option_failure(
   empty_sql
   "--execute requires a nonempty SQL statement"
   --execute ""
+)
+
+execute_process(
+  COMMAND "${CHRONOSCTL}" routed-sql --help
+  RESULT_VARIABLE routed_sql_help_result
+  OUTPUT_VARIABLE routed_sql_help_stdout
+  ERROR_VARIABLE routed_sql_help_stderr
+)
+if(NOT routed_sql_help_result EQUAL 0 OR NOT routed_sql_help_stderr STREQUAL "")
+  message(FATAL_ERROR "chronosctl routed-sql --help failed")
+endif()
+if(NOT routed_sql_help_stdout MATCHES "only after QUERY_END")
+  message(FATAL_ERROR "routed-sql help omits its terminal result contract")
+endif()
+
+function(expect_routed_sql_option_failure case_name expected_error)
+  execute_process(
+    COMMAND "${CHRONOSCTL}" routed-sql ${ARGN}
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE stdout
+    ERROR_VARIABLE stderr
+  )
+  if(NOT result EQUAL 2 OR NOT stdout STREQUAL "")
+    message(FATAL_ERROR "${case_name} changed its routed-sql option exit/output contract")
+  endif()
+  if(NOT stderr MATCHES "^chronosctl: ${expected_error}\nUsage:")
+    message(FATAL_ERROR "${case_name} returned an unexpected routed-sql diagnostic: ${stderr}")
+  endif()
+endfunction()
+
+expect_routed_sql_option_failure(
+  missing_routed_sql_bundle
+  "routed-sql requires every group, route, TLS, query, and timeout option"
+)
+expect_routed_sql_option_failure(
+  empty_routed_sql
+  "--execute requires a nonempty SQL statement"
+  --execute ""
+)
+expect_routed_sql_option_failure(
+  duplicate_routed_sql_group
+  "--group was specified more than once"
+  --group 00000000-0000-0000-0000-000000000001
+  --group 00000000-0000-0000-0000-000000000001
+)
+expect_routed_sql_option_failure(
+  excessive_routed_sql_timeout
+  "--timeout-ms exceeds the one-hour command limit"
+  --timeout-ms 3600001
+)
+expect_routed_sql_option_failure(
+  unknown_routed_sql_option
+  "unknown routed-sql option: --future"
+  --future value
 )
 
 execute_process(

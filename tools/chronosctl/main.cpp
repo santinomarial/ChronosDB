@@ -6,6 +6,7 @@
 #include "chronos/ingest/columnar_append_format.hpp"
 #include "chronos/network/client_session.hpp"
 #include "chronos/network/messages.hpp"
+#include "chronos/network/native_query_tcp_execution.hpp"
 #include "chronos/network/native_quorum_ingest_tcp_execution.hpp"
 #include "chronos/service/native_client_tls_route_owner.hpp"
 
@@ -25,6 +26,7 @@
 #include <new>
 #include <optional>
 #include <span>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -52,6 +54,24 @@ struct SqlOptions {
 
 struct SqlParseResult {
   std::optional<SqlOptions> options;
+  std::string error;
+  bool help{};
+};
+
+struct RoutedSqlOptions {
+  chronos::common::Uuid group_id;
+  std::uint64_t initial_node_id{};
+  std::uint64_t minimum_placement_epoch{};
+  std::string routes_file;
+  std::string tls_certificate_file;
+  std::string tls_private_key_file;
+  std::string tls_trust_store_file;
+  std::string execute;
+  std::chrono::milliseconds timeout{};
+};
+
+struct RoutedSqlParseResult {
+  std::optional<RoutedSqlOptions> options;
   std::string error;
   bool help{};
 };
@@ -115,9 +135,24 @@ void print_usage(const std::string_view program, std::ostream& output) {
   output << "Usage:\n"
          << "  " << program << " version [--json]\n"
          << "  " << program << " sql --host 127.0.0.1 --port PORT --execute \"SQL\"\n"
+         << "  " << program << " routed-sql --group UUID --initial-node NODE_ID\\\n"
+         << "      --minimum-placement-epoch EPOCH --routes FILE --tls-cert FILE\\\n"
+         << "      --tls-key FILE --tls-ca FILE --execute \"SQL\" --timeout-ms MILLISECONDS\n"
          << "  " << program << " quorum-sync [--json] --group UUID --initial-node NODE_ID\\\n"
          << "      --minimum-placement-epoch EPOCH --routes FILE --tls-cert FILE\\\n"
          << "      --tls-key FILE --tls-ca FILE --append-file FILE --timeout-ms MILLISECONDS\n";
+}
+
+void print_routed_sql_usage(const std::string_view program, std::ostream& output) {
+  output
+      << "Usage: " << program << " routed-sql --group UUID --initial-node NODE_ID\\\n"
+      << "    --minimum-placement-epoch EPOCH --routes FILE --tls-cert FILE\\\n"
+      << "    --tls-key FILE --tls-ca FILE --execute \"SQL\" --timeout-ms MILLISECONDS\n"
+      << "\n"
+      << "Executes one exact finite SQL query through an authenticated single-group route.\n"
+      << "Results are printed only after QUERY_END as tab-separated column names and rows.\n"
+      << "UUID must use lowercase 8-4-4-4-12 form; positive integers must be canonical decimal.\n"
+      << "The timeout range is 1 through " << kMaximumTimeoutMilliseconds << " milliseconds.\n";
 }
 
 void print_sql_usage(const std::string_view program, std::ostream& output) {
@@ -245,6 +280,125 @@ parse_uuid(const std::string_view text) noexcept {
 
   if (!host_seen || !port_seen || !execute_seen) {
     return {.error = "sql requires --host, --port, and --execute"};
+  }
+  return {.options = std::move(options)};
+}
+
+[[nodiscard]] RoutedSqlParseResult
+parse_routed_sql_options(const std::span<const char* const> arguments) {
+  RoutedSqlOptions options;
+  bool group_seen{};
+  bool initial_node_seen{};
+  bool placement_epoch_seen{};
+  bool routes_seen{};
+  bool certificate_seen{};
+  bool private_key_seen{};
+  bool trust_store_seen{};
+  bool execute_seen{};
+  bool timeout_seen{};
+
+  auto value = [&arguments](std::size_t& index) -> std::optional<std::string_view> {
+    if (++index >= arguments.size()) {
+      return std::nullopt;
+    }
+    return std::string_view{arguments[index]};
+  };
+  auto assign_path = [&value](const std::string_view name, bool* const seen, std::size_t& index,
+                              std::string& destination) -> std::string {
+    if (*seen) {
+      return std::string{name} + " was specified more than once";
+    }
+    const auto parsed = value(index);
+    if (!parsed.has_value() || parsed->empty()) {
+      return std::string{name} + " requires a nonempty path";
+    }
+    destination = *parsed;
+    *seen = true;
+    return {};
+  };
+
+  for (std::size_t index = 2U; index < arguments.size(); ++index) {
+    const std::string_view argument{arguments[index]};
+    if (argument == "--help") {
+      if (arguments.size() != 3U) {
+        return {.error = "--help cannot be combined with routed-sql options"};
+      }
+      return {.help = true};
+    }
+    if (argument == "--group") {
+      if (group_seen) {
+        return {.error = "--group was specified more than once"};
+      }
+      const auto text = value(index);
+      const auto parsed = text.has_value() ? parse_uuid(*text) : std::nullopt;
+      if (!parsed.has_value()) {
+        return {.error = "--group requires a non-nil lowercase canonical UUID"};
+      }
+      options.group_id = *parsed;
+      group_seen = true;
+      continue;
+    }
+    if (argument == "--initial-node" || argument == "--minimum-placement-epoch" ||
+        argument == "--timeout-ms") {
+      bool* seen =
+          argument == "--initial-node"
+              ? &initial_node_seen
+              : (argument == "--minimum-placement-epoch" ? &placement_epoch_seen : &timeout_seen);
+      if (*seen) {
+        return {.error = std::string{argument} + " was specified more than once"};
+      }
+      const auto text = value(index);
+      std::uint64_t parsed{};
+      if (!text.has_value() || !parse_positive_decimal(*text, parsed)) {
+        return {.error = std::string{argument} + " requires a positive canonical decimal"};
+      }
+      if (argument == "--initial-node") {
+        options.initial_node_id = parsed;
+      } else if (argument == "--minimum-placement-epoch") {
+        options.minimum_placement_epoch = parsed;
+      } else {
+        if (parsed > kMaximumTimeoutMilliseconds) {
+          return {.error = "--timeout-ms exceeds the one-hour command limit"};
+        }
+        options.timeout = std::chrono::milliseconds{parsed};
+      }
+      *seen = true;
+      continue;
+    }
+    if (argument == "--execute") {
+      if (execute_seen) {
+        return {.error = "--execute was specified more than once"};
+      }
+      const auto parsed = value(index);
+      if (!parsed.has_value() || parsed->empty()) {
+        return {.error = "--execute requires a nonempty SQL statement"};
+      }
+      options.execute = *parsed;
+      execute_seen = true;
+      continue;
+    }
+
+    std::string path_error;
+    if (argument == "--routes") {
+      path_error = assign_path(argument, &routes_seen, index, options.routes_file);
+    } else if (argument == "--tls-cert") {
+      path_error = assign_path(argument, &certificate_seen, index, options.tls_certificate_file);
+    } else if (argument == "--tls-key") {
+      path_error = assign_path(argument, &private_key_seen, index, options.tls_private_key_file);
+    } else if (argument == "--tls-ca") {
+      path_error = assign_path(argument, &trust_store_seen, index, options.tls_trust_store_file);
+    } else {
+      return {.error = "unknown routed-sql option: " + std::string{argument}};
+    }
+    if (!path_error.empty()) {
+      return {.error = std::move(path_error)};
+    }
+  }
+
+  if (!group_seen || !initial_node_seen || !placement_epoch_seen || !routes_seen ||
+      !certificate_seen || !private_key_seen || !trust_store_seen || !execute_seen ||
+      !timeout_seen) {
+    return {.error = "routed-sql requires every group, route, TLS, query, and timeout option"};
   }
   return {.options = std::move(options)};
 }
@@ -627,20 +781,20 @@ struct PrintedColumn {
 
 [[nodiscard]] chronos::common::Status
 print_query_batch(const chronos::network::QueryResultBatchView& batch,
-                  std::vector<PrintedColumn>& schema) {
+                  std::vector<PrintedColumn>& schema, std::ostream& output = std::cout) {
   const auto columns = batch.columns();
   if (schema.empty()) {
     schema.reserve(columns.size());
     for (std::size_t index = 0U; index < columns.size(); ++index) {
       if (index != 0U) {
-        std::cout << '\t';
+        output << '\t';
       }
-      std::cout << escaped_text(columns[index].name);
+      output << escaped_text(columns[index].name);
       schema.push_back({.name = std::string{columns[index].name},
                         .type = columns[index].type,
                         .nullable = columns[index].nullable});
     }
-    std::cout << '\n';
+    output << '\n';
   } else {
     if (columns.size() != schema.size()) {
       return invalid("query result schema changed between batches");
@@ -656,7 +810,7 @@ print_query_batch(const chronos::network::QueryResultBatchView& batch,
   for (std::uint32_t row = 0U; row < batch.row_count(); ++row) {
     for (std::size_t column = 0U; column < columns.size(); ++column) {
       if (column != 0U) {
-        std::cout << '\t';
+        output << '\t';
       }
       const auto* const cell = batch.cell(row, column);
       if (cell == nullptr) {
@@ -666,11 +820,11 @@ print_query_batch(const chronos::network::QueryResultBatchView& batch,
       if (!formatted.has_value()) {
         return formatted.error();
       }
-      std::cout << *formatted;
+      output << *formatted;
     }
-    std::cout << '\n';
+    output << '\n';
   }
-  if (!std::cout) {
+  if (!output) {
     return io_error("writing SQL result", EIO);
   }
   return chronos::common::Status::ok();
@@ -858,6 +1012,79 @@ protocol_error_name(const chronos::network::ProtocolErrorCode code) noexcept {
   return 0;
 }
 
+[[nodiscard]] int run_routed_sql(RoutedSqlOptions options) {
+  auto routes = chronos::service::NativeClientTlsRouteOwner::load(
+      {.route_config_file = std::move(options.routes_file),
+       .tls = {.certificate_chain_file = std::move(options.tls_certificate_file),
+               .private_key_file = std::move(options.tls_private_key_file),
+               .trust_store_file = std::move(options.tls_trust_store_file)}});
+  if (!routes.has_value()) {
+    std::cerr << "chronosctl: " << routes.error().to_string() << '\n';
+    return 1;
+  }
+
+  try {
+    const auto published = routes->leader_routes();
+    std::vector<chronos::network::NativeLeaderRoute> operation_routes(published.begin(),
+                                                                      published.end());
+    chronos::network::NativeQueryTcpExecutionConfig config{
+        .client = {.retry = {.routing = {.group_id = options.group_id,
+                                         .initial_node_id = options.initial_node_id,
+                                         .minimum_placement_epoch = options.minimum_placement_epoch,
+                                         .routes = std::move(operation_routes),
+                                         .limits = {.maximum_routes = published.size(),
+                                                    .maximum_redirects = kMaximumRedirects}}},
+                   .authenticator = &routes->authority(),
+                   .node_authorizer = &routes->authority()},
+        .operation_deadline = std::chrono::steady_clock::now() + options.timeout};
+    auto execution = chronos::network::NativeQueryTcpExecution::begin(std::move(config),
+                                                                      std::move(options.execute));
+    if (!execution.has_value()) {
+      std::cerr << "chronosctl: " << execution.error().to_string() << '\n';
+      return 1;
+    }
+    while (execution->state() == chronos::network::NativeQueryTcpExecutionState::kRunning) {
+      const chronos::common::Status status = execution->poll_once(kMaximumPollWait);
+      if (!status.is_ok()) {
+        std::cerr << "chronosctl: " << status.to_string() << '\n';
+        return 1;
+      }
+    }
+    if (!execution->result().has_value()) {
+      std::cerr << "chronosctl: " << execution->failure().to_string() << '\n';
+      return 1;
+    }
+
+    std::ostringstream formatted_result;
+    std::vector<PrintedColumn> result_schema;
+    for (const auto& encoded_batch : execution->result()->encoded_batches) {
+      auto batch = chronos::network::decode_query_result_batch(encoded_batch);
+      if (!batch.has_value()) {
+        std::cerr << "chronosctl: " << batch.error().to_string() << '\n';
+        return 1;
+      }
+      const chronos::common::Status printed =
+          print_query_batch(*batch, result_schema, formatted_result);
+      if (!printed.is_ok()) {
+        std::cerr << "chronosctl: " << printed.to_string() << '\n';
+        return 1;
+      }
+    }
+    std::cout << formatted_result.view();
+    if (!std::cout) {
+      std::cerr << "chronosctl: io_error: writing routed SQL result failed\n";
+      return 1;
+    }
+    return 0;
+  } catch (const std::bad_alloc&) {
+    std::cerr << "chronosctl: resource_exhausted: allocating routed SQL operation state failed\n";
+    return 1;
+  } catch (const std::length_error&) {
+    std::cerr << "chronosctl: resource_exhausted: routed SQL operation exceeds container limits\n";
+    return 1;
+  }
+}
+
 [[nodiscard]] std::string_view
 outcome_name(const chronos::network::IngestOutcome outcome) noexcept {
   return outcome == chronos::network::IngestOutcome::kApplied ? "APPLIED" : "MATCHING_RETRY";
@@ -993,6 +1220,28 @@ namespace {
       return 1;
     } catch (const std::length_error&) {
       std::cerr << "chronosctl: resource_exhausted: SQL command exceeds container limits\n";
+      return 1;
+    }
+  }
+  if (argc >= 2 && std::string_view{argv[1]} == "routed-sql") {
+    try {
+      RoutedSqlParseResult parsed = parse_routed_sql_options(
+          std::span<const char* const>{argv, static_cast<std::size_t>(argc)});
+      if (parsed.help) {
+        print_routed_sql_usage(program, std::cout);
+        return 0;
+      }
+      if (!parsed.options.has_value()) {
+        std::cerr << "chronosctl: " << parsed.error << '\n';
+        print_routed_sql_usage(program, std::cerr);
+        return 2;
+      }
+      return run_routed_sql(std::move(*parsed.options));
+    } catch (const std::bad_alloc&) {
+      std::cerr << "chronosctl: resource_exhausted: parsing routed SQL options failed\n";
+      return 1;
+    } catch (const std::length_error&) {
+      std::cerr << "chronosctl: resource_exhausted: routed SQL options exceed container limits\n";
       return 1;
     }
   }

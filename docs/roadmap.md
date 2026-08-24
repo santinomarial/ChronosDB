@@ -1056,7 +1056,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   sessions and withholds bounded owned result batches until `QUERY_END`; an authenticated
   deadline-bound TCP/mutual-TLS carrier now drives that owner and reconnects only for validated
   redirects. A whole-operation-aware poll owner supplies cancellation, bounded waits, and terminal
-  route/attempt metrics. A packaged command and authoritative single-group server redirect remain.
+  route/attempt metrics. `chronosctl routed-sql` now packages that composition for one explicit
+  group and emits only a terminally validated TSV result. Authoritative single-group server redirect
+  remains.
   The packaged daemon now accepts an atomic native-server TLS credential
   and strict client-certificate-principal bundle, owns the immutable authority beyond its reactor
   borrow, permits non-loopback canonical IPv4 binding only in that mode, and fails closed instead of

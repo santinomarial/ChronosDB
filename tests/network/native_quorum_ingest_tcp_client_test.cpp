@@ -43,8 +43,8 @@ template <typename Value>
   return {code, message};
 }
 
-[[nodiscard]] std::filesystem::path fixture(const char* name) {
-  return std::filesystem::path{CHRONOS_NETWORK_FIXTURE_DIR} / "tls" / name;
+[[nodiscard]] std::filesystem::path fixture(const std::string_view name) {
+  return std::filesystem::path{CHRONOS_NETWORK_FIXTURE_DIR} / "tls" / std::filesystem::path{name};
 }
 
 class TemporaryDirectory {
@@ -96,6 +96,12 @@ private:
 [[nodiscard]] TlsServerConfig tls_server_config() {
   return {.certificate_chain_file = fixture("server.pem").string(),
           .private_key_file = fixture("server-key.pem").string(),
+          .trust_store_file = fixture("ca.pem").string()};
+}
+
+[[nodiscard]] TlsServerConfig node_tls_server_config(const std::string_view node) {
+  return {.certificate_chain_file = fixture(std::string{node} + ".pem").string(),
+          .private_key_file = fixture(std::string{node} + "-key.pem").string(),
           .trust_store_file = fixture("ca.pem").string()};
 }
 
@@ -155,11 +161,12 @@ public:
         buffers_(std::move(owned_buffers)), protocol_state_(std::move(owned_state)),
         reply_(configured_reply) {}
 
-  [[nodiscard]] static common::Result<ScriptedNativeServer> create(const ServerReply reply) {
+  [[nodiscard]] static common::Result<ScriptedNativeServer>
+  create(const ServerReply reply, const TlsServerConfig& server_config = tls_server_config()) {
     auto listener = TcpListener::bind();
     if (!listener.has_value())
       return common::make_unexpected(listener.error());
-    auto context = TlsServerContext::create(tls_server_config());
+    auto context = TlsServerContext::create(server_config);
     if (!context.has_value())
       return common::make_unexpected(context.error());
     auto buffers = ConnectionBuffers::create();
@@ -1074,6 +1081,110 @@ TEST(NativeQuorumIngestTcpExecutionTest, PackagedChronosctlObtainsJsonReceiptThr
             "\"group_id\":\"09000000-0000-0000-0000-000000000000\",\"leader_node_id\":2,"
             "\"leader_term\":8,\"log_index\":10,\"entry_term\":8,"
             "\"local_durable_physical_sequence\":12,\"attempts\":1,\"redirects\":0}\n");
+}
+
+TEST(NativeQueryTcpExecutionTest, PackagedChronosctlReplaysRoutedSqlThroughRealMutualTls) {
+  constexpr std::string_view kNodeOneFingerprint =
+      "7145018d7511b2e2af9e5531e01e9061af0a43e0b193621be717906b20e253a9";
+  constexpr std::string_view kNodeTwoFingerprint =
+      "baf82073b1ad1f131414b65c6b302bd1d09b7f3bbb224916e19f305f201b091f";
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  auto first =
+      ScriptedNativeServer::create(ServerReply::kQueryRedirect, node_tls_server_config("node1"));
+  auto second =
+      ScriptedNativeServer::create(ServerReply::kQueryResult, node_tls_server_config("node2"));
+  ASSERT_TRUE(first.has_value()) << first.error().to_string();
+  ASSERT_TRUE(second.has_value()) << second.error().to_string();
+
+  const std::filesystem::path route_file = directory.path() / "routes.conf";
+  {
+    std::ofstream output{route_file, std::ios::binary | std::ios::trunc};
+    output << "CHRONOSDB_NATIVE_CLIENT_ROUTES_V1\n1=127.0.0.1:" << first->endpoint().port
+           << ",127.0.0.1," << kNodeOneFingerprint << "\n2=127.0.0.1:" << second->endpoint().port
+           << ",127.0.0.1," << kNodeTwoFingerprint << '\n';
+    output.close();
+    ASSERT_TRUE(output);
+  }
+  const std::filesystem::path private_key = directory.path() / "client-key.pem";
+  std::error_code filesystem_error;
+  std::filesystem::copy_file(fixture("client-key.pem"), private_key,
+                             std::filesystem::copy_options::overwrite_existing, filesystem_error);
+  ASSERT_FALSE(filesystem_error) << filesystem_error.message();
+  std::filesystem::permissions(
+      private_key, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+      std::filesystem::perm_options::replace, filesystem_error);
+  ASSERT_FALSE(filesystem_error) << filesystem_error.message();
+
+  std::array<int, 2U> output_pipe{-1, -1};
+  ASSERT_EQ(::pipe(output_pipe.data()), 0);
+  const pid_t child = ::fork();
+  ASSERT_GE(child, 0);
+  if (child == 0) {
+    static_cast<void>(::dup2(output_pipe[1], STDOUT_FILENO));
+    static_cast<void>(::dup2(output_pipe[1], STDERR_FILENO));
+    ::close(output_pipe[0]);
+    ::close(output_pipe[1]);
+    const std::string routes = route_file.string();
+    const std::string certificate = fixture("client.pem").string();
+    const std::string key = private_key.string();
+    const std::string trust_store = fixture("cluster-ca.pem").string();
+    ::execl(CHRONOSCTL_PATH, CHRONOSCTL_PATH, "routed-sql", "--group",
+            "09000000-0000-0000-0000-000000000000", "--initial-node", "1",
+            "--minimum-placement-epoch", "4", "--routes", routes.c_str(), "--tls-cert",
+            certificate.c_str(), "--tls-key", key.c_str(), "--tls-ca", trust_store.c_str(),
+            "--execute", "SELECT value FROM events", "--timeout-ms", "5000", nullptr);
+    std::_Exit(127);
+  }
+  ::close(output_pipe[1]);
+  output_pipe[1] = -1;
+
+  int child_status{};
+  pid_t waited{};
+  common::Status first_status = common::Status::ok();
+  common::Status second_status = common::Status::ok();
+  for (std::size_t iteration = 0U; iteration < 10'000U; ++iteration) {
+    first_status = first->poll_once();
+    second_status = second->poll_once();
+    if (!first_status.is_ok() || !second_status.is_ok())
+      break;
+    waited = ::waitpid(child, &child_status, WNOHANG);
+    if (waited < 0 && errno == EINTR) {
+      waited = 0;
+      continue;
+    }
+    if (waited == child || waited < 0)
+      break;
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+  if (waited != child) {
+    static_cast<void>(::kill(child, SIGKILL));
+    waited = ::waitpid(child, &child_status, 0);
+  }
+
+  std::string command_output;
+  std::array<char, 1024U> buffer{};
+  for (;;) {
+    const ssize_t count = ::read(output_pipe[0], buffer.data(), buffer.size());
+    if (count <= 0)
+      break;
+    command_output.append(buffer.data(), static_cast<std::size_t>(count));
+  }
+  ::close(output_pipe[0]);
+
+  ASSERT_TRUE(first_status.is_ok()) << first_status.to_string();
+  ASSERT_TRUE(second_status.is_ok()) << second_status.to_string();
+  ASSERT_EQ(waited, child);
+  ASSERT_TRUE(WIFEXITED(child_status));
+  EXPECT_EQ(WEXITSTATUS(child_status), 0) << command_output;
+  const std::string sql = "SELECT value FROM events";
+  const auto sql_bytes = std::as_bytes(std::span{sql.data(), sql.size()});
+  const std::vector<std::byte> expected_sql(sql_bytes.begin(), sql_bytes.end());
+  EXPECT_EQ(first->request_ids(), std::vector<std::uint64_t>{1U});
+  EXPECT_EQ(second->request_ids(), std::vector<std::uint64_t>{1U});
+  EXPECT_EQ(first->queries(), std::vector<std::vector<std::byte>>{expected_sql});
+  EXPECT_EQ(second->queries(), std::vector<std::vector<std::byte>>{expected_sql});
+  EXPECT_EQ(command_output, "value\n");
 }
 
 } // namespace

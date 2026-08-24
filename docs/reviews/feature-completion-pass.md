@@ -975,8 +975,9 @@ were deliberately not run.
   reconnect carrier, single-operation poll scheduling, and the packaged `chronosctl quorum-sync`
   composition now have bounded, fail-closed owners. Finite queries now also have exact SQL/session
   replay with bounded terminal-only result ownership, an authenticated deadline-bound TCP/TLS
-  redirect carrier, and whole-operation-aware poll execution, but its packaged command and
-  authoritative server emission are still absent.
+  redirect carrier, whole-operation-aware poll execution, and an explicit packaged single-group
+  `chronosctl routed-sql` command. Authoritative server emission and remote mutable-tablet fragments
+  are still absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
@@ -994,8 +995,8 @@ were deliberately not run.
 The exact subsystem/category ledger is
 [`deferred-validation.md`](../development/deferred-validation.md). Recommended order:
 
-1. Add remote mutable-tablet query fragments, compose the implemented finite-query TCP execution
-   with a packaged command, then extend the existing three-process
+1. Add authoritative single-group query redirects and remote mutable-tablet query fragments, then
+   extend the existing three-process
    quorum-ingest/failover gate through applied read-barrier native SELECT and the remaining real
    data-plane sequence.
 2. Specify database namespaces/catalog tombstones and placement-driven membership orchestration

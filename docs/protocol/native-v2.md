@@ -3,7 +3,7 @@
 > **Status: Protocol 2.0 framing, negotiation, QUORUM_SYNC request/receipt, and negotiated leader
 > redirect are implemented. Packaged replicated QUORUM_SYNC, exact ingest leader redirect,
 > deadline-bound native TCP/mutual-TLS client replay, exact transport-independent finite-query
-> redirect replay, and applied-barrier SELECT execute.**
+> redirect replay, packaged single-group routed SQL, and applied-barrier SELECT execute.**
 
 Protocol 2.0 inherits the complete [Native Protocol v1](native-v1.md) framing, limits, type
 assignments, request lifecycle, security boundary, and Protocol 1.1 subscription payloads except
@@ -97,8 +97,10 @@ fresh Protocol 2 sessions, enforces aggregate batch/row/byte limits, and publish
 result batches only after `QUERY_END`. `NativeQueryTcpClient` composes it with the same nonblocking
 mutual-TLS, certificate-principal-to-node authorization, partial-I/O, reconnect, and phase-deadline
 rules as ingest. `NativeQueryTcpExecution` adds bounded poll scheduling, whole-operation deadline,
-cancellation, and terminal route/attempt metrics. These owners do not make a multi-group query
-redirectable through one group.
+cancellation, and terminal route/attempt metrics. `chronosctl routed-sql` packages those owners for
+one explicitly named group, withholds stdout until the complete retained stream validates, and then
+prints canonical batches as tab-separated rows. These owners and the command do not make a
+multi-group query redirectable through one group.
 
 ## Compatibility and rejection
 

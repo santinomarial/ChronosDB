@@ -68,3 +68,27 @@ validated `APPLIED` or `MATCHING_RETRY` quorum receipt. Option errors return `2`
 deadline, transport, protocol, and server failures return `1`. The command does not retry ambiguous
 transport failures. Re-running the same canonical append is safe through its embedded client and
 batch identity and request digest.
+
+## Packaged single-group routed SQL command
+
+`chronosctl routed-sql` executes one exact finite query through the same authenticated route bundle:
+
+```sh
+chronosctl routed-sql \
+  --group 01234567-89ab-cdef-0123-456789abcdef \
+  --initial-node 1 \
+  --minimum-placement-epoch 4 \
+  --routes /etc/chronosdb/native-client-routes \
+  --tls-cert /etc/chronosdb/client.pem \
+  --tls-key /etc/chronosdb/client-key.pem \
+  --tls-ca /etc/chronosdb/cluster-ca.pem \
+  --execute "SELECT count(*) AS rows FROM trades" \
+  --timeout-ms 30000
+```
+
+The named group is the complete redirect authority for this invocation; the command does not infer
+tablet placement from SQL or combine multiple group leaders. It follows at most eight authenticated
+redirects and buffers bounded canonical result batches until `QUERY_END`, so a failed or redirected
+attempt emits no partial rows. Exit `0` means the complete tab-separated result was validated and
+printed. Option errors return `2`; route, TLS, deadline, transport, protocol, server, result-limit,
+and output failures return `1`. An ambiguous transport failure is never replayed.
