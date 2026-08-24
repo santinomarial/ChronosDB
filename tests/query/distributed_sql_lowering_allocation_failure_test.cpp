@@ -104,8 +104,9 @@ TEST(DistributedSqlLoweringAllocationFailureTest,
 
 TEST(DistributedSqlLoweringAllocationFailureTest,
      ClassifiesEveryRowDependentExpressionAllocationFailure) {
-  BoundSqlSelect select = bound_select(
-      "SELECT value + 2 AS shifted, value > 4 AS high FROM metrics ORDER BY ts LIMIT 2");
+  BoundSqlSelect select =
+      bound_select("SELECT value + 2 AS shifted, value > 4 AS high FROM metrics "
+                   "ORDER BY shifted DESC LIMIT 2");
   bool reached_success = false;
   for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
     SCOPED_TRACE(fail_after);

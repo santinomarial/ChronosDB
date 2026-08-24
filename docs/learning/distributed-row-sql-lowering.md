@@ -64,8 +64,7 @@ and evaluates only the globally ordered, limited rows.
 Expression materialization uses an exact sizing pass followed by one contiguous canonical output
 arena. Fixed values write through the nonallocating canonical scalar encoder. STRING/SYMBOL values
 remain borrowed with an identity/lower/upper transform until their final bytes are copied. Runtime
-errors abort the complete result before publication. Computed order keys still fail closed because
-global ordering precedes coordinator expression evaluation.
+errors abort the complete result before publication.
 
 ## WHERE execution and event-time specialization
 
@@ -96,9 +95,15 @@ ORDER BY keys index complete worker outputs. When a direct source reference is a
 SELECT list, lowering adds that source ordinal to the fragment projection, appends one hidden worker
 output, and records the original SELECT outputs in Plan Intent 1.1's visible-row vector. The global
 finalizer sorts against the complete schema and encodes only those visible positions. Repeated
-references reuse the same helper and repeated order keys are removed: once two rows compare equal
-on that value, comparing the identical value again cannot distinguish them. Computed keys still
-fail closed.
+references reuse the same helper and repeated direct order keys are removed: once two rows compare
+equal on that value, comparing the identical value again cannot distinguish them.
+
+If any ORDER BY key is computed, lowering retains every nonconstant key as a coordinator expression
+in SQL key order and workers carry the complete source schema. Moving the whole key list avoids
+splitting precedence between worker-output indices and coordinator programs. The finalizer
+evaluates fixed or borrowed variable-width values inside its stable merge comparator, honors NULL
+placement independently of direction, and applies LIMIT afterward. Successful comparisons allocate
+no per-row or per-comparison storage; two reusable canonical source-row views are bounded up front.
 
 Direction and explicit NULL placement are retained. Without `NULLS FIRST/LAST`, ascending uses
 NULLS LAST and descending uses NULLS FIRST, matching local physical lowering. ORDER BY and LIMIT
@@ -113,10 +118,11 @@ Unsupported SQL returns a source-spanned `NOT_SUPPORTED` diagnostic. Invalid lim
 
 The implementation is single-threaded. Lowering is linear in source width, outputs, WHERE leaves,
 expression instructions, and order keys. Finalization adds one checked predicate evaluation per
-input row and two checked output-expression evaluations per selected row, plus transformed output
-bytes. Retained memory is linear in projected columns, worker and visible outputs, expression
-configuration, selected computed cells, one canonical payload arena, and order keys, all under
-caller-configurable bounds.
+input row, `O(rows log rows * order-expression work)` for computed ordering, and two checked output-
+expression evaluations per selected row, plus transformed output bytes. Retained memory is linear
+in projected columns, worker and visible outputs, expression configuration, selected computed
+cells, one canonical payload arena, two comparison row views, and order keys, all under caller-
+configurable bounds.
 
 ## Tradeoffs and likely interview questions
 
@@ -131,9 +137,9 @@ worthwhile only with a versioned contract and evidence that the extra bandwidth 
 **Why evaluate WHERE before LIMIT?** LIMIT counts rows after SQL filtering. Applying it first could
 discard later matching rows and return too few or the wrong rows.
 
-**Why evaluate expressions after LIMIT?** ORDER BY currently accepts only direct worker columns.
-Rows discarded by the global limit cannot affect the visible result, so evaluating them would waste
-CPU and transformed-byte capacity without changing semantics.
+**Why evaluate visible expressions after LIMIT?** Order expressions run during the global stable
+sort, but visible expressions are evaluated only for selected rows. Rows discarded by LIMIT cannot
+affect the visible result, so materializing them would waste transformed-byte capacity.
 
 **Why are ORDER BY and LIMIT global?** A tablet-local limit can discard a row that should win after
 merging another tablet. Global finalization is the correctness boundary.

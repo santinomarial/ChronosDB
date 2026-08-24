@@ -233,8 +233,38 @@ TEST(DistributedSqlLoweringTest, OwnsCheckedRowDependentCoordinatorExpressions) 
 
   const auto computed_order = lower_bound_sql_select_to_distributed_vector_rows(
       bind("SELECT value + 2 AS shifted FROM metrics ORDER BY shifted"));
-  ASSERT_FALSE(computed_order.has_value());
-  EXPECT_EQ(computed_order.error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
+  ASSERT_TRUE(computed_order.has_value()) << computed_order.error().status().to_string();
+  EXPECT_EQ(computed_order->destination_column_ordinals, (std::vector<std::uint32_t>{0U, 1U, 2U}));
+  EXPECT_TRUE(computed_order->intent.order_keys.empty());
+  ASSERT_TRUE(computed_order->coordinator_projection.has_value());
+  ASSERT_EQ(computed_order->coordinator_projection->order_keys.size(), 1U);
+  EXPECT_EQ(computed_order->coordinator_projection->order_keys.front()
+                .expression.result_shape()
+                .type.kind(),
+            schema::LogicalTypeKind::kInt64);
+
+  const auto mixed_order = lower_bound_sql_select_to_distributed_vector_rows(
+      bind("SELECT label FROM metrics ORDER BY lower(label) ASC NULLS FIRST, value + 1 DESC"));
+  ASSERT_TRUE(mixed_order.has_value()) << mixed_order.error().status().to_string();
+  EXPECT_TRUE(mixed_order->intent.order_keys.empty());
+  ASSERT_TRUE(mixed_order->coordinator_projection.has_value());
+  ASSERT_EQ(mixed_order->coordinator_projection->order_keys.size(), 2U);
+  EXPECT_EQ(mixed_order->coordinator_projection->order_keys[0].null_placement,
+            ScalarNullPlacement::kFirst);
+  EXPECT_EQ(mixed_order->coordinator_projection->order_keys[1].direction,
+            PhysicalSortDirection::kDescending);
+
+  const auto constant_order = lower_bound_sql_select_to_distributed_vector_rows(
+      bind("SELECT value FROM metrics ORDER BY lower('constant')"));
+  ASSERT_TRUE(constant_order.has_value()) << constant_order.error().status().to_string();
+  EXPECT_TRUE(constant_order->intent.order_keys.empty());
+  EXPECT_FALSE(constant_order->coordinator_projection.has_value());
+
+  const auto bounded_order = lower_bound_sql_select_to_distributed_vector_rows(
+      bind("SELECT value FROM metrics ORDER BY value + 1"),
+      {.maximum_expression_configuration_bytes = 1U});
+  ASSERT_FALSE(bounded_order.has_value());
+  EXPECT_EQ(bounded_order.error().code(), SqlDiagnosticCode::kResourceLimit);
 
   const auto bounded = lower_bound_sql_select_to_distributed_vector_rows(
       select, {.maximum_expression_configuration_bytes = 1U});

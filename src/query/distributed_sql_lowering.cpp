@@ -377,8 +377,42 @@ SqlResult<DistributedVectorRowsSqlPlan> lower_bound_sql_select_to_distributed_ve
         select_row_dependent[output_index] = true;
       }
     }
+    bool has_computed_order = false;
+    for (const SqlOrderItem& item : select.syntax().order_by()) {
+      const std::optional<std::size_t> selected = order_output_ordinal(select, item);
+      if (selected.has_value()) {
+        if (*selected >= select.outputs().size()) {
+          return std::unexpected(diagnostic(SqlDiagnosticCode::kExecutionFailure,
+                                            item.expression.span(), common::StatusCode::kInternal,
+                                            "Distributed ORDER BY output is unavailable"));
+        }
+        const BoundOutputColumn& output = select.outputs()[*selected];
+        const std::optional<DirectOutputBinding> binding = direct_output_binding(select, output);
+        if (binding.has_value() && binding->source_ordinal == 0U &&
+            binding->column_ordinal < source.columns().size()) {
+          continue;
+        }
+        const SqlExpression* expression = output.expression_span.has_value()
+                                              ? output_expression(select, *output.expression_span)
+                                              : nullptr;
+        if (expression == nullptr) {
+          unsupported(item.expression.span(),
+                      "Distributed ORDER BY output expression is unavailable");
+        }
+        if (!source_independent(select, *expression))
+          has_computed_order = true;
+        continue;
+      }
+      const BoundColumnReference* reference = select.find_column_reference(item.expression.span());
+      if (reference != nullptr && reference->source_ordinal == 0U &&
+          reference->column_ordinal < source.columns().size()) {
+        continue;
+      }
+      if (!source_independent(select, item.expression))
+        has_computed_order = true;
+    }
     const bool needs_full_source =
-        has_row_dependent_output ||
+        has_row_dependent_output || has_computed_order ||
         (coordinator_where && where != nullptr && !source_independent(select, *where));
     if (needs_full_source) {
       if (source.columns().size() > limits.maximum_projection_columns ||
@@ -558,8 +592,63 @@ SqlResult<DistributedVectorRowsSqlPlan> lower_bound_sql_select_to_distributed_ve
       needs_coordinator_projection = true;
     }
 
+    if (has_computed_order) {
+      coordinator_projection.order_keys.reserve(select.syntax().order_by().size());
+      for (const SqlOrderItem& item : select.syntax().order_by()) {
+        const SqlExpression* expression = &item.expression;
+        const std::optional<std::size_t> selected = order_output_ordinal(select, item);
+        if (selected.has_value()) {
+          if (*selected >= select.outputs().size()) {
+            return std::unexpected(diagnostic(SqlDiagnosticCode::kExecutionFailure,
+                                              item.expression.span(), common::StatusCode::kInternal,
+                                              "Distributed ORDER BY output is unavailable"));
+          }
+          const BoundOutputColumn& output = select.outputs()[*selected];
+          expression = output.expression_span.has_value()
+                           ? output_expression(select, *output.expression_span)
+                           : nullptr;
+          if (expression == nullptr) {
+            unsupported(item.expression.span(),
+                        "Distributed ORDER BY output expression is unavailable");
+          }
+        }
+        if (source_independent(select, *expression))
+          continue;
+        if (coordinator_projection.order_keys.size() >= limits.maximum_order_keys) {
+          throw LoweringFailure{diagnostic(SqlDiagnosticCode::kResourceLimit,
+                                           item.expression.span(),
+                                           common::StatusCode::kResourceExhausted,
+                                           "Distributed ORDER BY key count exceeds the limit")};
+        }
+        auto lowered =
+            lower_bound_sql_scalar_expression(select, *expression, limits.expression_limits);
+        if (!lowered.has_value())
+          throw LoweringFailure{std::move(lowered.error())};
+        const auto next_expression =
+            common::checked_add(expression_bytes, lowered->retained_configuration_bytes());
+        if (!next_expression.has_value() ||
+            *next_expression > limits.maximum_expression_configuration_bytes) {
+          throw LoweringFailure{
+              diagnostic(SqlDiagnosticCode::kResourceLimit, item.expression.span(),
+                         common::StatusCode::kResourceExhausted,
+                         "Distributed expression configuration bytes exceed the limit")};
+        }
+        expression_bytes = *next_expression;
+        coordinator_projection.order_keys.push_back(
+            {.expression = std::move(*lowered),
+             .direction = item.direction == SqlOrderDirection::kAscending
+                              ? PhysicalSortDirection::kAscending
+                              : PhysicalSortDirection::kDescending,
+             .null_placement = null_placement(item)});
+      }
+      needs_coordinator_projection = true;
+    }
+
     std::vector<bool> ordered_outputs(result.intent.row_output_indices.size(), false);
-    for (const SqlOrderItem& item : select.syntax().order_by()) {
+    std::span<const SqlOrderItem> direct_order_items = select.syntax().order_by();
+    if (has_computed_order)
+      direct_order_items = {};
+    for (const SqlOrderItem& item : direct_order_items) {
       std::optional<std::size_t> output;
       const std::optional<std::size_t> select_output = order_output_ordinal(select, item);
       if (select_output.has_value()) {
@@ -581,6 +670,8 @@ SqlResult<DistributedVectorRowsSqlPlan> lower_bound_sql_select_to_distributed_ve
             select.find_column_reference(item.expression.span());
         if (reference == nullptr || reference->source_ordinal != 0U ||
             reference->column_ordinal >= source.columns().size()) {
+          if (source_independent(select, item.expression))
+            continue;
           unsupported(item.expression.span(),
                       "Distributed ORDER BY must reference a direct source column");
         }

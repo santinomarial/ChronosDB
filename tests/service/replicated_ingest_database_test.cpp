@@ -1047,7 +1047,8 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   auto native_distributed_expressions = distributed_native.execute_query(
       query_request("SELECT lower(tag) AS folded, enabled, "
                     "time_bucket(INTERVAL '1 nanosecond', ts) AS shifted FROM events "
-                    "WHERE enabled AND lower(tag) = 'x' ORDER BY ts LIMIT 1"));
+                    "WHERE enabled AND lower(tag) = 'x' "
+                    "ORDER BY lower(tag), shifted DESC LIMIT 1"));
   stop_server.store(true, std::memory_order_release);
   server_thread.join();
   ASSERT_FALSE(server_failed.load(std::memory_order_acquire));
@@ -1216,7 +1217,8 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   auto native_local_expressions = local_distributed_native.execute_query(
       query_request("SELECT lower(tag) AS folded, enabled, "
                     "time_bucket(INTERVAL '1 nanosecond', ts) AS shifted FROM events "
-                    "WHERE enabled AND lower(tag) = 'x' ORDER BY ts LIMIT 1"));
+                    "WHERE enabled AND lower(tag) = 'x' "
+                    "ORDER BY lower(tag), shifted DESC LIMIT 1"));
   ASSERT_TRUE(native_local_expressions.has_value()) << native_local_expressions.error().to_string();
   ASSERT_EQ(native_local_expressions->responses.size(), 2U);
   EXPECT_EQ(native_local_expressions->responses[0].frame.payload,

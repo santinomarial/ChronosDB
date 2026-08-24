@@ -371,6 +371,49 @@ TEST(DistributedVectorRowFinalizationV2Test, AppliesCoordinatorPredicateBeforeGl
 }
 
 TEST(DistributedVectorRowFinalizationV2Test,
+     EvaluatesComputedCoordinatorOrderBeforeLimitAndVisibleOutputs) {
+  auto plan = row_plan();
+  plan.limit = 2U;
+  auto input = execution_result(
+      std::move(plan), {message(2U, 1U, true, encode_rows({{5, "Zulu"}, {3, std::nullopt}})),
+                        message(3U, 1U, true, encode_rows({{7, "alpha"}, {9, "ALPHA"}}))});
+  const query::DistributedVectorRowCoordinatorProjection projection{
+      .outputs = {query::DistributedVectorRowSourceOutput{.worker_output_index = 0U},
+                  query::DistributedVectorRowExpressionOutput{.expression =
+                                                                  lower_label_expression()}},
+      .result_schema = {.columns = {{"score", type(schema::LogicalTypeKind::kInt64), false},
+                                    {"folded", type(schema::LogicalTypeKind::kString), true}}},
+      .order_keys = {{.expression = lower_label_expression(),
+                      .direction = query::PhysicalSortDirection::kAscending,
+                      .null_placement = query::ScalarNullPlacement::kLast},
+                     {.expression = add_score_expression(0),
+                      .direction = query::PhysicalSortDirection::kDescending,
+                      .null_placement = query::ScalarNullPlacement::kLast}}};
+  auto finalized =
+      finalize_distributed_vector_rows_with_projection_v2(std::move(input), projection);
+  ASSERT_TRUE(finalized.has_value()) << finalized.error().to_string();
+  ASSERT_EQ(finalized->row_count, 2U);
+  ASSERT_EQ(finalized->encoded_batches.size(), 1U);
+  auto batch = network::decode_query_result_batch(finalized->encoded_batches.front());
+  ASSERT_TRUE(batch.has_value()) << batch.error().to_string();
+  ASSERT_EQ(batch->row_count(), 2U);
+  const network::QueryResultCell* first_score = batch->cell(0U, 0U);
+  const network::QueryResultCell* second_score = batch->cell(1U, 0U);
+  ASSERT_NE(first_score, nullptr);
+  ASSERT_NE(second_score, nullptr);
+  common::ByteReader first_reader{first_score->value};
+  common::ByteReader second_reader{second_score->value};
+  EXPECT_EQ(first_reader.read_i64_le(), 9);
+  EXPECT_EQ(second_reader.read_i64_le(), 7);
+  const std::string_view expected{"alpha"};
+  for (std::uint32_t row = 0U; row < 2U; ++row) {
+    const network::QueryResultCell* folded = batch->cell(row, 1U);
+    ASSERT_NE(folded, nullptr);
+    EXPECT_TRUE(std::ranges::equal(folded->value, std::as_bytes(std::span{expected})));
+  }
+}
+
+TEST(DistributedVectorRowFinalizationV2Test,
      EvaluatesCheckedFixedAndTextExpressionsAfterGlobalOrderAndLimit) {
   auto plan = row_plan();
   plan.order_keys = {{.output_index = 0U,
@@ -502,6 +545,43 @@ TEST(DistributedVectorRowFinalizationV2Test,
       execution_result(row_plan(), {message(2U, 1U, true, encode_rows({{1, "x"}}))});
   EXPECT_EQ(finalize_distributed_vector_rows_with_projection_v2(std::move(failing_predicate_input),
                                                                 invalid_predicate)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  query::DistributedVectorRowCoordinatorProjection invalid_order{
+      .outputs = {query::DistributedVectorRowSourceOutput{.worker_output_index = 0U}},
+      .result_schema = {.columns = {{"score", type(schema::LogicalTypeKind::kInt64), false}}},
+      .order_keys = {{.expression = divide_score_predicate(0)}}};
+  auto failing_order_input =
+      execution_result(row_plan(), {message(2U, 1U, true, encode_rows({{1, "x"}, {2, "y"}}))});
+  EXPECT_EQ(finalize_distributed_vector_rows_with_projection_v2(std::move(failing_order_input),
+                                                                invalid_order)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  std::vector<query::VectorExpressionInstruction> stale_order_instructions;
+  stale_order_instructions.emplace_back(
+      query::VectorInputExpression{.input_column_ordinal = 0U,
+                                   .type = type(schema::LogicalTypeKind::kUInt64),
+                                   .nullable = false});
+  invalid_order.order_keys = {
+      {.expression = query::VectorExpression::create(std::move(stale_order_instructions)).value()}};
+  auto stale_order_input =
+      execution_result(row_plan(), {message(2U, 1U, true, encode_rows({{1, "x"}}))});
+  EXPECT_EQ(finalize_distributed_vector_rows_with_projection_v2(std::move(stale_order_input),
+                                                                invalid_order)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  auto conflicting_plan = row_plan();
+  conflicting_plan.order_keys = {{.output_index = 0U}};
+  auto conflicting_order_input = execution_result(std::move(conflicting_plan),
+                                                  {message(2U, 1U, true, encode_rows({{1, "x"}}))});
+  EXPECT_EQ(finalize_distributed_vector_rows_with_projection_v2(std::move(conflicting_order_input),
+                                                                invalid_order)
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);

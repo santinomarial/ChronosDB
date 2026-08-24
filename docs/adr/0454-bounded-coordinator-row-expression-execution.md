@@ -30,6 +30,10 @@ worker schema. It closes all tablet streams, performs global direct-column ORDER
 LIMIT before evaluating visible expression outputs. Computed ORDER BY keys remain unsupported
 because ordering must precede this stage.
 
+[ADR 0457](0457-bounded-coordinator-computed-row-ordering.md) subsequently evaluates a separate
+bounded order-program vector before LIMIT while retaining visible expression materialization after
+LIMIT.
+
 Final materialization uses two passes over selected rows. The first evaluates programs to determine
 NULL state and exact payload sizes. The finalizer then admits a bounded size vector and one
 contiguous canonical-byte arena, reevaluates each program, and writes fixed-width values or borrowed

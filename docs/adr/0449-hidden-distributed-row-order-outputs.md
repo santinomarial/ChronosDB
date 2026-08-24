@@ -26,6 +26,9 @@ fragment projection, worker row outputs, and worker result schema. It records th
 positions as visible and points the global order key at the helper output. Repeated order references
 reuse one helper. Computed and relational order expressions remain unsupported.
 
+[ADR 0457](0457-bounded-coordinator-computed-row-ordering.md) subsequently adds checked computed
+keys without changing Plan Intent bytes.
+
 The global row finalizer validates and decodes the complete worker schema, sorts and limits against
 complete outputs, then sizes and encodes only the visible vector. Zero-row results likewise publish
 only the visible schema. Output limits apply to visible columns; input and working limits continue

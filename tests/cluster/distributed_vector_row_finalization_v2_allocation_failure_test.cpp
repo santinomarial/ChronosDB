@@ -97,6 +97,9 @@ TEST(DistributedVectorRowFinalizationV2AllocationFailureTest,
       query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kGreater,
                                     .left_instruction = 0U,
                                     .right_instruction = 1U});
+  std::vector<query::VectorExpressionInstruction> order_instructions;
+  order_instructions.emplace_back(
+      query::VectorInputExpression{.input_column_ordinal = 0U, .type = type, .nullable = false});
   const query::DistributedVectorRowCoordinatorProjection projection{
       .outputs = {query::DistributedVectorRowSourceOutput{.worker_output_index = 0U},
                   query::DistributedVectorRowConstantOutput{
@@ -110,12 +113,15 @@ TEST(DistributedVectorRowFinalizationV2AllocationFailureTest,
       .result_schema = {.columns = {{"source", type, false},
                                     {"constant", type, false},
                                     {"computed", type, false}}},
-      .predicate = query::VectorExpression::create(std::move(predicate_instructions)).value()};
+      .predicate = query::VectorExpression::create(std::move(predicate_instructions)).value(),
+      .order_keys = {
+          {.expression = query::VectorExpression::create(std::move(order_instructions)).value()}}};
 
   bool succeeded = false;
   for (std::size_t fail_after = 0U; fail_after < 224U; ++fail_after) {
     auto input = make_input(batch, type);
     input.plan.visible_row_output_indices.clear();
+    input.plan.order_keys.clear();
     auto result = run_failure(fail_after, [&] {
       return finalize_distributed_vector_rows_with_projection_v2(std::move(input), projection);
     });

@@ -204,9 +204,23 @@ visibility_working_bytes(const query::DistributedVectorPlanIntent& plan,
         return predicate;
       total = predicate;
     }
+    auto order_state = add_product(*total, projection->order_keys.size(),
+                                   sizeof(query::DistributedVectorRowCoordinatorOrderKey) * 2U);
+    if (!order_state.has_value())
+      return order_state;
+    total = order_state;
+    for (const query::DistributedVectorRowCoordinatorOrderKey& key : projection->order_keys) {
+      has_expression = true;
+      auto next = add_product(*total, key.expression.retained_configuration_bytes(), 2U);
+      if (!next.has_value())
+        return next;
+      total = next;
+    }
     if (has_expression) {
-      auto canonical_row = add_product(*total, schema.columns.size(),
-                                       sizeof(query::detail::CanonicalVectorExpressionCell) * 2U);
+      const std::size_t row_multiplier = projection->order_keys.empty() ? 2U : 4U;
+      auto canonical_row =
+          add_product(*total, schema.columns.size(),
+                      sizeof(query::detail::CanonicalVectorExpressionCell) * row_multiplier);
       if (!canonical_row.has_value())
         return canonical_row;
       total = canonical_row;
@@ -299,6 +313,19 @@ validate_projection(const query::DistributedVectorRowCoordinatorProjection& proj
     if (!sources.is_ok())
       return sources;
   }
+  if (projection.order_keys.size() > query::distributed_vector_plan_format::kMaximumOrderKeys)
+    return invalid("vector row coordinator order key count is invalid");
+  for (const query::DistributedVectorRowCoordinatorOrderKey& key : projection.order_keys) {
+    if ((key.direction != query::PhysicalSortDirection::kAscending &&
+         key.direction != query::PhysicalSortDirection::kDescending) ||
+        (key.null_placement != query::ScalarNullPlacement::kFirst &&
+         key.null_placement != query::ScalarNullPlacement::kLast)) {
+      return invalid("vector row coordinator order policy is invalid");
+    }
+    const common::Status sources = validate_expression_sources(key.expression, worker_schema);
+    if (!sources.is_ok())
+      return sources;
+  }
   return common::Status::ok();
 }
 
@@ -330,6 +357,82 @@ predicate_matches(const query::VectorExpression& predicate,
     return common::make_unexpected(internal("vector row predicate produced non-Boolean storage"));
   return *boolean;
 }
+
+[[nodiscard]] int
+compare_borrowed_variable(const query::detail::BorrowedVariableExpressionValue& left,
+                          const query::detail::BorrowedVariableExpressionValue& right,
+                          const query::ScalarNullPlacement null_placement) noexcept {
+  if (left.is_null || right.is_null) {
+    if (left.is_null == right.is_null)
+      return 0;
+    const bool left_first = null_placement == query::ScalarNullPlacement::kFirst;
+    return left.is_null == left_first ? -1 : 1;
+  }
+  const std::size_t common_size = std::min(left.bytes.size(), right.bytes.size());
+  for (std::size_t index = 0U; index < common_size; ++index) {
+    const unsigned char left_byte = std::to_integer<unsigned char>(
+        query::detail::transform_variable_byte(left.bytes[index], left.transform));
+    const unsigned char right_byte = std::to_integer<unsigned char>(
+        query::detail::transform_variable_byte(right.bytes[index], right.transform));
+    if (left_byte != right_byte)
+      return left_byte < right_byte ? -1 : 1;
+  }
+  if (left.bytes.size() == right.bytes.size())
+    return 0;
+  return left.bytes.size() < right.bytes.size() ? -1 : 1;
+}
+
+// Each left/right pair forms one comparison operand and remains deliberately adjacent.
+// NOLINTBEGIN(bugprone-easily-swappable-parameters)
+[[nodiscard]] common::Result<int> compare_coordinator_rows(
+    const std::vector<network::QueryResultBatchView>& batches,
+    const std::span<const query::DistributedVectorRowCoordinatorOrderKey> keys,
+    const RowReference left, const RowReference right,
+    const std::span<query::detail::CanonicalVectorExpressionCell> left_input,
+    const std::span<query::detail::CanonicalVectorExpressionCell> right_input) {
+  auto left_loaded = load_canonical_row(batches, left, left_input);
+  if (!left_loaded.has_value())
+    return common::make_unexpected(left_loaded.error());
+  auto right_loaded = load_canonical_row(batches, right, right_input);
+  if (!right_loaded.has_value())
+    return common::make_unexpected(right_loaded.error());
+  for (const query::DistributedVectorRowCoordinatorOrderKey& key : keys) {
+    int comparison{};
+    bool compared_null{};
+    if (key.expression.result_shape().type.is_variable_width()) {
+      auto left_value = query::detail::evaluate_variable_canonical_vector_expression_row(
+          key.expression, left_input);
+      if (!left_value.has_value())
+        return common::make_unexpected(left_value.error());
+      auto right_value = query::detail::evaluate_variable_canonical_vector_expression_row(
+          key.expression, right_input);
+      if (!right_value.has_value())
+        return common::make_unexpected(right_value.error());
+      compared_null = left_value->is_null || right_value->is_null;
+      comparison = compare_borrowed_variable(*left_value, *right_value, key.null_placement);
+    } else {
+      auto left_value =
+          query::detail::evaluate_canonical_vector_expression_row(key.expression, left_input);
+      if (!left_value.has_value())
+        return common::make_unexpected(left_value.error());
+      auto right_value =
+          query::detail::evaluate_canonical_vector_expression_row(key.expression, right_input);
+      if (!right_value.has_value())
+        return common::make_unexpected(right_value.error());
+      compared_null = left_value->is_null() || right_value->is_null();
+      auto ordered = query::compare_scalar_values(*left_value, *right_value, key.null_placement);
+      if (!ordered.has_value())
+        return common::make_unexpected(ordered.error());
+      comparison = *ordered;
+    }
+    if (!compared_null && key.direction == query::PhysicalSortDirection::kDescending)
+      comparison = -comparison;
+    if (comparison != 0)
+      return comparison;
+  }
+  return 0;
+}
+// NOLINTEND(bugprone-easily-swappable-parameters)
 
 [[nodiscard]] common::Result<std::size_t>
 expression_value_size(const query::VectorExpression& expression,
@@ -423,6 +526,45 @@ stable_sort_rows(std::vector<RowReference>& rows, std::vector<RowReference>& scr
       std::size_t output = begin;
       while (left < middle && right < end) {
         auto order = compare_rows(batches, schema, keys, source[left], source[right]);
+        if (!order.has_value())
+          return common::make_unexpected(order.error());
+        destination[output++] = *order <= 0 ? source[left++] : source[right++];
+      }
+      while (left < middle)
+        destination[output++] = source[left++];
+      while (right < end)
+        destination[output++] = source[right++];
+      begin = end;
+    }
+    rows_are_source = !rows_are_source;
+    width = width > rows.size() / 2U ? rows.size() : width * 2U;
+  }
+  if (!rows_are_source)
+    rows.swap(scratch);
+  return {};
+}
+
+[[nodiscard]] common::Result<void> stable_sort_coordinator_rows(
+    std::vector<RowReference>& rows, std::vector<RowReference>& scratch,
+    const std::vector<network::QueryResultBatchView>& batches,
+    const std::span<const query::DistributedVectorRowCoordinatorOrderKey> keys,
+    const std::span<query::detail::CanonicalVectorExpressionCell> left_input,
+    const std::span<query::detail::CanonicalVectorExpressionCell> right_input) {
+  scratch.resize(rows.size());
+  bool rows_are_source = true;
+  for (std::size_t width = 1U; width < rows.size();) {
+    std::vector<RowReference>& source = rows_are_source ? rows : scratch;
+    std::vector<RowReference>& destination = rows_are_source ? scratch : rows;
+    for (std::size_t begin = 0U; begin < rows.size();) {
+      const std::size_t middle = std::min(rows.size(), begin + width);
+      const std::size_t run_width = std::min(rows.size() - begin, width * 2U);
+      const std::size_t end = begin + run_width;
+      std::size_t left = begin;
+      std::size_t right = middle;
+      std::size_t output = begin;
+      while (left < middle && right < end) {
+        auto order = compare_coordinator_rows(batches, keys, source[left], source[right],
+                                              left_input, right_input);
         if (!order.has_value())
           return common::make_unexpected(order.error());
         destination[output++] = *order <= 0 ? source[left++] : source[right++];
@@ -544,6 +686,11 @@ finalize_distributed_vector_rows_impl(
       return common::make_unexpected(
           invalid("vector row coordinator projection conflicts with worker visibility"));
     }
+    if (projection != nullptr && !projection->order_keys.empty() &&
+        !input.plan.order_keys.empty()) {
+      return common::make_unexpected(
+          invalid("vector row coordinator and worker order keys conflict"));
+    }
     if (projection != nullptr) {
       const common::Status projection_status =
           validate_projection(*projection, input.result.result_schema);
@@ -599,8 +746,9 @@ finalize_distributed_vector_rows_impl(
     if (input.result.messages.size() > limits.maximum_input_messages) {
       return common::make_unexpected(exhausted("vector row input message limit is exhausted"));
     }
-    auto preliminary_state = working_bytes(input.result.messages.size(), 0U, 0U, 0U, 0U,
-                                           !input.plan.order_keys.empty(), 0U);
+    const bool sorts = !input.plan.order_keys.empty() ||
+                       (projection != nullptr && !projection->order_keys.empty());
+    auto preliminary_state = working_bytes(input.result.messages.size(), 0U, 0U, 0U, 0U, sorts, 0U);
     if (!preliminary_state.has_value())
       return common::make_unexpected(preliminary_state.error());
     if (*preliminary_state > limits.maximum_working_bytes - *visibility_bytes)
@@ -692,9 +840,9 @@ finalize_distributed_vector_rows_impl(
 
     const std::size_t maximum_planned_batches =
         std::min(limits.maximum_output_batches, static_cast<std::size_t>(total_rows) + 1U);
-    auto state_bytes = working_bytes(input.result.messages.size(), batch_count, total_columns,
-                                     total_cells, static_cast<std::size_t>(total_rows),
-                                     !input.plan.order_keys.empty(), maximum_planned_batches);
+    auto state_bytes =
+        working_bytes(input.result.messages.size(), batch_count, total_columns, total_cells,
+                      static_cast<std::size_t>(total_rows), sorts, maximum_planned_batches);
     if (!state_bytes.has_value())
       return common::make_unexpected(state_bytes.error());
     if (*state_bytes > limits.maximum_working_bytes - *visibility_bytes)
@@ -736,9 +884,13 @@ finalize_distributed_vector_rows_impl(
     }
     std::vector<query::detail::CanonicalVectorExpressionCell> canonical_row;
     if (projection != nullptr &&
-        (projection->predicate.has_value() || expression_output_count > 0U)) {
+        (projection->predicate.has_value() || expression_output_count > 0U ||
+         !projection->order_keys.empty())) {
       canonical_row.resize(input.result.result_schema.columns.size());
     }
+    std::vector<query::detail::CanonicalVectorExpressionCell> canonical_other;
+    if (projection != nullptr && !projection->order_keys.empty())
+      canonical_other.resize(input.result.result_schema.columns.size());
     if (projection != nullptr && projection->predicate.has_value()) {
       std::size_t retained_rows{};
       for (std::size_t index = 0U; index < rows.size(); ++index) {
@@ -755,7 +907,13 @@ finalize_distributed_vector_rows_impl(
       rows.resize(retained_rows);
     }
 
-    if (!input.plan.order_keys.empty() && rows.size() > 1U) {
+    if (projection != nullptr && !projection->order_keys.empty() && rows.size() > 1U) {
+      std::vector<RowReference> scratch;
+      auto sorted = stable_sort_coordinator_rows(rows, scratch, batches, projection->order_keys,
+                                                 canonical_row, canonical_other);
+      if (!sorted.has_value())
+        return common::make_unexpected(sorted.error());
+    } else if (!input.plan.order_keys.empty() && rows.size() > 1U) {
       std::vector<RowReference> scratch;
       auto sorted = stable_sort_rows(rows, scratch, batches, input.result.result_schema,
                                      input.plan.order_keys);
