@@ -1259,6 +1259,46 @@ TEST(ChronosdProcessTest, PreservesIncompleteFinalRaftTailWithoutRepairAuthoriza
   EXPECT_EQ(read_text_file(segment), damaged);
 }
 
+TEST(ChronosdProcessTest, RejectsUnknownRaftNamespaceEntryWithoutCleanup) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  ChildProcess child;
+  ASSERT_TRUE(child.start(directory.path()));
+  const std::string startup = child.read_startup_line();
+  EXPECT_NE(startup.find("data_plane=configured"), std::string::npos);
+  EXPECT_EQ(child.stop(), 0);
+
+  const std::string raft_directory = directory.path() + "/" + runtime::kDatabaseRaftDirectoryName;
+  constexpr std::string_view kFirstRaftSegment = "raft-00000000000000000001.rlog";
+  const std::string segment = raft_directory + "/" + std::string{kFirstRaftSegment};
+  const std::string pristine_segment = read_text_file(segment);
+  ASSERT_GT(pristine_segment.size(), 64U);
+
+  const std::string unexpected = raft_directory + "/unexpected-authority";
+  constexpr std::string_view kUnexpectedBytes = "durable unexpected Raft namespace entry\n";
+  const int unexpected_file =
+      ::open(unexpected.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+  ASSERT_GE(unexpected_file, 0);
+  ASSERT_EQ(::write(unexpected_file, kUnexpectedBytes.data(), kUnexpectedBytes.size()),
+            static_cast<ssize_t>(kUnexpectedBytes.size()));
+  ASSERT_EQ(::fsync(unexpected_file), 0);
+  ASSERT_EQ(::close(unexpected_file), 0);
+  const int raft_directory_file =
+      ::open(raft_directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+  ASSERT_GE(raft_directory_file, 0);
+  ASSERT_EQ(::fsync(raft_directory_file), 0);
+  ASSERT_EQ(::close(raft_directory_file), 0);
+  ASSERT_EQ(read_text_file(unexpected), kUnexpectedBytes);
+
+  ASSERT_TRUE(child.start_with_captured_errors(directory.path()));
+  const std::string failure = child.read_startup_line();
+  EXPECT_NE(failure.find("database start failed"), std::string::npos);
+  EXPECT_NE(failure.find("Raft directory contains an unknown entry"), std::string::npos);
+  EXPECT_EQ(child.wait_for_exit(), 1);
+  EXPECT_EQ(read_text_file(unexpected), kUnexpectedBytes);
+  EXPECT_EQ(read_text_file(segment), pristine_segment);
+}
+
 TEST(ChronosdProcessTest, RejectsCorruptWalHeaderWithoutRewritingDurableSegment) {
   TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());

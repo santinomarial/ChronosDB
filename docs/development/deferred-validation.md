@@ -955,10 +955,12 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   incomplete-tail shapes and authorized packaged repair remain deferred. The packaged matrix now
   also rejects one CRC-covered metadata-Raft segment-header corruption and preserves the complete
   segment. A companion case rejects the first complete metadata-record payload checksum failure and
-  preserves the same segment; remaining Raft record, anchor, namespace, and tail corruption matrices
-  remain deferred. A minimal one-byte Raft final-tail case now proves packaged startup does not
-  authorize repair and preserves the suffix; other tail shapes and authorized packaged repair remain
-  deferred. The
+  preserves the same segment; remaining Raft record and recovery-anchor corruption matrices remain
+  deferred. A minimal one-byte Raft final-tail case now proves packaged startup does not authorize
+  repair and preserves the suffix; other tail shapes and authorized packaged repair remain deferred.
+  One synchronized unknown regular Raft-directory entry now proves startup fails before admission
+  without cleaning the entry or rewriting the established segment; non-regular-entry and broader
+  namespace matrices remain deferred. The
   process target remains intentionally unregistered on non-Linux hosts because the server reactor
   is Linux-only.
 - Native ingest service adapter allocation/fault injection, event-time and ancestor-schema retry

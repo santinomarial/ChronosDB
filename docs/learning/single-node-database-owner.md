@@ -128,7 +128,9 @@ begins. Packaged coverage proves the complete damaged segment is preserved. The 
 complete-record case corrupts the multiplexed payload and proves the same pre-catalog rejection and
 segment preservation. A structurally incomplete final Raft suffix could be repaired only when the
 caller opts in; the packaged owner does not, so it rejects and preserves the suffix before catalog
-projection.
+projection. An unrecognized regular file in the metadata-Raft directory also stops startup before
+catalog projection. Packaged coverage proves the owner does not classify it as cleanup residue and
+preserves both the entry and established Raft segment.
 
 Malformed transport/command bytes become client-invalid protocol errors. Database corruption stays
 distinguishable as an internal error; I/O, unavailability, and unsupported operations are execution

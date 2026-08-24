@@ -74,6 +74,8 @@ segment header, requires its exact checksum diagnostic and pre-listen exit, and 
 complete segment byte-for-byte. A complete metadata-record case damages the multiplexed payload,
 requires its exact checksum diagnostic and the same pre-listen exit, and preserves the segment. A
 one-byte Raft tail case requires the exact incomplete-record diagnostic and proves no truncation.
+An unknown regular Raft-directory entry requires its exact namespace diagnostic and the same
+pre-listen exit while preserving both that entry and the established segment.
 
 ## References
 

@@ -67,7 +67,9 @@ complete segment before and after rejection, proving startup does not patch or r
 metadata authority. A companion case damages the first complete multiplexed record payload while
 leaving its headers intact, requires the payload-checksum failure, and preserves the complete
 segment. A third appends a one-byte incomplete final suffix and proves packaged startup's strict
-no-repair policy preserves it.
+no-repair policy preserves it. A fourth adds one durable unrecognized regular file to the Raft
+directory, requires the exact unknown-entry failure before socket admission, and preserves both
+that entry and the established segment.
 
 ## Deferred decisions
 

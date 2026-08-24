@@ -74,6 +74,8 @@ admission, and proves the complete durable segment is unchanged. A companion cas
 first complete metadata-record payload and proves the owner fails on its checksum before catalog
 projection without rewriting the segment. The incomplete-tail case proves the owner's packaged
 no-repair configuration rejects the suffix before catalog projection and preserves it unchanged.
+The unknown-entry case proves metadata recovery rejects an unrecognized durable namespace member
+before catalog projection without cleaning it up or changing the established segment.
 
 ## References
 

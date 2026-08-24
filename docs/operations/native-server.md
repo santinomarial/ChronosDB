@@ -42,7 +42,9 @@ listening and is never repaired automatically. Preserve the root and restore a c
 identity-consistent database rather than editing or deleting Raft history. The same applies to a
 complete multiplexed record payload checksum failure; it is not a repairable tail. A genuinely
 incomplete final Raft suffix is repairable only with explicit log-open authorization; packaged
-`chronosd` does not opt in and preserves that suffix while refusing startup. To serve one durable
+`chronosd` does not opt in and preserves that suffix while refusing startup. Any unrecognized Raft
+directory entry is corruption, not cleanup residue: preserve the root for diagnosis because
+packaged startup fails before listening and does not remove the entry. To serve one durable
 row-preserving plan, supply the paired
 `--subscription-sql SQL` and `--subscription-key-file PATH` options. The table must already exist.
 The key file must contain exactly 32 nonzero bytes and be inaccessible to group/other; preserve the

@@ -132,6 +132,10 @@ A companion case damages the first complete multiplexed record payload after its
 the payload-checksum failure, and proves the complete segment is still unchanged. A third appends
 the minimal one-byte incomplete suffix; packaged startup has no repair authorization, reports the
 incomplete final record, and preserves the segment byte-for-byte.
+The adjacent namespace case synchronizes one unrecognized regular file beside the established
+segment. Packaged startup reports the exact unknown-entry corruption before native socket admission
+and preserves both files, proving cleanup remains limited to recognized temporary and obsolete
+artifacts.
 
 The recovery-layout matrix checks a different dimension: target-size arithmetic and latest-state
 selection. A canonical state encodes to 213 bytes. Eight targets straddle the exact one-, two-,

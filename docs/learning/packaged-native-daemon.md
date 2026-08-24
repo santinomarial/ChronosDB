@@ -104,7 +104,9 @@ but before catalog projection or WAL recovery. The daemon reports the exact Raft
 before listening, and preserves the complete damaged segment. The adjacent record case leaves the
 multiplexed header valid, damages its payload, and requires the payload-checksum diagnostic with the
 same segment preservation. The adjacent one-byte suffix case requires `Raft final record is
-incomplete`; the packaged no-repair policy exits without truncation.
+incomplete`; the packaged no-repair policy exits without truncation. An unrecognized synchronized
+regular file in the Raft directory produces the exact unknown-entry failure; startup leaves that
+file and the established segment unchanged.
 
 ## Complexity and tradeoffs
 
@@ -135,7 +137,8 @@ and requires the exact CRC32C diagnostic plus complete-segment preservation. A c
 corrupts a packaged SQL INSERT body and proves the active segment is not truncated. A one-byte
 incomplete-tail case proves the packaged no-repair policy preserves the suffix. A metadata-Raft
 header and complete-record pair prove the complete segment remains unchanged. A one-byte Raft-tail
-case proves the no-repair policy preserves the suffix. Its replicated case negotiates Protocol 2,
+case proves the no-repair policy preserves the suffix. An unknown-entry case proves the packaged
+owner performs no speculative namespace cleanup. Its replicated case negotiates Protocol 2,
 applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact
 retry, and queries the same recovered row count. A separate replicated gate provisions three
 retained roots and distinct mutual-TLS identities, starts three actual daemon processes, obtains an
