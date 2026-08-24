@@ -96,7 +96,9 @@ operation deadline while preserving explicit cancellation and terminal-only rece
 fresh Protocol 2 sessions, enforces aggregate batch/row/byte limits, and publishes owned encoded
 result batches only after `QUERY_END`. `NativeQueryTcpClient` composes it with the same nonblocking
 mutual-TLS, certificate-principal-to-node authorization, partial-I/O, reconnect, and phase-deadline
-rules as ingest. It does not make a multi-group query redirectable through one group.
+rules as ingest. `NativeQueryTcpExecution` adds bounded poll scheduling, whole-operation deadline,
+cancellation, and terminal route/attempt metrics. These owners do not make a multi-group query
+redirectable through one group.
 
 ## Compatibility and rejection
 

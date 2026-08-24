@@ -1055,8 +1055,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   execution to a receipt. A finite-query replay owner now retains exact SQL across fresh Protocol 2
   sessions and withholds bounded owned result batches until `QUERY_END`; an authenticated
   deadline-bound TCP/mutual-TLS carrier now drives that owner and reconnects only for validated
-  redirects. Poll execution, a packaged command, and authoritative single-group server redirect
-  remain. The packaged daemon now accepts an atomic native-server TLS credential
+  redirects. A whole-operation-aware poll owner supplies cancellation, bounded waits, and terminal
+  route/attempt metrics. A packaged command and authoritative single-group server redirect remain.
+  The packaged daemon now accepts an atomic native-server TLS credential
   and strict client-certificate-principal bundle, owns the immutable authority beyond its reactor
   borrow, permits non-loopback canonical IPv4 binding only in that mode, and fails closed instead of
   downgrading io_uring or partial configuration. A Linux-only gate invokes the actual client against

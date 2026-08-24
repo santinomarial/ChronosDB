@@ -42,6 +42,10 @@ nonblocking connect completion, completes mutual TLS, maps the verified certific
 a stable principal, and authorizes that principal for the exact selected node before writing the
 native handshake. It reconnects only on the replay owner's validated redirect, gives connect,
 handshake, and exchange separate deadlines, and destroys TLS before closing each borrowed socket.
+`NativeQueryTcpExecution` supplies the constant-storage poll loop above that client. It bounds each
+wait by the caller maximum, active phase deadline, and optional whole-operation deadline; explicit
+cancellation destroys the client and leaves no result. Terminal metrics retain attempts, redirects,
+readiness, and the final route.
 `NativeQuorumIngestTcpClient` is that carrier boundary. It owns one nonblocking descriptor and TLS
 session at a time, authenticates the verified certificate fingerprint as a stable principal, and
 requires a node authorizer to bind that principal to the router's current node before writing the

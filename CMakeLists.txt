@@ -500,6 +500,7 @@ add_library(
   src/network/native_leader_redirect_router.cpp
   src/network/native_query_retry.cpp
   src/network/native_query_tcp_client.cpp
+  src/network/native_query_tcp_execution.cpp
   src/network/native_quorum_ingest_retry.cpp
   src/network/native_quorum_ingest_tcp_client.cpp
   src/network/native_quorum_ingest_tcp_execution.cpp
@@ -920,6 +921,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/network/native_query_retry_header_self_contained.cpp
     tests/network/native_query_retry_test.cpp
     tests/network/native_query_tcp_client_header_self_contained.cpp
+    tests/network/native_query_tcp_execution_header_self_contained.cpp
     tests/network/native_quorum_ingest_retry_header_self_contained.cpp
     tests/network/native_quorum_ingest_retry_test.cpp
     tests/network/native_quorum_ingest_tcp_client_header_self_contained.cpp

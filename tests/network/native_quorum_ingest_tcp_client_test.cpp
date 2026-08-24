@@ -3,6 +3,7 @@
 #include "chronos/network/connection_buffers.hpp"
 #include "chronos/network/connection_state.hpp"
 #include "chronos/network/native_query_tcp_client.hpp"
+#include "chronos/network/native_query_tcp_execution.hpp"
 #include "chronos/network/native_quorum_ingest_tcp_client.hpp"
 #include "chronos/network/native_quorum_ingest_tcp_execution.hpp"
 #include "columnar/columnar_test_support.hpp"
@@ -583,6 +584,77 @@ TEST(NativeQueryTcpClientTest, ValidatesBoundsAndExpiresConnectExactly) {
   EXPECT_EQ(client->state(), NativeQueryTcpClientState::kFailed);
   EXPECT_EQ(client->descriptor(), -1);
   EXPECT_FALSE(client->result().has_value());
+}
+
+TEST(NativeQueryTcpExecutionTest, PollsACompleteRedirectedOperation) {
+  auto first = ScriptedNativeServer::create(ServerReply::kQueryRedirect);
+  auto second = ScriptedNativeServer::create(ServerReply::kQueryResult);
+  auto context = TlsClientContext::create(tls_client_config());
+  ASSERT_TRUE(first.has_value()) << first.error().to_string();
+  ASSERT_TRUE(second.has_value()) << second.error().to_string();
+  ASSERT_TRUE(context.has_value()) << context.error().to_string();
+  Authenticator authenticator;
+  NodeAuthorizer authorizer;
+  const auto start = NativeQueryTcpExecution::TimePoint::clock::now();
+  const std::string sql = "SELECT value FROM events";
+  auto execution = NativeQueryTcpExecution::begin(
+      {.client = query_client_config(*context, first->endpoint(), second->endpoint(), authenticator,
+                                     authorizer, 1U),
+       .operation_deadline = start + std::chrono::seconds{5}},
+      sql);
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+
+  for (std::size_t iteration = 0U;
+       iteration < 20'000U && execution->state() == NativeQueryTcpExecutionState::kRunning;
+       ++iteration) {
+    ASSERT_TRUE(first->poll_once().is_ok());
+    ASSERT_TRUE(second->poll_once().is_ok());
+    const common::Status polled = execution->poll_once(std::chrono::milliseconds{1});
+    ASSERT_TRUE(polled.is_ok()) << polled.to_string();
+  }
+
+  ASSERT_EQ(execution->state(), NativeQueryTcpExecutionState::kComplete)
+      << execution->failure().to_string();
+  const auto metrics = execution->metrics();
+  EXPECT_GT(metrics.poll_calls, 0U);
+  EXPECT_GT(metrics.readiness_events, 0U);
+  EXPECT_EQ(metrics.attempts_started, 2U);
+  EXPECT_EQ(metrics.redirects_followed, 1U);
+  EXPECT_FALSE(metrics.active_client);
+  EXPECT_FALSE(execution->next_deadline().has_value());
+  EXPECT_EQ(execution->current_route().node_id, 2U);
+  ASSERT_TRUE(execution->result().has_value());
+  EXPECT_EQ(execution->result()->encoded_batches.size(), 1U);
+  EXPECT_TRUE(execution->poll_once(std::chrono::milliseconds{100}).is_ok());
+}
+
+TEST(NativeQueryTcpExecutionTest, CancelsExplicitlyAndPreservesTheFirstStatus) {
+  auto listener = TcpListener::bind();
+  auto context = TlsClientContext::create(tls_client_config());
+  ASSERT_TRUE(listener.has_value()) << listener.error().to_string();
+  ASSERT_TRUE(context.has_value()) << context.error().to_string();
+  Authenticator authenticator;
+  NodeAuthorizer authorizer;
+  const auto start = NativeQueryTcpExecution::TimePoint::clock::now();
+  auto execution = NativeQueryTcpExecution::begin(
+      {.client = query_client_config(*context, listener->bound_endpoint(), {{127U, 0U, 0U, 1U}, 1U},
+                                     authenticator, authorizer),
+       .operation_deadline = start + std::chrono::seconds{5}},
+      "SELECT 1");
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+  EXPECT_EQ(execution->poll_once(std::chrono::milliseconds{-1}).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(execution->state(), NativeQueryTcpExecutionState::kRunning);
+
+  const common::Status cancelled = execution->cancel();
+  EXPECT_EQ(cancelled.code(), common::StatusCode::kCancelled);
+  EXPECT_EQ(execution->state(), NativeQueryTcpExecutionState::kCancelled);
+  EXPECT_EQ(execution->failure(), cancelled);
+  EXPECT_EQ(execution->poll_once(std::chrono::milliseconds{0}), cancelled);
+  EXPECT_EQ(execution->cancel(), cancelled);
+  EXPECT_FALSE(execution->result().has_value());
+  EXPECT_FALSE(execution->metrics().active_client);
+  EXPECT_EQ(execution->metrics().attempts_started, 1U);
 }
 
 TEST(NativeQuorumIngestTcpClientTest, ReconnectsThroughRealMutualTlsAndFragmentsEveryByte) {

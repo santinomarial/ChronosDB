@@ -460,3 +460,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0423](0423-packaged-loopback-sql-client.md) | Packaged loopback SQL client command | accepted |
 | [0424](0424-exact-native-query-redirect-replay.md) | Exact native finite-query redirect replay | accepted |
 | [0425](0425-deadline-bound-native-query-tcp-client.md) | Deadline-bound native finite-query TCP client | accepted |
+| [0426](0426-bounded-native-query-tcp-execution.md) | Bounded native finite-query TCP execution | accepted |
