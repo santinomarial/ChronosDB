@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <new>
 #include <optional>
@@ -609,6 +610,86 @@ ReplicatedQuerySnapshot::bind_and_resolve_linearizable_mutable_vector_query(
     return common::make_unexpected(routes.error());
   return ReplicatedRoutedMutableVectorQuery{.fragments = std::move(*fragments),
                                             .routes = std::move(*routes)};
+}
+
+common::Result<ReplicatedRoutedMutableVectorQuery>
+ReplicatedQuerySnapshot::prepare_linearizable_mutable_vector_rows_query(
+    const ReplicatedMutableVectorRowsSqlBinding& binding,
+    const std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts,
+    const cluster::DistributedQueryRouteResolutionLimits limits) const {
+  if (impl_ == nullptr)
+    return common::make_unexpected(invalid("replicated query snapshot was moved from"));
+  if (binding.query_id.is_nil())
+    return common::make_unexpected(invalid("mutable SQL query identity is nil"));
+  const common::Status authorities = validate_mutable_group_authorities(binding.group_authorities);
+  if (!authorities.is_ok())
+    return common::make_unexpected(authorities);
+  const query::DistributedVectorRowsSqlPlan& sql_plan = binding.sql_plan.get();
+  const auto table = std::ranges::find_if(impl_->tables, [&](const Impl::Table& candidate) {
+    return candidate.lineage.table_id() == sql_plan.table_id;
+  });
+  if (table == impl_->tables.end())
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotFound, "mutable SQL table is not catalogued"});
+  const std::shared_ptr<const schema::TableSchema> current = table->lineage.current();
+  if (current == nullptr || current->schema_id() != sql_plan.destination_schema_id)
+    return common::make_unexpected(unavailable("mutable SQL schema publication differs"));
+  if (!table->complete_residency) {
+    return common::make_unexpected(
+        unavailable("mutable SQL plan requires every committed table tablet to be resident"));
+  }
+  if (table->tablets.empty() ||
+      table->tablets.size() > query::DistributedPlanLimits{}.maximum_fragments) {
+    return common::make_unexpected(invalid("mutable SQL table tablet count is invalid"));
+  }
+
+  try {
+    query::DistributedVectorQueryPlan plan{
+        .query_id = binding.query_id,
+        .read_policy = {.consistency = query::DistributedReadConsistency::kLeaderLinearizable},
+        .intent = sql_plan.intent,
+    };
+    plan.fragments.reserve(table->tablets.size());
+    for (const ingest::TabletSnapshot& snapshot : table->tablets) {
+      const auto group =
+          std::ranges::lower_bound(impl_->metadata->tablet_group_bindings, snapshot.tablet_id(), {},
+                                   &raft::TabletGroupBindingMetadata::tablet_id);
+      if (group == impl_->metadata->tablet_group_bindings.end() ||
+          group->tablet_id != snapshot.tablet_id()) {
+        return common::make_unexpected(
+            corruption("mutable SQL tablet has no committed group binding"));
+      }
+      const query::DistributedVectorGroupReadAuthority* const authority =
+          find_authority(binding.group_authorities, group->group_id);
+      if (authority == nullptr)
+        return common::make_unexpected(unavailable("mutable SQL tablet authority is missing"));
+      const std::optional<head::HeadCommitPosition>& position = snapshot.applied_position();
+      if (!position.has_value() || position->source != head::CommitSource::kRaft ||
+          position->raft_group_id != group->group_id) {
+        return common::make_unexpected(
+            unavailable("mutable SQL tablet publication has no matching Raft position"));
+      }
+      plan.fragments.push_back(
+          {.tablet_id = snapshot.tablet_id(),
+           .minimum_event_time = std::numeric_limits<std::int64_t>::min(),
+           .maximum_event_time = std::numeric_limits<std::int64_t>::max(),
+           .leader_node = authority->observation.node_id,
+           .local_applied_position = position->record_sequence,
+           .known_leader_commit_position = authority->observation.commit_index});
+    }
+    return bind_and_resolve_linearizable_mutable_vector_query(
+        {.plan = std::cref(plan),
+         .table_id = sql_plan.table_id,
+         .group_authorities = binding.group_authorities,
+         .destination_column_ordinals = sql_plan.destination_column_ordinals,
+         .event_time_predicate = sql_plan.event_time_predicate,
+         .result_schema = std::cref(sql_plan.result_schema)},
+        tls_contexts, limits);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("mutable SQL query preparation allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("mutable SQL query preparation exceeds limits"));
+  }
 }
 
 class ReplicatedIngestDatabase::Impl {

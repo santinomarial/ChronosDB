@@ -7,6 +7,7 @@
 #include "chronos/query/catalog.hpp"
 #include "chronos/query/distributed_fragment_binding.hpp"
 #include "chronos/query/distributed_mutable_vector_fragment.hpp"
+#include "chronos/query/distributed_sql_lowering.hpp"
 #include "chronos/query/physical_operator.hpp"
 #include "chronos/query/physical_plan.hpp"
 #include "chronos/query/resource_context.hpp"
@@ -58,6 +59,14 @@ struct ReplicatedMutableVectorQueryBinding {
 struct ReplicatedRoutedMutableVectorQuery {
   std::vector<query::DistributedMutableVectorFragment> fragments;
   std::vector<cluster::DistributedQueryNodeRoute> routes;
+};
+
+struct ReplicatedMutableVectorRowsSqlBinding {
+  common::Uuid query_id;
+  std::reference_wrapper<const query::DistributedVectorRowsSqlPlan> sql_plan;
+  // Canonical unique group order. Extra metadata authority is ignored; every committed table
+  // tablet must have one exact current-leader barrier/observation pair.
+  std::span<const query::DistributedVectorGroupReadAuthority> group_authorities;
 };
 
 enum class ReplicatedIngestDatabaseStartupStage : std::uint8_t {
@@ -129,6 +138,13 @@ public:
   [[nodiscard]] common::Result<ReplicatedRoutedMutableVectorQuery>
   bind_and_resolve_linearizable_mutable_vector_query(
       const ReplicatedMutableVectorQueryBinding& binding,
+      std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts,
+      cluster::DistributedQueryRouteResolutionLimits limits = {}) const;
+  // Constructs the complete canonical table plan from this pinned publication and the correlated
+  // current-leader authorities, then binds the schema-lowered SQL product and resolves its routes.
+  [[nodiscard]] common::Result<ReplicatedRoutedMutableVectorQuery>
+  prepare_linearizable_mutable_vector_rows_query(
+      const ReplicatedMutableVectorRowsSqlBinding& binding,
       std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts,
       cluster::DistributedQueryRouteResolutionLimits limits = {}) const;
 

@@ -457,6 +457,9 @@ int main() {
   const auto bind_and_resolve_replicated_mutable_vector_query =
       &chronos::service::ReplicatedQuerySnapshot::
           bind_and_resolve_linearizable_mutable_vector_query;
+  const auto prepare_replicated_mutable_vector_rows_query =
+      &chronos::service::ReplicatedQuerySnapshot::
+          prepare_linearizable_mutable_vector_rows_query;
   const auto start_replicated_vector_aggregate_query_server_v2 =
       &chronos::service::ReplicatedDistributedVectorAggregateQueryTcpServerV2::start;
   const auto create_distributed_query_tls_client =
@@ -706,6 +709,7 @@ int main() {
   (void)resolve_vector_query_routes;
   (void)resolve_mutable_vector_query_routes;
   (void)bind_and_resolve_replicated_mutable_vector_query;
+  (void)prepare_replicated_mutable_vector_rows_query;
   (void)encode_raft_observation_request;
   (void)decode_raft_observation_response;
   (void)create_raft_observation_response_reader;

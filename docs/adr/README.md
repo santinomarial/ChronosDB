@@ -474,3 +474,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0437](0437-correlated-replicated-mutable-fragment-binding.md) | Correlated replicated mutable fragment binding | accepted |
 | [0438](0438-committed-mutable-query-route-composition.md) | Committed mutable query route composition | accepted |
 | [0439](0439-schema-bound-distributed-row-sql-lowering.md) | Schema-bound distributed row SQL lowering | accepted |
+| [0440](0440-correlated-sql-mutable-query-preparation.md) | Correlated SQL mutable query preparation | accepted |

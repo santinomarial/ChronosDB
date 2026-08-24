@@ -837,6 +837,43 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
             (std::vector<network::Ipv4Endpoint>{{{127U, 0U, 0U, 1U}, 7411U}}));
   EXPECT_EQ(routed_mutable_query->routes.front().tls_context, &mutable_tls);
 
+  auto distributed_parsed =
+      query::parse_sql_v1_select("SELECT tag AS label, ts, tag AS repeated FROM events "
+                                 "WHERE ts >= TIMESTAMP '1970-01-01 00:00:00Z' "
+                                 "ORDER BY label DESC, ts LIMIT 1");
+  ASSERT_TRUE(distributed_parsed.has_value()) << distributed_parsed.error().status().to_string();
+  auto distributed_bound =
+      query::bind_sql_v1_select(std::move(*distributed_parsed), mutable_snapshot->catalog());
+  ASSERT_TRUE(distributed_bound.has_value()) << distributed_bound.error().status().to_string();
+  auto distributed_sql =
+      query::lower_bound_sql_select_to_distributed_vector_rows(*distributed_bound);
+  ASSERT_TRUE(distributed_sql.has_value()) << distributed_sql.error().status().to_string();
+  auto prepared_sql_query = mutable_snapshot->prepare_linearizable_mutable_vector_rows_query(
+      {.query_id = id(0x7aU),
+       .sql_plan = std::cref(*distributed_sql),
+       .group_authorities = *authorities},
+      mutable_tls_contexts);
+  ASSERT_TRUE(prepared_sql_query.has_value()) << prepared_sql_query.error().to_string();
+  ASSERT_EQ(prepared_sql_query->fragments.size(), 2U);
+  EXPECT_EQ(prepared_sql_query->fragments[0].tablet_id, tablet_id());
+  EXPECT_EQ(prepared_sql_query->fragments[1].tablet_id, second_tablet_id());
+  for (const query::DistributedMutableVectorFragment& fragment : prepared_sql_query->fragments) {
+    EXPECT_EQ(fragment.query_id, id(0x7aU));
+    EXPECT_EQ(fragment.destination_column_ordinals, (std::vector<std::uint32_t>{1U, 0U}));
+    EXPECT_EQ(fragment.plan.row_output_indices, (std::vector<std::uint32_t>{0U, 1U, 0U}));
+    ASSERT_TRUE(fragment.event_time_predicate.has_value());
+    EXPECT_EQ(fragment.event_time_predicate->lower,
+              (cseg::EventTimeBound{.value = 0, .inclusive = true}));
+    EXPECT_EQ(fragment.result_schema, distributed_sql->result_schema);
+  }
+  ASSERT_EQ(prepared_sql_query->routes.size(), 1U);
+  EXPECT_EQ(prepared_sql_query->routes.front().node_id, 1U);
+  auto nil_sql_query = mutable_snapshot->prepare_linearizable_mutable_vector_rows_query(
+      {.query_id = {}, .sql_plan = std::cref(*distributed_sql), .group_authorities = *authorities},
+      mutable_tls_contexts);
+  ASSERT_FALSE(nil_sql_query.has_value());
+  EXPECT_EQ(nil_sql_query.error().code(), common::StatusCode::kInvalidArgument);
+
   ++mutable_plan.fragments.front().local_applied_position;
   auto mixed_publication = mutable_snapshot->bind_linearizable_mutable_vector_fragments(
       {.plan = std::cref(mutable_plan),
@@ -857,6 +894,20 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
        .result_schema = std::cref(result_schema)});
   ASSERT_FALSE(incomplete_fragments.has_value());
   EXPECT_EQ(incomplete_fragments.error().code(), common::StatusCode::kUnavailable);
+  auto incomplete_sql_query = mutable_snapshot->prepare_linearizable_mutable_vector_rows_query(
+      {.query_id = id(0x7bU),
+       .sql_plan = std::cref(*distributed_sql),
+       .group_authorities = incomplete_authorities},
+      mutable_tls_contexts);
+  ASSERT_FALSE(incomplete_sql_query.has_value());
+  EXPECT_EQ(incomplete_sql_query.error().code(), common::StatusCode::kUnavailable);
+  query::DistributedVectorRowsSqlPlan stale_sql = *distributed_sql;
+  stale_sql.destination_schema_id = columnar::test::id<schema::SchemaId>(99U);
+  auto stale_sql_query = mutable_snapshot->prepare_linearizable_mutable_vector_rows_query(
+      {.query_id = id(0x7cU), .sql_plan = std::cref(stale_sql), .group_authorities = *authorities},
+      mutable_tls_contexts);
+  ASSERT_FALSE(stale_sql_query.has_value());
+  EXPECT_EQ(stale_sql_query.error().code(), common::StatusCode::kUnavailable);
   ASSERT_TRUE(read_barrier->shutdown().is_ok());
 
   auto snapshot = database->acquire_query_snapshot();

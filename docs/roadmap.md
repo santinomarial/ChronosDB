@@ -1084,8 +1084,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   complete owning fragment and deduplicated finite route sets from that same metadata publication.
   Bound direct-column SQL now lowers into one schema-bound distributed row product with unique
   projection, exact normalized event-time truth, canonical global order/limit, and result
-  descriptors while rejecting unsupported local-only semantics. Authority-plan construction,
-  scheduler/finalizer Native request ownership, and split-leader process composition remain.
+  descriptors while rejecting unsupported local-only semantics. The retained snapshot now joins
+  that product to the complete canonical tablet set and correlated current-leader authorities,
+  then binds and routes the whole query without caller-built tablet authority. Scheduler/finalizer
+  Native request ownership and split-leader process composition remain.
   The packaged daemon now accepts an atomic native-server TLS credential
   and strict client-certificate-principal bundle, owns the immutable authority beyond its reactor
   borrow, permits non-loopback canonical IPv4 binding only in that mode, and fails closed instead of

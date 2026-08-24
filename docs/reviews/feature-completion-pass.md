@@ -1003,8 +1003,10 @@ were deliberately not run.
   complete owning fragment set plus deduplicated bounded routes from the same metadata
   publication. Bound direct-column SQL now lowers to the exact schema identity, unique projection,
   normalized event-time predicate, global row order/limit intent, and result descriptors required
-  by that fragment path; computed/aggregate/relational semantics fail closed. Authority-plan
-  construction, scheduler/finalizer Native ownership, and process composition remain absent.
+  by that fragment path; computed/aggregate/relational semantics fail closed. The retained snapshot
+  now constructs the canonical tablet plan from those SQL semantics plus correlated current-leader
+  authorities and returns the all-or-none bound/routed package. Scheduler/finalizer Native
+  ownership and process composition remain absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

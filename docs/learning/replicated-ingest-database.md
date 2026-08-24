@@ -133,3 +133,12 @@ vector before scheduler polling. The result owns both fragments and routes, dedu
 served by one node, and borrows only explicit node-specific TLS contexts. No route answer can
 retarget a fragment, and any bind, metadata, TLS, endpoint, DNS, or allocation failure returns no
 routed query.
+
+The SQL preparation variant closes the caller-side authority-plan gap. It accepts the schema-bound
+distributed row product plus one correlated group-authority vector, requires complete residency,
+and constructs the temporary leader-linearizable tablet plan in canonical tablet-ID order from the
+same pinned publications. `TabletSnapshot` has no authenticated event-time extrema, so plan
+fragments use the complete signed-nanosecond domain: this sacrifices tablet pruning without risking
+a false negative. The existing all-or-none binder and committed route resolver then produce the
+final owning package. The temporary plan can disappear because every fragment has copied the
+intent, position, group, placement, barrier, and result schema it needs.
