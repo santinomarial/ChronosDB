@@ -84,6 +84,10 @@ exact fragment through retries and accepts no correlation, schema, or terminal-s
 The mutable mutual-TLS client authenticates and node-authorizes the server certificate before any
 request byte, while the server authenticates the client certificate before reading the distinct
 request. Both enforce exact handshake/exchange deadlines and discard incomplete output.
+The mutable TCP client adds request/route prevalidation, nonblocking connect ownership, and a
+distinct exact connect deadline. Its bounded server owns listener/TLS lifetime, preallocated poll
+storage, stable connection records, finite admission, metrics, and idempotent shutdown. Each owner
+destroys a TLS carrier before the descriptor that carrier borrows.
 Distributed Query Transport v1 wraps the dispatch and terminal exchange in correlated cluster
 request/response frames. `DistributedQueryReceiver` authenticates and authorizes the source before
 an embedding-owned worker service can execute the dispatch. `ReplicatedDistributedQueryWorker`
@@ -171,6 +175,11 @@ boundary without adding retry policy.
 `DistributedGroupedQueryTcpServer` reserves its connection and poll tables at startup, admits only a
 finite number per poll, keeps each carrier/descriptor pair at a stable allocation, and destroys the
 carrier before its borrowed descriptor on completion, failure, and shutdown.
+`DistributedMutableVectorQueryTcpClient` validates and exact-decodes the immutable attempt before
+opening a socket, confirms nonblocking connect completion, and then transfers the attempt into the
+authenticated mutable carrier. The companion server applies the same bounded stable-record polling
+model. Neither owner performs retry or worker acquisition, so failures remain explicit inputs to a
+future split-leader execution owner.
 `ReplicatedDistributedGroupedQueryTcpServer` then establishes stable worker/receiver/server
 addresses and reverse dependency destruction for the complete production inbound real-CSEG stack.
 `DistributedGroupedQuerySender` independently constructs immutable attempts, validates the complete

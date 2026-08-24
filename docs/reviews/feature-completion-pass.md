@@ -984,8 +984,10 @@ were deliberately not run.
   distinct bounded request carrier now adds authenticated source authorization, exact response
   schema validation, terminal publication, leader hints, and finite retries. A nonblocking
   mutual-TLS client/server carrier now authenticates and node-authorizes certificates before
-  request bytes or worker execution. TCP connect/listen ownership, packaged worker integration, and
-  split-leader native composition remain absent.
+  request bytes or worker execution. Dedicated TCP owners now add prevalidated nonblocking connect,
+  a separate exact connect deadline, bounded listener admission and polling, stable carrier/socket
+  lifetimes, metrics, and idempotent shutdown. Packaged worker integration and split-leader native
+  composition remain absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
@@ -1003,10 +1005,10 @@ were deliberately not run.
 The exact subsystem/category ledger is
 [`deferred-validation.md`](../development/deferred-validation.md). Recommended order:
 
-1. Add remote mutable-tablet query fragments for split leadership, then extend the existing
-   three-process
-   quorum-ingest/failover gate through applied read-barrier native SELECT and the remaining real
-   data-plane sequence.
+1. Compose the implemented remote mutable-tablet fragment/TLS/TCP boundaries with the packaged
+   worker and native split-leader scheduler, then extend the existing three-process quorum-ingest/
+   failover gate through applied read-barrier native SELECT and the remaining real data-plane
+   sequence.
 2. Specify database namespaces/catalog tombstones and placement-driven membership orchestration
    without changing Metadata Command v1 or Metadata Application Snapshot 1.0 bytes in place.
 3. Finish direct vector temporal winner lowering, mixed WAL/Raft recovery, durable retention

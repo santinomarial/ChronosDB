@@ -77,6 +77,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cluster/distributed_vector_query_tcp_server_v2.hpp>
 #include <chronos/cluster/distributed_vector_result_exchange.hpp>
 #include <chronos/cluster/distributed_grouped_query_tls.hpp>
+#include <chronos/cluster/distributed_mutable_vector_query_tcp.hpp>
 #include <chronos/cluster/distributed_query_transport.hpp>
 #include <chronos/cluster/distributed_query_execution.hpp>
 #include <chronos/cluster/distributed_query_tls_client.hpp>
@@ -1288,6 +1289,10 @@ int main() {
       &chronos::cluster::DistributedVectorQueryTcpClientV2::begin;
   const auto start_distributed_vector_query_tcp_server_v2 =
       &chronos::cluster::DistributedVectorQueryTcpServerV2::start;
+  const auto begin_distributed_mutable_vector_query_tcp_client =
+      &chronos::cluster::DistributedMutableVectorQueryTcpClient::begin;
+  const auto start_distributed_mutable_vector_query_tcp_server =
+      &chronos::cluster::DistributedMutableVectorQueryTcpServer::start;
   const auto create_distributed_vector_query_sender_v2 =
       &chronos::cluster::DistributedVectorQuerySenderV2::create;
   const auto create_distributed_vector_result_coordinator_v2 =
@@ -1610,6 +1615,8 @@ int main() {
                  create_distributed_grouped_query_tls_server != nullptr &&
                  begin_distributed_vector_query_tcp_client_v2 != nullptr &&
                  start_distributed_vector_query_tcp_server_v2 != nullptr &&
+                 begin_distributed_mutable_vector_query_tcp_client != nullptr &&
+                 start_distributed_mutable_vector_query_tcp_server != nullptr &&
                  create_distributed_vector_query_sender_v2 != nullptr &&
                  create_distributed_vector_result_coordinator_v2 != nullptr &&
                  create_distributed_vector_aggregate_coordinator_v2 != nullptr &&

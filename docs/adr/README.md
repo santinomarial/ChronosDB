@@ -466,3 +466,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0429](0429-distinct-proof-bound-mutable-vector-fragment.md) | Distinct proof-bound mutable vector fragment | accepted |
 | [0430](0430-distinct-mutable-vector-query-transport.md) | Distinct mutable vector query transport | accepted |
 | [0431](0431-mutual-tls-mutable-vector-query-carrier.md) | Mutual-TLS mutable vector query carrier | accepted |
+| [0432](0432-bounded-mutable-vector-query-tcp-ownership.md) | Bounded mutable vector query TCP ownership | accepted |
