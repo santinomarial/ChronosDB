@@ -127,6 +127,10 @@ existence of a design document alone is not implementation evidence.
   v1](formats/distributed-mutable-vector-fragment-v1.md): distinct exact-applied TabletState
   authority, checksummed nested plan/result schema, and proof-revalidated mutable row execution
   without reinterpreting durable Manifest fragment positions.
+- [Distributed Mutable Vector Query Transport
+  v1](formats/distributed-mutable-vector-query-transport-v1.md): distinct bounded request carrier,
+  authenticated source authorization boundary, finite retry owner, and schema-bound v2 response
+  reuse for exact mutable fragments.
 - [Distributed Aggregate Fragment Dispatch v1](formats/distributed-aggregate-fragment-dispatch-v1.md):
   group-scoped executable envelope around one exact aggregate fragment request.
   Runtime construction binds admission, committed placement, schema, and one exact Raft-backed

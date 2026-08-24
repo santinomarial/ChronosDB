@@ -77,6 +77,10 @@ The distinct `DistributedMutableVectorFragment` instead names one immutable comm
 Raft group, applied position, current placement, local barrier, active schema, projection, plan, and
 result schema before scanning heads. The `CHDMVFR1` format carries independent header, nested-plan,
 nested-schema, and complete-frame CRCs and cannot be decoded as the durable vector fragment.
+Mutable Query Transport v1 wraps that value in the distinct `CHDMREQ1` request. Its receiver
+requires an authenticated principal, authorizes the claimed source node before worker execution,
+and returns only complete bounded schema-valid `CHDVRSP2` streams. The finite sender retains the
+exact fragment through retries and accepts no correlation, schema, or terminal-sequence drift.
 Distributed Query Transport v1 wraps the dispatch and terminal exchange in correlated cluster
 request/response frames. `DistributedQueryReceiver` authenticates and authorizes the source before
 an embedding-owned worker service can execute the dispatch. `ReplicatedDistributedQueryWorker`

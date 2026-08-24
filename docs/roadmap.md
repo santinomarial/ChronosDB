@@ -1061,8 +1061,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   single-table-group route and redirects only when ordered observations prove one common stable
   remote leader across its entire read gate. A distinct proof-bound mutable vector fragment now
   binds and locally executes one exact committed/applied TabletState publication without
-  reinterpreting Manifest-fragment positions; authenticated transport and split-leader native
-  composition remain.
+  reinterpreting Manifest-fragment positions. Its distinct checksummed request transport now
+  authenticates and authorizes the claimed source before worker execution, bounds terminal typed
+  responses, and retains exact authority through finite retries; TLS/socket ownership, packaged
+  worker integration, and split-leader native composition remain.
   The packaged daemon now accepts an atomic native-server TLS credential
   and strict client-certificate-principal bundle, owns the immutable authority beyond its reactor
   borrow, permits non-loopback canonical IPv4 binding only in that mode, and fails closed instead of

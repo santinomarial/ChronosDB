@@ -981,7 +981,9 @@ were deliberately not run.
   common stable remote leader across its complete read gate. A distinct checksummed mutable vector
   fragment now binds and locally executes one exact committed/applied TabletState publication with
   complete route, placement, barrier, schema, projection, and result-shape revalidation. Its
-  authenticated transport and split-leader native composition remain absent.
+  distinct bounded request carrier now adds authenticated source authorization, exact response
+  schema validation, terminal publication, leader hints, and finite retries. TLS/socket ownership,
+  packaged worker integration, and split-leader native composition remain absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

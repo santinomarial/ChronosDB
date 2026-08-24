@@ -442,6 +442,8 @@ common::Result<DistributedMutableVectorFragment> decode_distributed_mutable_vect
         .result_schema = std::move(*result_schema)};
     const common::Status validation = validate_distributed_mutable_vector_fragment(fragment);
     if (!validation.is_ok()) {
+      if (validation.code() == common::StatusCode::kResourceExhausted)
+        return common::make_unexpected(validation);
       return common::make_unexpected(common::Status{
           common::StatusCode::kCorruption, "mutable vector fragment semantics are invalid"});
     }

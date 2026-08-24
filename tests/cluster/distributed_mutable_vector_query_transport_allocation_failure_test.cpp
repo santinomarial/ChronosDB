@@ -1,0 +1,174 @@
+#include "chronos/cluster/distributed_mutable_vector_query_transport.hpp"
+#include "support/failing_allocator.hpp"
+
+#include <cstddef>
+#include <gtest/gtest.h>
+#include <optional>
+#include <span>
+#include <utility>
+
+namespace chronos::cluster {
+namespace {
+
+template <typename Operation>
+[[nodiscard]] auto run_failure(const std::size_t fail_after, Operation&& operation) {
+  using Result = decltype(operation());
+  std::optional<Result> result;
+  {
+    ::chronos::test::ScopedAllocationFailure failure{fail_after};
+    try {
+      result.emplace(operation());
+    } catch (...) {
+      failure.disable();
+      throw;
+    }
+    failure.disable();
+  }
+  return std::move(*result);
+}
+
+[[nodiscard]] common::Uuid uuid(const std::uint8_t seed) {
+  common::Uuid::Bytes bytes{};
+  bytes.front() = std::byte{seed};
+  return common::Uuid{bytes};
+}
+
+template <typename Id> [[nodiscard]] Id id(const std::uint8_t seed) {
+  return Id::from_uuid(uuid(seed)).value();
+}
+
+[[nodiscard]] query::DistributedVectorResultSchema result_schema() {
+  return {
+      .columns = {
+          {"value", schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(), false}}};
+}
+
+[[nodiscard]] query::DistributedMutableVectorFragment fragment() {
+  return {.query_id = uuid(1U),
+          .database_id = id<manifest::DatabaseId>(2U),
+          .table_id = id<schema::TableId>(3U),
+          .tablet_id = id<schema::TabletId>(4U),
+          .destination_schema_id = id<schema::SchemaId>(5U),
+          .raft_group_id = uuid(6U),
+          .serving_node = 7U,
+          .applied_position = 8U,
+          .observed_leader_commit_position = 8U,
+          .placement_epoch = 9U,
+          .read_policy = {.consistency = query::DistributedReadConsistency::kLocalEventual},
+          .destination_column_ordinals = {0U},
+          .plan = {.mode = query::DistributedVectorPlanMode::kRows, .row_output_indices = {0U}},
+          .result_schema = result_schema()};
+}
+
+class Authorizer final : public ClusterNodePrincipalAuthorizer {
+public:
+  common::Result<bool> authorize_node(const std::uint64_t principal_id,
+                                      const raft::NodeId claimed_node_id) const override {
+    return principal_id == 91U && claimed_node_id == 1U;
+  }
+};
+
+class Worker final : public DistributedMutableVectorQueryWorkerService {
+public:
+  Worker()
+      : messages_{{.query_id = uuid(1U),
+                   .tablet_id = id<schema::TabletId>(4U),
+                   .sequence = 1U,
+                   .terminal = true}} {}
+
+  common::Result<std::vector<DistributedVectorResultExchangeMessage>>
+  execute(const query::DistributedMutableVectorFragment&) override {
+    return std::move(messages_);
+  }
+
+private:
+  std::vector<DistributedVectorResultExchangeMessage> messages_;
+};
+
+template <typename Operation>
+void expect_eventual_success(const char* label, Operation&& operation) {
+  SCOPED_TRACE(label);
+  bool success = false;
+  for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
+    auto result = run_failure(fail_after, operation);
+    if (result.has_value()) {
+      success = true;
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(success);
+}
+
+TEST(DistributedMutableVectorQueryTransportAllocationFailureTest,
+     ClassifiesOwnedRequestAllocations) {
+  const DistributedMutableVectorQueryRequest request{1U, 7U, fragment()};
+  expect_eventual_success("request encode",
+                          [&] { return encode_distributed_mutable_vector_query_request(request); });
+  const auto encoded = encode_distributed_mutable_vector_query_request(request);
+  ASSERT_TRUE(encoded.has_value());
+  expect_eventual_success("request decode", [&] {
+    return decode_distributed_mutable_vector_query_request_exact(*encoded);
+  });
+  expect_eventual_success("request reader", [&] {
+    DistributedMutableVectorQueryRequestReader reader;
+    return reader.consume(*encoded);
+  });
+}
+
+TEST(DistributedMutableVectorQueryReceiverAllocationFailureTest,
+     ClassifiesOwnedResponsePublicationAllocations) {
+  Authorizer authorizer;
+  const auto encoded = encode_distributed_mutable_vector_query_request({1U, 7U, fragment()});
+  ASSERT_TRUE(encoded.has_value());
+  bool success = false;
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    Worker worker;
+    auto receiver = DistributedMutableVectorQueryReceiver::create(
+        {.local_node_id = 7U, .authorizer = &authorizer, .worker = &worker});
+    ASSERT_TRUE(receiver.has_value());
+    auto result = run_failure(fail_after, [&] {
+      return receiver->receive(*encoded, {.authorized = true, .principal_id = 91U});
+    });
+    if (result.has_value()) {
+      success = true;
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(success);
+}
+
+TEST(DistributedMutableVectorQuerySenderAllocationFailureTest,
+     ClassifiesSchemaValidationAndResultRetentionAllocations) {
+  const DistributedVectorQueryResponseV2 response{
+      .source_node_id = 7U,
+      .target_node_id = 1U,
+      .query_id = uuid(1U),
+      .tablet_id = id<schema::TabletId>(4U),
+      .status_code = common::StatusCode::kOk,
+      .payload = DistributedVectorResultExchangeMessage{.query_id = uuid(1U),
+                                                        .tablet_id = id<schema::TabletId>(4U),
+                                                        .sequence = 1U,
+                                                        .terminal = true}};
+  bool success = false;
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    auto sender = DistributedMutableVectorQuerySender::create(1U, fragment());
+    ASSERT_TRUE(sender.has_value());
+    ASSERT_TRUE(sender->begin_attempt({}).has_value());
+    const common::Status status = run_failure(
+        fail_after, [&] { return sender->accept_responses(std::span{&response, 1U}, {}); });
+    if (status.is_ok()) {
+      ASSERT_TRUE(sender->result().has_value());
+      success = true;
+      break;
+    }
+    EXPECT_EQ(status.code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(sender->state(), DistributedQuerySenderState::kWaitingForResponse);
+    EXPECT_FALSE(sender->result().has_value());
+  }
+  EXPECT_TRUE(success);
+}
+
+} // namespace
+} // namespace chronos::cluster
