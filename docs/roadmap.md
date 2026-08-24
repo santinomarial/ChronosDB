@@ -1082,12 +1082,13 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   publication with stable placement/group metadata and its leader barrier observation. Mutable
   fragments now enter the shared committed-node/TLS resolver, and a snapshot package returns the
   complete owning fragment and deduplicated finite route sets from that same metadata publication.
-  Bound row SQL now lowers direct columns plus bounded source-independent scalar outputs into one
-  schema-bound product with unique real-source projection, exact normalized event-time comparison
-  and inclusive `BETWEEN` truth, canonical global order/limit including hidden direct-column sort
-  helpers, and result descriptors while rejecting row-dependent or relational semantics. The
-  coordinator injects canonical constants only after complete global sort/limit; all-constant
-  queries retain a real event-time row-count anchor. Plan Intent bytes remain unchanged. Bound global aggregate SQL now also produces
+  Bound row SQL now lowers direct columns, bounded source-independent scalar outputs, and checked
+  row-dependent vector-expression outputs into one schema-bound product with exact normalized
+  event-time comparison and inclusive `BETWEEN` truth, canonical global order/limit including hidden
+  direct-column sort helpers, and result descriptors while rejecting computed ordering or relational
+  semantics. The coordinator injects constants and evaluates row expressions only after complete
+  global sort/limit; computed plans carry the full source schema in ordinal order, all-constant
+  queries retain a real event-time row-count anchor, and Plan Intent bytes remain unchanged. Bound global aggregate SQL now also produces
   exact unique projection, sufficient-state definitions, event-time truth, LIMIT, and result
   descriptors for direct aggregate calls plus an exact unlimited identity input-row plan. The
   replicated Native service and packaged daemon now execute that input through the existing local/

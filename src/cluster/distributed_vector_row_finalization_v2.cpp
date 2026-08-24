@@ -1,5 +1,6 @@
 #include "chronos/cluster/distributed_vector_row_finalization_v2.hpp"
 
+#include "../query/vector_expression_internal.hpp"
 #include "chronos/common/byte_reader.hpp"
 #include "chronos/common/checked_math.hpp"
 #include "chronos/query/distributed_sql_lowering.hpp"
@@ -138,8 +139,8 @@ working_bytes(const std::size_t messages, const std::size_t batches, const std::
   if (!next.has_value())
     return next;
   total = *next;
-  // Decoded-cell ownership plus one output-batch staging vector, both with conservative capacity
-  // headroom. Neither path allocates per row.
+  // Decoded-cell ownership with conservative capacity headroom. The exact maximum output-batch
+  // staging width is charged separately once the selected row count is known.
   next = add_product(total, cells, sizeof(network::QueryResultCell) * 4U);
   if (!next.has_value())
     return next;
@@ -167,19 +168,40 @@ visibility_working_bytes(const query::DistributedVectorPlanIntent& plan,
   if (!total.has_value())
     return total;
   if (projection != nullptr) {
+    bool has_expression = false;
+    auto output_state = add_product(*total, visible_columns,
+                                    sizeof(query::DistributedVectorRowCoordinatorOutput) * 2U);
+    if (!output_state.has_value())
+      return output_state;
+    total = output_state;
     for (std::size_t position = 0U; position < visible_columns; ++position) {
       auto next = add_product(*total, projection->result_schema.columns[position].name.size(), 2U);
       if (!next.has_value())
         return next;
       total = next;
-      if (const auto* constant = std::get_if<query::DistributedVectorRowConstantOutput>(
-              &projection->outputs[position]);
+      const auto& output = projection->outputs[position];
+      if (const auto* constant = std::get_if<query::DistributedVectorRowConstantOutput>(&output);
           constant != nullptr) {
         next = add_product(*total, constant->canonical_value.size(), 2U);
         if (!next.has_value())
           return next;
         total = next;
+      } else if (const auto* expression =
+                     std::get_if<query::DistributedVectorRowExpressionOutput>(&output);
+                 expression != nullptr) {
+        has_expression = true;
+        next = add_product(*total, expression->expression.retained_configuration_bytes(), 2U);
+        if (!next.has_value())
+          return next;
+        total = next;
       }
+    }
+    if (has_expression) {
+      auto canonical_row = add_product(*total, schema.columns.size(),
+                                       sizeof(query::detail::CanonicalVectorExpressionCell) * 2U);
+      if (!canonical_row.has_value())
+        return canonical_row;
+      total = canonical_row;
     }
     return total;
   }
@@ -219,18 +241,97 @@ validate_projection(const query::DistributedVectorRowCoordinatorProjection& proj
         return invalid("vector row coordinator source shape differs from its worker output");
       continue;
     }
-    const auto& constant =
-        std::get<query::DistributedVectorRowConstantOutput>(projection.outputs[index]);
-    if ((constant.is_null && !descriptor.nullable) ||
-        (constant.is_null && !constant.canonical_value.empty()))
-      return invalid("vector row coordinator NULL constant shape is invalid");
-    auto canonical = query::compare_canonical_scalar_bytes(
-        descriptor.type, constant.is_null, constant.canonical_value, constant.is_null,
-        constant.canonical_value, query::ScalarNullPlacement::kLast);
-    if (!canonical.has_value())
-      return invalid("vector row coordinator constant bytes are invalid");
+    if (const auto* constant =
+            std::get_if<query::DistributedVectorRowConstantOutput>(&projection.outputs[index]);
+        constant != nullptr) {
+      if ((constant->is_null && !descriptor.nullable) ||
+          (constant->is_null && !constant->canonical_value.empty())) {
+        return invalid("vector row coordinator NULL constant shape is invalid");
+      }
+      auto canonical = query::compare_canonical_scalar_bytes(
+          descriptor.type, constant->is_null, constant->canonical_value, constant->is_null,
+          constant->canonical_value, query::ScalarNullPlacement::kLast);
+      if (!canonical.has_value())
+        return invalid("vector row coordinator constant bytes are invalid");
+      continue;
+    }
+    const auto& expression =
+        std::get<query::DistributedVectorRowExpressionOutput>(projection.outputs[index]).expression;
+    if (expression.result_shape().type != descriptor.type ||
+        expression.result_shape().nullable != descriptor.nullable) {
+      return invalid("vector row coordinator expression result shape is invalid");
+    }
+    for (const query::VectorExpressionInstruction& instruction : expression.instructions()) {
+      const auto* source = std::get_if<query::VectorInputExpression>(&instruction);
+      if (source == nullptr)
+        continue;
+      if (source->input_column_ordinal >= worker_schema.columns.size())
+        return invalid("vector row coordinator expression source is out of bounds");
+      const auto& worker = worker_schema.columns[source->input_column_ordinal];
+      if (worker.type != source->type || worker.nullable != source->nullable)
+        return invalid(
+            "vector row coordinator expression source shape differs from its worker output");
+    }
   }
   return common::Status::ok();
+}
+
+[[nodiscard]] common::Result<void>
+load_canonical_row(const std::vector<network::QueryResultBatchView>& batches,
+                   const RowReference row,
+                   const std::span<query::detail::CanonicalVectorExpressionCell> output) {
+  if (row.batch_index >= batches.size())
+    return common::make_unexpected(internal("vector expression row references an absent batch"));
+  for (std::size_t column = 0U; column < output.size(); ++column) {
+    const network::QueryResultCell* cell = batches[row.batch_index].cell(row.row, column);
+    if (cell == nullptr)
+      return common::make_unexpected(internal("vector expression source cell disappeared"));
+    output[column] = {.is_null = cell->is_null, .bytes = cell->value};
+  }
+  return {};
+}
+
+[[nodiscard]] common::Result<std::size_t>
+expression_value_size(const query::VectorExpression& expression,
+                      const std::span<const query::detail::CanonicalVectorExpressionCell> input) {
+  if (expression.result_shape().type.is_variable_width()) {
+    auto value =
+        query::detail::evaluate_variable_canonical_vector_expression_row(expression, input);
+    if (!value.has_value())
+      return common::make_unexpected(value.error());
+    return value->is_null ? 0U : value->bytes.size();
+  }
+  auto value = query::detail::evaluate_canonical_vector_expression_row(expression, input);
+  if (!value.has_value())
+    return common::make_unexpected(value.error());
+  return query::canonical_scalar_value_size(*value);
+}
+
+[[nodiscard]] common::Result<network::QueryResultCell> materialize_expression_cell(
+    const query::VectorExpression& expression,
+    const std::span<const query::detail::CanonicalVectorExpressionCell> input,
+    const std::span<std::byte> destination) {
+  if (expression.result_shape().type.is_variable_width()) {
+    auto value =
+        query::detail::evaluate_variable_canonical_vector_expression_row(expression, input);
+    if (!value.has_value())
+      return common::make_unexpected(value.error());
+    const std::size_t expected = value->is_null ? 0U : value->bytes.size();
+    if (destination.size() != expected)
+      return common::make_unexpected(internal("variable expression output sizing changed"));
+    for (std::size_t index = 0U; index < destination.size(); ++index) {
+      destination[index] =
+          query::detail::transform_variable_byte(value->bytes[index], value->transform);
+    }
+    return network::QueryResultCell{.is_null = value->is_null, .value = destination};
+  }
+  auto value = query::detail::evaluate_canonical_vector_expression_row(expression, input);
+  if (!value.has_value())
+    return common::make_unexpected(value.error());
+  auto written = query::write_canonical_scalar_value(*value, destination);
+  if (!written.has_value())
+    return common::make_unexpected(written.error());
+  return network::QueryResultCell{.is_null = value->is_null(), .value = destination};
 }
 
 [[nodiscard]] common::Result<int>
@@ -316,15 +417,21 @@ descriptor_prefix_size(const query::DistributedVectorResultSchema& schema) {
   return total;
 }
 
-[[nodiscard]] common::Result<std::size_t>
-encoded_row_size(const std::vector<network::QueryResultBatchView>& batches,
-                 const std::span<const std::uint32_t> output_indices,
-                 const query::DistributedVectorRowCoordinatorProjection* projection,
-                 const RowReference row) {
+[[nodiscard]] common::Result<std::size_t> encoded_row_size(
+    const std::vector<network::QueryResultBatchView>& batches,
+    const std::span<const std::uint32_t> output_indices,
+    const query::DistributedVectorRowCoordinatorProjection* projection, const RowReference row,
+    const std::span<query::detail::CanonicalVectorExpressionCell> canonical_row,
+    std::size_t& computed_payload_bytes, std::vector<std::size_t>& computed_value_sizes) {
   if (row.batch_index >= batches.size())
     return common::make_unexpected(internal("vector row output references an absent batch"));
   std::size_t total{};
   if (projection != nullptr) {
+    if (!canonical_row.empty()) {
+      auto loaded = load_canonical_row(batches, row, canonical_row);
+      if (!loaded.has_value())
+        return common::make_unexpected(loaded.error());
+    }
     for (const query::DistributedVectorRowCoordinatorOutput& output : projection->outputs) {
       std::size_t value_size{};
       if (const auto* source = std::get_if<query::DistributedVectorRowSourceOutput>(&output);
@@ -334,9 +441,22 @@ encoded_row_size(const std::vector<network::QueryResultBatchView>& batches,
         if (cell == nullptr)
           return common::make_unexpected(internal("vector row output cell disappeared"));
         value_size = cell->value.size();
+      } else if (const auto* constant =
+                     std::get_if<query::DistributedVectorRowConstantOutput>(&output);
+                 constant != nullptr) {
+        value_size = constant->canonical_value.size();
       } else {
-        value_size =
-            std::get<query::DistributedVectorRowConstantOutput>(output).canonical_value.size();
+        const auto& expression =
+            std::get<query::DistributedVectorRowExpressionOutput>(output).expression;
+        auto size = expression_value_size(expression, canonical_row);
+        if (!size.has_value())
+          return common::make_unexpected(size.error());
+        value_size = *size;
+        const auto next_computed = common::checked_add(computed_payload_bytes, value_size);
+        if (!next_computed.has_value())
+          return common::make_unexpected(exhausted("computed vector output size overflowed"));
+        computed_payload_bytes = *next_computed;
+        computed_value_sizes.push_back(value_size);
       }
       const auto cell_size = common::checked_add(std::size_t{4U}, value_size);
       const auto next =
@@ -579,9 +699,46 @@ finalize_distributed_vector_rows_impl(
         static_cast<std::size_t>(std::min<std::uint64_t>(requested_rows, total_rows));
     rows.resize(selected_rows);
 
+    const std::size_t maximum_staged_output_rows =
+        std::min(selected_rows, static_cast<std::size_t>(limits.output_batch.maximum_rows));
+    const auto maximum_staged_output_cells =
+        common::checked_multiply(maximum_staged_output_rows, visible_column_count);
+    if (!maximum_staged_output_cells.has_value())
+      return common::make_unexpected(exhausted("vector row output cell count overflowed"));
+    auto state_with_output_cells = add_product(*state_bytes, *maximum_staged_output_cells,
+                                               sizeof(network::QueryResultCell) * 2U);
+    if (!state_with_output_cells.has_value())
+      return common::make_unexpected(state_with_output_cells.error());
+    if (*state_with_output_cells > limits.maximum_working_bytes - *visibility_bytes)
+      return common::make_unexpected(exhausted("vector row working-memory limit is exhausted"));
+
+    std::size_t expression_output_count{};
+    if (projection != nullptr) {
+      expression_output_count = static_cast<std::size_t>(std::ranges::count_if(
+          projection->outputs, [](const query::DistributedVectorRowCoordinatorOutput& output) {
+            return std::holds_alternative<query::DistributedVectorRowExpressionOutput>(output);
+          }));
+    }
+    const auto computed_cell_count =
+        common::checked_multiply(selected_rows, expression_output_count);
+    if (!computed_cell_count.has_value())
+      return common::make_unexpected(exhausted("computed vector output cell count overflowed"));
+    auto state_with_computed_sizes =
+        add_product(*state_with_output_cells, *computed_cell_count, sizeof(std::size_t) * 2U);
+    if (!state_with_computed_sizes.has_value())
+      return common::make_unexpected(state_with_computed_sizes.error());
+    if (*state_with_computed_sizes > limits.maximum_working_bytes - *visibility_bytes)
+      return common::make_unexpected(exhausted("vector row working-memory limit is exhausted"));
+    std::vector<query::detail::CanonicalVectorExpressionCell> canonical_row;
+    if (expression_output_count > 0U)
+      canonical_row.resize(input.result.result_schema.columns.size());
+    std::vector<std::size_t> computed_value_sizes;
+    computed_value_sizes.reserve(*computed_cell_count);
+
     std::vector<BatchRange> ranges;
     ranges.reserve(std::min(limits.maximum_output_batches, selected_rows + 1U));
     std::size_t output_encoded_bytes{};
+    std::size_t computed_payload_bytes{};
     if (selected_rows == 0U) {
       ranges.push_back({.begin = 0U, .end = 0U, .encoded_size = *prefix_size});
       output_encoded_bytes = *prefix_size;
@@ -591,7 +748,11 @@ finalize_distributed_vector_rows_impl(
         std::size_t end = begin;
         std::size_t encoded_size = *prefix_size;
         while (end < selected_rows && end - begin < limits.output_batch.maximum_rows) {
-          auto row_size = encoded_row_size(batches, visible_output_indices, projection, rows[end]);
+          const std::size_t computed_size_checkpoint = computed_value_sizes.size();
+          const std::size_t computed_payload_checkpoint = computed_payload_bytes;
+          auto row_size =
+              encoded_row_size(batches, visible_output_indices, projection, rows[end],
+                               canonical_row, computed_payload_bytes, computed_value_sizes);
           if (!row_size.has_value())
             return common::make_unexpected(row_size.error());
           const auto next = common::checked_add(encoded_size, *row_size);
@@ -601,6 +762,8 @@ finalize_distributed_vector_rows_impl(
             if (end == begin)
               return common::make_unexpected(
                   exhausted("one vector row exceeds the output payload limit"));
+            computed_value_sizes.resize(computed_size_checkpoint);
+            computed_payload_bytes = computed_payload_checkpoint;
             break;
           }
           encoded_size = *next;
@@ -618,6 +781,15 @@ finalize_distributed_vector_rows_impl(
     }
     if (output_encoded_bytes > limits.maximum_output_encoded_bytes)
       return common::make_unexpected(exhausted("vector row output byte limit is exhausted"));
+    if (computed_value_sizes.size() != *computed_cell_count)
+      return common::make_unexpected(internal("computed vector output sizing count changed"));
+    auto state_with_computed_payload =
+        add_product(*state_with_computed_sizes, computed_payload_bytes, 2U);
+    if (!state_with_computed_payload.has_value())
+      return common::make_unexpected(state_with_computed_payload.error());
+    if (*state_with_computed_payload > limits.maximum_working_bytes - *visibility_bytes)
+      return common::make_unexpected(exhausted("vector row working-memory limit is exhausted"));
+    std::vector<std::byte> computed_values(computed_payload_bytes);
 
     std::vector<network::QueryResultColumn> columns;
     columns.reserve(visible_schema.columns.size());
@@ -626,6 +798,8 @@ finalize_distributed_vector_rows_impl(
     std::vector<std::vector<std::byte>> encoded_batches;
     encoded_batches.reserve(ranges.size());
     std::vector<network::QueryResultCell> cells;
+    std::size_t computed_size_index{};
+    std::size_t computed_value_offset{};
     for (const BatchRange& range : ranges) {
       cells.clear();
       const std::size_t row_count = range.end - range.begin;
@@ -636,6 +810,11 @@ finalize_distributed_vector_rows_impl(
       for (std::size_t index = range.begin; index < range.end; ++index) {
         const RowReference row = rows[index];
         if (projection != nullptr) {
+          if (!canonical_row.empty()) {
+            auto loaded = load_canonical_row(batches, row, canonical_row);
+            if (!loaded.has_value())
+              return common::make_unexpected(loaded.error());
+          }
           for (const query::DistributedVectorRowCoordinatorOutput& output : projection->outputs) {
             if (const auto* source = std::get_if<query::DistributedVectorRowSourceOutput>(&output);
                 source != nullptr) {
@@ -644,9 +823,29 @@ finalize_distributed_vector_rows_impl(
               if (cell == nullptr)
                 return common::make_unexpected(internal("vector row output cell disappeared"));
               cells.push_back(*cell);
+            } else if (const auto* constant =
+                           std::get_if<query::DistributedVectorRowConstantOutput>(&output);
+                       constant != nullptr) {
+              cells.push_back({.is_null = constant->is_null, .value = constant->canonical_value});
             } else {
-              const auto& constant = std::get<query::DistributedVectorRowConstantOutput>(output);
-              cells.push_back({.is_null = constant.is_null, .value = constant.canonical_value});
+              if (computed_size_index >= computed_value_sizes.size()) {
+                return common::make_unexpected(internal("computed vector output size disappeared"));
+              }
+              const std::size_t value_size = computed_value_sizes[computed_size_index++];
+              if (computed_value_offset > computed_values.size() ||
+                  value_size > computed_values.size() - computed_value_offset) {
+                return common::make_unexpected(
+                    internal("computed vector output payload escaped its arena"));
+              }
+              std::span<std::byte> destination =
+                  std::span{computed_values}.subspan(computed_value_offset, value_size);
+              const auto& expression =
+                  std::get<query::DistributedVectorRowExpressionOutput>(output).expression;
+              auto cell = materialize_expression_cell(expression, canonical_row, destination);
+              if (!cell.has_value())
+                return common::make_unexpected(cell.error());
+              cells.push_back(*cell);
+              computed_value_offset += value_size;
             }
           }
           continue;
@@ -665,6 +864,10 @@ finalize_distributed_vector_rows_impl(
       if (encoded->size() != range.encoded_size)
         return common::make_unexpected(internal("vector row output sizing changed"));
       encoded_batches.push_back(std::move(*encoded));
+    }
+    if (computed_size_index != computed_value_sizes.size() ||
+        computed_value_offset != computed_values.size()) {
+      return common::make_unexpected(internal("computed vector output materialization changed"));
     }
     return DistributedVectorRowsFinalizedResultV2{.result_schema = std::move(visible_schema),
                                                   .encoded_batches = std::move(encoded_batches),

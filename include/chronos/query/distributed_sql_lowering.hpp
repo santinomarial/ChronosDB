@@ -5,6 +5,7 @@
 #include "chronos/query/binder.hpp"
 #include "chronos/query/distributed_vector_plan.hpp"
 #include "chronos/query/distributed_vector_result_schema.hpp"
+#include "chronos/query/vector_expression.hpp"
 #include "chronos/schema/identity.hpp"
 
 #include <cstddef>
@@ -22,6 +23,8 @@ struct DistributedVectorRowsSqlLoweringLimits {
   std::uint32_t maximum_result_name_bytes{
       distributed_vector_result_schema_format::kMaximumNameLength};
   std::size_t maximum_constant_bytes{std::size_t{1024U} * 1024U};
+  VectorExpressionLimits expression_limits{};
+  std::size_t maximum_expression_configuration_bytes{std::size_t{4U} * 1024U * 1024U};
 };
 
 struct DistributedVectorAggregateSqlLoweringLimits {
@@ -46,8 +49,16 @@ struct DistributedVectorRowConstantOutput {
                          const DistributedVectorRowConstantOutput&) = default;
 };
 
+struct DistributedVectorRowExpressionOutput {
+  VectorExpression expression;
+
+  friend bool operator==(const DistributedVectorRowExpressionOutput&,
+                         const DistributedVectorRowExpressionOutput&) = default;
+};
+
 using DistributedVectorRowCoordinatorOutput =
-    std::variant<DistributedVectorRowSourceOutput, DistributedVectorRowConstantOutput>;
+    std::variant<DistributedVectorRowSourceOutput, DistributedVectorRowConstantOutput,
+                 DistributedVectorRowExpressionOutput>;
 
 struct DistributedVectorRowCoordinatorProjection {
   std::vector<DistributedVectorRowCoordinatorOutput> outputs;
@@ -58,10 +69,13 @@ struct DistributedVectorRowCoordinatorProjection {
 };
 
 // Complete schema-bound row intent for later authority binding. Source projection ordinals are
-// unique and preserve first use; row output indices may repeat and may append hidden direct order
-// columns. A nonempty plan visibility vector retains the SELECT outputs. ORDER BY and LIMIT remain
-// global coordinator semantics. A coordinator projection is present only when source-independent
-// expressions must be injected after the complete worker streams are ordered and limited. The
+// unique; direct-only plans preserve first use, while row-expression plans preserve complete schema
+// order. Row output indices may repeat and may append hidden direct order columns. A nonempty plan
+// visibility vector retains the SELECT outputs. ORDER BY and LIMIT remain global coordinator
+// semantics. A coordinator projection is present only when source-independent
+// expressions must be evaluated or injected after the complete worker streams are ordered and
+// limited. Row-dependent programs use source-schema ordinals and therefore cause workers to carry
+// the full source row; computed ORDER BY remains outside this boundary. The
 // optional event-time predicate is exact row truth, not merely storage-pruning evidence.
 struct DistributedVectorRowsSqlPlan {
   schema::TableId table_id;
@@ -76,11 +90,11 @@ struct DistributedVectorRowsSqlPlan {
                          const DistributedVectorRowsSqlPlan&) = default;
 };
 
-// Lowers the executable distributed row subset: one current table, direct source-column or
-// source-independent scalar outputs, an optional AND-conjunction of event-time/TIMESTAMP
-// comparisons or inclusive BETWEEN leaves, direct-column ORDER BY (including hidden helpers), and
-// LIMIT. Row-dependent computed expressions remain unsupported. No scalar or relational fallback
-// is inferred.
+// Lowers the executable distributed row subset: one current table, direct source-column,
+// source-independent scalar, or checked vector-expression outputs; an optional AND-conjunction of
+// event-time/TIMESTAMP comparisons or inclusive BETWEEN leaves, direct-column ORDER BY (including
+// hidden helpers), and LIMIT. Computed ORDER BY remains unsupported. No scalar or relational
+// fallback is inferred.
 [[nodiscard]] SqlResult<DistributedVectorRowsSqlPlan>
 lower_bound_sql_select_to_distributed_vector_rows(
     const BoundSqlSelect& select, DistributedVectorRowsSqlLoweringLimits limits = {});

@@ -83,6 +83,12 @@ The pre-alpha row SQL product gains an optional coordinator-only field. Existing
 leave it empty and retain identical wire bytes and finalization behavior. Rollback removes the new
 lowering branch and projected finalizer call; previously accepted queries are unaffected.
 
+## Subsequent decision
+
+[ADR 0454](0454-bounded-coordinator-row-expression-execution.md) extends the same in-memory
+coordinator projection with checked row-dependent vector programs while leaving Plan Intent bytes
+unchanged. Computed ORDER BY remains outside that boundary.
+
 ## References
 
 - [Distributed row SQL lowering](../learning/distributed-row-sql-lowering.md)

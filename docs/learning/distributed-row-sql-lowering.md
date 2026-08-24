@@ -17,7 +17,8 @@ output names. The output is an owned `DistributedVectorRowsSqlPlan` containing:
 - an optional exact event-time predicate;
 - the canonical row-mode intent with output mapping, final order, and final limit; and
 - the exact worker result schema; and
-- when needed, a coordinator-only source/constant projection with the final named result schema.
+- when needed, a coordinator-only source/constant/expression projection with the final named result
+  schema.
 
 It owns no query ID, tablet set, Raft proof, route, TLS context, socket, or Native response. Those
 belong to later authority and lifecycle layers.
@@ -39,7 +40,7 @@ row output indices:          [0,     1,  0]
 Workers read each source column once and reproduce SQL output order exactly. Result schema entries
 remain one per SQL output, so aliases and repeated values retain distinct visible identities.
 
-## Source-independent outputs
+## Coordinator outputs
 
 A SELECT output whose complete bound tree contains no source column, star, aggregate, or relational
 dependency is evaluated once by the scalar oracle. Lowering retains its typed canonical bytes in a
@@ -50,8 +51,20 @@ real row-count anchor; it is never exposed to the client.
 The coordinator validates source shapes and canonical bytes after every tablet stream closes. It
 sorts and applies LIMIT against real worker outputs first, then injects constants while encoding the
 final Native batches. A selected constant ORDER BY key is removed because it cannot distinguish
-rows. Constant evaluation errors are planning errors. Row-dependent computed outputs and computed
-order keys still fail closed because the current worker format carries no expression program.
+rows. Constant evaluation errors are planning errors.
+
+A row-dependent SELECT output is now lowered through the same checked `VectorExpression` program
+used by the local physical engine. Because that program addresses schema ordinals, the worker
+projection carries the complete source schema in exact ordinal order whenever at least one such
+output exists. This is a deliberate transitional bandwidth cost: it avoids remapping programs or
+defining a wire bytecode. The coordinator validates every program leaf against the worker schema
+and evaluates only the globally ordered, limited rows.
+
+Expression materialization uses an exact sizing pass followed by one contiguous canonical output
+arena. Fixed values write through the nonallocating canonical scalar encoder. STRING/SYMBOL values
+remain borrowed with an identity/lower/upper transform until their final bytes are copied. Runtime
+errors abort the complete result before publication. Computed order keys still fail closed because
+global ordering precedes coordinator expression evaluation.
 
 ## Exact event-time normalization
 
@@ -89,18 +102,25 @@ Unsupported SQL returns a source-spanned `NOT_SUPPORTED` diagnostic. Invalid lim
 `INVALID_ARGUMENT`; exceeded caller bounds and owned-allocation failures return
 `RESOURCE_EXHAUSTED`. No partial product is returned.
 
-The implementation is single-threaded. Time is linear in source width, outputs, WHERE leaves, and
-order keys. Retained memory is linear in unique projected columns, worker and visible outputs, and
-order keys, all under caller-configurable bounds no greater than the network-format hard bounds.
+The implementation is single-threaded. Lowering is linear in source width, outputs, WHERE leaves,
+expression instructions, and order keys. Finalization adds two checked expression evaluations per
+selected row, plus transformed output bytes. Retained memory is linear in projected columns, worker
+and visible outputs, expression configuration, selected computed cells, one canonical payload
+arena, and order keys, all under caller-configurable bounds.
 
 ## Tradeoffs and likely interview questions
 
 **Why not serialize `PhysicalPipelinePlan`?** It contains implementation variants, resource-policy
 objects, and process-sized ordinals. The canonical intent keeps the protocol stable and small.
 
-**Why reject row-dependent computed expressions?** The mutable worker currently projects physical
-source columns and filters event time. Source-independent expressions have one exact bounded value;
-row-dependent programs require a versioned execution rule and resource contract.
+**Why carry the full source row for one computed output?** The existing checked program uses bound
+schema ordinals. Preserving those ordinals makes the coordinator baseline simple and auditable while
+leaving Plan Intent unchanged. Projection remapping or worker execution is worthwhile only with a
+versioned contract and evidence that the extra bandwidth matters.
+
+**Why evaluate expressions after LIMIT?** ORDER BY currently accepts only direct worker columns.
+Rows discarded by the global limit cannot affect the visible result, so evaluating them would waste
+CPU and transformed-byte capacity without changing semantics.
 
 **Why are ORDER BY and LIMIT global?** A tablet-local limit can discard a row that should win after
 merging another tablet. Global finalization is the correctness boundary.

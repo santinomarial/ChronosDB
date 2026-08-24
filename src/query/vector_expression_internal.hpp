@@ -8,6 +8,7 @@
 #include "chronos/query/vector_expression.hpp"
 
 #include <cstdint>
+#include <span>
 
 namespace chronos::query::detail {
 
@@ -29,6 +30,14 @@ struct BorrowedVariableExpressionValue {
   VariableByteTransform transform;
 };
 
+// One independently framed canonical input cell. The caller owns the payload and must keep it
+// immutable for the synchronous evaluation call. Logical type and declared nullability are carried
+// by the corresponding VectorInputExpression instruction.
+struct CanonicalVectorExpressionCell {
+  bool is_null;
+  common::ByteView bytes;
+};
+
 [[nodiscard]] common::Result<void>
 validate_vector_expression_input(const VectorExpression& expression, const VectorChunk& input);
 
@@ -43,6 +52,16 @@ evaluate_vector_expression_row(const VectorExpression& expression, const VectorC
 [[nodiscard]] common::Result<BorrowedVariableExpressionValue>
 evaluate_variable_vector_expression_row(const VectorExpression& expression,
                                         const VectorChunk& input, std::uint32_t physical_row);
+
+// Evaluates over one row of already framed canonical cells, such as decoded Native result cells.
+// The fixed-width result owns its scalar storage. Variable bytes borrow the input row or expression
+// program and retain a case transform for allocation-free two-pass materialization.
+[[nodiscard]] common::Result<ScalarValue>
+evaluate_canonical_vector_expression_row(const VectorExpression& expression,
+                                         std::span<const CanonicalVectorExpressionCell> input);
+[[nodiscard]] common::Result<BorrowedVariableExpressionValue>
+evaluate_variable_canonical_vector_expression_row(
+    const VectorExpression& expression, std::span<const CanonicalVectorExpressionCell> input);
 
 } // namespace chronos::query::detail
 

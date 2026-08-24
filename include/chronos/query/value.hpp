@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -58,6 +59,8 @@ public:
   [[nodiscard]] const std::optional<schema::LogicalType>& type() const noexcept;
   [[nodiscard]] const ScalarStorage& storage() const noexcept;
 
+  friend bool operator==(const ScalarValue&, const ScalarValue&) noexcept;
+
 private:
   ScalarValue(std::optional<schema::LogicalType> type, ScalarStorage storage) noexcept;
 
@@ -70,6 +73,18 @@ private:
 // their storage and never expose the ScalarValue's variable-width buffers.
 [[nodiscard]] common::Result<std::vector<std::byte>>
 encode_canonical_scalar_value(const ScalarValue& value);
+
+// Decodes one independently framed canonical scalar cell. NULL must have an empty payload. This
+// function owns variable-width storage in the returned ScalarValue; callers that only need to
+// inspect or transform text on a row path should use a borrowed vector-expression adapter.
+[[nodiscard]] common::Result<ScalarValue>
+decode_canonical_scalar_value(schema::LogicalType type, bool is_null, common::ByteView bytes);
+
+// Returns and writes the exact canonical payload size of one typed ScalarValue. The write requires
+// an exact-size destination and performs no allocation. NULL has size zero.
+[[nodiscard]] common::Result<std::size_t> canonical_scalar_value_size(const ScalarValue& value);
+[[nodiscard]] common::Result<void> write_canonical_scalar_value(const ScalarValue& value,
+                                                                std::span<std::byte> destination);
 
 enum class SqlTruthValue : std::uint8_t { kFalse, kTrue, kUnknown };
 enum class ScalarNullPlacement : std::uint8_t { kFirst, kLast };

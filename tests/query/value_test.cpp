@@ -85,10 +85,20 @@ TEST(ScalarValueTest, EncodesOwnedValuesIntoCanonicalPhysicalBytes) {
   ASSERT_EQ(signed_bytes->size(), 8U);
   EXPECT_EQ(signed_bytes->front(), std::byte{0xfe});
   EXPECT_EQ(signed_bytes->back(), std::byte{0xff});
+  EXPECT_EQ(canonical_scalar_value_size(signed_value), 8U);
+  std::array<std::byte, 8U> written{};
+  ASSERT_TRUE(write_canonical_scalar_value(signed_value, written).has_value());
+  EXPECT_TRUE(std::ranges::equal(written, *signed_bytes));
+  const auto decoded_signed =
+      decode_canonical_scalar_value(type(schema::LogicalTypeKind::kInt64), false, written);
+  ASSERT_TRUE(decoded_signed.has_value());
+  EXPECT_EQ(*decoded_signed, signed_value);
 
   const auto boolean = encode_canonical_scalar_value(ScalarValue::boolean(true).value());
   ASSERT_TRUE(boolean.has_value());
   EXPECT_EQ(*boolean, (std::vector<std::byte>{std::byte{1U}}));
+  EXPECT_EQ(decode_canonical_scalar_value(type(schema::LogicalTypeKind::kBool), false, *boolean),
+            ScalarValue::boolean(true));
 
   const auto text_value =
       ScalarValue::text(type(schema::LogicalTypeKind::kString), "hello").value();
@@ -102,6 +112,23 @@ TEST(ScalarValueTest, EncodesOwnedValuesIntoCanonicalPhysicalBytes) {
   EXPECT_TRUE(null->empty());
   EXPECT_EQ(encode_canonical_scalar_value(ScalarValue::untyped_null()).error().code(),
             common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(decode_canonical_scalar_value(type(schema::LogicalTypeKind::kInt32), true, {})
+                  .value()
+                  .is_null());
+  EXPECT_EQ(decode_canonical_scalar_value(type(schema::LogicalTypeKind::kInt32), true,
+                                          std::array{std::byte{0U}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(decode_canonical_scalar_value(type(schema::LogicalTypeKind::kBool), false,
+                                          std::array{std::byte{2U}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(write_canonical_scalar_value(signed_value, std::span<std::byte>{written}.first(7U))
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
 }
 
 TEST(ScalarValueTest, ImplementsSqlNullNaNAndTotalOrderingRules) {
@@ -110,6 +137,10 @@ TEST(ScalarValueTest, ImplementsSqlNullNaNAndTotalOrderingRules) {
   const ScalarValue infinity =
       ScalarValue::float64(std::numeric_limits<double>::infinity()).value();
   const ScalarValue nan = ScalarValue::float64(std::numeric_limits<double>::quiet_NaN()).value();
+  const ScalarValue same_nan =
+      ScalarValue::float64(std::numeric_limits<double>::quiet_NaN()).value();
+
+  EXPECT_EQ(nan, same_nan);
 
   EXPECT_EQ(sql_scalar_equal(null, null).value(), SqlTruthValue::kUnknown);
   EXPECT_EQ(sql_scalar_equal(nan, nan).value(), SqlTruthValue::kFalse);

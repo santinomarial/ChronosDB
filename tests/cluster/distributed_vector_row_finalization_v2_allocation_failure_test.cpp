@@ -79,17 +79,31 @@ TEST(DistributedVectorRowFinalizationV2AllocationFailureTest,
   const std::array<network::QueryResultCell, 1U> cells{network::QueryResultCell{.value = value}};
   const std::vector<std::byte> batch =
       network::encode_query_result_batch(1U, columns, cells).value();
+  std::vector<query::VectorExpressionInstruction> instructions;
+  instructions.emplace_back(
+      query::VectorInputExpression{.input_column_ordinal = 0U, .type = type, .nullable = false});
+  instructions.emplace_back(
+      query::VectorConstantExpression{.value = query::ScalarValue::signed_value(type, 3).value()});
+  instructions.emplace_back(
+      query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kAdd,
+                                    .left_instruction = 0U,
+                                    .right_instruction = 1U});
   const query::DistributedVectorRowCoordinatorProjection projection{
       .outputs = {query::DistributedVectorRowSourceOutput{.worker_output_index = 0U},
                   query::DistributedVectorRowConstantOutput{
                       .is_null = false,
                       .canonical_value = {std::byte{2U}, std::byte{0U}, std::byte{0U},
                                           std::byte{0U}, std::byte{0U}, std::byte{0U},
-                                          std::byte{0U}, std::byte{0U}}}},
-      .result_schema = {.columns = {{"source", type, false}, {"constant", type, false}}}};
+                                          std::byte{0U}, std::byte{0U}}},
+                  query::DistributedVectorRowExpressionOutput{
+                      .expression =
+                          query::VectorExpression::create(std::move(instructions)).value()}},
+      .result_schema = {.columns = {{"source", type, false},
+                                    {"constant", type, false},
+                                    {"computed", type, false}}}};
 
   bool succeeded = false;
-  for (std::size_t fail_after = 0U; fail_after < 160U; ++fail_after) {
+  for (std::size_t fail_after = 0U; fail_after < 224U; ++fail_after) {
     auto input = make_input(batch, type);
     input.plan.visible_row_output_indices.clear();
     auto result = run_failure(fail_after, [&] {

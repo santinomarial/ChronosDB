@@ -1145,6 +1145,27 @@ void expect_replicated_rows(const int client, const std::uint64_t request_id) {
   EXPECT_EQ(word->value[1], std::byte{'K'});
   response = network::decode_frame(receive_frame(client)).value_or(network::Frame{});
   EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
+
+  response = send_replicated_query(
+      client, request_id + 3U,
+      "SELECT lower(tag) AS folded, NOT enabled AS disabled FROM events ORDER BY ts LIMIT 1");
+  if (response.header.message_type == network::MessageType::kError) {
+    auto decoded = network::decode_error_message(response.payload);
+    ASSERT_TRUE(decoded.has_value());
+    ADD_FAILURE() << "distributed expression query failed: " << byte_string(decoded->message);
+    return;
+  }
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
+  auto expressions = network::decode_query_result_batch(response.payload);
+  ASSERT_TRUE(expressions.has_value()) << expressions.error().to_string();
+  ASSERT_EQ(expressions->row_count(), 1U);
+  ASSERT_EQ(expressions->columns().size(), 2U);
+  EXPECT_EQ(expressions->columns()[0].name, "folded");
+  EXPECT_EQ(expressions->columns()[1].name, "disabled");
+  EXPECT_NE(expressions->cell(0U, 0U), nullptr);
+  EXPECT_NE(expressions->cell(0U, 1U), nullptr);
+  response = network::decode_frame(receive_frame(client)).value_or(network::Frame{});
+  EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
 }
 
 [[nodiscard]] network::Frame send_query(const int client, const std::uint64_t request_id,

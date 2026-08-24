@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -90,6 +91,49 @@ struct TestRow {
 
 [[nodiscard]] query::DistributedVectorPlanIntent row_plan() {
   return {.mode = query::DistributedVectorPlanMode::kRows, .row_output_indices = {0U, 1U}};
+}
+
+[[nodiscard]] query::VectorExpression add_score_expression(const std::int64_t value) {
+  std::vector<query::VectorExpressionInstruction> instructions;
+  instructions.emplace_back(
+      query::VectorInputExpression{.input_column_ordinal = 0U,
+                                   .type = type(schema::LogicalTypeKind::kInt64),
+                                   .nullable = false});
+  instructions.emplace_back(query::VectorConstantExpression{
+      .value =
+          query::ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), value).value()});
+  instructions.emplace_back(
+      query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kAdd,
+                                    .left_instruction = 0U,
+                                    .right_instruction = 1U});
+  return query::VectorExpression::create(std::move(instructions)).value();
+}
+
+[[nodiscard]] query::VectorExpression lower_label_expression() {
+  std::vector<query::VectorExpressionInstruction> instructions;
+  instructions.emplace_back(
+      query::VectorInputExpression{.input_column_ordinal = 1U,
+                                   .type = type(schema::LogicalTypeKind::kString),
+                                   .nullable = true});
+  instructions.emplace_back(query::VectorUnaryExpression{
+      .operation = query::VectorUnaryOperation::kLowerAscii, .operand_instruction = 0U});
+  return query::VectorExpression::create(std::move(instructions)).value();
+}
+
+[[nodiscard]] query::VectorExpression divide_score_expression(const std::int64_t divisor) {
+  std::vector<query::VectorExpressionInstruction> instructions;
+  instructions.emplace_back(
+      query::VectorInputExpression{.input_column_ordinal = 0U,
+                                   .type = type(schema::LogicalTypeKind::kInt64),
+                                   .nullable = false});
+  instructions.emplace_back(query::VectorConstantExpression{
+      .value = query::ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), divisor)
+                   .value()});
+  instructions.emplace_back(
+      query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kDivide,
+                                    .left_instruction = 0U,
+                                    .right_instruction = 1U});
+  return query::VectorExpression::create(std::move(instructions)).value();
 }
 
 [[nodiscard]] DistributedVectorQueryExecutionResultV2
@@ -265,6 +309,122 @@ TEST(DistributedVectorRowFinalizationV2Test,
           .error()
           .code(),
       common::StatusCode::kInvalidArgument);
+}
+
+TEST(DistributedVectorRowFinalizationV2Test,
+     EvaluatesCheckedFixedAndTextExpressionsAfterGlobalOrderAndLimit) {
+  auto plan = row_plan();
+  plan.order_keys = {{.output_index = 0U,
+                      .direction = query::PhysicalSortDirection::kDescending,
+                      .null_placement = query::ScalarNullPlacement::kLast}};
+  plan.limit = 3U;
+  auto input = execution_result(
+      std::move(plan), {message(2U, 1U, true, encode_rows({{5, "MiDdLe"}, {3, std::nullopt}})),
+                        message(3U, 1U, true, encode_rows({{7, "FIRST"}}))});
+  const query::DistributedVectorRowCoordinatorProjection projection{
+      .outputs = {query::DistributedVectorRowExpressionOutput{.expression =
+                                                                  add_score_expression(2)},
+                  query::DistributedVectorRowExpressionOutput{.expression =
+                                                                  lower_label_expression()}},
+      .result_schema = {.columns = {{"shifted", type(schema::LogicalTypeKind::kInt64), false},
+                                    {"folded", type(schema::LogicalTypeKind::kString), true}}}};
+  auto finalized = finalize_distributed_vector_rows_with_projection_v2(
+      std::move(input), projection, {.output_batch = {.maximum_rows = 2U}});
+  ASSERT_TRUE(finalized.has_value()) << finalized.error().to_string();
+  EXPECT_EQ(finalized->row_count, 3U);
+  EXPECT_EQ(finalized->encoded_batches.size(), 2U);
+  const std::array<std::int64_t, 3U> expected_scores{9, 7, 5};
+  const std::array<std::optional<std::string_view>, 3U> expected_labels{"first", "middle",
+                                                                        std::nullopt};
+  std::size_t output_row{};
+  for (const auto& encoded : finalized->encoded_batches) {
+    auto batch = network::decode_query_result_batch(encoded);
+    ASSERT_TRUE(batch.has_value()) << batch.error().to_string();
+    for (std::uint32_t row = 0U; row < batch->row_count(); ++row) {
+      const network::QueryResultCell* shifted = batch->cell(row, 0U);
+      const network::QueryResultCell* folded = batch->cell(row, 1U);
+      ASSERT_NE(shifted, nullptr);
+      ASSERT_NE(folded, nullptr);
+      common::ByteReader reader{shifted->value};
+      EXPECT_EQ(reader.read_i64_le(), expected_scores[output_row]);
+      EXPECT_EQ(folded->is_null, !expected_labels[output_row].has_value());
+      if (expected_labels[output_row].has_value()) {
+        EXPECT_TRUE(std::ranges::equal(folded->value,
+                                       std::as_bytes(std::span{*expected_labels[output_row]})));
+      }
+      ++output_row;
+    }
+  }
+  EXPECT_EQ(output_row, 3U);
+}
+
+TEST(DistributedVectorRowFinalizationV2Test,
+     RetainsOneExpressionSizePerRowAcrossPayloadDrivenBatchSplits) {
+  const auto make_input = [] {
+    auto plan = row_plan();
+    plan.order_keys = {{.output_index = 0U,
+                        .direction = query::PhysicalSortDirection::kDescending,
+                        .null_placement = query::ScalarNullPlacement::kLast}};
+    plan.limit = 3U;
+    return execution_result(std::move(plan),
+                            {message(2U, 1U, true, encode_rows({{5, "MiDdLe"}, {3, std::nullopt}})),
+                             message(3U, 1U, true, encode_rows({{7, "FIRST"}}))});
+  };
+  const query::DistributedVectorRowCoordinatorProjection projection{
+      .outputs = {query::DistributedVectorRowExpressionOutput{.expression =
+                                                                  add_score_expression(2)},
+                  query::DistributedVectorRowExpressionOutput{.expression =
+                                                                  lower_label_expression()}},
+      .result_schema = {.columns = {{"shifted", type(schema::LogicalTypeKind::kInt64), false},
+                                    {"folded", type(schema::LogicalTypeKind::kString), true}}}};
+
+  auto one_row_batches = finalize_distributed_vector_rows_with_projection_v2(
+      make_input(), projection, {.output_batch = {.maximum_rows = 1U}});
+  ASSERT_TRUE(one_row_batches.has_value()) << one_row_batches.error().to_string();
+  ASSERT_EQ(one_row_batches->encoded_batches.size(), 3U);
+  std::size_t maximum_payload{};
+  for (const auto& batch : one_row_batches->encoded_batches)
+    maximum_payload = std::max(maximum_payload, batch.size());
+  ASSERT_LE(maximum_payload, std::numeric_limits<std::uint32_t>::max());
+
+  auto byte_split_batches = finalize_distributed_vector_rows_with_projection_v2(
+      make_input(), projection,
+      {.output_batch = {
+           .protocol = {.maximum_payload_size = static_cast<std::uint32_t>(maximum_payload)},
+           .maximum_rows = 3U}});
+  ASSERT_TRUE(byte_split_batches.has_value()) << byte_split_batches.error().to_string();
+  EXPECT_EQ(byte_split_batches->encoded_batches, one_row_batches->encoded_batches);
+}
+
+TEST(DistributedVectorRowFinalizationV2Test,
+     RejectsStaleExpressionShapesAndPropagatesCheckedEvaluationErrors) {
+  std::vector<query::VectorExpressionInstruction> stale_instructions;
+  stale_instructions.emplace_back(
+      query::VectorInputExpression{.input_column_ordinal = 0U,
+                                   .type = type(schema::LogicalTypeKind::kUInt64),
+                                   .nullable = false});
+  const query::DistributedVectorRowCoordinatorProjection stale_projection{
+      .outputs = {query::DistributedVectorRowExpressionOutput{
+          .expression = query::VectorExpression::create(std::move(stale_instructions)).value()}},
+      .result_schema = {.columns = {{"stale", type(schema::LogicalTypeKind::kUInt64), false}}}};
+  auto stale_input = execution_result(row_plan(), {message(2U, 1U, true, encode_rows({{1, "x"}}))});
+  EXPECT_EQ(
+      finalize_distributed_vector_rows_with_projection_v2(std::move(stale_input), stale_projection)
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
+
+  const query::DistributedVectorRowCoordinatorProjection failing_projection{
+      .outputs = {query::DistributedVectorRowExpressionOutput{.expression =
+                                                                  divide_score_expression(0)}},
+      .result_schema = {.columns = {{"failure", type(schema::LogicalTypeKind::kInt64), false}}}};
+  auto failing_input =
+      execution_result(row_plan(), {message(2U, 1U, true, encode_rows({{1, "x"}}))});
+  EXPECT_EQ(finalize_distributed_vector_rows_with_projection_v2(std::move(failing_input),
+                                                                failing_projection)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
 }
 
 TEST(DistributedVectorRowFinalizationV2Test, RejectsDamagedStreamsSchemasAndResourceExcess) {

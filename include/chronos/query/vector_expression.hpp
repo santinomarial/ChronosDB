@@ -50,26 +50,37 @@ struct VectorInputExpression {
   std::size_t input_column_ordinal;
   schema::LogicalType type;
   bool nullable;
+
+  friend bool operator==(const VectorInputExpression&, const VectorInputExpression&) = default;
 };
 
 struct VectorConstantExpression {
   ScalarValue value;
+
+  friend bool operator==(const VectorConstantExpression&,
+                         const VectorConstantExpression&) = default;
 };
 
 struct VectorUnaryExpression {
   VectorUnaryOperation operation;
   std::size_t operand_instruction;
+
+  friend bool operator==(const VectorUnaryExpression&, const VectorUnaryExpression&) = default;
 };
 
 struct VectorCastExpression {
   std::size_t operand_instruction;
   schema::LogicalType target_type;
+
+  friend bool operator==(const VectorCastExpression&, const VectorCastExpression&) = default;
 };
 
 struct VectorBinaryExpression {
   VectorBinaryOperation operation;
   std::size_t left_instruction;
   std::size_t right_instruction;
+
+  friend bool operator==(const VectorBinaryExpression&, const VectorBinaryExpression&) = default;
 };
 
 using VectorExpressionInstruction =
@@ -111,6 +122,12 @@ public:
   [[nodiscard]] const VectorExpressionShape& result_shape() const noexcept;
   [[nodiscard]] std::size_t maximum_depth() const noexcept;
   [[nodiscard]] std::size_t retained_configuration_bytes() const noexcept;
+
+  friend bool operator==(const VectorExpression& left, const VectorExpression& right) {
+    return left.instructions_ == right.instructions_ &&
+           left.instruction_shapes_ == right.instruction_shapes_ &&
+           left.maximum_depth_ == right.maximum_depth_;
+  }
 
 private:
   VectorExpression(std::vector<VectorExpressionInstruction> instructions,

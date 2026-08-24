@@ -796,7 +796,12 @@ public:
 
   HybridRowEvaluator(const VectorExpression& expression, const VectorChunk& input,
                      const std::uint32_t physical_row) noexcept
-      : expression_(expression), input_(input), physical_row_(physical_row) {}
+      : expression_(expression), input_(std::addressof(input)), physical_row_(physical_row) {}
+
+  HybridRowEvaluator(
+      const VectorExpression& expression,
+      const std::span<const detail::CanonicalVectorExpressionCell> canonical_input) noexcept
+      : expression_(expression), canonical_input_(canonical_input) {}
 
   [[nodiscard]] common::Result<ScalarValue> run_scalar() {
     common::Result<Value> value = evaluate(expression_.instructions().size() - 1U, 1U);
@@ -857,6 +862,26 @@ private:
                                           .transform = detail::VariableByteTransform::kIdentity}});
   }
 
+  [[nodiscard]] common::Result<Value>
+  borrow_canonical_cell(const std::size_t index, const VectorInputExpression& source,
+                        const detail::CanonicalVectorExpressionCell& cell) {
+    if (cell.is_null) {
+      if (!source.nullable || !cell.bytes.empty())
+        return common::make_unexpected(invalid("canonical vector source NULL shape is invalid"));
+      return remember(index,
+                      Value{Borrowed{.is_null = true,
+                                     .bytes = {},
+                                     .transform = detail::VariableByteTransform::kIdentity}});
+    }
+    auto valid = compare_canonical_scalar_bytes(source.type, false, cell.bytes, false, cell.bytes,
+                                                ScalarNullPlacement::kLast);
+    if (!valid.has_value())
+      return common::make_unexpected(valid.error());
+    return remember(index, Value{Borrowed{.is_null = false,
+                                          .bytes = cell.bytes,
+                                          .transform = detail::VariableByteTransform::kIdentity}});
+  }
+
   [[nodiscard]] common::Result<Value> evaluate(const std::size_t index, const std::size_t depth) {
     if (depth > expression_.maximum_depth() || index >= kMaximumVectorExpressionInstructions)
       return common::make_unexpected(internal("vector expression evaluation depth is invalid"));
@@ -866,15 +891,33 @@ private:
 
     const VectorExpressionInstruction& instruction = expression_.instructions()[index];
     if (const auto* source = std::get_if<VectorInputExpression>(&instruction); source != nullptr) {
-      const columnar::PhysicalColumnView* column = input_.column(source->input_column_ordinal);
-      if (column == nullptr)
-        return common::make_unexpected(invalid("vector expression source ordinal is out of range"));
-      common::Result<columnar::ColumnCellView> cell = column->cell(physical_row_);
-      if (!cell.has_value())
-        return common::make_unexpected(cell.error());
-      return text(source->type.kind())
-                 ? borrow_cell(index, *cell)
-                 : remember_scalar(index, ScalarValue::from_column_cell(source->type, *cell));
+      if (input_ != nullptr) {
+        const columnar::PhysicalColumnView* column = input_->column(source->input_column_ordinal);
+        if (column == nullptr) {
+          return common::make_unexpected(
+              invalid("vector expression source ordinal is out of range"));
+        }
+        common::Result<columnar::ColumnCellView> cell = column->cell(physical_row_);
+        if (!cell.has_value())
+          return common::make_unexpected(cell.error());
+        return text(source->type.kind())
+                   ? borrow_cell(index, *cell)
+                   : remember_scalar(index, ScalarValue::from_column_cell(source->type, *cell));
+      }
+      if (source->input_column_ordinal >= canonical_input_.size()) {
+        return common::make_unexpected(
+            invalid("canonical vector expression source ordinal is out of range"));
+      }
+      const detail::CanonicalVectorExpressionCell& cell =
+          canonical_input_[source->input_column_ordinal];
+      if (text(source->type.kind()))
+        return borrow_canonical_cell(index, *source, cell);
+      if (cell.is_null && !source->nullable) {
+        return common::make_unexpected(
+            invalid("canonical vector source unexpectedly contains NULL"));
+      }
+      return remember_scalar(index,
+                             decode_canonical_scalar_value(source->type, cell.is_null, cell.bytes));
     }
     if (const auto* constant = std::get_if<VectorConstantExpression>(&instruction);
         constant != nullptr) {
@@ -984,8 +1027,9 @@ private:
   }
 
   const VectorExpression& expression_;
-  const VectorChunk& input_;
-  std::uint32_t physical_row_;
+  const VectorChunk* input_{};
+  std::span<const detail::CanonicalVectorExpressionCell> canonical_input_;
+  std::uint32_t physical_row_{};
   std::array<std::optional<Value>, kMaximumVectorExpressionInstructions> values_{};
 };
 
@@ -1147,6 +1191,22 @@ evaluate_variable_vector_expression_row(const VectorExpression& expression,
   if (physical_row >= input.physical_row_count())
     return common::make_unexpected(invalid("vector expression physical row is out of range"));
   return HybridRowEvaluator{expression, input, physical_row}.run_variable();
+}
+
+common::Result<ScalarValue> evaluate_canonical_vector_expression_row(
+    const VectorExpression& expression,
+    const std::span<const CanonicalVectorExpressionCell> input) {
+  if (expression.result_shape().type.is_variable_width())
+    return common::make_unexpected(invalid("vector expression result is variable-width"));
+  return HybridRowEvaluator{expression, input}.run_scalar();
+}
+
+common::Result<BorrowedVariableExpressionValue> evaluate_variable_canonical_vector_expression_row(
+    const VectorExpression& expression,
+    const std::span<const CanonicalVectorExpressionCell> input) {
+  if (!expression.result_shape().type.is_variable_width())
+    return common::make_unexpected(invalid("vector expression result is not variable-width"));
+  return HybridRowEvaluator{expression, input}.run_variable();
 }
 
 } // namespace detail

@@ -871,6 +871,44 @@ output_position_shape(const ColumnOutputPosition& position,
 
 } // namespace
 
+SqlResult<VectorExpression> lower_bound_sql_scalar_expression(const BoundSqlSelect& select,
+                                                              const SqlExpression& expression,
+                                                              const VectorExpressionLimits limits) {
+  try {
+    if (limits.maximum_instructions == 0U ||
+        limits.maximum_instructions > kMaximumVectorExpressionInstructions ||
+        limits.maximum_retained_configuration_bytes == 0U) {
+      return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, expression.span(),
+                                        common::StatusCode::kInvalidArgument,
+                                        "Physical expression limits are invalid"));
+    }
+    if (select.sources().size() != 1U || !select.asof_joins().empty()) {
+      return std::unexpected(diagnostic(SqlDiagnosticCode::kUnsupportedSyntax, expression.span(),
+                                        common::StatusCode::kNotSupported,
+                                        "Physical scalar lowering requires one SQL source"));
+    }
+    ColumnOutputPosition output = ExpressionLowerer{select, limits}.output(expression);
+    auto* computed = std::get_if<ComputedColumnOutputPosition>(&output);
+    if (computed == nullptr) {
+      return std::unexpected(
+          diagnostic(SqlDiagnosticCode::kUnsupportedSyntax, expression.span(),
+                     common::StatusCode::kNotSupported,
+                     "Physical scalar lowering requires a source-dependent computed expression"));
+    }
+    return std::move(computed->expression);
+  } catch (LoweringFailure& failure) {
+    return std::unexpected(failure.take());
+  } catch (const std::bad_alloc&) {
+    return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, expression.span(),
+                                      common::StatusCode::kResourceExhausted,
+                                      "Physical scalar lowering allocation failed"));
+  } catch (const std::length_error&) {
+    return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, expression.span(),
+                                      common::StatusCode::kResourceExhausted,
+                                      "Physical scalar lowering exceeds container limits"));
+  }
+}
+
 SqlResult<PhysicalPipelinePlan> lower_bound_sql_select(const BoundSqlSelect& select,
                                                        const PhysicalSelectLoweringLimits limits) {
   try {

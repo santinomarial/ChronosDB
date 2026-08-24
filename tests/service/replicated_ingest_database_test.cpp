@@ -1044,6 +1044,9 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
       "TIMESTAMP '1970-01-01 00:00:00Z' AND TIMESTAMP '1970-01-01 00:00:00Z' LIMIT 1"));
   auto native_distributed_constants = distributed_native.execute_query(
       query_request("SELECT 7 AS marker, upper('ok') AS word FROM events LIMIT 1"));
+  auto native_distributed_expressions = distributed_native.execute_query(query_request(
+      "SELECT lower(tag) AS folded, enabled, "
+      "time_bucket(INTERVAL '1 nanosecond', ts) AS shifted FROM events ORDER BY ts LIMIT 1"));
   stop_server.store(true, std::memory_order_release);
   server_thread.join();
   ASSERT_FALSE(server_failed.load(std::memory_order_acquire));
@@ -1156,6 +1159,18 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   const std::string_view expected_word{"OK"};
   EXPECT_TRUE(std::ranges::equal(
       word->value, std::as_bytes(std::span{expected_word.data(), expected_word.size()})));
+  ASSERT_TRUE(native_distributed_expressions.has_value())
+      << native_distributed_expressions.error().to_string();
+  ASSERT_EQ(native_distributed_expressions->responses.size(), 2U);
+  EXPECT_EQ(native_distributed_expressions->result_rows, 1U);
+  const auto remote_expression_batch = network::decode_query_result_batch(
+      native_distributed_expressions->responses[0].frame.payload);
+  ASSERT_TRUE(remote_expression_batch.has_value()) << remote_expression_batch.error().to_string();
+  ASSERT_EQ(remote_expression_batch->row_count(), 1U);
+  ASSERT_EQ(remote_expression_batch->columns().size(), 3U);
+  EXPECT_EQ(remote_expression_batch->columns()[0].name, "folded");
+  EXPECT_EQ(remote_expression_batch->columns()[1].name, "enabled");
+  EXPECT_EQ(remote_expression_batch->columns()[2].name, "shifted");
   ASSERT_TRUE(distributed_server->shutdown().is_ok());
 
   auto local_worker = ReplicatedDistributedMutableVectorQueryWorker::create(
@@ -1196,6 +1211,14 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   ASSERT_EQ(native_local_constants->responses.size(), 2U);
   EXPECT_EQ(native_local_constants->responses[0].frame.payload,
             native_distributed_constants->responses[0].frame.payload);
+
+  auto native_local_expressions = local_distributed_native.execute_query(query_request(
+      "SELECT lower(tag) AS folded, enabled, "
+      "time_bucket(INTERVAL '1 nanosecond', ts) AS shifted FROM events ORDER BY ts LIMIT 1"));
+  ASSERT_TRUE(native_local_expressions.has_value()) << native_local_expressions.error().to_string();
+  ASSERT_EQ(native_local_expressions->responses.size(), 2U);
+  EXPECT_EQ(native_local_expressions->responses[0].frame.payload,
+            native_distributed_expressions->responses[0].frame.payload);
 
   auto native_zero_aggregate = local_distributed_native.execute_query(
       query_request("SELECT count(*) AS rows FROM events LIMIT 0"));

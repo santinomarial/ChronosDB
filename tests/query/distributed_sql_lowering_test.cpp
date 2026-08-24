@@ -198,9 +198,51 @@ TEST(DistributedSqlLoweringTest, OwnsSourceIndependentOutputsAndARealRowAnchor) 
   EXPECT_TRUE(missing.canonical_value.empty());
 }
 
+TEST(DistributedSqlLoweringTest, OwnsCheckedRowDependentCoordinatorExpressions) {
+  BoundSqlSelect select = bind(
+      "SELECT value + 2 AS shifted, lower(label) AS folded, value > 4 AS high, ts FROM metrics "
+      "ORDER BY ts DESC LIMIT 2");
+  auto lowered = lower_bound_sql_select_to_distributed_vector_rows(select);
+  ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
+  EXPECT_EQ(lowered->destination_column_ordinals, (std::vector<std::uint32_t>{0U, 1U, 2U}));
+  EXPECT_EQ(lowered->intent.row_output_indices, (std::vector<std::uint32_t>{0U, 1U, 2U}));
+  EXPECT_TRUE(lowered->intent.visible_row_output_indices.empty());
+  ASSERT_EQ(lowered->intent.order_keys.size(), 1U);
+  EXPECT_EQ(lowered->intent.order_keys.front().output_index, 0U);
+  ASSERT_EQ(lowered->result_schema.columns.size(), 3U);
+  EXPECT_EQ(lowered->result_schema.columns[1].name, "label");
+  ASSERT_TRUE(lowered->coordinator_projection.has_value());
+  const auto& projection = *lowered->coordinator_projection;
+  ASSERT_EQ(projection.outputs.size(), 4U);
+  const auto& shifted =
+      std::get<DistributedVectorRowExpressionOutput>(projection.outputs[0]).expression;
+  EXPECT_EQ(shifted.result_shape().type.kind(), schema::LogicalTypeKind::kInt64);
+  EXPECT_FALSE(shifted.result_shape().nullable);
+  const auto& folded =
+      std::get<DistributedVectorRowExpressionOutput>(projection.outputs[1]).expression;
+  EXPECT_EQ(folded.result_shape().type.kind(), schema::LogicalTypeKind::kString);
+  EXPECT_TRUE(folded.result_shape().nullable);
+  const auto& high =
+      std::get<DistributedVectorRowExpressionOutput>(projection.outputs[2]).expression;
+  EXPECT_EQ(high.result_shape().type.kind(), schema::LogicalTypeKind::kBool);
+  EXPECT_EQ(std::get<DistributedVectorRowSourceOutput>(projection.outputs[3]).worker_output_index,
+            0U);
+  EXPECT_EQ(projection.result_schema.columns[0].name, "shifted");
+  EXPECT_EQ(projection.result_schema.columns[1].name, "folded");
+
+  const auto computed_order = lower_bound_sql_select_to_distributed_vector_rows(
+      bind("SELECT value + 2 AS shifted FROM metrics ORDER BY shifted"));
+  ASSERT_FALSE(computed_order.has_value());
+  EXPECT_EQ(computed_order.error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
+
+  const auto bounded = lower_bound_sql_select_to_distributed_vector_rows(
+      select, {.maximum_expression_configuration_bytes = 1U});
+  ASSERT_FALSE(bounded.has_value());
+  EXPECT_EQ(bounded.error().code(), SqlDiagnosticCode::kResourceLimit);
+}
+
 TEST(DistributedSqlLoweringTest, RejectsEveryUnsupportedSemanticWithoutFallback) {
   const std::vector<std::string_view> statements{
-      "SELECT value + 1 AS v FROM metrics",
       "SELECT value FROM metrics WHERE value > 1",
       "SELECT count(*) AS n FROM metrics",
       "SELECT value FROM metrics WHERE ts NOT BETWEEN "

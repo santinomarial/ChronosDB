@@ -344,6 +344,33 @@ common::Result<ScalarValue> ScalarValue::from_column_cell(const schema::LogicalT
   return scalar_from_nonnull_canonical_bytes(type, *bytes_result);
 }
 
+common::Result<ScalarValue> decode_canonical_scalar_value(const schema::LogicalType type,
+                                                          const bool is_null,
+                                                          const common::ByteView bytes) {
+  try {
+    if (is_null) {
+      if (!bytes.empty())
+        return common::make_unexpected(invalid("NULL canonical scalar has a nonempty payload"));
+      return ScalarValue::null(type);
+    }
+    if (type.kind() == schema::LogicalTypeKind::kBool) {
+      if (bytes.size() != 1U ||
+          (bytes.front() != std::byte{0U} && bytes.front() != std::byte{1U})) {
+        return common::make_unexpected(invalid("Boolean canonical scalar is invalid"));
+      }
+      return ScalarValue::boolean(bytes.front() == std::byte{1U});
+    }
+    return scalar_from_nonnull_canonical_bytes(type, bytes);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "canonical scalar decode allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "canonical scalar decode exceeds container limits"});
+  }
+}
+
 bool ScalarValue::is_null() const noexcept {
   return std::holds_alternative<std::monostate>(storage_);
 }
@@ -356,124 +383,31 @@ const ScalarStorage& ScalarValue::storage() const noexcept {
   return storage_;
 }
 
+bool operator==(const ScalarValue& left, const ScalarValue& right) noexcept {
+  if (left.type_ != right.type_ || left.storage_.index() != right.storage_.index())
+    return false;
+  if (const auto* left_float = std::get_if<float>(&left.storage_); left_float != nullptr) {
+    const auto* right_float = std::get_if<float>(&right.storage_);
+    return right_float != nullptr &&
+           std::bit_cast<std::uint32_t>(*left_float) == std::bit_cast<std::uint32_t>(*right_float);
+  }
+  if (const auto* left_double = std::get_if<double>(&left.storage_); left_double != nullptr) {
+    const auto* right_double = std::get_if<double>(&right.storage_);
+    return right_double != nullptr && std::bit_cast<std::uint64_t>(*left_double) ==
+                                          std::bit_cast<std::uint64_t>(*right_double);
+  }
+  return left.storage_ == right.storage_;
+}
+
 common::Result<std::vector<std::byte>> encode_canonical_scalar_value(const ScalarValue& value) {
   try {
-    const schema::LogicalType* type = value_type(value);
-    if (type == nullptr)
-      return common::make_unexpected(invalid("canonical scalar value is untyped"));
-    if (value.is_null())
-      return std::vector<std::byte>{};
-
-    std::vector<std::byte> bytes;
-    const auto store_unsigned = [&bytes]<typename Unsigned>(const Unsigned input) {
-      static_assert(std::is_unsigned_v<Unsigned>);
-      bytes.resize(sizeof(Unsigned));
-      for (std::size_t index = 0U; index < sizeof(Unsigned); ++index) {
-        bytes[index] =
-            static_cast<std::byte>((input >> (index * 8U)) & static_cast<Unsigned>(0xffU));
-      }
-    };
-    using schema::LogicalTypeKind;
-    switch (type->kind()) {
-    case LogicalTypeKind::kBool: {
-      const auto* stored = std::get_if<bool>(&value.storage());
-      if (stored == nullptr)
-        return common::make_unexpected(invalid("Boolean scalar storage is invalid"));
-      bytes.push_back(*stored ? std::byte{1U} : std::byte{0U});
-      break;
-    }
-    case LogicalTypeKind::kInt8: {
-      const auto* stored = std::get_if<std::int64_t>(&value.storage());
-      if (stored == nullptr)
-        return common::make_unexpected(invalid("signed scalar storage is invalid"));
-      store_unsigned(std::bit_cast<std::uint8_t>(static_cast<std::int8_t>(*stored)));
-      break;
-    }
-    case LogicalTypeKind::kInt16: {
-      const auto* stored = std::get_if<std::int64_t>(&value.storage());
-      if (stored == nullptr)
-        return common::make_unexpected(invalid("signed scalar storage is invalid"));
-      store_unsigned(std::bit_cast<std::uint16_t>(static_cast<std::int16_t>(*stored)));
-      break;
-    }
-    case LogicalTypeKind::kInt32:
-    case LogicalTypeKind::kDate: {
-      const auto* stored = std::get_if<std::int64_t>(&value.storage());
-      if (stored == nullptr)
-        return common::make_unexpected(invalid("signed scalar storage is invalid"));
-      store_unsigned(std::bit_cast<std::uint32_t>(static_cast<std::int32_t>(*stored)));
-      break;
-    }
-    case LogicalTypeKind::kInt64:
-    case LogicalTypeKind::kTimestampNs: {
-      const auto* stored = std::get_if<std::int64_t>(&value.storage());
-      if (stored == nullptr)
-        return common::make_unexpected(invalid("signed scalar storage is invalid"));
-      store_unsigned(std::bit_cast<std::uint64_t>(*stored));
-      break;
-    }
-    case LogicalTypeKind::kUInt8:
-    case LogicalTypeKind::kUInt16:
-    case LogicalTypeKind::kUInt32:
-    case LogicalTypeKind::kUInt64: {
-      const auto* stored = std::get_if<std::uint64_t>(&value.storage());
-      if (stored == nullptr)
-        return common::make_unexpected(invalid("unsigned scalar storage is invalid"));
-      if (type->kind() == LogicalTypeKind::kUInt8)
-        store_unsigned(static_cast<std::uint8_t>(*stored));
-      else if (type->kind() == LogicalTypeKind::kUInt16)
-        store_unsigned(static_cast<std::uint16_t>(*stored));
-      else if (type->kind() == LogicalTypeKind::kUInt32)
-        store_unsigned(static_cast<std::uint32_t>(*stored));
-      else
-        store_unsigned(*stored);
-      break;
-    }
-    case LogicalTypeKind::kFloat32: {
-      const auto* stored = std::get_if<float>(&value.storage());
-      if (stored == nullptr)
-        return common::make_unexpected(invalid("FLOAT32 scalar storage is invalid"));
-      store_unsigned(std::bit_cast<std::uint32_t>(*stored));
-      break;
-    }
-    case LogicalTypeKind::kFloat64: {
-      const auto* stored = std::get_if<double>(&value.storage());
-      if (stored == nullptr)
-        return common::make_unexpected(invalid("FLOAT64 scalar storage is invalid"));
-      store_unsigned(std::bit_cast<std::uint64_t>(*stored));
-      break;
-    }
-    case LogicalTypeKind::kDecimal: {
-      const auto* stored = std::get_if<Decimal128Value>(&value.storage());
-      if (stored == nullptr)
-        return common::make_unexpected(invalid("DECIMAL scalar storage is invalid"));
-      bytes.assign(stored->coefficient.begin(), stored->coefficient.end());
-      break;
-    }
-    case LogicalTypeKind::kSymbol:
-    case LogicalTypeKind::kString: {
-      const auto* stored = std::get_if<std::string>(&value.storage());
-      if (stored == nullptr)
-        return common::make_unexpected(invalid("text scalar storage is invalid"));
-      const auto view = std::as_bytes(std::span<const char>{stored->data(), stored->size()});
-      bytes.assign(view.begin(), view.end());
-      break;
-    }
-    case LogicalTypeKind::kBinary: {
-      const auto* stored = std::get_if<std::vector<std::byte>>(&value.storage());
-      if (stored == nullptr)
-        return common::make_unexpected(invalid("binary scalar storage is invalid"));
-      bytes = *stored;
-      break;
-    }
-    case LogicalTypeKind::kUuid: {
-      const auto* stored = std::get_if<common::Uuid>(&value.storage());
-      if (stored == nullptr)
-        return common::make_unexpected(invalid("UUID scalar storage is invalid"));
-      bytes.assign(stored->bytes().begin(), stored->bytes().end());
-      break;
-    }
-    }
+    auto size = canonical_scalar_value_size(value);
+    if (!size.has_value())
+      return common::make_unexpected(size.error());
+    std::vector<std::byte> bytes(*size);
+    auto written = write_canonical_scalar_value(value, bytes);
+    if (!written.has_value())
+      return common::make_unexpected(written.error());
     return bytes;
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
@@ -482,6 +416,159 @@ common::Result<std::vector<std::byte>> encode_canonical_scalar_value(const Scala
     return common::make_unexpected(common::Status{
         common::StatusCode::kResourceExhausted, "canonical scalar value exceeds container limits"});
   }
+}
+
+common::Result<std::size_t> canonical_scalar_value_size(const ScalarValue& value) {
+  const schema::LogicalType* type = value_type(value);
+  if (type == nullptr)
+    return common::make_unexpected(invalid("canonical scalar value is untyped"));
+  if (value.is_null())
+    return 0U;
+  using schema::LogicalTypeKind;
+  switch (type->kind()) {
+  case LogicalTypeKind::kBool:
+  case LogicalTypeKind::kInt8:
+  case LogicalTypeKind::kUInt8:
+    return 1U;
+  case LogicalTypeKind::kInt16:
+  case LogicalTypeKind::kUInt16:
+    return 2U;
+  case LogicalTypeKind::kInt32:
+  case LogicalTypeKind::kUInt32:
+  case LogicalTypeKind::kFloat32:
+  case LogicalTypeKind::kDate:
+    return 4U;
+  case LogicalTypeKind::kInt64:
+  case LogicalTypeKind::kUInt64:
+  case LogicalTypeKind::kFloat64:
+  case LogicalTypeKind::kTimestampNs:
+    return 8U;
+  case LogicalTypeKind::kDecimal:
+  case LogicalTypeKind::kUuid:
+    return 16U;
+  case LogicalTypeKind::kString:
+  case LogicalTypeKind::kSymbol: {
+    const auto* stored = std::get_if<std::string>(&value.storage());
+    return stored != nullptr ? common::Result<std::size_t>{stored->size()}
+                             : common::make_unexpected(invalid("text scalar storage is invalid"));
+  }
+  case LogicalTypeKind::kBinary: {
+    const auto* stored = std::get_if<std::vector<std::byte>>(&value.storage());
+    return stored != nullptr ? common::Result<std::size_t>{stored->size()}
+                             : common::make_unexpected(invalid("binary scalar storage is invalid"));
+  }
+  }
+  return common::make_unexpected(invalid("canonical scalar type is invalid"));
+}
+
+common::Result<void> write_canonical_scalar_value(const ScalarValue& value,
+                                                  const std::span<std::byte> destination) {
+  auto size = canonical_scalar_value_size(value);
+  if (!size.has_value())
+    return common::make_unexpected(size.error());
+  if (destination.size() != *size)
+    return common::make_unexpected(invalid("canonical scalar destination size is invalid"));
+  if (value.is_null())
+    return {};
+  const schema::LogicalType& type = *value.type(); // NOLINT(bugprone-unchecked-optional-access)
+  const auto store_unsigned = [destination]<typename Unsigned>(const Unsigned input) {
+    static_assert(std::is_unsigned_v<Unsigned>);
+    for (std::size_t index = 0U; index < sizeof(Unsigned); ++index) {
+      destination[index] =
+          static_cast<std::byte>((input >> (index * 8U)) & static_cast<Unsigned>(0xffU));
+    }
+  };
+  using schema::LogicalTypeKind;
+  switch (type.kind()) {
+  case LogicalTypeKind::kBool: {
+    const auto* stored = std::get_if<bool>(&value.storage());
+    if (stored == nullptr)
+      return common::make_unexpected(invalid("Boolean scalar storage is invalid"));
+    destination.front() = *stored ? std::byte{1U} : std::byte{0U};
+    break;
+  }
+  case LogicalTypeKind::kInt8:
+  case LogicalTypeKind::kInt16:
+  case LogicalTypeKind::kInt32:
+  case LogicalTypeKind::kInt64:
+  case LogicalTypeKind::kDate:
+  case LogicalTypeKind::kTimestampNs: {
+    const auto* stored = std::get_if<std::int64_t>(&value.storage());
+    if (stored == nullptr)
+      return common::make_unexpected(invalid("signed scalar storage is invalid"));
+    if (destination.size() == 1U)
+      store_unsigned(std::bit_cast<std::uint8_t>(static_cast<std::int8_t>(*stored)));
+    else if (destination.size() == 2U)
+      store_unsigned(std::bit_cast<std::uint16_t>(static_cast<std::int16_t>(*stored)));
+    else if (destination.size() == 4U)
+      store_unsigned(std::bit_cast<std::uint32_t>(static_cast<std::int32_t>(*stored)));
+    else
+      store_unsigned(std::bit_cast<std::uint64_t>(*stored));
+    break;
+  }
+  case LogicalTypeKind::kUInt8:
+  case LogicalTypeKind::kUInt16:
+  case LogicalTypeKind::kUInt32:
+  case LogicalTypeKind::kUInt64: {
+    const auto* stored = std::get_if<std::uint64_t>(&value.storage());
+    if (stored == nullptr)
+      return common::make_unexpected(invalid("unsigned scalar storage is invalid"));
+    if (destination.size() == 1U)
+      store_unsigned(static_cast<std::uint8_t>(*stored));
+    else if (destination.size() == 2U)
+      store_unsigned(static_cast<std::uint16_t>(*stored));
+    else if (destination.size() == 4U)
+      store_unsigned(static_cast<std::uint32_t>(*stored));
+    else
+      store_unsigned(*stored);
+    break;
+  }
+  case LogicalTypeKind::kFloat32: {
+    const auto* stored = std::get_if<float>(&value.storage());
+    if (stored == nullptr)
+      return common::make_unexpected(invalid("FLOAT32 scalar storage is invalid"));
+    store_unsigned(std::bit_cast<std::uint32_t>(*stored));
+    break;
+  }
+  case LogicalTypeKind::kFloat64: {
+    const auto* stored = std::get_if<double>(&value.storage());
+    if (stored == nullptr)
+      return common::make_unexpected(invalid("FLOAT64 scalar storage is invalid"));
+    store_unsigned(std::bit_cast<std::uint64_t>(*stored));
+    break;
+  }
+  case LogicalTypeKind::kDecimal: {
+    const auto* stored = std::get_if<Decimal128Value>(&value.storage());
+    if (stored == nullptr)
+      return common::make_unexpected(invalid("DECIMAL scalar storage is invalid"));
+    std::ranges::copy(stored->coefficient, destination.begin());
+    break;
+  }
+  case LogicalTypeKind::kString:
+  case LogicalTypeKind::kSymbol: {
+    const auto* stored = std::get_if<std::string>(&value.storage());
+    if (stored == nullptr)
+      return common::make_unexpected(invalid("text scalar storage is invalid"));
+    std::ranges::copy(std::as_bytes(std::span{stored->data(), stored->size()}),
+                      destination.begin());
+    break;
+  }
+  case LogicalTypeKind::kBinary: {
+    const auto* stored = std::get_if<std::vector<std::byte>>(&value.storage());
+    if (stored == nullptr)
+      return common::make_unexpected(invalid("binary scalar storage is invalid"));
+    std::ranges::copy(*stored, destination.begin());
+    break;
+  }
+  case LogicalTypeKind::kUuid: {
+    const auto* stored = std::get_if<common::Uuid>(&value.storage());
+    if (stored == nullptr)
+      return common::make_unexpected(invalid("UUID scalar storage is invalid"));
+    std::ranges::copy(stored->bytes(), destination.begin());
+    break;
+  }
+  }
+  return {};
 }
 
 common::Result<int> compare_scalar_values(const ScalarValue& left, const ScalarValue& right,
