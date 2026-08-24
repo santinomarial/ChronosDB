@@ -518,10 +518,20 @@ NativeProtocolService::execute_ingest(network::NetworkTask request) {
 
 common::Result<NativeProtocolResponseSequence>
 NativeProtocolService::execute_query(network::NetworkTask request) {
+  return execute_query(std::move(request), nullptr);
+}
+
+common::Result<NativeProtocolResponseSequence>
+NativeProtocolService::execute_query(network::NetworkTask request,
+                                     const NativeQueryCancellation* const cancellation) {
   const ResponseRoute target = route(request);
   if (request.frame.header.message_type != network::MessageType::kQueryRequest ||
       target.request_id == 0U) {
     return query_error(target, invalid("expected a nonzero QUERY_REQUEST"), limits_.protocol);
+  }
+  if (cancellation != nullptr && cancellation->requested()) {
+    return query_error(target, {common::StatusCode::kCancelled, "native query was cancelled"},
+                       limits_.protocol);
   }
   const auto sql = network::decode_query_request(request.frame.payload, limits_.protocol);
   if (!sql.has_value())
@@ -797,6 +807,10 @@ NativeProtocolService::execute_query(network::NetworkTask request) {
         return query_error(target, coordinator.error(), limits_.protocol);
 
       for (query::DistributedMutableVectorFragment& fragment : prepared->fragments) {
+        if (cancellation != nullptr && cancellation->requested()) {
+          return query_error(target, {common::StatusCode::kCancelled, "native query was cancelled"},
+                             limits_.protocol);
+        }
         if (fragment.serving_node != config.source_node_id) {
           remote_fragments.push_back(std::move(fragment));
           continue;
@@ -812,6 +826,10 @@ NativeProtocolService::execute_query(network::NetworkTask request) {
           const common::Status accepted = coordinator->accept(message);
           if (!accepted.is_ok())
             return query_error(target, accepted, limits_.protocol);
+        }
+        if (cancellation != nullptr && cancellation->requested()) {
+          return query_error(target, {common::StatusCode::kCancelled, "native query was cancelled"},
+                             limits_.protocol);
         }
         if (std::chrono::steady_clock::now() >= execution_deadline) {
           return query_error(target,
@@ -847,6 +865,12 @@ NativeProtocolService::execute_query(network::NetworkTask request) {
           return query_error(target, scheduler.error(), limits_.protocol);
         while (scheduler->state() ==
                cluster::DistributedMutableVectorQueryTcpExecutionState::kRunning) {
+          if (cancellation != nullptr && cancellation->requested()) {
+            static_cast<void>(scheduler->cancel());
+            return query_error(target,
+                               {common::StatusCode::kCancelled, "native query was cancelled"},
+                               limits_.protocol);
+          }
           const common::Status polled = scheduler->poll_once(config.maximum_poll_wait);
           if (!polled.is_ok())
             return query_error(target, polled, limits_.protocol);
@@ -932,6 +956,11 @@ NativeProtocolService::execute_query(network::NetworkTask request) {
     result.responses.reserve(limits_.maximum_result_batches + 1U);
     bool emitted_result{};
     for (;;) {
+      if (cancellation != nullptr && cancellation->requested()) {
+        static_cast<void>(resources->request_cancel());
+        return query_error(target, {common::StatusCode::kCancelled, "native query was cancelled"},
+                           limits_.protocol);
+      }
       auto step = pipeline->next(*resources);
       if (!step.has_value())
         return query_error(target, step.error(), limits_.protocol);

@@ -19,6 +19,7 @@
 #include "chronos/service/replicated_ingest_database.hpp"
 #include "chronos/service/single_node_database.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -53,6 +54,29 @@ struct NativeProtocolResponseSequence {
   std::size_t payload_bytes{};
 };
 
+// Cross-thread cooperative cancellation publication for one Native query. The queue owner is the
+// sole publisher and the query thread is the sole observer. Cancellation is sticky and carries no
+// response ownership by itself.
+class NativeQueryCancellation {
+public:
+  void request_cancel() noexcept {
+    requested_.store(true, std::memory_order_release);
+  }
+  [[nodiscard]] bool requested() const noexcept {
+    return requested_.load(std::memory_order_acquire);
+  }
+
+private:
+  std::atomic<bool> requested_{};
+};
+
+class NativeQueryDispatcher {
+public:
+  virtual ~NativeQueryDispatcher() = default;
+  [[nodiscard]] virtual common::Result<NativeProtocolResponseSequence>
+  execute_query(network::NetworkTask request, const NativeQueryCancellation* cancellation) = 0;
+};
+
 using NativeIdentityGenerator = common::UuidGenerator;
 
 // Borrowed split-leader row-query client policy. source_node_id names the coordinator transport
@@ -85,7 +109,7 @@ struct NativeDistributedMutableVectorRowsQueryConfig {
 // Ingest returns one terminal response; query returns a bounded result sequence ending in
 // QUERY_END, one terminal ERROR, or an authoritative negotiated redirect before output. Queueing
 // and socket backpressure remain owned by the reactor worker.
-class NativeProtocolService {
+class NativeProtocolService final : public NativeQueryDispatcher {
 public:
   explicit NativeProtocolService(SingleNodeDatabase& database,
                                  NativeProtocolServiceLimits limits = {}) noexcept;
@@ -106,6 +130,8 @@ public:
   [[nodiscard]] common::Result<network::NetworkTask> execute_ingest(network::NetworkTask request);
   [[nodiscard]] common::Result<NativeProtocolResponseSequence>
   execute_query(network::NetworkTask request);
+  [[nodiscard]] common::Result<NativeProtocolResponseSequence>
+  execute_query(network::NetworkTask request, const NativeQueryCancellation* cancellation) override;
 
 private:
   SingleNodeDatabase* database_{};

@@ -1446,9 +1446,13 @@ TEST(ReplicatedIngestDatabaseTest, PinsCommittedWholeTableQueryStateBeyondOwnerS
                                        .responses = &responses});
   ASSERT_TRUE(native_service.has_value()) << native_service.error().to_string();
   ASSERT_TRUE(requests.try_push(query_request("SELECT count(*) AS rows FROM events", true)));
-  auto polled = native_service->poll_once();
-  ASSERT_TRUE(polled.has_value()) << polled.error().to_string();
-  ASSERT_FALSE(polled->response_enqueued);
+  common::Result<ReplicatedIngestServicePoll> polled = ReplicatedIngestServicePoll{};
+  for (std::size_t attempt = 0U; attempt < 10'000U && !native_service->metrics().response_retained;
+       ++attempt) {
+    polled = native_service->poll_once();
+    ASSERT_TRUE(polled.has_value()) << polled.error().to_string();
+    std::this_thread::yield();
+  }
   ASSERT_TRUE(native_service->metrics().response_retained);
   ASSERT_TRUE(responses.try_pop().has_value());
   polled = native_service->poll_once();

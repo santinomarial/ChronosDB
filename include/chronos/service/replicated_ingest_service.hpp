@@ -11,11 +11,11 @@
 
 namespace chronos::service {
 
-class NativeProtocolService;
+class NativeQueryDispatcher;
 
 struct ReplicatedIngestServiceConfig {
   ReplicatedIngestCoordinator* coordinator{};
-  NativeProtocolService* queries{};
+  NativeQueryDispatcher* queries{};
   network::SpscNetworkTaskQueue* requests{};
   network::SpscNetworkTaskQueue* responses{};
   network::ProtocolLimits protocol;
@@ -35,13 +35,15 @@ struct ReplicatedIngestServiceMetrics {
   std::uint64_t response_backpressure{};
   bool accepting{};
   bool response_retained{};
+  bool query_active{};
 };
 
 // Thread-affine queue adapter between one native reactor shard, one replicated-ingest coordinator,
-// and an optional synchronous native query dispatcher. Each poll retries one retained response,
-// advances one finite query sequence, consumes at most one request, or advances the coordinator by
-// at most one response. The configured owners and queues must outlive this service. The response
-// producer must be joined before either queue is destroyed.
+// and an optional query dispatcher. It owns at most one joined query thread so the queue owner can
+// consume exact CANCEL tasks while synchronous query work advances. Each poll retries one retained
+// response, advances one finite query sequence, consumes at most one request, harvests one query,
+// or advances the coordinator by at most one response. The configured owners and queues must
+// outlive this service. The response producer must be joined before either queue is destroyed.
 class ReplicatedIngestService {
 public:
   ReplicatedIngestService() = delete;

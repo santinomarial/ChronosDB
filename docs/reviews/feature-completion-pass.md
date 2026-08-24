@@ -1018,7 +1018,8 @@ were deliberately not run.
   The packaged daemon now binds the committed local private query endpoint, reuses the immutable
   authenticated peer bundle for inbound/outbound query TLS, polls synchronous workers separately
   from Raft, and extends its three-process gate through remote SELECT before and after tablet-leader
-  failover. Reactor-aware cancellation and fresh authority rebinding remain absent.
+  failover. Reactor-visible exact cancellation now uses one joined query slot, cooperatively tears
+  down remote work, and suppresses the complete response. Fresh authority rebinding remains absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
@@ -1036,7 +1037,7 @@ were deliberately not run.
 The exact subsystem/category ledger is
 [`deferred-validation.md`](../development/deferred-validation.md). Recommended order:
 
-1. Compose reactor-aware cancellation/fresh-authority rebinding and extend distributed SQL beyond
+1. Compose fresh-authority rebinding and extend distributed SQL beyond
    the direct-column row subset while preserving the applied read-barrier data-plane sequence.
 2. Specify database namespaces/catalog tombstones and placement-driven membership orchestration
    without changing Metadata Command v1 or Metadata Application Snapshot 1.0 bytes in place.

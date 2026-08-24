@@ -1106,6 +1106,25 @@ TEST(NativeProtocolServiceTest, EmitsDescribedZeroRowResultBeforeQueryEnd) {
   EXPECT_TRUE(database->shutdown().is_ok());
 }
 
+TEST(NativeProtocolServiceTest, RejectsAPreCancelledQueryBeforeExecution) {
+  TemporaryDirectory directory;
+  seed_catalog(directory);
+  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  NativeProtocolService service{*database};
+  NativeQueryCancellation cancellation;
+  cancellation.request_cancel();
+
+  auto query = service.execute_query(query_task(43U, "SELECT * FROM events"), &cancellation);
+  ASSERT_TRUE(query.has_value()) << query.error().to_string();
+  ASSERT_EQ(query->responses.size(), 1U);
+  EXPECT_EQ(query->responses.front().frame.header.message_type, network::MessageType::kError);
+  auto error = network::decode_error_message(query->responses.front().frame.payload);
+  ASSERT_TRUE(error.has_value()) << error.error().to_string();
+  EXPECT_EQ(error->code, network::ProtocolErrorCode::kCancelled);
+  EXPECT_TRUE(database->shutdown().is_ok());
+}
+
 TEST(NativeProtocolServiceTest, CreatesTableWithInjectedIdentitiesAndReturnsDurableResult) {
   TemporaryDirectory directory;
   auto database = SingleNodeDatabase::open_or_create(config(directory));

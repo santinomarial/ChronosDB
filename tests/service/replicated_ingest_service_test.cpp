@@ -3,11 +3,13 @@
 #include "chronos/raft/metadata_codec.hpp"
 #include "chronos/raft/schema_definition_codec.hpp"
 #include "chronos/raft/tablet_group_binding_codec.hpp"
+#include "chronos/service/native_protocol_service.hpp"
 #include "chronos/service/replicated_ingest_runtime.hpp"
 #include "chronos/service/replicated_ingest_service.hpp"
 #include "columnar/columnar_test_support.hpp"
 #include "ingest/ingest_test_support.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <gtest/gtest.h>
@@ -86,6 +88,55 @@ private:
                                .payload_size = static_cast<std::uint32_t>(payload.size())},
                     .payload = std::move(payload)}};
 }
+
+[[nodiscard]] network::NetworkTask query_request(const std::uint64_t request_id) {
+  auto payload = network::encode_query_request("SELECT count(*) FROM events").value();
+  return {.connection_id = 10U,
+          .principal_id = 9U,
+          .protocol = {.protocol_major = network::kProtocolMajor,
+                       .protocol_minor = network::kProtocolMinor,
+                       .maximum_payload_size = network::kDefaultMaximumPayloadSize},
+          .frame = {.header = {.protocol_major = network::kProtocolMajor,
+                               .protocol_minor = network::kProtocolMinor,
+                               .message_type = network::MessageType::kQueryRequest,
+                               .request_id = request_id,
+                               .payload_size = static_cast<std::uint32_t>(payload.size())},
+                    .payload = std::move(payload)}};
+}
+
+class BlockingQueryDispatcher final : public NativeQueryDispatcher {
+public:
+  common::Result<NativeProtocolResponseSequence>
+  execute_query(network::NetworkTask request,
+                const NativeQueryCancellation* const cancellation) override {
+    started_.fetch_add(1U, std::memory_order_release);
+    while (cancellation != nullptr && !cancellation->requested())
+      std::this_thread::yield();
+    if (cancellation != nullptr && cancellation->requested())
+      cancellation_observed_.fetch_add(1U, std::memory_order_release);
+    request.frame = {.header = {.protocol_major = request.protocol.protocol_major,
+                                .protocol_minor = request.protocol.protocol_minor,
+                                .message_type = network::MessageType::kQueryEnd,
+                                .request_id = request.frame.header.request_id}};
+    NativeProtocolResponseSequence result;
+    result.responses.push_back(std::move(request));
+    return result;
+  }
+
+  [[nodiscard]] bool started() const noexcept {
+    return started_.load(std::memory_order_acquire) != 0U;
+  }
+  [[nodiscard]] std::uint64_t executions_started() const noexcept {
+    return started_.load(std::memory_order_acquire);
+  }
+  [[nodiscard]] std::uint64_t cancellations_observed() const noexcept {
+    return cancellation_observed_.load(std::memory_order_acquire);
+  }
+
+private:
+  std::atomic<std::uint64_t> started_{};
+  std::atomic<std::uint64_t> cancellation_observed_{};
+};
 
 [[nodiscard]] common::Result<ReplicatedIngestRuntimeConfig>
 runtime_config(const std::filesystem::path& directory) {
@@ -237,6 +288,78 @@ TEST(ReplicatedIngestServiceTest, CancelsExactlyAndRejectsNewWorkDuringDrain) {
   EXPECT_EQ(error->code, network::ProtocolErrorCode::kExecutionFailure);
   EXPECT_EQ(service->metrics().shutdown_rejections, 1U);
   EXPECT_EQ(service->metrics().request_errors, 1U);
+  EXPECT_TRUE(service->drained());
+  EXPECT_TRUE(owner.shutdown().is_ok());
+}
+
+TEST(ReplicatedIngestServiceTest, CancelsAnExactActiveQueryAndSuppressesItsResponse) {
+  TemporaryDirectory directory;
+  ReplicatedIngestRuntime owner = create_runtime(directory.path());
+  elect_and_publish_route(owner);
+  BlockingQueryDispatcher queries;
+  auto requests = network::SpscNetworkTaskQueue::create(4U).value();
+  auto responses = network::SpscNetworkTaskQueue::create(4U).value();
+  auto service = ReplicatedIngestService::create({.coordinator = owner.coordinator(),
+                                                  .queries = &queries,
+                                                  .requests = &requests,
+                                                  .responses = &responses});
+  ASSERT_TRUE(service.has_value()) << service.error().to_string();
+  ASSERT_TRUE(requests.try_push(query_request(41U)));
+  ASSERT_TRUE(service->poll_once().has_value());
+  for (std::size_t attempt = 0U; attempt < 10'000U && !queries.started(); ++attempt)
+    std::this_thread::yield();
+  ASSERT_TRUE(queries.started());
+  ASSERT_TRUE(service->metrics().query_active);
+
+  ASSERT_TRUE(requests.try_push(
+      {.connection_id = 11U,
+       .principal_id = 9U,
+       .frame = {.header = {.message_type = network::MessageType::kCancel, .request_id = 41U}}}));
+  ASSERT_TRUE(service->poll_once().has_value());
+  EXPECT_TRUE(service->metrics().query_active);
+  EXPECT_EQ(service->metrics().cancelled_requests, 0U);
+
+  ASSERT_TRUE(requests.try_push(query_request(42U)));
+  auto occupied = service->poll_once();
+  ASSERT_TRUE(occupied.has_value()) << occupied.error().to_string();
+  ASSERT_TRUE(occupied->response_enqueued);
+  auto occupied_response = responses.try_pop();
+  ASSERT_TRUE(occupied_response.has_value());
+  auto occupied_error = network::decode_error_message(occupied_response->frame.payload);
+  ASSERT_TRUE(occupied_error.has_value()) << occupied_error.error().to_string();
+  EXPECT_EQ(occupied_error->code, network::ProtocolErrorCode::kOverloaded);
+  EXPECT_TRUE(service->metrics().query_active);
+  EXPECT_EQ(service->metrics().query_requests, 1U);
+
+  ASSERT_TRUE(requests.try_push(
+      {.connection_id = 10U,
+       .principal_id = 9U,
+       .frame = {.header = {.message_type = network::MessageType::kCancel, .request_id = 41U}}}));
+  ASSERT_TRUE(service->poll_once().has_value());
+  for (std::size_t attempt = 0U; attempt < 10'000U && service->metrics().query_active; ++attempt) {
+    ASSERT_TRUE(service->poll_once().has_value());
+    std::this_thread::yield();
+  }
+  EXPECT_EQ(queries.cancellations_observed(), 1U);
+  EXPECT_FALSE(service->metrics().query_active);
+  EXPECT_EQ(service->metrics().cancelled_requests, 1U);
+  EXPECT_TRUE(responses.empty());
+
+  ASSERT_TRUE(requests.try_push(query_request(43U)));
+  ASSERT_TRUE(service->poll_once().has_value());
+  for (std::size_t attempt = 0U; attempt < 10'000U && queries.executions_started() != 2U;
+       ++attempt) {
+    std::this_thread::yield();
+  }
+  ASSERT_EQ(queries.executions_started(), 2U);
+  service->begin_shutdown();
+  EXPECT_FALSE(service->drained());
+  for (std::size_t attempt = 0U; attempt < 10'000U && service->metrics().query_active; ++attempt) {
+    ASSERT_TRUE(service->poll_once().has_value());
+    std::this_thread::yield();
+  }
+  EXPECT_EQ(queries.cancellations_observed(), 2U);
+  EXPECT_TRUE(responses.empty());
   EXPECT_TRUE(service->drained());
   EXPECT_TRUE(owner.shutdown().is_ok());
 }

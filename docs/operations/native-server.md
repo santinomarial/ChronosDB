@@ -175,6 +175,13 @@ TLS failures stop startup. `distributed_query=local` names replicated single-nod
 private carrier; `disabled` names non-replicated modes. Endpoint and peer-certificate changes
 require an orderly restart.
 
+Replicated Native dispatch admits one active query thread per service shard so the queue owner can
+consume an exact later `CANCEL`. A matching connection/request cancellation suppresses the complete
+response and cooperatively closes active remote clients; another query receives overload until the
+slot drains. Shutdown publishes the same cancellation and joins the query before releasing database
+or TLS owners. Synchronous local fragment work observes cancellation between fragment calls rather
+than inside a scan.
+
 The repository's Linux process qualification uses one CA and a distinct certificate/key for each
 of three loopback nodes. It proves authenticated election, QUORUM_SYNC application, remote SELECT
 from a nonleader, abrupt tablet-leader loss, higher-term retry deduplication, remote SELECT through

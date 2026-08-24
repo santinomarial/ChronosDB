@@ -55,6 +55,13 @@ TLS contexts, local worker, listener, and borrowed Native config address-stable.
 stop and failure flags have the same publication argument as the existing worker threads: stop is
 visible before loop exit, and failure is visible before the main thread reports termination.
 
+The replicated queue adapter separately admits one joined Native query thread. This keeps its queue
+owner available for an exact later `CANCEL`: the matching connection/request publishes a sticky
+cooperative token, destroys live remote clients at the next scheduler poll, and suppresses the whole
+response. A second query is rejected while the slot is occupied. Shutdown publishes cancellation
+and waits for the query thread before releasing service or database owners. Local worker calls are
+bounded but remain interruptible only at fragment boundaries.
+
 The subscription composition uses a stable committed-append router as the database's pre-open
 observer address. After recovery and before socket admission, one per-plan runtime binds its fan-out
 and borrows the database's exact snapshot storage context. The runtime owns neither the plan,

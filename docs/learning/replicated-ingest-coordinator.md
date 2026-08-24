@@ -40,5 +40,8 @@ worker shutdown. A coordinator must never borrow a stack-local runtime that will
 
 `ReplicatedIngestService` is the queue-facing layer. It consumes reactor tasks, converts admission
 failures to correlated errors, forwards exact cancellations, polls this coordinator, and retains
-one owning response across SPSC backpressure. Its poll result tells the embedding when a response
-was actually enqueued and the reactor should be woken.
+one owning response across SPSC backpressure. It also owns at most one joined Native query thread,
+which leaves the queue owner available to consume an exact connection/request cancellation while a
+synchronous distributed query advances. A matching cancel publishes a sticky cooperative token and
+suppresses the whole result; a mismatched cancel still targets ingest. Its poll result tells the
+embedding when a response was actually enqueued and the reactor should be woken.

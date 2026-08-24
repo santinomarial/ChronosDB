@@ -4,11 +4,13 @@
 #include "chronos/service/native_protocol_service.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <limits>
 #include <memory>
 #include <new>
 #include <optional>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -60,6 +62,86 @@ class ReplicatedIngestService::Impl {
 public:
   explicit Impl(ReplicatedIngestServiceConfig configured) noexcept : config(configured) {}
 
+  class ActiveQuery {
+  public:
+    ActiveQuery(NativeQueryDispatcher& dispatcher, network::NetworkTask request) noexcept
+        : dispatcher_(&dispatcher), connection_id_(request.connection_id),
+          request_id_(request.frame.header.request_id), request_(std::move(request)) {}
+    ~ActiveQuery() {
+      cancel();
+      join();
+    }
+    ActiveQuery(const ActiveQuery&) = delete;
+    ActiveQuery& operator=(const ActiveQuery&) = delete;
+
+    [[nodiscard]] static common::Result<std::unique_ptr<ActiveQuery>>
+    start(NativeQueryDispatcher& dispatcher, network::NetworkTask request) {
+      try {
+        auto owner = std::make_unique<ActiveQuery>(dispatcher, std::move(request));
+        owner->thread_ = std::thread{[query = owner.get()] { query->run(); }};
+        return owner;
+      } catch (const std::bad_alloc&) {
+        return common::make_unexpected(exhausted("native query worker allocation failed"));
+      } catch (const std::system_error&) {
+        return common::make_unexpected(common::Status{
+            common::StatusCode::kUnavailable, "native query worker thread could not be started"});
+      }
+    }
+
+    [[nodiscard]] bool matches(const network::NetworkTask& task) const noexcept {
+      return task.connection_id == connection_id_ && task.frame.header.request_id == request_id_;
+    }
+    void cancel() noexcept {
+      suppress_response_ = true;
+      cancellation_.request_cancel();
+    }
+    [[nodiscard]] bool complete() const noexcept {
+      return complete_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] bool response_suppressed() const noexcept {
+      return suppress_response_;
+    }
+    void join() noexcept {
+      if (thread_.joinable())
+        thread_.join();
+    }
+    [[nodiscard]] common::Result<NativeProtocolResponseSequence> take_result() {
+      join();
+      if (allocation_failure_) {
+        return common::make_unexpected(exhausted("native query worker allocation failed"));
+      }
+      if (unexpected_failure_ || !completion_.has_value()) {
+        return common::make_unexpected(common::Status{
+            common::StatusCode::kInternal, "native query worker terminated unexpectedly"});
+      }
+      return std::move(*completion_);
+    }
+
+  private:
+    void run() noexcept {
+      try {
+        completion_.emplace(dispatcher_->execute_query(std::move(request_), &cancellation_));
+      } catch (const std::bad_alloc&) {
+        allocation_failure_ = true;
+      } catch (...) {
+        unexpected_failure_ = true;
+      }
+      complete_.store(true, std::memory_order_release);
+    }
+
+    NativeQueryDispatcher* dispatcher_{};
+    std::uint64_t connection_id_{};
+    std::uint64_t request_id_{};
+    network::NetworkTask request_;
+    NativeQueryCancellation cancellation_;
+    std::optional<common::Result<NativeProtocolResponseSequence>> completion_;
+    bool suppress_response_{};
+    bool allocation_failure_{};
+    bool unexpected_failure_{};
+    std::atomic<bool> complete_{};
+    std::thread thread_;
+  };
+
   [[nodiscard]] common::Result<ReplicatedIngestServicePoll> publish(network::NetworkTask response) {
     if (pending_response.has_value())
       return common::make_unexpected(common::Status{
@@ -110,8 +192,13 @@ public:
   accept(network::NetworkTask request, const std::chrono::steady_clock::time_point now) {
     increment(stats.consumed_requests);
     if (request.frame.header.message_type == network::MessageType::kCancel) {
-      if (config.coordinator->cancel(request.connection_id, request.frame.header.request_id))
+      if (active_query != nullptr && active_query->matches(request)) {
+        active_query->cancel();
         increment(stats.cancelled_requests);
+      } else if (config.coordinator->cancel(request.connection_id,
+                                            request.frame.header.request_id)) {
+        increment(stats.cancelled_requests);
+      }
       return ReplicatedIngestServicePoll{};
     }
     if (request.frame.header.message_type == network::MessageType::kQueryRequest) {
@@ -124,16 +211,14 @@ public:
       if (config.queries == nullptr)
         return reject(std::move(request),
                       invalid("replicated native query service is not configured"));
-      auto result = config.queries->execute_query(std::move(request));
-      if (!result.has_value())
-        return common::make_unexpected(result.error());
-      if (result->responses.empty())
-        return common::make_unexpected(common::Status{
-            common::StatusCode::kInternal, "replicated native query returned no response"});
-      pending_sequence = std::move(result->responses);
-      next_sequence_response = 0U;
+      if (active_query != nullptr)
+        return reject(std::move(request), exhausted("replicated native query slot is occupied"));
+      auto started = ActiveQuery::start(*config.queries, std::move(request));
+      if (!started.has_value())
+        return common::make_unexpected(started.error());
+      active_query = std::move(*started);
       increment(stats.query_requests);
-      return publish_sequence();
+      return ReplicatedIngestServicePoll{};
     }
     if (request.frame.header.message_type != network::MessageType::kIngestRequest)
       return reject(std::move(request),
@@ -171,6 +256,21 @@ public:
       if (!accepted.has_value() || accepted->response_enqueued || pending_response.has_value())
         return accepted;
     }
+    if (active_query != nullptr && active_query->complete()) {
+      const bool suppress = active_query->response_suppressed();
+      auto completed = active_query->take_result();
+      active_query.reset();
+      if (suppress)
+        return ReplicatedIngestServicePoll{};
+      if (!completed.has_value())
+        return common::make_unexpected(completed.error());
+      if (completed->responses.empty())
+        return common::make_unexpected(common::Status{
+            common::StatusCode::kInternal, "replicated native query returned no response"});
+      pending_sequence = std::move(completed->responses);
+      next_sequence_response = 0U;
+      return publish_sequence();
+    }
     auto completed = config.coordinator->poll(now);
     if (!completed.has_value())
       return common::make_unexpected(completed.error());
@@ -187,6 +287,7 @@ public:
   std::optional<network::NetworkTask> pending_response;
   std::vector<network::NetworkTask> pending_sequence;
   std::size_t next_sequence_response{};
+  std::unique_ptr<ActiveQuery> active_query;
   ReplicatedIngestServiceMetrics stats;
   bool accepting{true};
 };
@@ -219,15 +320,18 @@ ReplicatedIngestService::poll_once(const std::chrono::steady_clock::time_point n
 }
 
 void ReplicatedIngestService::begin_shutdown() noexcept {
-  if (impl_)
+  if (impl_) {
     impl_->accepting = false;
+    if (impl_->active_query != nullptr)
+      impl_->active_query->cancel();
+  }
 }
 
 bool ReplicatedIngestService::drained() const noexcept {
   if (!impl_)
     return true;
   return impl_->config.requests->empty() && !impl_->pending_response.has_value() &&
-         impl_->pending_sequence.empty() &&
+         impl_->pending_sequence.empty() && impl_->active_query == nullptr &&
          impl_->config.coordinator->metrics().pending_requests == 0U;
 }
 
@@ -241,6 +345,7 @@ ReplicatedIngestServiceMetrics ReplicatedIngestService::metrics() const noexcept
   ReplicatedIngestServiceMetrics value = impl_->stats;
   value.accepting = impl_->accepting;
   value.response_retained = impl_->pending_response.has_value() || !impl_->pending_sequence.empty();
+  value.query_active = impl_->active_query != nullptr;
   return value;
 }
 
