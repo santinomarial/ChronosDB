@@ -129,6 +129,22 @@ DistributedMutableVectorRowsQueryTcpExecution::result() const noexcept {
   return result_;
 }
 
+common::Result<DistributedVectorRowsFinalizedResultV2>
+DistributedMutableVectorRowsQueryTcpExecution::take_result() {
+  try {
+    if (state_ != DistributedMutableVectorRowsQueryTcpExecutionState::kComplete ||
+        !result_.has_value()) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kUnavailable, "mutable vector rows query result is unavailable"});
+    }
+    DistributedVectorRowsFinalizedResultV2 result = std::move(*result_);
+    result_.reset();
+    return result;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("mutable vector rows result transfer failed"));
+  }
+}
+
 const common::Status& DistributedMutableVectorRowsQueryTcpExecution::failure() const noexcept {
   return failure_;
 }

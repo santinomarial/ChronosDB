@@ -1007,7 +1007,11 @@ were deliberately not run.
   now constructs the canonical tablet plan from those SQL semantics plus correlated current-leader
   authorities and returns the all-or-none bound/routed package. A move-only request owner now
   composes bounded mutual-TLS scheduling with exact-once all-tablet result transfer and global
-  Native row finalization; request-envelope/reactor wiring and process composition remain absent.
+  Native row finalization. The replicated Native service now joins a real request to correlated
+  read authorities, snapshot binding/lowering, fragment/route preparation, finite TCP execution,
+  and terminal response routing. Production worker-context provision, reactor-aware cancellation
+  and fresh authority rebinding, local-fragment execution, daemon composition, and multi-process
+  split-leader qualification remain absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
@@ -1025,10 +1029,10 @@ were deliberately not run.
 The exact subsystem/category ledger is
 [`deferred-validation.md`](../development/deferred-validation.md). Recommended order:
 
-1. Compose correlated authority acquisition and mutable fragment binding with the scheduler's
-   explicit rebind boundary, then add native SQL/result handling and extend the existing three-
-   process quorum-ingest/failover gate through applied read-barrier native SELECT and the remaining
-   real data-plane sequence.
+1. Compose the production database-to-worker context provider, local-fragment execution, daemon
+   configuration, and reactor-aware cancellation/fresh-authority rebinding, then extend the
+   existing three-process quorum-ingest/failover gate through applied read-barrier distributed
+   Native SELECT and the remaining real data-plane sequence.
 2. Specify database namespaces/catalog tombstones and placement-driven membership orchestration
    without changing Metadata Command v1 or Metadata Application Snapshot 1.0 bytes in place.
 3. Finish direct vector temporal winner lowering, mixed WAL/Raft recovery, durable retention

@@ -267,6 +267,11 @@ TEST(DistributedMutableVectorRowsQueryTcpExecutionTest,
   EXPECT_EQ(decoded->row_count(), 0U);
   ASSERT_EQ(decoded->columns().size(), 1U);
   EXPECT_EQ(decoded->columns().front().name, "value");
+  auto owned_result = execution->take_result();
+  ASSERT_TRUE(owned_result.has_value()) << owned_result.error().to_string();
+  EXPECT_EQ(owned_result->row_count, 0U);
+  EXPECT_FALSE(execution->result().has_value());
+  EXPECT_EQ(execution->take_result().error().code(), common::StatusCode::kUnavailable);
   EXPECT_EQ(worker.calls, 1U);
   EXPECT_EQ(execution->metrics().transport_completed_attempts, 1U);
 

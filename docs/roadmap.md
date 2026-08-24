@@ -1088,8 +1088,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   that product to the complete canonical tablet set and correlated current-leader authorities,
   then binds and routes the whole query without caller-built tablet authority. A move-only request
   owner now drives that routed fragment set through bounded mutual-TLS scheduling, consumes the
-  all-tablet result exactly once, and retains only globally finalized Native row payloads. Native
-  request-envelope/reactor wiring and split-leader process composition remain.
+  all-tablet result exactly once, and retains only globally finalized Native row payloads. The
+  replicated Native service now retains the correlated read authority and snapshot, lowers a real
+  request, drives that owner under a finite deadline, and moves only its terminal payloads back into
+  the original connection/principal/request route. Production worker-context provision,
+  reactor-aware cancellation and authority rebinding, local-fragment execution, daemon
+  configuration, and multi-process split-leader qualification remain.
   The packaged daemon now accepts an atomic native-server TLS credential
   and strict client-certificate-principal bundle, owns the immutable authority beyond its reactor
   borrow, permits non-loopback canonical IPv4 binding only in that mode, and fails closed instead of

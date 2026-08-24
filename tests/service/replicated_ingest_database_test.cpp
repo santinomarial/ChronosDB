@@ -10,6 +10,7 @@
 #include "chronos/raft/schema_definition_codec.hpp"
 #include "chronos/raft/tablet_group_binding_codec.hpp"
 #include "chronos/service/native_protocol_service.hpp"
+#include "chronos/service/replicated_distributed_mutable_vector_query_tcp_server.hpp"
 #include "chronos/service/replicated_ingest_database.hpp"
 #include "chronos/service/replicated_ingest_service.hpp"
 #include "chronos/service/replicated_read_barrier.hpp"
@@ -18,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <memory>
@@ -33,6 +35,74 @@
 
 namespace chronos::service {
 namespace {
+
+[[nodiscard]] std::filesystem::path network_fixture(const char* name) {
+  return std::filesystem::path{CHRONOS_NETWORK_FIXTURE_DIR} / "tls" / name;
+}
+
+[[nodiscard]] network::TlsServerConfig distributed_server_tls() {
+  return {.certificate_chain_file = network_fixture("server.pem").string(),
+          .private_key_file = network_fixture("server-key.pem").string(),
+          .trust_store_file = network_fixture("ca.pem").string()};
+}
+
+[[nodiscard]] network::TlsClientConfig distributed_client_tls() {
+  return {.certificate_chain_file = network_fixture("client.pem").string(),
+          .private_key_file = network_fixture("client-key.pem").string(),
+          .trust_store_file = network_fixture("ca.pem").string(),
+          .expected_server_identity = "127.0.0.1"};
+}
+
+class DistributedTestAuthenticator final : public network::ConnectionAuthenticator {
+public:
+  explicit DistributedTestAuthenticator(const std::uint64_t principal) : principal_(principal) {}
+
+  common::Result<network::PeerAuthenticationResult>
+  authenticate(const network::PeerAuthenticationRequest&) override {
+    return network::PeerAuthenticationResult{.authorized = true, .principal_id = principal_};
+  }
+
+private:
+  std::uint64_t principal_{};
+};
+
+class DistributedTestNodeAuthorizer final : public cluster::ClusterNodePrincipalAuthorizer {
+public:
+  common::Result<bool> authorize_node(const std::uint64_t principal,
+                                      const raft::NodeId node) const override {
+    return (principal == 91U && node == 9U) || (principal == 92U && node == 1U);
+  }
+};
+
+class DistributedTestContextProvider final
+    : public ReplicatedDistributedMutableVectorQueryWorkerContextProvider {
+public:
+  explicit DistributedTestContextProvider(
+      std::vector<ReplicatedDistributedMutableVectorQueryWorkerContext> contexts)
+      : contexts_(std::move(contexts)) {}
+
+  common::Result<ReplicatedDistributedMutableVectorQueryWorkerContext>
+  acquire(const query::DistributedMutableVectorFragment& fragment) override {
+    const auto context = std::ranges::find_if(
+        contexts_, [&](const ReplicatedDistributedMutableVectorQueryWorkerContext& candidate) {
+          return candidate.snapshot.tablet_id() == fragment.tablet_id &&
+                 candidate.raft_group_id == fragment.raft_group_id;
+        });
+    if (context == contexts_.end()) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kNotFound, "test worker context is unavailable"});
+    }
+    ++calls;
+    ReplicatedDistributedMutableVectorQueryWorkerContext result = *context;
+    result.local_linearizable_barrier = fragment.linearizable_barrier;
+    return result;
+  }
+
+  std::size_t calls{};
+
+private:
+  std::vector<ReplicatedDistributedMutableVectorQueryWorkerContext> contexts_;
+};
 
 class RecordingStartupObserver final : public ReplicatedIngestDatabaseStartupObserver {
 public:
@@ -840,7 +910,7 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   auto distributed_parsed =
       query::parse_sql_v1_select("SELECT tag AS label, ts, tag AS repeated FROM events "
                                  "WHERE ts >= TIMESTAMP '1970-01-01 00:00:00Z' "
-                                 "ORDER BY label DESC, ts LIMIT 1");
+                                 "ORDER BY label ASC, ts LIMIT 1");
   ASSERT_TRUE(distributed_parsed.has_value()) << distributed_parsed.error().status().to_string();
   auto distributed_bound =
       query::bind_sql_v1_select(std::move(*distributed_parsed), mutable_snapshot->catalog());
@@ -868,6 +938,129 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   }
   ASSERT_EQ(prepared_sql_query->routes.size(), 1U);
   EXPECT_EQ(prepared_sql_query->routes.front().node_id, 1U);
+
+  auto lineage = schema::SchemaLineage::create(*columnar::test::batch_schema());
+  ASSERT_TRUE(lineage.has_value()) << lineage.error().to_string();
+  auto retained_lineage = std::make_shared<const schema::SchemaLineage>(std::move(*lineage));
+  DistributedTestContextProvider context_provider{
+      {{.snapshot = *first_publication,
+        .lineage = retained_lineage,
+        .placement = {.table_id = columnar::test::batch_schema()->table_id(),
+                      .tablet_id = tablet_id(),
+                      .placement_epoch = 1U,
+                      .replicas = {1U},
+                      .leader_hint = 1U},
+        .raft_group_id = tablet_group()},
+       {.snapshot = *second_publication,
+        .lineage = retained_lineage,
+        .placement = {.table_id = columnar::test::batch_schema()->table_id(),
+                      .tablet_id = second_tablet_id(),
+                      .placement_epoch = 1U,
+                      .replicas = {1U},
+                      .leader_hint = 1U},
+        .raft_group_id = second_tablet_group()}}};
+  DistributedTestNodeAuthorizer node_authorizer;
+  DistributedTestAuthenticator inbound_authenticator{91U};
+  const cluster::DistributedMutableVectorQueryTlsLimits distributed_carrier{
+      .handshake_timeout = std::chrono::milliseconds{1000},
+      .exchange_timeout = std::chrono::milliseconds{1000},
+      .maximum_response_frames = 4U,
+      .maximum_response_bytes = std::size_t{1024U} * 1024U};
+  auto distributed_server = ReplicatedDistributedMutableVectorQueryTcpServer::start(
+      {.worker = {.local_node_id = 1U, .context_provider = &context_provider},
+       .listener = {.bind_endpoint = {{127U, 0U, 0U, 1U}, 7411U}},
+       .tls = distributed_server_tls(),
+       .authenticator = &inbound_authenticator,
+       .node_authorizer = &node_authorizer,
+       .carrier_limits = distributed_carrier,
+       .maximum_connections = 4U,
+       .maximum_accepts_per_poll = 4U});
+  ASSERT_TRUE(distributed_server.has_value()) << distributed_server.error().to_string();
+  auto client_context = network::TlsClientContext::create(distributed_client_tls());
+  ASSERT_TRUE(client_context.has_value()) << client_context.error().to_string();
+  const std::array distributed_tls_contexts{cluster::DistributedQueryNodeTlsContext{
+      .node_id = 1U, .tls_context = std::addressof(*client_context)}};
+  DistributedTestAuthenticator outbound_authenticator{92U};
+  const NativeDistributedMutableVectorRowsQueryConfig distributed_config{
+      .source_node_id = 9U,
+      .authenticator = &outbound_authenticator,
+      .node_authorizer = &node_authorizer,
+      .tls_contexts = distributed_tls_contexts,
+      .execution = {.sender = {.retry = {.maximum_attempts = 1U},
+                               .maximum_response_frames = 4U,
+                               .maximum_response_bytes = std::size_t{1024U} * 1024U}},
+      .carrier = distributed_carrier,
+      .finalization = {.output_batch = {.maximum_rows = 2U}},
+      .connect_timeout = std::chrono::milliseconds{1000},
+      .execution_timeout = std::chrono::milliseconds{5000},
+      .maximum_poll_wait = std::chrono::milliseconds{1}};
+  NativeProtocolService distributed_native{*database, *read_barrier, distributed_config};
+  std::atomic<bool> stop_server{};
+  std::atomic<bool> server_failed{};
+  std::thread server_thread{[&] {
+    while (!stop_server.load(std::memory_order_acquire)) {
+      if (!distributed_server->poll_once(std::chrono::milliseconds{1}).is_ok()) {
+        server_failed.store(true, std::memory_order_release);
+        return;
+      }
+    }
+  }};
+  auto native_distributed = distributed_native.execute_query(
+      query_request("SELECT tag AS label, ts, tag AS repeated FROM events "
+                    "WHERE ts >= TIMESTAMP '1970-01-01 00:00:00Z' "
+                    "ORDER BY label ASC, ts LIMIT 1"));
+  stop_server.store(true, std::memory_order_release);
+  server_thread.join();
+  ASSERT_FALSE(server_failed.load(std::memory_order_acquire));
+  ASSERT_TRUE(native_distributed.has_value()) << native_distributed.error().to_string();
+  if (native_distributed->responses.size() == 1U &&
+      native_distributed->responses.front().frame.header.message_type ==
+          network::MessageType::kError) {
+    auto error = network::decode_error_message(native_distributed->responses.front().frame.payload);
+    ASSERT_TRUE(error.has_value());
+    std::string message;
+    message.reserve(error->message.size());
+    for (const std::byte byte : error->message)
+      message.push_back(static_cast<char>(byte));
+    ADD_FAILURE() << "distributed Native query returned error: " << message;
+  }
+  ASSERT_EQ(native_distributed->responses.size(), 2U);
+  EXPECT_EQ(native_distributed->result_rows, 1U);
+  for (const network::NetworkTask& response : native_distributed->responses) {
+    EXPECT_EQ(response.connection_id, 21U);
+    EXPECT_EQ(response.principal_id, 19U);
+    EXPECT_EQ(response.frame.header.request_id, 4U);
+  }
+  EXPECT_EQ(native_distributed->responses[0].frame.header.message_type,
+            network::MessageType::kQueryResult);
+  auto native_batch =
+      network::decode_query_result_batch(native_distributed->responses[0].frame.payload);
+  ASSERT_TRUE(native_batch.has_value()) << native_batch.error().to_string();
+  EXPECT_EQ(native_batch->row_count(), 1U);
+  ASSERT_EQ(native_batch->columns().size(), 3U);
+  EXPECT_EQ(native_batch->columns()[0].name, "label");
+  EXPECT_EQ(native_batch->columns()[1].name, "ts");
+  EXPECT_EQ(native_batch->columns()[2].name, "repeated");
+  const network::QueryResultCell* label = native_batch->cell(0U, 0U);
+  const network::QueryResultCell* timestamp = native_batch->cell(0U, 1U);
+  const network::QueryResultCell* repeated = native_batch->cell(0U, 2U);
+  ASSERT_NE(label, nullptr);
+  ASSERT_NE(timestamp, nullptr);
+  ASSERT_NE(repeated, nullptr);
+  EXPECT_FALSE(label->is_null);
+  EXPECT_FALSE(timestamp->is_null);
+  EXPECT_FALSE(repeated->is_null);
+  ASSERT_EQ(label->value.size(), 1U);
+  EXPECT_EQ(label->value.front(), std::byte{'x'});
+  EXPECT_TRUE(std::ranges::equal(repeated->value, label->value));
+  common::ByteReader timestamp_reader{timestamp->value};
+  const auto timestamp_value = timestamp_reader.read_i64_le();
+  ASSERT_TRUE(timestamp_value.has_value());
+  EXPECT_EQ(*timestamp_value, 0);
+  EXPECT_EQ(native_distributed->responses[1].frame.header.message_type,
+            network::MessageType::kQueryEnd);
+  EXPECT_EQ(context_provider.calls, 2U);
+  ASSERT_TRUE(distributed_server->shutdown().is_ok());
   auto nil_sql_query = mutable_snapshot->prepare_linearizable_mutable_vector_rows_query(
       {.query_id = {}, .sql_plan = std::cref(*distributed_sql), .group_authorities = *authorities},
       mutable_tls_contexts);

@@ -399,6 +399,21 @@ TEST(DistributedMutableVectorRowsQueryTcpExecutionAllocationFailureTest,
   }
   EXPECT_TRUE(saw_failure);
   EXPECT_TRUE(saw_success);
+
+  DistributedMutableVectorRowsQueryTcpExecutionConfig transfer_config{
+      .source_node_id = 1U,
+      .tcp = {.authenticator = &authenticator,
+              .node_authorizer = &authorizer,
+              .routes = {{.node_id = 7U,
+                          .endpoints = {listener->bound_endpoint()},
+                          .tls_context = std::addressof(*tls_context)}}}};
+  auto owner = DistributedMutableVectorRowsQueryTcpExecution::create({fragment()},
+                                                                     std::move(transfer_config));
+  ASSERT_TRUE(owner.has_value()) << owner.error().to_string();
+  auto unavailable_failure = run_failure(0U, [&] { return owner->take_result(); });
+  ASSERT_FALSE(unavailable_failure.has_value());
+  EXPECT_EQ(unavailable_failure.error().code(), common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(owner->take_result().error().code(), common::StatusCode::kUnavailable);
 }
 
 } // namespace

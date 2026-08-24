@@ -13,3 +13,7 @@ static_assert(std::is_constructible_v<chronos::service::NativeProtocolService,
 static_assert(std::is_constructible_v<chronos::service::NativeProtocolService,
                                       chronos::service::ReplicatedIngestDatabase&,
                                       chronos::service::ReplicatedReadBarrier&>);
+static_assert(std::is_constructible_v<
+              chronos::service::NativeProtocolService, chronos::service::ReplicatedIngestDatabase&,
+              chronos::service::ReplicatedReadBarrier&,
+              const chronos::service::NativeDistributedMutableVectorRowsQueryConfig&>);

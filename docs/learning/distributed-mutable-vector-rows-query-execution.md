@@ -8,6 +8,12 @@ and finalization limits. `poll_once` advances network work and performs terminal
 `cancel`, `rebind`, `suggested_leader`, state, metrics, failure, and result observation expose the
 request lifecycle without exposing mutable internal authority.
 
+The optional `NativeDistributedMutableVectorRowsQueryConfig` constructor on
+`NativeProtocolService` composes this owner with a real replicated `QUERY_REQUEST`. The service
+retains correlated group authorities and a matching query snapshot, binds and lowers the supported
+SQL row subset, asks the snapshot for the all-tablet fragment/route package, and drives the owner to
+one terminal Native response sequence.
+
 ## Data structures and ownership
 
 The owner stores the source node and portable-execution limits needed for a possible fresh rebind,
@@ -35,6 +41,13 @@ Every method is serialized by one caller thread. The class performs no atomic pu
 no memory-ordering argument. Borrowed security and TLS owners must outlive both execution and any
 rebind.
 
+The service-level config is also borrowed. Its source node is a coordinator transport identity and
+cannot equal a routed worker node. Its TLS-context span and every referenced client context must
+remain stable for the entire service lifetime. The current service bridge is synchronous and uses
+bounded polls under one finite deadline. It disables rebinding because safe rebinding requires a
+fresh all-group read-authority acquisition and correlation policy, and it cannot observe a later
+Native cancellation request while the call owns the service thread.
+
 ## Complexity and tradeoffs
 
 Creation inherits `O(tablets log tablets + routes log routes)` validation and indexing. Each poll is
@@ -50,6 +63,12 @@ payload. Negative coverage proves that finalization failure suppresses output; a
 tests cover split leaders, retries, deadlines, cancellation, and fresh-authority rebinding.
 Allocation injection covers construction and the finalizer separately.
 
+The Native integration gate uses a replicated two-tablet snapshot and a real production worker TCP
+server over mutual TLS. It submits projected, filtered, globally ordered and limited SQL, then
+decodes the returned Native payload and checks its schema, row, and `QUERY_END`. The test context
+provider is a controlled authority seam for that integration; production database-to-worker
+context provision and daemon composition remain explicit follow-on boundaries.
+
 Useful interview questions include:
 
 1. Why does the scheduler need a consuming result API instead of returning a const reference?
@@ -58,3 +77,6 @@ Useful interview questions include:
 4. Which objects own sockets, encoded messages, and final Native payloads, and which objects are
    borrowed?
 5. Why is the composite constructor not `noexcept`, even though moves of the owner are `noexcept`?
+6. Why does the Native bridge disable redirects and fresh-authority rebinding when distributed
+   execution is configured?
+7. Which cancellation behavior changes when a synchronous request handler owns network polling?

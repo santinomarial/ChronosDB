@@ -56,6 +56,8 @@ public:
   [[nodiscard]] DistributedMutableVectorQueryTcpExecutionMetrics metrics() const noexcept;
   [[nodiscard]] const std::optional<DistributedVectorRowsFinalizedResultV2>&
   result() const noexcept;
+  // Transfers the finalized Native payload set exactly once. The execution remains terminal.
+  [[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2> take_result();
   [[nodiscard]] const common::Status& failure() const noexcept;
   [[nodiscard]] common::Result<std::optional<DistributedQueryLeaderHint>>
   suggested_leader(const schema::TabletId& tablet_id) const;
