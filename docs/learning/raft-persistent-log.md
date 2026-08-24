@@ -148,6 +148,9 @@ base, and leaves it unchanged rather than treating its filename as authority.
 A complementary database-owner case retains the anchor but damages the selected segment-2 header.
 Repeated recovery validates the anchor, rejects the exact retained-header checksum, releases the
 owner, and preserves both images; anchor selection cannot bypass retained-byte integrity.
+A retained-record companion damages the first complete checkpoint payload instead. Repeated
+recovery rejects the exact payload checksum, releases ownership, preserves both images, and does not
+recreate segment 1; anchor selection cannot turn complete record corruption into repairable tail.
 
 The recovery-layout matrix checks a different dimension: target-size arithmetic and latest-state
 selection. A canonical state encodes to 213 bytes. Eight targets straddle the exact one-, two-,

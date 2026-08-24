@@ -60,3 +60,6 @@ The complementary portable case leaves the anchor intact and damages a checksum-
 segment 2's header. Two owner reopens return the exact header-checksum corruption, release ownership,
 and preserve the anchor and damaged segment, proving the anchor never replaces retained-byte
 validation.
+A retained-record companion damages the first complete checkpoint payload in segment 2. Two owner
+reopens return the exact payload-checksum corruption, release ownership, preserve both authority
+files, and never reconstruct reclaimed segment 1.

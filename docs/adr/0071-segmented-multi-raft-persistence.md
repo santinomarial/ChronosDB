@@ -132,6 +132,9 @@ instead of adopting segment 2 as unanchored history, and preserves the retained 
 A second portable case keeps the anchor intact but damages its retained segment header. Two database
 reopens require the exact header-checksum failure, release ownership, and preserve both authority
 files without falling back to the reclaimed prefix.
+A third portable case damages the first complete checkpoint-record payload in that retained segment.
+Two database reopens require the exact payload-checksum failure, release ownership, preserve the
+anchor and damaged segment, and do not recreate the reclaimed prefix.
 
 A separate 24-case recovery matrix fixes the encoded record size at 213 bytes and crosses segment
 targets `277`, `278`, `489`, `490`, `491`, `702`, `703`, and `1024` with 1, 3, and 8 logical groups.

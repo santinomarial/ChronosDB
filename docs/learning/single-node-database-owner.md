@@ -140,6 +140,9 @@ twice requires the exact absent-base diagnostic with ownership release, and pres
 When the anchor remains valid but segment 2's header is damaged, two startup attempts instead return
 its exact checksum failure before projection and preserve both files. The owner never treats anchor
 validity as permission to skip retained-history validation or fall back.
+The matching complete-record case damages the first checkpoint payload. Two startup attempts return
+the exact payload-checksum failure before projection, release ownership, preserve both authority
+files, and do not recreate reclaimed segment 1.
 
 Malformed transport/command bytes become client-invalid protocol errors. Database corruption stays
 distinguishable as an internal error; I/O, unavailability, and unsupported operations are execution

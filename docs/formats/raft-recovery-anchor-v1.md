@@ -84,6 +84,10 @@ retained segment-2 header. Two database starts report the exact segment-header c
 release ownership, and preserve both anchor and damaged segment. Anchor validity never substitutes
 for validation of the retained checkpoint bytes it selects.
 
+A retained-record companion flips one payload byte in the first complete checkpoint record. Two
+database starts report `multiplexed log payload checksum mismatch`, release ownership, preserve the
+anchor and damaged segment, and do not recreate reclaimed segment 1.
+
 Unknown files, nonregular entries, a damaged authoritative anchor, or damage in retained history
 remain corruption. Recovery does not fall back to an older anchor after the newest authority is
 damaged.

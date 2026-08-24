@@ -11,6 +11,7 @@
 #include "chronos/query/tablet_state_pipeline.hpp"
 #include "chronos/raft/durable_runtime.hpp"
 #include "chronos/raft/metadata_codec.hpp"
+#include "chronos/raft/multiplexed_log.hpp"
 #include "chronos/raft/persistent_log.hpp"
 #include "chronos/raft/schema_definition_codec.hpp"
 #include "chronos/service/native_protocol_service.hpp"
@@ -138,6 +139,48 @@ constexpr std::string_view kCreateSql =
   return {.bootstrap = {.database_root = directory.path().string(), .new_database = descriptor()},
           .wal_recovery = {.repair_incomplete_final_tail = false},
           .raft_recovery = {.repair_incomplete_final_tail = false}};
+}
+
+struct AnchoredMetadataLog {
+  std::filesystem::path raft_directory;
+  std::filesystem::path anchor;
+  std::filesystem::path retained_segment;
+  std::filesystem::path reclaimed_segment;
+  bool ready{};
+};
+
+void provision_anchored_metadata_log(const TemporaryDirectory& directory,
+                                     AnchoredMetadataLog& output) {
+  auto created = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  ASSERT_TRUE(created->shutdown().is_ok());
+
+  const std::filesystem::path raft_directory =
+      directory.path() / runtime::kDatabaseRaftDirectoryName;
+  auto log = raft::RaftPersistentLog::open_existing(
+      {.directory_path = raft_directory.string(),
+       .target_segment_size = descriptor().raft_segment_target_bytes});
+  ASSERT_TRUE(log.has_value()) << log.error().to_string();
+  std::vector<raft::GroupPersistentState> checkpoint = log->recovery().latest_group_states;
+  ASSERT_EQ(checkpoint.size(), 1U);
+  checkpoint.front().physical_sequence = log->written_position().physical_sequence + 1U;
+  auto reclaimed = log->checkpoint_and_reclaim(checkpoint);
+  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  ASSERT_EQ(reclaimed->base_segment_number, 2U);
+  ASSERT_TRUE(log->close().is_ok());
+
+  auto anchored = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(anchored.has_value()) << anchored.error().to_string();
+  ASSERT_TRUE(anchored->shutdown().is_ok());
+
+  output.raft_directory = raft_directory;
+  output.anchor = raft_directory / "raft-base-00000000000000000002.rbase";
+  output.retained_segment = raft_directory / "raft-00000000000000000002.rlog";
+  output.reclaimed_segment = raft_directory / "raft-00000000000000000001.rlog";
+  ASSERT_TRUE(std::filesystem::is_regular_file(output.anchor));
+  ASSERT_TRUE(std::filesystem::is_regular_file(output.retained_segment));
+  ASSERT_FALSE(std::filesystem::exists(output.reclaimed_segment));
+  output.ready = true;
 }
 
 [[nodiscard]] schema::TabletId tablet_id() {
@@ -338,43 +381,19 @@ TEST(SingleNodeDatabaseTest, CreatesAndReopensAnEmptyDatabaseWithoutConfiguredTa
 
 TEST(SingleNodeDatabaseTest, RejectsMissingAuthoritativeRaftAnchorWithoutAdoptingRetainedBase) {
   TemporaryDirectory directory;
-  auto created = SingleNodeDatabase::open_or_create(config(directory));
-  ASSERT_TRUE(created.has_value()) << created.error().to_string();
-  ASSERT_TRUE(created->shutdown().is_ok());
-
-  const std::filesystem::path raft_directory =
-      directory.path() / runtime::kDatabaseRaftDirectoryName;
-  auto log = raft::RaftPersistentLog::open_existing(
-      {.directory_path = raft_directory.string(),
-       .target_segment_size = descriptor().raft_segment_target_bytes});
-  ASSERT_TRUE(log.has_value()) << log.error().to_string();
-  std::vector<raft::GroupPersistentState> checkpoint = log->recovery().latest_group_states;
-  ASSERT_EQ(checkpoint.size(), 1U);
-  checkpoint.front().physical_sequence = log->written_position().physical_sequence + 1U;
-  auto reclaimed = log->checkpoint_and_reclaim(checkpoint);
-  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
-  ASSERT_EQ(reclaimed->base_segment_number, 2U);
-  ASSERT_TRUE(log->close().is_ok());
-
-  auto anchored = SingleNodeDatabase::open_or_create(config(directory));
-  ASSERT_TRUE(anchored.has_value()) << anchored.error().to_string();
-  ASSERT_TRUE(anchored->shutdown().is_ok());
-
-  const std::filesystem::path anchor = raft_directory / "raft-base-00000000000000000002.rbase";
-  const std::filesystem::path retained_segment = raft_directory / "raft-00000000000000000002.rlog";
-  const std::filesystem::path reclaimed_segment = raft_directory / "raft-00000000000000000001.rlog";
-  ASSERT_TRUE(std::filesystem::is_regular_file(anchor));
-  ASSERT_FALSE(std::filesystem::exists(reclaimed_segment));
-  const std::string pristine_segment = read_binary_file(retained_segment);
+  AnchoredMetadataLog anchored;
+  provision_anchored_metadata_log(directory, anchored);
+  ASSERT_TRUE(anchored.ready);
+  const std::string pristine_segment = read_binary_file(anchored.retained_segment);
   ASSERT_GT(pristine_segment.size(), raft::kRaftSegmentHeaderSize);
 
-  ASSERT_EQ(::unlink(anchor.c_str()), 0);
+  ASSERT_EQ(::unlink(anchored.anchor.c_str()), 0);
   const int raft_directory_file =
-      ::open(raft_directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+      ::open(anchored.raft_directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
   ASSERT_GE(raft_directory_file, 0);
   ASSERT_EQ(::fsync(raft_directory_file), 0);
   ASSERT_EQ(::close(raft_directory_file), 0);
-  ASSERT_FALSE(std::filesystem::exists(anchor));
+  ASSERT_FALSE(std::filesystem::exists(anchored.anchor));
 
   for (std::size_t attempt = 0U; attempt < 2U; ++attempt) {
     SCOPED_TRACE(attempt);
@@ -383,56 +402,35 @@ TEST(SingleNodeDatabaseTest, RejectsMissingAuthoritativeRaftAnchorWithoutAdoptin
     EXPECT_EQ(missing.error().code(), common::StatusCode::kCorruption);
     EXPECT_NE(missing.error().to_string().find("Raft recovery base segment is absent"),
               std::string::npos);
-    EXPECT_FALSE(std::filesystem::exists(anchor));
-    EXPECT_EQ(read_binary_file(retained_segment), pristine_segment);
+    EXPECT_FALSE(std::filesystem::exists(anchored.anchor));
+    EXPECT_EQ(read_binary_file(anchored.retained_segment), pristine_segment);
+    EXPECT_FALSE(std::filesystem::exists(anchored.reclaimed_segment));
   }
 }
 
 TEST(SingleNodeDatabaseTest, RejectsCorruptAnchoredRaftSegmentWithoutFallbackOrRewrite) {
   TemporaryDirectory directory;
-  auto created = SingleNodeDatabase::open_or_create(config(directory));
-  ASSERT_TRUE(created.has_value()) << created.error().to_string();
-  ASSERT_TRUE(created->shutdown().is_ok());
-
-  const std::filesystem::path raft_directory =
-      directory.path() / runtime::kDatabaseRaftDirectoryName;
-  auto log = raft::RaftPersistentLog::open_existing(
-      {.directory_path = raft_directory.string(),
-       .target_segment_size = descriptor().raft_segment_target_bytes});
-  ASSERT_TRUE(log.has_value()) << log.error().to_string();
-  std::vector<raft::GroupPersistentState> checkpoint = log->recovery().latest_group_states;
-  ASSERT_EQ(checkpoint.size(), 1U);
-  checkpoint.front().physical_sequence = log->written_position().physical_sequence + 1U;
-  auto reclaimed = log->checkpoint_and_reclaim(checkpoint);
-  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
-  ASSERT_EQ(reclaimed->base_segment_number, 2U);
-  ASSERT_TRUE(log->close().is_ok());
-
-  auto anchored = SingleNodeDatabase::open_or_create(config(directory));
-  ASSERT_TRUE(anchored.has_value()) << anchored.error().to_string();
-  ASSERT_TRUE(anchored->shutdown().is_ok());
-
-  const std::filesystem::path anchor = raft_directory / "raft-base-00000000000000000002.rbase";
-  const std::filesystem::path retained_segment = raft_directory / "raft-00000000000000000002.rlog";
-  const std::filesystem::path reclaimed_segment = raft_directory / "raft-00000000000000000001.rlog";
-  const std::string pristine_anchor = read_binary_file(anchor);
+  AnchoredMetadataLog anchored;
+  provision_anchored_metadata_log(directory, anchored);
+  ASSERT_TRUE(anchored.ready);
+  const std::string pristine_anchor = read_binary_file(anchored.anchor);
   ASSERT_EQ(pristine_anchor.size(), 64U);
-  const std::string pristine_segment = read_binary_file(retained_segment);
+  const std::string pristine_segment = read_binary_file(anchored.retained_segment);
   ASSERT_GT(pristine_segment.size(), raft::kRaftSegmentHeaderSize);
-  ASSERT_FALSE(std::filesystem::exists(reclaimed_segment));
 
   constexpr std::size_t kCoveredSegmentNumberByte = 16U;
   std::string corrupted_segment = pristine_segment;
   corrupted_segment.at(kCoveredSegmentNumberByte) = static_cast<char>(
       static_cast<unsigned char>(corrupted_segment.at(kCoveredSegmentNumberByte)) ^ 1U);
-  const int segment_file = ::open(retained_segment.c_str(), O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+  const int segment_file =
+      ::open(anchored.retained_segment.c_str(), O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
   ASSERT_GE(segment_file, 0);
   ASSERT_EQ(::pwrite(segment_file, corrupted_segment.data() + kCoveredSegmentNumberByte, 1U,
                      static_cast<off_t>(kCoveredSegmentNumberByte)),
             static_cast<ssize_t>(1));
   ASSERT_EQ(::fsync(segment_file), 0);
   ASSERT_EQ(::close(segment_file), 0);
-  ASSERT_EQ(read_binary_file(retained_segment), corrupted_segment);
+  ASSERT_EQ(read_binary_file(anchored.retained_segment), corrupted_segment);
 
   for (std::size_t attempt = 0U; attempt < 2U; ++attempt) {
     SCOPED_TRACE(attempt);
@@ -441,9 +439,47 @@ TEST(SingleNodeDatabaseTest, RejectsCorruptAnchoredRaftSegmentWithoutFallbackOrR
     EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
     EXPECT_NE(rejected.error().to_string().find("Raft segment header checksum mismatch"),
               std::string::npos);
-    EXPECT_EQ(read_binary_file(anchor), pristine_anchor);
-    EXPECT_EQ(read_binary_file(retained_segment), corrupted_segment);
-    EXPECT_FALSE(std::filesystem::exists(reclaimed_segment));
+    EXPECT_EQ(read_binary_file(anchored.anchor), pristine_anchor);
+    EXPECT_EQ(read_binary_file(anchored.retained_segment), corrupted_segment);
+    EXPECT_FALSE(std::filesystem::exists(anchored.reclaimed_segment));
+  }
+}
+
+TEST(SingleNodeDatabaseTest, RejectsCorruptAnchoredRaftRecordWithoutFallbackOrRewrite) {
+  TemporaryDirectory directory;
+  AnchoredMetadataLog anchored;
+  provision_anchored_metadata_log(directory, anchored);
+  ASSERT_TRUE(anchored.ready);
+  const std::string pristine_anchor = read_binary_file(anchored.anchor);
+  ASSERT_EQ(pristine_anchor.size(), 64U);
+  const std::string pristine_segment = read_binary_file(anchored.retained_segment);
+  constexpr std::size_t kFirstCheckpointPayloadByte =
+      raft::kRaftSegmentHeaderSize + raft::kMultiplexedLogHeaderSize;
+  ASSERT_GT(pristine_segment.size(), kFirstCheckpointPayloadByte);
+
+  std::string corrupted_segment = pristine_segment;
+  corrupted_segment.at(kFirstCheckpointPayloadByte) = static_cast<char>(
+      static_cast<unsigned char>(corrupted_segment.at(kFirstCheckpointPayloadByte)) ^ 1U);
+  const int segment_file =
+      ::open(anchored.retained_segment.c_str(), O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+  ASSERT_GE(segment_file, 0);
+  ASSERT_EQ(::pwrite(segment_file, corrupted_segment.data() + kFirstCheckpointPayloadByte, 1U,
+                     static_cast<off_t>(kFirstCheckpointPayloadByte)),
+            static_cast<ssize_t>(1));
+  ASSERT_EQ(::fsync(segment_file), 0);
+  ASSERT_EQ(::close(segment_file), 0);
+  ASSERT_EQ(read_binary_file(anchored.retained_segment), corrupted_segment);
+
+  for (std::size_t attempt = 0U; attempt < 2U; ++attempt) {
+    SCOPED_TRACE(attempt);
+    auto rejected = SingleNodeDatabase::open_or_create(config(directory));
+    ASSERT_FALSE(rejected.has_value());
+    EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
+    EXPECT_NE(rejected.error().to_string().find("multiplexed log payload checksum mismatch"),
+              std::string::npos);
+    EXPECT_EQ(read_binary_file(anchored.anchor), pristine_anchor);
+    EXPECT_EQ(read_binary_file(anchored.retained_segment), corrupted_segment);
+    EXPECT_FALSE(std::filesystem::exists(anchored.reclaimed_segment));
   }
 }
 

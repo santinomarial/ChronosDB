@@ -961,10 +961,10 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   fields, truncations, and retained-history combinations remain deferred. A portable aggregate-owner
   case also removes the authoritative anchor after segment-1 reclamation, twice requires the exact
   absent-base corruption with ownership release, and preserves segment 2; packaged missing-anchor
-  qualification remains deferred. A companion portable case retains the valid anchor, corrupts one
-  covered segment-2 header field, and twice rejects that exact checksum failure without rewriting
-  either file; other retained-record, truncation, and packaged anchored-history combinations remain
-  deferred.
+  qualification remains deferred. Companion portable cases retain the valid anchor, corrupt either
+  one covered segment-2 header field or the first complete checkpoint-record payload, and twice
+  reject the exact checksum failure without rewriting either file or recreating segment 1; other
+  record fields, truncations, and packaged anchored-history combinations remain deferred.
   A minimal one-byte Raft final-tail case now proves packaged startup does not authorize repair and
   preserves the suffix; other tail shapes and authorized packaged repair remain deferred.
   One synchronized unknown regular Raft-directory entry now proves startup fails before admission

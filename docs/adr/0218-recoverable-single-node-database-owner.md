@@ -83,6 +83,9 @@ Portable owner coverage also deletes the authoritative anchor after prefix recla
 rejects the otherwise valid retained segment before projection rather than inventing a new base.
 The complementary retained-history case keeps the anchor valid, damages its base segment header,
 and proves repeated startup fails before projection without fallback or rewriting either file.
+A second retained-history case damages the first complete checkpoint-record payload. Repeated
+startup fails on its payload checksum before projection, releases ownership, preserves both files,
+and does not recreate reclaimed history.
 
 ## References
 
