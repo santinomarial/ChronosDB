@@ -1,3 +1,4 @@
+#include "chronos/common/byte_reader.hpp"
 #include "chronos/common/uuid.hpp"
 #include "chronos/query/catalog.hpp"
 #include "chronos/query/distributed_sql_lowering.hpp"
@@ -153,6 +154,50 @@ TEST(DistributedSqlLoweringTest, CarriesAndHidesAnUnselectedDirectOrderColumn) {
   EXPECT_EQ(lowered->result_schema.columns[1].name, "ts");
 }
 
+TEST(DistributedSqlLoweringTest, OwnsSourceIndependentOutputsAndARealRowAnchor) {
+  BoundSqlSelect mixed =
+      bind("SELECT 7 AS seven, upper('ok') AS word, label AS source_label FROM metrics "
+           "ORDER BY ts DESC LIMIT 2");
+  auto lowered = lower_bound_sql_select_to_distributed_vector_rows(mixed);
+  ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
+  EXPECT_EQ(lowered->destination_column_ordinals, (std::vector<std::uint32_t>{1U, 0U}));
+  EXPECT_EQ(lowered->intent.row_output_indices, (std::vector<std::uint32_t>{0U, 1U}));
+  EXPECT_TRUE(lowered->intent.visible_row_output_indices.empty());
+  ASSERT_EQ(lowered->intent.order_keys.size(), 1U);
+  EXPECT_EQ(lowered->intent.order_keys.front().output_index, 1U);
+  ASSERT_TRUE(lowered->coordinator_projection.has_value());
+  const auto& projection = *lowered->coordinator_projection;
+  ASSERT_EQ(projection.outputs.size(), 3U);
+  const auto& seven = std::get<DistributedVectorRowConstantOutput>(projection.outputs[0]);
+  common::ByteReader seven_reader{seven.canonical_value};
+  EXPECT_FALSE(seven.is_null);
+  EXPECT_EQ(seven_reader.read_i64_le(), 7);
+  const auto& word = std::get<DistributedVectorRowConstantOutput>(projection.outputs[1]);
+  EXPECT_EQ(std::string_view(reinterpret_cast<const char*>(word.canonical_value.data()),
+                             word.canonical_value.size()),
+            "OK");
+  EXPECT_EQ(std::get<DistributedVectorRowSourceOutput>(projection.outputs[2]).worker_output_index,
+            0U);
+  ASSERT_EQ(projection.result_schema.columns.size(), 3U);
+  EXPECT_EQ(projection.result_schema.columns[0].name, "seven");
+  EXPECT_EQ(projection.result_schema.columns[1].name, "word");
+  EXPECT_EQ(projection.result_schema.columns[2].name, "source_label");
+
+  BoundSqlSelect constants =
+      bind("SELECT CAST(42 AS INT32) AS answer, CAST(NULL AS STRING) AS missing FROM metrics");
+  auto anchored = lower_bound_sql_select_to_distributed_vector_rows(constants);
+  ASSERT_TRUE(anchored.has_value()) << anchored.error().status().to_string();
+  EXPECT_EQ(anchored->destination_column_ordinals, (std::vector<std::uint32_t>{0U}));
+  EXPECT_EQ(anchored->intent.row_output_indices, (std::vector<std::uint32_t>{0U}));
+  ASSERT_EQ(anchored->result_schema.columns.size(), 1U);
+  EXPECT_EQ(anchored->result_schema.columns.front().name, "ts");
+  ASSERT_TRUE(anchored->coordinator_projection.has_value());
+  const auto& missing =
+      std::get<DistributedVectorRowConstantOutput>(anchored->coordinator_projection->outputs[1]);
+  EXPECT_TRUE(missing.is_null);
+  EXPECT_TRUE(missing.canonical_value.empty());
+}
+
 TEST(DistributedSqlLoweringTest, RejectsEveryUnsupportedSemanticWithoutFallback) {
   const std::vector<std::string_view> statements{
       "SELECT value + 1 AS v FROM metrics",
@@ -203,6 +248,12 @@ TEST(DistributedSqlLoweringTest, EnforcesCallerBoundsBeforePublishingAPlan) {
       lower_bound_sql_select_to_distributed_vector_rows(hidden, {.maximum_output_columns = 1U});
   ASSERT_FALSE(hidden_output.has_value());
   EXPECT_EQ(hidden_output.error().status().code(), common::StatusCode::kResourceExhausted);
+
+  BoundSqlSelect constant = bind("SELECT 'too large' AS value FROM metrics");
+  auto constant_bytes =
+      lower_bound_sql_select_to_distributed_vector_rows(constant, {.maximum_constant_bytes = 2U});
+  ASSERT_FALSE(constant_bytes.has_value());
+  EXPECT_EQ(constant_bytes.error().status().code(), common::StatusCode::kResourceExhausted);
 }
 
 TEST(DistributedSqlLoweringTest, OwnsCanonicalGlobalAggregateProjectionPredicateAndSchema) {

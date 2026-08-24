@@ -1,5 +1,6 @@
 #include "chronos/cluster/distributed_vector_row_finalization_v2.hpp"
 #include "chronos/common/byte_reader.hpp"
+#include "chronos/query/distributed_sql_lowering.hpp"
 
 #include <algorithm>
 #include <array>
@@ -212,6 +213,58 @@ TEST(DistributedVectorRowFinalizationV2Test, SortsByHiddenOutputAndPublishesOnly
     ASSERT_NE(cell, nullptr);
     EXPECT_TRUE(std::ranges::equal(cell->value, std::as_bytes(std::span{expected[row]})));
   }
+}
+
+TEST(DistributedVectorRowFinalizationV2Test,
+     ProjectsSourceAndCanonicalConstantsAfterGlobalOrderAndLimit) {
+  auto plan = row_plan();
+  plan.order_keys = {{.output_index = 0U,
+                      .direction = query::PhysicalSortDirection::kDescending,
+                      .null_placement = query::ScalarNullPlacement::kLast}};
+  plan.limit = 2U;
+  auto input = execution_result(std::move(plan),
+                                {message(2U, 1U, true, encode_rows({{5, "middle"}, {3, "last"}})),
+                                 message(3U, 1U, true, encode_rows({{7, "first"}}))});
+  const auto nine_bytes = signed_bytes(9);
+  query::DistributedVectorRowCoordinatorProjection projection{
+      .outputs = {query::DistributedVectorRowSourceOutput{.worker_output_index = 1U},
+                  query::DistributedVectorRowConstantOutput{
+                      .is_null = false, .canonical_value = {nine_bytes.begin(), nine_bytes.end()}},
+                  query::DistributedVectorRowConstantOutput{.is_null = true}},
+      .result_schema = {.columns = {{"name", type(schema::LogicalTypeKind::kString), true},
+                                    {"nine", type(schema::LogicalTypeKind::kInt64), false},
+                                    {"missing", type(schema::LogicalTypeKind::kString), true}}}};
+  auto finalized =
+      finalize_distributed_vector_rows_with_projection_v2(std::move(input), projection);
+  ASSERT_TRUE(finalized.has_value()) << finalized.error().to_string();
+  ASSERT_EQ(finalized->encoded_batches.size(), 1U);
+  const auto batch = network::decode_query_result_batch(finalized->encoded_batches.front());
+  ASSERT_TRUE(batch.has_value()) << batch.error().to_string();
+  ASSERT_EQ(batch->row_count(), 2U);
+  ASSERT_EQ(batch->columns().size(), 3U);
+  const std::array<std::string_view, 2U> expected{"first", "middle"};
+  for (std::uint32_t row = 0U; row < batch->row_count(); ++row) {
+    const network::QueryResultCell* name = batch->cell(row, 0U);
+    const network::QueryResultCell* nine = batch->cell(row, 1U);
+    const network::QueryResultCell* missing = batch->cell(row, 2U);
+    ASSERT_NE(name, nullptr);
+    ASSERT_NE(nine, nullptr);
+    ASSERT_NE(missing, nullptr);
+    EXPECT_TRUE(std::ranges::equal(name->value, std::as_bytes(std::span{expected[row]})));
+    common::ByteReader reader{nine->value};
+    EXPECT_EQ(reader.read_i64_le(), 9);
+    EXPECT_TRUE(missing->is_null);
+  }
+
+  auto malformed_input =
+      execution_result(row_plan(), {message(2U, 1U, true, encode_rows({{1, "x"}}))});
+  auto malformed = projection;
+  std::get<query::DistributedVectorRowSourceOutput>(malformed.outputs[0]).worker_output_index = 9U;
+  EXPECT_EQ(
+      finalize_distributed_vector_rows_with_projection_v2(std::move(malformed_input), malformed)
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
 }
 
 TEST(DistributedVectorRowFinalizationV2Test, RejectsDamagedStreamsSchemasAndResourceExcess) {

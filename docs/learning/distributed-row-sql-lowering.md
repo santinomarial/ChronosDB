@@ -16,7 +16,8 @@ output names. The output is an owned `DistributedVectorRowsSqlPlan` containing:
 - unique destination source-column ordinals;
 - an optional exact event-time predicate;
 - the canonical row-mode intent with output mapping, final order, and final limit; and
-- the exact named result schema.
+- the exact worker result schema; and
+- when needed, a coordinator-only source/constant projection with the final named result schema.
 
 It owns no query ID, tablet set, Raft proof, route, TLS context, socket, or Native response. Those
 belong to later authority and lifecycle layers.
@@ -37,6 +38,20 @@ row output indices:          [0,     1,  0]
 
 Workers read each source column once and reproduce SQL output order exactly. Result schema entries
 remain one per SQL output, so aliases and repeated values retain distinct visible identities.
+
+## Source-independent outputs
+
+A SELECT output whose complete bound tree contains no source column, star, aggregate, or relational
+dependency is evaluated once by the scalar oracle. Lowering retains its typed canonical bytes in a
+bounded coordinator projection. Direct outputs in the same query retain worker-output indices in
+that projection. If no output reads a source column, the event-time column is projected solely as a
+real row-count anchor; it is never exposed to the client.
+
+The coordinator validates source shapes and canonical bytes after every tablet stream closes. It
+sorts and applies LIMIT against real worker outputs first, then injects constants while encoding the
+final Native batches. A selected constant ORDER BY key is removed because it cannot distinguish
+rows. Constant evaluation errors are planning errors. Row-dependent computed outputs and computed
+order keys still fail closed because the current worker format carries no expression program.
 
 ## Exact event-time normalization
 
@@ -83,9 +98,9 @@ order keys, all under caller-configurable bounds no greater than the network-for
 **Why not serialize `PhysicalPipelinePlan`?** It contains implementation variants, resource-policy
 objects, and process-sized ordinals. The canonical intent keeps the protocol stable and small.
 
-**Why reject computed expressions?** The mutable worker currently projects physical source
-columns and filters event time. Accepting expressions in the coordinator without a distributed
-execution rule would change semantics or duplicate unbounded work.
+**Why reject row-dependent computed expressions?** The mutable worker currently projects physical
+source columns and filters event time. Source-independent expressions have one exact bounded value;
+row-dependent programs require a versioned execution rule and resource contract.
 
 **Why are ORDER BY and LIMIT global?** A tablet-local limit can discard a row that should win after
 merging another tablet. Global finalization is the correctness boundary.

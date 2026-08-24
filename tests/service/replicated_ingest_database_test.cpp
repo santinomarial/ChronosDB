@@ -1042,6 +1042,8 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
       "SELECT count(*) AS rows, count(tag) AS tags, min(tag) AS first_tag, "
       "max(enabled) AS any_enabled FROM events WHERE ts BETWEEN "
       "TIMESTAMP '1970-01-01 00:00:00Z' AND TIMESTAMP '1970-01-01 00:00:00Z' LIMIT 1"));
+  auto native_distributed_constants = distributed_native.execute_query(
+      query_request("SELECT 7 AS marker, upper('ok') AS word FROM events LIMIT 1"));
   stop_server.store(true, std::memory_order_release);
   server_thread.join();
   ASSERT_FALSE(server_failed.load(std::memory_order_acquire));
@@ -1134,6 +1136,26 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   EXPECT_EQ(aggregate_any_enabled->value.front(), std::byte{1U});
   EXPECT_EQ(native_distributed_aggregate->responses[1].frame.header.message_type,
             network::MessageType::kQueryEnd);
+  ASSERT_TRUE(native_distributed_constants.has_value())
+      << native_distributed_constants.error().to_string();
+  ASSERT_EQ(native_distributed_constants->responses.size(), 2U);
+  EXPECT_EQ(native_distributed_constants->result_rows, 1U);
+  const auto remote_constant_batch =
+      network::decode_query_result_batch(native_distributed_constants->responses[0].frame.payload);
+  ASSERT_TRUE(remote_constant_batch.has_value()) << remote_constant_batch.error().to_string();
+  ASSERT_EQ(remote_constant_batch->row_count(), 1U);
+  ASSERT_EQ(remote_constant_batch->columns().size(), 2U);
+  EXPECT_EQ(remote_constant_batch->columns()[0].name, "marker");
+  EXPECT_EQ(remote_constant_batch->columns()[1].name, "word");
+  const network::QueryResultCell* marker = remote_constant_batch->cell(0U, 0U);
+  const network::QueryResultCell* word = remote_constant_batch->cell(0U, 1U);
+  ASSERT_NE(marker, nullptr);
+  ASSERT_NE(word, nullptr);
+  common::ByteReader marker_reader{marker->value};
+  EXPECT_EQ(marker_reader.read_i64_le().value(), 7);
+  const std::string_view expected_word{"OK"};
+  EXPECT_TRUE(std::ranges::equal(
+      word->value, std::as_bytes(std::span{expected_word.data(), expected_word.size()})));
   ASSERT_TRUE(distributed_server->shutdown().is_ok());
 
   auto local_worker = ReplicatedDistributedMutableVectorQueryWorker::create(
@@ -1167,6 +1189,13 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   EXPECT_EQ(native_local_aggregate->result_rows, native_distributed_aggregate->result_rows);
   EXPECT_EQ(native_local_aggregate->responses[0].frame.payload,
             native_distributed_aggregate->responses[0].frame.payload);
+
+  auto native_local_constants = local_distributed_native.execute_query(
+      query_request("SELECT 7 AS marker, upper('ok') AS word FROM events LIMIT 1"));
+  ASSERT_TRUE(native_local_constants.has_value()) << native_local_constants.error().to_string();
+  ASSERT_EQ(native_local_constants->responses.size(), 2U);
+  EXPECT_EQ(native_local_constants->responses[0].frame.payload,
+            native_distributed_constants->responses[0].frame.payload);
 
   auto native_zero_aggregate = local_distributed_native.execute_query(
       query_request("SELECT count(*) AS rows FROM events LIMIT 0"));

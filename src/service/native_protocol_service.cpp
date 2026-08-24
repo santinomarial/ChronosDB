@@ -1065,9 +1065,18 @@ NativeProtocolService::execute_query(network::NetworkTask request,
             return query_error(target, finalized.error(), limits_.protocol);
           return distributed_aggregate_result(target, std::move(*finalized), limits_);
         }
-        auto finalized = cluster::finalize_distributed_vector_rows_v2(
-            {.plan = logical_identity->plan, .result = std::move(*coordinated)},
-            bounded_finalization_limits(config, limits_));
+        if (!lowered_rows.has_value())
+          return query_error(target, internal("distributed row SQL plan is absent"),
+                             limits_.protocol);
+        common::Result<cluster::DistributedVectorRowsFinalizedResultV2> finalized =
+            lowered_rows->coordinator_projection.has_value()
+                ? cluster::finalize_distributed_vector_rows_with_projection_v2(
+                      {.plan = logical_identity->plan, .result = std::move(*coordinated)},
+                      *lowered_rows->coordinator_projection,
+                      bounded_finalization_limits(config, limits_))
+                : cluster::finalize_distributed_vector_rows_v2(
+                      {.plan = logical_identity->plan, .result = std::move(*coordinated)},
+                      bounded_finalization_limits(config, limits_));
         if (!finalized.has_value())
           return query_error(target, finalized.error(), limits_.protocol);
         return distributed_rows_result(target, std::move(*finalized), limits_);

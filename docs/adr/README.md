@@ -487,3 +487,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0450](0450-schema-bound-distributed-global-aggregate-sql-lowering.md) | Schema-bound distributed global aggregate SQL lowering | accepted |
 | [0451](0451-bounded-mutable-row-global-aggregate-finalization.md) | Bounded mutable-row global aggregate finalization | accepted |
 | [0452](0452-replicated-native-global-aggregate-execution.md) | Replicated Native global aggregate execution | accepted |
+| [0453](0453-coordinator-owned-source-independent-row-outputs.md) | Coordinator-owned source-independent row outputs | accepted |

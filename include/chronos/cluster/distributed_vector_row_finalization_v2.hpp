@@ -10,6 +10,10 @@
 #include <cstdint>
 #include <vector>
 
+namespace chronos::query {
+struct DistributedVectorRowCoordinatorProjection;
+}
+
 namespace chronos::cluster {
 
 inline constexpr std::uint64_t kDefaultDistributedVectorRowFinalizationRowsV2 = 1'048'576U;
@@ -50,6 +54,15 @@ struct DistributedVectorRowsFinalizedResultV2 {
 [[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2>
 finalize_distributed_vector_rows_v2(DistributedVectorQueryExecutionResultV2&& input,
                                     DistributedVectorRowFinalizationLimitsV2 limits = {});
+
+// Applies a checked coordinator-only source/constant projection after global order and LIMIT.
+// Worker streams and their wire schema remain unchanged; constants cannot influence row truth or
+// cardinality and are borrowed only for this synchronous call.
+[[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2>
+finalize_distributed_vector_rows_with_projection_v2(
+    DistributedVectorQueryExecutionResultV2&& input,
+    const query::DistributedVectorRowCoordinatorProjection& projection,
+    DistributedVectorRowFinalizationLimitsV2 limits = {});
 
 } // namespace chronos::cluster
 

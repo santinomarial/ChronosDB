@@ -1,4 +1,5 @@
 #include "chronos/cluster/distributed_vector_row_finalization_v2.hpp"
+#include "chronos/query/distributed_sql_lowering.hpp"
 #include "support/failing_allocator.hpp"
 
 #include <array>
@@ -59,6 +60,41 @@ TEST(DistributedVectorRowFinalizationV2AllocationFailureTest,
     auto input = make_input(batch, type);
     auto result = run_failure(
         fail_after, [&] { return finalize_distributed_vector_rows_v2(std::move(input)); });
+    if (result.has_value()) {
+      succeeded = true;
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(succeeded);
+}
+
+TEST(DistributedVectorRowFinalizationV2AllocationFailureTest,
+     ClassifiesEveryCoordinatorProjectionAllocation) {
+  const schema::LogicalType type =
+      schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  const std::array<network::QueryResultColumn, 1U> columns{
+      network::QueryResultColumn{.name = "value", .type = type, .nullable = false}};
+  const std::array<std::byte, 8U> value{std::byte{1U}};
+  const std::array<network::QueryResultCell, 1U> cells{network::QueryResultCell{.value = value}};
+  const std::vector<std::byte> batch =
+      network::encode_query_result_batch(1U, columns, cells).value();
+  const query::DistributedVectorRowCoordinatorProjection projection{
+      .outputs = {query::DistributedVectorRowSourceOutput{.worker_output_index = 0U},
+                  query::DistributedVectorRowConstantOutput{
+                      .is_null = false,
+                      .canonical_value = {std::byte{2U}, std::byte{0U}, std::byte{0U},
+                                          std::byte{0U}, std::byte{0U}, std::byte{0U},
+                                          std::byte{0U}, std::byte{0U}}}},
+      .result_schema = {.columns = {{"source", type, false}, {"constant", type, false}}}};
+
+  bool succeeded = false;
+  for (std::size_t fail_after = 0U; fail_after < 160U; ++fail_after) {
+    auto input = make_input(batch, type);
+    input.plan.visible_row_output_indices.clear();
+    auto result = run_failure(fail_after, [&] {
+      return finalize_distributed_vector_rows_with_projection_v2(std::move(input), projection);
+    });
     if (result.has_value()) {
       succeeded = true;
       break;

@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <variant>
 #include <vector>
 
 namespace chronos::query {
@@ -20,6 +21,7 @@ struct DistributedVectorRowsSqlLoweringLimits {
   std::uint32_t maximum_order_keys{distributed_vector_plan_format::kMaximumOrderKeys};
   std::uint32_t maximum_result_name_bytes{
       distributed_vector_result_schema_format::kMaximumNameLength};
+  std::size_t maximum_constant_bytes{std::size_t{1024U} * 1024U};
 };
 
 struct DistributedVectorAggregateSqlLoweringLimits {
@@ -29,11 +31,38 @@ struct DistributedVectorAggregateSqlLoweringLimits {
       distributed_vector_result_schema_format::kMaximumNameLength};
 };
 
+struct DistributedVectorRowSourceOutput {
+  std::uint32_t worker_output_index{};
+
+  friend bool operator==(const DistributedVectorRowSourceOutput&,
+                         const DistributedVectorRowSourceOutput&) = default;
+};
+
+struct DistributedVectorRowConstantOutput {
+  bool is_null{};
+  std::vector<std::byte> canonical_value;
+
+  friend bool operator==(const DistributedVectorRowConstantOutput&,
+                         const DistributedVectorRowConstantOutput&) = default;
+};
+
+using DistributedVectorRowCoordinatorOutput =
+    std::variant<DistributedVectorRowSourceOutput, DistributedVectorRowConstantOutput>;
+
+struct DistributedVectorRowCoordinatorProjection {
+  std::vector<DistributedVectorRowCoordinatorOutput> outputs;
+  DistributedVectorResultSchema result_schema;
+
+  friend bool operator==(const DistributedVectorRowCoordinatorProjection&,
+                         const DistributedVectorRowCoordinatorProjection&) = default;
+};
+
 // Complete schema-bound row intent for later authority binding. Source projection ordinals are
 // unique and preserve first use; row output indices may repeat and may append hidden direct order
 // columns. A nonempty plan visibility vector retains the SELECT outputs. ORDER BY and LIMIT remain
-// global coordinator semantics. The optional event-time predicate is exact row truth, not merely
-// storage-pruning evidence.
+// global coordinator semantics. A coordinator projection is present only when source-independent
+// expressions must be injected after the complete worker streams are ordered and limited. The
+// optional event-time predicate is exact row truth, not merely storage-pruning evidence.
 struct DistributedVectorRowsSqlPlan {
   schema::TableId table_id;
   schema::SchemaId destination_schema_id;
@@ -41,15 +70,17 @@ struct DistributedVectorRowsSqlPlan {
   std::optional<cseg::EventTimePredicate> event_time_predicate;
   DistributedVectorPlanIntent intent;
   DistributedVectorResultSchema result_schema;
+  std::optional<DistributedVectorRowCoordinatorProjection> coordinator_projection;
 
   friend bool operator==(const DistributedVectorRowsSqlPlan&,
                          const DistributedVectorRowsSqlPlan&) = default;
 };
 
-// Lowers the executable distributed row subset: one current table, direct source-column outputs,
-// an optional AND-conjunction of event-time/TIMESTAMP comparisons or inclusive BETWEEN leaves,
-// direct-column ORDER BY (including hidden helpers), and LIMIT. Unsupported local-only SQL fails
-// with its source span; no scalar or relational fallback is inferred.
+// Lowers the executable distributed row subset: one current table, direct source-column or
+// source-independent scalar outputs, an optional AND-conjunction of event-time/TIMESTAMP
+// comparisons or inclusive BETWEEN leaves, direct-column ORDER BY (including hidden helpers), and
+// LIMIT. Row-dependent computed expressions remain unsupported. No scalar or relational fallback
+// is inferred.
 [[nodiscard]] SqlResult<DistributedVectorRowsSqlPlan>
 lower_bound_sql_select_to_distributed_vector_rows(
     const BoundSqlSelect& select, DistributedVectorRowsSqlLoweringLimits limits = {});

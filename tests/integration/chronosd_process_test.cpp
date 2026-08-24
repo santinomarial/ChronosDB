@@ -1120,6 +1120,31 @@ void expect_replicated_rows(const int client, const std::uint64_t request_id) {
   EXPECT_EQ(first_tag->value.front(), std::byte{'x'});
   response = network::decode_frame(receive_frame(client)).value_or(network::Frame{});
   EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
+
+  response = send_replicated_query(client, request_id + 2U,
+                                   "SELECT 7 AS marker, upper('ok') AS word FROM events LIMIT 1");
+  if (response.header.message_type == network::MessageType::kError) {
+    auto decoded = network::decode_error_message(response.payload);
+    ASSERT_TRUE(decoded.has_value());
+    ADD_FAILURE() << "distributed constant query failed: " << byte_string(decoded->message);
+    return;
+  }
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
+  auto constants = network::decode_query_result_batch(response.payload);
+  ASSERT_TRUE(constants.has_value()) << constants.error().to_string();
+  ASSERT_EQ(constants->row_count(), 1U);
+  ASSERT_EQ(constants->columns().size(), 2U);
+  const network::QueryResultCell* marker = constants->cell(0U, 0U);
+  const network::QueryResultCell* word = constants->cell(0U, 1U);
+  ASSERT_NE(marker, nullptr);
+  ASSERT_NE(word, nullptr);
+  common::ByteReader marker_reader{marker->value};
+  EXPECT_EQ(marker_reader.read_i64_le().value(), 7);
+  ASSERT_EQ(word->value.size(), 2U);
+  EXPECT_EQ(word->value[0], std::byte{'O'});
+  EXPECT_EQ(word->value[1], std::byte{'K'});
+  response = network::decode_frame(receive_frame(client)).value_or(network::Frame{});
+  EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
 }
 
 [[nodiscard]] network::Frame send_query(const int client, const std::uint64_t request_id,
@@ -2191,7 +2216,7 @@ TEST(ChronosdProcessTest, ReplicatesRetriesAndFailsOverAcrossThreeAuthenticatedD
     }
   }
   ASSERT_LT(remote_after_failover, clients.size());
-  expect_replicated_rows(clients[remote_after_failover], 10'001U);
+  expect_replicated_rows(clients[remote_after_failover], 20'000U);
 
   for (std::size_t index = 0U; index < children.size(); ++index) {
     if (!active[index])

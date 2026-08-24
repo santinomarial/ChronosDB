@@ -2,6 +2,7 @@
 #include "chronos/query/value.hpp"
 #include "chronos/schema/logical_type.hpp"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
@@ -74,6 +75,33 @@ TEST(ScalarValueTest, CopiesCanonicalPhysicalCellsWithoutUnalignedLoads) {
       ScalarValue::from_column_cell(text_column->type(), text_column->cell(0U).value());
   ASSERT_TRUE(text_scalar.has_value());
   EXPECT_EQ(*std::get_if<std::string>(&text_scalar->storage()), "abc");
+}
+
+TEST(ScalarValueTest, EncodesOwnedValuesIntoCanonicalPhysicalBytes) {
+  const auto signed_value =
+      ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), -2).value();
+  const auto signed_bytes = encode_canonical_scalar_value(signed_value);
+  ASSERT_TRUE(signed_bytes.has_value());
+  ASSERT_EQ(signed_bytes->size(), 8U);
+  EXPECT_EQ(signed_bytes->front(), std::byte{0xfe});
+  EXPECT_EQ(signed_bytes->back(), std::byte{0xff});
+
+  const auto boolean = encode_canonical_scalar_value(ScalarValue::boolean(true).value());
+  ASSERT_TRUE(boolean.has_value());
+  EXPECT_EQ(*boolean, (std::vector<std::byte>{std::byte{1U}}));
+
+  const auto text_value =
+      ScalarValue::text(type(schema::LogicalTypeKind::kString), "hello").value();
+  const auto text_bytes = encode_canonical_scalar_value(text_value);
+  ASSERT_TRUE(text_bytes.has_value());
+  EXPECT_TRUE(std::ranges::equal(*text_bytes, std::as_bytes(std::span{"hello", std::size_t{5U}})));
+
+  const auto null =
+      encode_canonical_scalar_value(ScalarValue::null(type(schema::LogicalTypeKind::kInt32)));
+  ASSERT_TRUE(null.has_value());
+  EXPECT_TRUE(null->empty());
+  EXPECT_EQ(encode_canonical_scalar_value(ScalarValue::untyped_null()).error().code(),
+            common::StatusCode::kInvalidArgument);
 }
 
 TEST(ScalarValueTest, ImplementsSqlNullNaNAndTotalOrderingRules) {

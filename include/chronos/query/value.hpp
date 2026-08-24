@@ -65,6 +65,12 @@ private:
   ScalarStorage storage_;
 };
 
+// Returns the exact canonical physical bytes used by column vectors and Native result cells.
+// Typed NULL has an empty payload; callers retain nullability separately. The returned bytes own
+// their storage and never expose the ScalarValue's variable-width buffers.
+[[nodiscard]] common::Result<std::vector<std::byte>>
+encode_canonical_scalar_value(const ScalarValue& value);
+
 enum class SqlTruthValue : std::uint8_t { kFalse, kTrue, kUnknown };
 enum class ScalarNullPlacement : std::uint8_t { kFirst, kLast };
 

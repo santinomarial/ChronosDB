@@ -2,6 +2,7 @@
 
 #include "chronos/common/byte_reader.hpp"
 #include "chronos/common/checked_math.hpp"
+#include "chronos/query/distributed_sql_lowering.hpp"
 #include "chronos/query/value.hpp"
 
 #include <algorithm>
@@ -152,16 +153,36 @@ working_bytes(const std::size_t messages, const std::size_t batches, const std::
 
 [[nodiscard]] common::Result<std::size_t>
 visibility_working_bytes(const query::DistributedVectorPlanIntent& plan,
-                         const query::DistributedVectorResultSchema& schema) {
-  const std::size_t visible_columns = plan.visible_row_output_indices.empty()
-                                          ? plan.row_output_indices.size()
-                                          : plan.visible_row_output_indices.size();
+                         const query::DistributedVectorResultSchema& schema,
+                         const query::DistributedVectorRowCoordinatorProjection* projection) {
+  const std::size_t visible_columns =
+      projection != nullptr
+          ? projection->outputs.size()
+          : (plan.visible_row_output_indices.empty() ? plan.row_output_indices.size()
+                                                     : plan.visible_row_output_indices.size());
   auto total = add_product(0U, visible_columns, sizeof(std::uint32_t) * 2U);
   if (!total.has_value())
     return total;
   total = add_product(*total, visible_columns, sizeof(query::DistributedVectorResultColumn) * 2U);
   if (!total.has_value())
     return total;
+  if (projection != nullptr) {
+    for (std::size_t position = 0U; position < visible_columns; ++position) {
+      auto next = add_product(*total, projection->result_schema.columns[position].name.size(), 2U);
+      if (!next.has_value())
+        return next;
+      total = next;
+      if (const auto* constant = std::get_if<query::DistributedVectorRowConstantOutput>(
+              &projection->outputs[position]);
+          constant != nullptr) {
+        next = add_product(*total, constant->canonical_value.size(), 2U);
+        if (!next.has_value())
+          return next;
+        total = next;
+      }
+    }
+    return total;
+  }
   for (std::size_t position = 0U; position < visible_columns; ++position) {
     const std::size_t index = plan.visible_row_output_indices.empty()
                                   ? position
@@ -174,6 +195,42 @@ visibility_working_bytes(const query::DistributedVectorPlanIntent& plan,
     total = next;
   }
   return total;
+}
+
+[[nodiscard]] common::Status
+validate_projection(const query::DistributedVectorRowCoordinatorProjection& projection,
+                    const query::DistributedVectorResultSchema& worker_schema) {
+  if (projection.outputs.empty() ||
+      projection.outputs.size() != projection.result_schema.columns.size())
+    return invalid("vector row coordinator projection shape is invalid");
+  common::Status schema_status =
+      query::validate_distributed_vector_result_schema_value(projection.result_schema);
+  if (!schema_status.is_ok())
+    return schema_status;
+  for (std::size_t index = 0U; index < projection.outputs.size(); ++index) {
+    const auto& descriptor = projection.result_schema.columns[index];
+    if (const auto* source =
+            std::get_if<query::DistributedVectorRowSourceOutput>(&projection.outputs[index]);
+        source != nullptr) {
+      if (source->worker_output_index >= worker_schema.columns.size())
+        return invalid("vector row coordinator source output is out of bounds");
+      const auto& worker = worker_schema.columns[source->worker_output_index];
+      if (worker.type != descriptor.type || worker.nullable != descriptor.nullable)
+        return invalid("vector row coordinator source shape differs from its worker output");
+      continue;
+    }
+    const auto& constant =
+        std::get<query::DistributedVectorRowConstantOutput>(projection.outputs[index]);
+    if ((constant.is_null && !descriptor.nullable) ||
+        (constant.is_null && !constant.canonical_value.empty()))
+      return invalid("vector row coordinator NULL constant shape is invalid");
+    auto canonical = query::compare_canonical_scalar_bytes(
+        descriptor.type, constant.is_null, constant.canonical_value, constant.is_null,
+        constant.canonical_value, query::ScalarNullPlacement::kLast);
+    if (!canonical.has_value())
+      return invalid("vector row coordinator constant bytes are invalid");
+  }
+  return common::Status::ok();
 }
 
 [[nodiscard]] common::Result<int>
@@ -261,10 +318,35 @@ descriptor_prefix_size(const query::DistributedVectorResultSchema& schema) {
 
 [[nodiscard]] common::Result<std::size_t>
 encoded_row_size(const std::vector<network::QueryResultBatchView>& batches,
-                 const std::span<const std::uint32_t> output_indices, const RowReference row) {
+                 const std::span<const std::uint32_t> output_indices,
+                 const query::DistributedVectorRowCoordinatorProjection* projection,
+                 const RowReference row) {
   if (row.batch_index >= batches.size())
     return common::make_unexpected(internal("vector row output references an absent batch"));
   std::size_t total{};
+  if (projection != nullptr) {
+    for (const query::DistributedVectorRowCoordinatorOutput& output : projection->outputs) {
+      std::size_t value_size{};
+      if (const auto* source = std::get_if<query::DistributedVectorRowSourceOutput>(&output);
+          source != nullptr) {
+        const network::QueryResultCell* cell =
+            batches[row.batch_index].cell(row.row, source->worker_output_index);
+        if (cell == nullptr)
+          return common::make_unexpected(internal("vector row output cell disappeared"));
+        value_size = cell->value.size();
+      } else {
+        value_size =
+            std::get<query::DistributedVectorRowConstantOutput>(output).canonical_value.size();
+      }
+      const auto cell_size = common::checked_add(std::size_t{4U}, value_size);
+      const auto next =
+          cell_size.has_value() ? common::checked_add(total, *cell_size) : std::nullopt;
+      if (!next.has_value())
+        return common::make_unexpected(exhausted("vector row output size overflowed"));
+      total = *next;
+    }
+    return total;
+  }
   for (const std::uint32_t column : output_indices) {
     const network::QueryResultCell* cell = batches[row.batch_index].cell(row.row, column);
     if (cell == nullptr)
@@ -282,9 +364,11 @@ encoded_row_size(const std::vector<network::QueryResultBatchView>& batches,
 
 } // namespace
 
-common::Result<DistributedVectorRowsFinalizedResultV2>
-finalize_distributed_vector_rows_v2(DistributedVectorQueryExecutionResultV2&& input,
-                                    const DistributedVectorRowFinalizationLimitsV2 limits) {
+[[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2>
+finalize_distributed_vector_rows_impl(
+    DistributedVectorQueryExecutionResultV2&& input,
+    const query::DistributedVectorRowCoordinatorProjection* projection,
+    const DistributedVectorRowFinalizationLimitsV2 limits) {
   try {
     if (!valid_limits(limits))
       return common::make_unexpected(invalid("vector row finalization limits are invalid"));
@@ -296,35 +380,54 @@ finalize_distributed_vector_rows_v2(DistributedVectorQueryExecutionResultV2&& in
       return common::make_unexpected(schema_status);
     if (input.result.result_schema.columns.size() != input.plan.row_output_indices.size())
       return common::make_unexpected(invalid("vector row plan and result schema widths differ"));
+    if (projection != nullptr && !input.plan.visible_row_output_indices.empty()) {
+      return common::make_unexpected(
+          invalid("vector row coordinator projection conflicts with worker visibility"));
+    }
+    if (projection != nullptr) {
+      const common::Status projection_status =
+          validate_projection(*projection, input.result.result_schema);
+      if (!projection_status.is_ok())
+        return common::make_unexpected(projection_status);
+    }
     const common::Status plan_status = query::validate_distributed_vector_plan_intent(
         input.plan, query::distributed_vector_plan_format::kMaximumInputColumns,
         static_cast<std::uint32_t>(input.result.result_schema.columns.size()));
     if (!plan_status.is_ok())
       return common::make_unexpected(plan_status);
-    auto visibility_bytes = visibility_working_bytes(input.plan, input.result.result_schema);
+    auto visibility_bytes =
+        visibility_working_bytes(input.plan, input.result.result_schema, projection);
     if (!visibility_bytes.has_value())
       return common::make_unexpected(visibility_bytes.error());
     if (*visibility_bytes > limits.maximum_working_bytes)
       return common::make_unexpected(exhausted("vector row working-memory limit is exhausted"));
     std::vector<std::uint32_t> visible_output_indices;
-    if (input.plan.visible_row_output_indices.empty()) {
+    query::DistributedVectorResultSchema visible_schema;
+    if (projection != nullptr) {
+      visible_schema = projection->result_schema;
+    } else if (input.plan.visible_row_output_indices.empty()) {
       visible_output_indices.reserve(input.plan.row_output_indices.size());
       for (std::size_t index = 0U; index < input.plan.row_output_indices.size(); ++index)
         visible_output_indices.push_back(static_cast<std::uint32_t>(index));
     } else {
       visible_output_indices = input.plan.visible_row_output_indices;
     }
-    if (visible_output_indices.size() > limits.output_batch.maximum_columns)
+    const std::size_t visible_column_count =
+        projection != nullptr ? projection->outputs.size() : visible_output_indices.size();
+    if (visible_column_count > limits.output_batch.maximum_columns)
       return common::make_unexpected(exhausted("vector row output column limit is exhausted"));
-    query::DistributedVectorResultSchema visible_schema;
-    visible_schema.columns.reserve(visible_output_indices.size());
-    for (const std::uint32_t index : visible_output_indices) {
-      if (index >= input.result.result_schema.columns.size())
-        return common::make_unexpected(internal("visible vector row output escaped its schema"));
-      const auto& column = input.result.result_schema.columns[index];
+    if (projection == nullptr) {
+      visible_schema.columns.reserve(visible_output_indices.size());
+      for (const std::uint32_t index : visible_output_indices) {
+        if (index >= input.result.result_schema.columns.size()) {
+          return common::make_unexpected(internal("visible vector row output escaped its schema"));
+        }
+        visible_schema.columns.push_back(input.result.result_schema.columns[index]);
+      }
+    }
+    for (const auto& column : visible_schema.columns) {
       if (column.name.size() > limits.output_batch.maximum_column_name_bytes)
         return common::make_unexpected(exhausted("vector row output name limit is exhausted"));
-      visible_schema.columns.push_back(column);
     }
     auto prefix_size = descriptor_prefix_size(visible_schema);
     if (!prefix_size.has_value())
@@ -488,7 +591,7 @@ finalize_distributed_vector_rows_v2(DistributedVectorQueryExecutionResultV2&& in
         std::size_t end = begin;
         std::size_t encoded_size = *prefix_size;
         while (end < selected_rows && end - begin < limits.output_batch.maximum_rows) {
-          auto row_size = encoded_row_size(batches, visible_output_indices, rows[end]);
+          auto row_size = encoded_row_size(batches, visible_output_indices, projection, rows[end]);
           if (!row_size.has_value())
             return common::make_unexpected(row_size.error());
           const auto next = common::checked_add(encoded_size, *row_size);
@@ -526,12 +629,28 @@ finalize_distributed_vector_rows_v2(DistributedVectorQueryExecutionResultV2&& in
     for (const BatchRange& range : ranges) {
       cells.clear();
       const std::size_t row_count = range.end - range.begin;
-      const auto cell_count = common::checked_multiply(row_count, visible_output_indices.size());
+      const auto cell_count = common::checked_multiply(row_count, visible_column_count);
       if (!cell_count.has_value())
         return common::make_unexpected(exhausted("vector row output cell count overflowed"));
       cells.reserve(*cell_count);
       for (std::size_t index = range.begin; index < range.end; ++index) {
         const RowReference row = rows[index];
+        if (projection != nullptr) {
+          for (const query::DistributedVectorRowCoordinatorOutput& output : projection->outputs) {
+            if (const auto* source = std::get_if<query::DistributedVectorRowSourceOutput>(&output);
+                source != nullptr) {
+              const network::QueryResultCell* cell =
+                  batches[row.batch_index].cell(row.row, source->worker_output_index);
+              if (cell == nullptr)
+                return common::make_unexpected(internal("vector row output cell disappeared"));
+              cells.push_back(*cell);
+            } else {
+              const auto& constant = std::get<query::DistributedVectorRowConstantOutput>(output);
+              cells.push_back({.is_null = constant.is_null, .value = constant.canonical_value});
+            }
+          }
+          continue;
+        }
         for (const std::uint32_t column : visible_output_indices) {
           const network::QueryResultCell* cell = batches[row.batch_index].cell(row.row, column);
           if (cell == nullptr)
@@ -557,6 +676,20 @@ finalize_distributed_vector_rows_v2(DistributedVectorQueryExecutionResultV2&& in
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("vector row finalization exceeds container limits"));
   }
+}
+
+common::Result<DistributedVectorRowsFinalizedResultV2>
+finalize_distributed_vector_rows_v2(DistributedVectorQueryExecutionResultV2&& input,
+                                    const DistributedVectorRowFinalizationLimitsV2 limits) {
+  return finalize_distributed_vector_rows_impl(std::move(input), nullptr, limits);
+}
+
+common::Result<DistributedVectorRowsFinalizedResultV2>
+finalize_distributed_vector_rows_with_projection_v2(
+    DistributedVectorQueryExecutionResultV2&& input,
+    const query::DistributedVectorRowCoordinatorProjection& projection,
+    const DistributedVectorRowFinalizationLimitsV2 limits) {
+  return finalize_distributed_vector_rows_impl(std::move(input), &projection, limits);
 }
 
 } // namespace chronos::cluster

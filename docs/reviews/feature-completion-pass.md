@@ -1002,11 +1002,14 @@ were deliberately not run.
   publications, placements, group bindings, projection, plan, and result schema. Those mutable
   fragments now use the shared committed-node/TLS resolver, and one snapshot call returns the
   complete owning fragment set plus deduplicated bounded routes from the same metadata
-  publication. Bound direct-column SQL now lowers to the exact schema identity, unique projection,
+  publication. Bound row SQL now lowers direct columns and bounded source-independent scalar
+  outputs to the exact schema identity, unique real-source projection,
   normalized event-time comparisons and inclusive `BETWEEN`, global row order/limit intent, and
   result descriptors required by that fragment path. Unselected direct order columns travel as
   bounded hidden worker outputs under Plan Intent minor 1 and are removed only after global
-  sort/limit; computed/relational row semantics fail closed. A separate checked global-aggregate
+  sort/limit. Coordinator-owned canonical constants are injected only after complete sort/limit,
+  with a real event-time anchor preserving all-constant row cardinality; row-dependent computed and
+  relational semantics fail closed. A separate checked global-aggregate
   lowering now emits direct aggregate sufficient-state intent, unique projection, event-time truth,
   LIMIT, and exact result descriptors. A bounded transitional finalizer now consumes complete
   mutable all-tablet row streams through the shared aggregate kernel and emits one all-or-none
