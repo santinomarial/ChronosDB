@@ -24,9 +24,11 @@ namespace {
 DistributedMutableVectorQueryExecution::DistributedMutableVectorQueryExecution(
     query::DistributedVectorPlanIntent plan, DistributedVectorResultCoordinatorV2 coordinator,
     std::vector<SenderSlot> senders, std::vector<DistributedMutableVectorQueryTarget> targets,
+    DistributedMutableVectorQueryLogicalIdentity logical_identity,
     std::map<schema::TabletId, std::size_t> sender_indexes) noexcept
     : plan_(std::move(plan)), coordinator_(std::move(coordinator)), senders_(std::move(senders)),
-      targets_(std::move(targets)), sender_indexes_(std::move(sender_indexes)) {}
+      targets_(std::move(targets)), logical_identity_(std::move(logical_identity)),
+      sender_indexes_(std::move(sender_indexes)) {}
 
 common::Result<DistributedMutableVectorQueryExecution>
 DistributedMutableVectorQueryExecution::create(
@@ -42,8 +44,20 @@ DistributedMutableVectorQueryExecution::create(
     const schema::TableId table_id = fragments.front().table_id;
     const schema::SchemaId destination_schema_id = fragments.front().destination_schema_id;
     const query::DistributedReadPolicy read_policy = fragments.front().read_policy;
+    const auto destination_column_ordinals = fragments.front().destination_column_ordinals;
+    const auto event_time_predicate = fragments.front().event_time_predicate;
     query::DistributedVectorPlanIntent plan = fragments.front().plan;
     query::DistributedVectorResultSchema result_schema = fragments.front().result_schema;
+    DistributedMutableVectorQueryLogicalIdentity logical_identity{
+        .query_id = query_id,
+        .database_id = database_id,
+        .table_id = table_id,
+        .destination_schema_id = destination_schema_id,
+        .read_policy = read_policy,
+        .destination_column_ordinals = destination_column_ordinals,
+        .event_time_predicate = event_time_predicate,
+        .plan = plan,
+        .result_schema = result_schema};
     std::vector<schema::TabletId> tablets;
     std::vector<SenderSlot> senders;
     std::vector<DistributedMutableVectorQueryTarget> targets;
@@ -51,6 +65,7 @@ DistributedMutableVectorQueryExecution::create(
     tablets.reserve(fragments.size());
     senders.reserve(fragments.size());
     targets.reserve(fragments.size());
+    logical_identity.tablets.reserve(fragments.size());
     for (std::size_t index = 0U; index < fragments.size(); ++index) {
       query::DistributedMutableVectorFragment& fragment = fragments[index];
       const common::Status structural =
@@ -62,12 +77,15 @@ DistributedMutableVectorQueryExecution::create(
           fragment.destination_schema_id != destination_schema_id ||
           fragment.read_policy != read_policy || fragment.plan != plan ||
           fragment.result_schema != result_schema ||
+          fragment.destination_column_ordinals != destination_column_ordinals ||
+          fragment.event_time_predicate != event_time_predicate ||
           !indexes.emplace(fragment.tablet_id, index).second) {
         return common::make_unexpected(
             invalid("mutable vector query execution authority is mixed or duplicated"));
       }
       const schema::TabletId tablet_id = fragment.tablet_id;
       const raft::NodeId serving_node = fragment.serving_node;
+      const raft::GroupId raft_group_id = fragment.raft_group_id;
       auto sender = DistributedMutableVectorQuerySender::create(source_node_id, std::move(fragment),
                                                                 limits.sender);
       if (!sender.has_value())
@@ -75,14 +93,15 @@ DistributedMutableVectorQueryExecution::create(
       tablets.push_back(tablet_id);
       senders.push_back({tablet_id, std::move(*sender), false, false});
       targets.push_back({tablet_id, serving_node});
+      logical_identity.tablets.push_back({tablet_id, raft_group_id});
     }
     auto coordinator = DistributedVectorResultCoordinatorV2::create(
         query_id, std::move(tablets), std::move(result_schema), limits.coordinator);
     if (!coordinator.has_value())
       return common::make_unexpected(coordinator.error());
-    return DistributedMutableVectorQueryExecution{std::move(plan), std::move(*coordinator),
-                                                  std::move(senders), std::move(targets),
-                                                  std::move(indexes)};
+    return DistributedMutableVectorQueryExecution{
+        std::move(plan),    std::move(*coordinator),     std::move(senders),
+        std::move(targets), std::move(logical_identity), std::move(indexes)};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("mutable vector query execution allocation failed"));
   } catch (const std::length_error&) {
@@ -240,6 +259,11 @@ DistributedMutableVectorQueryExecution::finish() {
 std::span<const DistributedMutableVectorQueryTarget>
 DistributedMutableVectorQueryExecution::targets() const noexcept {
   return targets_;
+}
+
+const DistributedMutableVectorQueryLogicalIdentity&
+DistributedMutableVectorQueryExecution::logical_identity() const noexcept {
+  return logical_identity_;
 }
 
 } // namespace chronos::cluster

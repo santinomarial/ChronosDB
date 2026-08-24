@@ -29,6 +29,32 @@ struct DistributedMutableVectorQueryTarget {
                          const DistributedMutableVectorQueryTarget&) = default;
 };
 
+struct DistributedMutableVectorQueryLogicalTablet {
+  schema::TabletId tablet_id;
+  raft::GroupId raft_group_id;
+
+  friend bool operator==(const DistributedMutableVectorQueryLogicalTablet&,
+                         const DistributedMutableVectorQueryLogicalTablet&) = default;
+};
+
+// Logical query fields that fresh authority may not change. Serving node, exact positions,
+// placement epoch, and barrier are deliberately absent because rebinding must replace them.
+struct DistributedMutableVectorQueryLogicalIdentity {
+  common::Uuid query_id;
+  manifest::DatabaseId database_id;
+  schema::TableId table_id;
+  schema::SchemaId destination_schema_id;
+  query::DistributedReadPolicy read_policy;
+  std::vector<std::uint32_t> destination_column_ordinals;
+  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  query::DistributedVectorPlanIntent plan;
+  query::DistributedVectorResultSchema result_schema;
+  std::vector<DistributedMutableVectorQueryLogicalTablet> tablets;
+
+  friend bool operator==(const DistributedMutableVectorQueryLogicalIdentity&,
+                         const DistributedMutableVectorQueryLogicalIdentity&) = default;
+};
+
 // Portable single-owner orchestration for one proof-bound mutable publication per tablet. The
 // fragments are immutable, value-owned authority; callers own transports and clocks and serialize
 // every method. Completion reuses the schema-bound v2 result value consumed by row finalization.
@@ -66,6 +92,8 @@ public:
   suggested_leader(const schema::TabletId& tablet_id) const;
   [[nodiscard]] common::Result<DistributedVectorQueryExecutionResultV2> finish();
   [[nodiscard]] std::span<const DistributedMutableVectorQueryTarget> targets() const noexcept;
+  [[nodiscard]] const DistributedMutableVectorQueryLogicalIdentity&
+  logical_identity() const noexcept;
 
 private:
   struct SenderSlot {
@@ -78,6 +106,7 @@ private:
   DistributedMutableVectorQueryExecution(
       query::DistributedVectorPlanIntent plan, DistributedVectorResultCoordinatorV2 coordinator,
       std::vector<SenderSlot> senders, std::vector<DistributedMutableVectorQueryTarget> targets,
+      DistributedMutableVectorQueryLogicalIdentity logical_identity,
       std::map<schema::TabletId, std::size_t> sender_indexes) noexcept;
 
   [[nodiscard]] common::Result<std::size_t> sender_index(const schema::TabletId& tablet_id) const;
@@ -87,6 +116,7 @@ private:
   DistributedVectorResultCoordinatorV2 coordinator_;
   std::vector<SenderSlot> senders_;
   std::vector<DistributedMutableVectorQueryTarget> targets_;
+  DistributedMutableVectorQueryLogicalIdentity logical_identity_;
   std::map<schema::TabletId, std::size_t> sender_indexes_;
   bool finished_{};
 };

@@ -993,8 +993,10 @@ were deliberately not run.
   common plan/schema authority, retains finite senders, exposes fresh-authority hints without
   rewriting fragments, and publishes only a complete plan-ordered result. Its TCP scheduler now
   drives one bounded mutual-TLS client per tablet, rotates finite same-node addresses, enforces
-  whole-query deadlines, and releases all clients on terminal failure. Fresh rebinding and native
-  composition remain absent.
+  whole-query deadlines, and releases all clients on terminal failure. Explicit bounded rebinding
+  now accepts only a freshly constructed execution with identical logical query and tablet/group
+  identity while permitting new leader/position/placement/barrier authority. Automatic authority
+  acquisition and native composition remain absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
@@ -1012,9 +1014,10 @@ were deliberately not run.
 The exact subsystem/category ledger is
 [`deferred-validation.md`](../development/deferred-validation.md). Recommended order:
 
-1. Add fresh-authority rebinding around the mutable multi-tablet TCP scheduler, then compose it with
-   native SQL/result handling and extend the existing three-process quorum-ingest/failover gate
-   through applied read-barrier native SELECT and the remaining real data-plane sequence.
+1. Compose correlated authority acquisition and mutable fragment binding with the scheduler's
+   explicit rebind boundary, then add native SQL/result handling and extend the existing three-
+   process quorum-ingest/failover gate through applied read-barrier native SELECT and the remaining
+   real data-plane sequence.
 2. Specify database namespaces/catalog tombstones and placement-driven membership orchestration
    without changing Metadata Command v1 or Metadata Application Snapshot 1.0 bytes in place.
 3. Finish direct vector temporal winner lowering, mixed WAL/Raft recovery, durable retention

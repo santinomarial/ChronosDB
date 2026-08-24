@@ -23,6 +23,7 @@ struct DistributedMutableVectorQueryTcpExecutionConfig {
   DistributedMutableVectorQueryTlsLimits carrier_limits;
   std::chrono::milliseconds connect_timeout{5000};
   std::optional<std::chrono::steady_clock::time_point> execution_deadline;
+  std::size_t maximum_rebindings{3U};
 };
 
 struct DistributedMutableVectorQueryTcpExecutionMetrics {
@@ -30,6 +31,7 @@ struct DistributedMutableVectorQueryTcpExecutionMetrics {
   std::uint64_t retries_started{};
   std::uint64_t transport_completed_attempts{};
   std::uint64_t transport_failed_attempts{};
+  std::uint64_t rebindings_started{};
   std::size_t active_attempts{};
 };
 
@@ -61,6 +63,8 @@ public:
          DistributedMutableVectorQueryTcpExecutionConfig config);
   [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait);
   [[nodiscard]] common::Status cancel();
+  [[nodiscard]] common::Status rebind(DistributedMutableVectorQueryExecution execution,
+                                      DistributedMutableVectorQueryTcpExecutionConfig config);
 
   [[nodiscard]] DistributedMutableVectorQueryTcpExecutionState state() const noexcept;
   [[nodiscard]] DistributedMutableVectorQueryTcpExecutionMetrics metrics() const noexcept;

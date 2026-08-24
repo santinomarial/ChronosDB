@@ -141,6 +141,17 @@ start_server(Authenticator& authenticator, DistributedMutableVectorQueryReceiver
            .maximum_total_encoded_bytes = std::size_t{2U} * 1024U * 1024U}});
 }
 
+[[nodiscard]] common::Result<DistributedMutableVectorQueryExecution>
+single_execution(query::DistributedMutableVectorFragment value) {
+  return DistributedMutableVectorQueryExecution::create(
+      1U, {std::move(value)},
+      {.sender = {.retry = {.maximum_attempts = 1U,
+                            .initial_backoff = std::chrono::milliseconds{1},
+                            .maximum_backoff = std::chrono::milliseconds{1}},
+                  .maximum_response_frames = 4U,
+                  .maximum_response_bytes = std::size_t{1024U} * 1024U}});
+}
+
 TEST(DistributedMutableVectorQueryTcpExecutionTest,
      SchedulesSplitLeadersAndRotatesOnlyPrevalidatedAddresses) {
   auto refused_listener = network::TcpListener::bind();
@@ -262,6 +273,95 @@ TEST(DistributedMutableVectorQueryTcpExecutionTest,
   EXPECT_EQ(cancelled->state(), DistributedMutableVectorQueryTcpExecutionState::kCancelled);
   EXPECT_EQ(cancelled->metrics().active_attempts, 0U);
   EXPECT_TRUE(listener->close().is_ok());
+}
+
+TEST(DistributedMutableVectorQueryTcpExecutionTest,
+     RebindsOnlyFreshCompatibleAuthorityAfterTerminalFailure) {
+  auto refused_listener = network::TcpListener::bind();
+  ASSERT_TRUE(refused_listener.has_value()) << refused_listener.error().to_string();
+  const network::Ipv4Endpoint refused_endpoint = refused_listener->bound_endpoint();
+  ASSERT_TRUE(refused_listener->close().is_ok());
+
+  Authorizer authorizer;
+  Authenticator server_authenticator{92U};
+  auto context = network::TlsClientContext::create(client_tls());
+  ASSERT_TRUE(context.has_value()) << context.error().to_string();
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+  auto stale_execution = single_execution(fragment(4U, 7U));
+  ASSERT_TRUE(stale_execution.has_value()) << stale_execution.error().to_string();
+  auto scheduled = DistributedMutableVectorQueryTcpExecution::create(
+      std::move(*stale_execution), {.authenticator = &server_authenticator,
+                                    .node_authorizer = &authorizer,
+                                    .routes = {{.node_id = 7U,
+                                                .endpoints = {refused_endpoint},
+                                                .tls_context = std::addressof(*context)}},
+                                    .carrier_limits = carrier_limits(),
+                                    .connect_timeout = std::chrono::milliseconds{1000},
+                                    .execution_deadline = deadline,
+                                    .maximum_rebindings = 1U});
+  ASSERT_TRUE(scheduled.has_value()) << scheduled.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 1024U &&
+       scheduled->state() == DistributedMutableVectorQueryTcpExecutionState::kRunning;
+       ++iteration) {
+    static_cast<void>(scheduled->poll_once(std::chrono::milliseconds{1}));
+  }
+  ASSERT_EQ(scheduled->state(), DistributedMutableVectorQueryTcpExecutionState::kFailed);
+  EXPECT_EQ(scheduled->failure().code(), common::StatusCode::kIoError);
+
+  Worker worker;
+  auto receiver = DistributedMutableVectorQueryReceiver::create(
+      {.local_node_id = 8U, .authorizer = &authorizer, .worker = &worker});
+  ASSERT_TRUE(receiver.has_value()) << receiver.error().to_string();
+  Authenticator client_authenticator{91U};
+  auto server = start_server(client_authenticator, *receiver);
+  ASSERT_TRUE(server.has_value()) << server.error().to_string();
+  auto fresh_fragment = fragment(4U, 8U);
+  fresh_fragment.applied_position = 9U;
+  fresh_fragment.observed_leader_commit_position = 9U;
+  fresh_fragment.placement_epoch = 10U;
+  auto fresh_execution = single_execution(fresh_fragment);
+  ASSERT_TRUE(fresh_execution.has_value()) << fresh_execution.error().to_string();
+  auto incompatible_fragment = fresh_fragment;
+  incompatible_fragment.query_id = uuid(99U);
+  auto incompatible = single_execution(std::move(incompatible_fragment));
+  ASSERT_TRUE(incompatible.has_value()) << incompatible.error().to_string();
+  const DistributedMutableVectorQueryTcpExecutionConfig replacement_config{
+      .authenticator = &server_authenticator,
+      .node_authorizer = &authorizer,
+      .routes = {{.node_id = 8U,
+                  .endpoints = {server->bound_endpoint()},
+                  .tls_context = std::addressof(*context)}},
+      .carrier_limits = carrier_limits(),
+      .connect_timeout = std::chrono::milliseconds{1000},
+      .execution_deadline = deadline,
+      .maximum_rebindings = 1U};
+  EXPECT_EQ(scheduled->rebind(std::move(*incompatible), replacement_config).code(),
+            common::StatusCode::kInvalidArgument);
+  ASSERT_TRUE(scheduled->rebind(std::move(*fresh_execution), replacement_config).is_ok());
+  EXPECT_EQ(scheduled->state(), DistributedMutableVectorQueryTcpExecutionState::kRunning);
+  for (std::size_t iteration = 0U;
+       iteration < 2048U &&
+       scheduled->state() == DistributedMutableVectorQueryTcpExecutionState::kRunning;
+       ++iteration) {
+    ASSERT_TRUE(scheduled->poll_once(std::chrono::milliseconds{1}).is_ok())
+        << scheduled->failure().to_string();
+    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{0}).is_ok());
+  }
+  ASSERT_EQ(scheduled->state(), DistributedMutableVectorQueryTcpExecutionState::kComplete)
+      << scheduled->failure().to_string();
+  EXPECT_EQ(worker.calls, 1U);
+  const auto metrics = scheduled->metrics();
+  EXPECT_EQ(metrics.attempts_started, 2U);
+  EXPECT_EQ(metrics.transport_failed_attempts, 1U);
+  EXPECT_EQ(metrics.transport_completed_attempts, 1U);
+  EXPECT_EQ(metrics.rebindings_started, 1U);
+  EXPECT_EQ(metrics.active_attempts, 0U);
+  auto late = single_execution(fresh_fragment);
+  ASSERT_TRUE(late.has_value());
+  EXPECT_EQ(scheduled->rebind(std::move(*late), replacement_config).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(server->shutdown().is_ok());
 }
 
 } // namespace

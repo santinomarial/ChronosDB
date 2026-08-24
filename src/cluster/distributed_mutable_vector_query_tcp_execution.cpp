@@ -49,6 +49,11 @@ namespace {
   return timeout.count() > 0 && timeout <= maximum;
 }
 
+[[nodiscard]] bool retryable_rebinding_failure(const common::StatusCode code) noexcept {
+  return code == common::StatusCode::kUnavailable ||
+         code == common::StatusCode::kResourceExhausted || code == common::StatusCode::kIoError;
+}
+
 } // namespace
 
 class DistributedMutableVectorQueryTcpExecution::Impl {
@@ -255,7 +260,7 @@ DistributedMutableVectorQueryTcpExecution::create(
       kDistributedVectorQueryResponseV2HeaderSize + kDistributedVectorQueryResponseV2TrailerSize;
   if (config.authenticator == nullptr || config.node_authorizer == nullptr ||
       config.routes.empty() || config.routes.size() > 65'536U ||
-      !valid_timeout(config.connect_timeout) ||
+      config.maximum_rebindings > 1024U || !valid_timeout(config.connect_timeout) ||
       !valid_timeout(config.carrier_limits.handshake_timeout) ||
       !valid_timeout(config.carrier_limits.exchange_timeout) ||
       config.carrier_limits.maximum_response_frames == 0U ||
@@ -410,6 +415,43 @@ common::Status DistributedMutableVectorQueryTcpExecution::cancel() {
     return invalid("mutable vector query TCP execution is empty");
   return implementation_->cancel(
       {common::StatusCode::kCancelled, "mutable vector query TCP execution was cancelled"});
+}
+
+common::Status DistributedMutableVectorQueryTcpExecution::rebind(
+    DistributedMutableVectorQueryExecution execution,
+    DistributedMutableVectorQueryTcpExecutionConfig config) {
+  if (!implementation_)
+    return invalid("mutable vector query TCP execution is empty");
+  Impl& previous = *implementation_;
+  if (previous.execution_state != DistributedMutableVectorQueryTcpExecutionState::kFailed ||
+      !retryable_rebinding_failure(previous.execution_failure.code())) {
+    return invalid("mutable vector query TCP execution is not eligible for rebinding");
+  }
+  if (previous.execution_metrics.rebindings_started >= previous.config.maximum_rebindings)
+    return exhausted("mutable vector query TCP execution rebinding budget is exhausted");
+  if (config.execution_deadline != previous.config.execution_deadline ||
+      config.maximum_rebindings != previous.config.maximum_rebindings) {
+    return invalid("mutable vector query TCP execution rebinding limits changed");
+  }
+  if (previous.execution.logical_identity() != execution.logical_identity()) {
+    return invalid("mutable vector query TCP replacement changes logical query authority");
+  }
+
+  auto replacement =
+      DistributedMutableVectorQueryTcpExecution::create(std::move(execution), std::move(config));
+  if (!replacement.has_value())
+    return replacement.error();
+  const DistributedMutableVectorQueryTcpExecutionMetrics prior = previous.execution_metrics;
+  replacement->implementation_->execution_metrics.attempts_started += prior.attempts_started;
+  replacement->implementation_->execution_metrics.retries_started += prior.retries_started;
+  replacement->implementation_->execution_metrics.transport_completed_attempts +=
+      prior.transport_completed_attempts;
+  replacement->implementation_->execution_metrics.transport_failed_attempts +=
+      prior.transport_failed_attempts;
+  replacement->implementation_->execution_metrics.rebindings_started =
+      prior.rebindings_started + 1U;
+  implementation_ = std::move(replacement->implementation_);
+  return common::Status::ok();
 }
 
 DistributedMutableVectorQueryTcpExecutionState

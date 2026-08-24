@@ -101,6 +101,10 @@ The mutable TCP scheduler validates complete route coverage before I/O, owns at 
 nonblocking mutual-TLS client per tablet, rotates only finite addresses for the immutable target,
 bounds poll waits by query and backoff deadlines, and tears down every client before publishing a
 terminal failure or cancellation.
+After a retryable terminal failure, explicit rebinding accepts only a newly constructed execution
+with the same query/database/table/schema/policy/projection/predicate/plan/result schema and
+plan-ordered tablet/group identity. Serving nodes, positions, placement epochs, and barriers may
+advance; metrics and the original deadline remain cumulative.
 Distributed Query Transport v1 wraps the dispatch and terminal exchange in correlated cluster
 request/response frames. `DistributedQueryReceiver` authenticates and authorizes the source before
 an embedding-owned worker service can execute the dispatch. `ReplicatedDistributedQueryWorker`
@@ -193,7 +197,8 @@ opening a socket, confirms nonblocking connect completion, and then transfers th
 authenticated mutable carrier. The companion server applies the same bounded stable-record polling
 model. The production service above supplies worker acquisition on the inbound side, while the
 multi-tablet scheduler above supplies outbound retry and complete-result ownership. Fresh authority
-still requires an outer rebinding owner.
+acquisition remains an embedding responsibility, but its compatible replacement boundary is now
+implemented.
 `ReplicatedDistributedGroupedQueryTcpServer` then establishes stable worker/receiver/server
 addresses and reverse dependency destruction for the complete production inbound real-CSEG stack.
 `DistributedGroupedQuerySender` independently constructs immutable attempts, validates the complete
