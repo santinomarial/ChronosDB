@@ -158,8 +158,8 @@ TEST(DistributedSqlLoweringAllocationFailureTest,
 TEST(DistributedSqlLoweringAllocationFailureTest,
      ClassifiesEveryGlobalAggregateOwnedAllocationFailure) {
   BoundSqlSelect select = bound_select(
-      "SELECT count(*) AS n, sum(value) AS total, avg(value) AS mean_value FROM metrics "
-      "WHERE value > 0 LIMIT 1");
+      "SELECT count(*) * 2 AS n, sum(value) + 1 AS total, avg(value) AS mean_value FROM metrics "
+      "WHERE value > 0 ORDER BY total LIMIT 1");
   bool reached_success = false;
   for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
     SCOPED_TRACE(fail_after);

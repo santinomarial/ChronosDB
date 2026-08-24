@@ -1039,9 +1039,10 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   auto native_distributed_hidden = distributed_native.execute_query(
       query_request("SELECT tag AS label FROM events ORDER BY ts, label LIMIT 1"));
   auto native_distributed_aggregate = distributed_native.execute_query(
-      query_request("SELECT count(*) AS rows, count(tag) AS tags, min(tag) AS first_tag, "
+      query_request("SELECT count(*) + 1 AS rows_plus, count(tag) * 2 AS tags_twice, "
+                    "upper(coalesce(min(tag), 'none')) AS first_tag, "
                     "max(enabled) AS any_enabled FROM events "
-                    "WHERE enabled AND lower(tag) = 'x' LIMIT 1"));
+                    "WHERE enabled AND lower(tag) = 'x' ORDER BY rows_plus DESC LIMIT 1"));
   auto native_distributed_constants = distributed_native.execute_query(
       query_request("SELECT 7 AS marker, upper('ok') AS word FROM events LIMIT 1"));
   auto native_distributed_expressions = distributed_native.execute_query(
@@ -1119,8 +1120,8 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   ASSERT_TRUE(remote_aggregate_batch.has_value()) << remote_aggregate_batch.error().to_string();
   ASSERT_EQ(remote_aggregate_batch->row_count(), 1U);
   ASSERT_EQ(remote_aggregate_batch->columns().size(), 4U);
-  EXPECT_EQ(remote_aggregate_batch->columns()[0].name, "rows");
-  EXPECT_EQ(remote_aggregate_batch->columns()[1].name, "tags");
+  EXPECT_EQ(remote_aggregate_batch->columns()[0].name, "rows_plus");
+  EXPECT_EQ(remote_aggregate_batch->columns()[1].name, "tags_twice");
   EXPECT_EQ(remote_aggregate_batch->columns()[2].name, "first_tag");
   EXPECT_EQ(remote_aggregate_batch->columns()[3].name, "any_enabled");
   const network::QueryResultCell* aggregate_rows = remote_aggregate_batch->cell(0U, 0U);
@@ -1133,10 +1134,10 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   ASSERT_NE(aggregate_any_enabled, nullptr);
   common::ByteReader aggregate_rows_reader{aggregate_rows->value};
   common::ByteReader aggregate_tags_reader{aggregate_tags->value};
-  EXPECT_EQ(aggregate_rows_reader.read_i64_le().value(), 2);
-  EXPECT_EQ(aggregate_tags_reader.read_i64_le().value(), 2);
+  EXPECT_EQ(aggregate_rows_reader.read_i64_le().value(), 3);
+  EXPECT_EQ(aggregate_tags_reader.read_i64_le().value(), 4);
   ASSERT_EQ(aggregate_first_tag->value.size(), 1U);
-  EXPECT_EQ(aggregate_first_tag->value.front(), std::byte{'x'});
+  EXPECT_EQ(aggregate_first_tag->value.front(), std::byte{'X'});
   ASSERT_EQ(aggregate_any_enabled->value.size(), 1U);
   EXPECT_EQ(aggregate_any_enabled->value.front(), std::byte{1U});
   EXPECT_EQ(native_distributed_aggregate->responses[1].frame.header.message_type,
@@ -1198,9 +1199,10 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   EXPECT_EQ(native_local->responses[1].frame.header.message_type, network::MessageType::kQueryEnd);
 
   auto native_local_aggregate = local_distributed_native.execute_query(
-      query_request("SELECT count(*) AS rows, count(tag) AS tags, min(tag) AS first_tag, "
+      query_request("SELECT count(*) + 1 AS rows_plus, count(tag) * 2 AS tags_twice, "
+                    "upper(coalesce(min(tag), 'none')) AS first_tag, "
                     "max(enabled) AS any_enabled FROM events "
-                    "WHERE enabled AND lower(tag) = 'x' LIMIT 1"));
+                    "WHERE enabled AND lower(tag) = 'x' ORDER BY rows_plus DESC LIMIT 1"));
   ASSERT_TRUE(native_local_aggregate.has_value()) << native_local_aggregate.error().to_string();
   ASSERT_EQ(native_local_aggregate->responses.size(), 2U);
   EXPECT_EQ(native_local_aggregate->result_rows, native_distributed_aggregate->result_rows);

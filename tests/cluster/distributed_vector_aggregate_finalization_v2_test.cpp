@@ -1,4 +1,5 @@
 #include "chronos/cluster/distributed_vector_aggregate_finalization_v2.hpp"
+#include "chronos/query/distributed_sql_lowering.hpp"
 
 #include <array>
 #include <bit>
@@ -144,6 +145,89 @@ TEST(DistributedVectorAggregateFinalizationV2Test,
   auto bounded = all_types_input();
   EXPECT_EQ(finalize_distributed_vector_aggregate_v2(bounded.plan, std::move(bounded.result),
                                                      {.maximum_working_bytes = 1U})
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+}
+
+TEST(DistributedVectorAggregateFinalizationV2Test,
+     EvaluatesCheckedVisibleExpressionsBeforeGlobalLimit) {
+  const schema::LogicalType int64 = type(schema::LogicalTypeKind::kInt64);
+  const schema::LogicalType symbol = type(schema::LogicalTypeKind::kSymbol);
+  query::DistributedVectorAggregateCoordinatorProjection projection{
+      .result_schema = {.columns = {{"shifted", int64, true}, {"upper_symbol", symbol, true}}}};
+  projection.outputs.push_back(
+      query::VectorExpression::create(
+          {query::VectorInputExpression{
+               .input_column_ordinal = 4U, .type = int64, .nullable = true},
+           query::VectorConstantExpression{query::ScalarValue::signed_value(int64, 1).value()},
+           query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kAdd,
+                                         .left_instruction = 0U,
+                                         .right_instruction = 1U}})
+          .value());
+  projection.outputs.push_back(
+      query::VectorExpression::create(
+          {query::VectorInputExpression{
+               .input_column_ordinal = 14U, .type = symbol, .nullable = true},
+           query::VectorUnaryExpression{.operation = query::VectorUnaryOperation::kUpperAscii,
+                                        .operand_instruction = 0U}})
+          .value());
+
+  auto input = all_types_input();
+  auto finalized = finalize_distributed_vector_aggregate_with_projection_v2(
+      input.plan, std::move(input.result), projection);
+  ASSERT_TRUE(finalized.has_value()) << finalized.error().to_string();
+  EXPECT_EQ(finalized->result_schema, projection.result_schema);
+  auto batch = network::decode_query_result_batch(finalized->encoded_batch);
+  ASSERT_TRUE(batch.has_value()) << batch.error().to_string();
+  ASSERT_EQ(batch->row_count(), 1U);
+  const network::QueryResultCell* shifted = batch->cell(0U, 0U);
+  ASSERT_NE(shifted, nullptr);
+  ASSERT_EQ(shifted->value.size(), 8U);
+  std::array<std::byte, 8U> shifted_bytes{};
+  std::ranges::copy(shifted->value, shifted_bytes.begin());
+  EXPECT_EQ(std::bit_cast<std::int64_t>(shifted_bytes), -63);
+  const network::QueryResultCell* upper = batch->cell(0U, 1U);
+  ASSERT_NE(upper, nullptr);
+  EXPECT_EQ(std::string(reinterpret_cast<const char*>(upper->value.data()), upper->value.size()),
+            "SYMBOL");
+
+  auto failing_input = all_types_input();
+  failing_input.plan.limit = 0U;
+  query::DistributedVectorAggregateCoordinatorProjection failing{
+      .result_schema = {.columns = {{"broken", int64, true}}}};
+  failing.outputs.push_back(
+      query::VectorExpression::create(
+          {query::VectorInputExpression{
+               .input_column_ordinal = 4U, .type = int64, .nullable = true},
+           query::VectorConstantExpression{query::ScalarValue::signed_value(int64, 0).value()},
+           query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kDivide,
+                                         .left_instruction = 0U,
+                                         .right_instruction = 1U}})
+          .value());
+  EXPECT_EQ(finalize_distributed_vector_aggregate_with_projection_v2(
+                failing_input.plan, std::move(failing_input.result), failing)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  auto stale_input = all_types_input();
+  query::DistributedVectorAggregateCoordinatorProjection stale{
+      .result_schema = {.columns = {{"stale", int64, true}}}};
+  stale.outputs.push_back(query::VectorExpression::create(
+                              {query::VectorInputExpression{
+                                  .input_column_ordinal = 99U, .type = int64, .nullable = true}})
+                              .value());
+  EXPECT_EQ(finalize_distributed_vector_aggregate_with_projection_v2(
+                stale_input.plan, std::move(stale_input.result), stale)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  auto bounded_input = all_types_input();
+  EXPECT_EQ(finalize_distributed_vector_aggregate_with_projection_v2(
+                bounded_input.plan, std::move(bounded_input.result), projection,
+                {.maximum_working_bytes = 1U})
                 .error()
                 .code(),
             common::StatusCode::kResourceExhausted);

@@ -11,6 +11,10 @@
 #include <cstdint>
 #include <vector>
 
+namespace chronos::query {
+struct DistributedVectorAggregateCoordinatorProjection;
+}
+
 namespace chronos::cluster {
 
 inline constexpr std::size_t kDefaultDistributedVectorAggregateFinalizationWorkingBytesV2 =
@@ -43,6 +47,15 @@ struct DistributedVectorAggregateFinalizedResultV2 {
 finalize_distributed_vector_aggregate_v2(
     const query::DistributedVectorPlanIntent& plan,
     query::DistributedVectorAggregateQueryResultV2&& input,
+    DistributedVectorAggregateFinalizationLimitsV2 limits = {});
+
+// Revalidates the raw aggregate authority, evaluates every checked visible expression over its
+// single finalized row (including for LIMIT 0), then Native-encodes the projected client schema.
+[[nodiscard]] common::Result<DistributedVectorAggregateFinalizedResultV2>
+finalize_distributed_vector_aggregate_with_projection_v2(
+    const query::DistributedVectorPlanIntent& plan,
+    query::DistributedVectorAggregateQueryResultV2&& input,
+    const query::DistributedVectorAggregateCoordinatorProjection& projection,
     DistributedVectorAggregateFinalizationLimitsV2 limits = {});
 
 } // namespace chronos::cluster

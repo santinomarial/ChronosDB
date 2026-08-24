@@ -1,7 +1,9 @@
 #include "chronos/cluster/distributed_vector_aggregate_finalization_v2.hpp"
 
+#include "../query/vector_expression_internal.hpp"
 #include "chronos/common/byte_writer.hpp"
 #include "chronos/common/checked_math.hpp"
+#include "chronos/query/distributed_sql_lowering.hpp"
 #include "chronos/query/value.hpp"
 
 #include <algorithm>
@@ -283,10 +285,11 @@ descriptor_size(const query::DistributedVectorResultSchema& schema) {
 
 } // namespace
 
-common::Result<DistributedVectorAggregateFinalizedResultV2>
-finalize_distributed_vector_aggregate_v2(
+static common::Result<DistributedVectorAggregateFinalizedResultV2>
+finalize_distributed_vector_aggregate_impl_v2(
     const query::DistributedVectorPlanIntent& plan,
     query::DistributedVectorAggregateQueryResultV2&& input,
+    const query::DistributedVectorAggregateCoordinatorProjection* const projection,
     const DistributedVectorAggregateFinalizationLimitsV2 limits) {
   try {
     if (!valid_limits(limits))
@@ -308,17 +311,6 @@ finalize_distributed_vector_aggregate_v2(
         static_cast<std::uint32_t>(input.definitions.size()));
     if (!plan_status.is_ok())
       return common::make_unexpected(plan_status);
-    if (input.definitions.size() > limits.output_batch.maximum_columns)
-      return common::make_unexpected(
-          exhausted("vector aggregate output column limit is exhausted"));
-
-    std::vector<std::size_t> scalar_sizes;
-    scalar_sizes.reserve(input.values.size());
-    auto planned_size = descriptor_size(input.result_schema);
-    if (!planned_size.has_value())
-      return common::make_unexpected(planned_size.error());
-    const bool emits_row = plan.limit.value_or(1U) != 0U;
-    std::size_t retained_scalar_bytes{};
     for (std::size_t ordinal = 0U; ordinal < input.definitions.size(); ++ordinal) {
       const query::DistributedVectorAggregateIntent& intent = plan.aggregates[ordinal];
       const query::VectorAggregateDefinition& definition = input.definitions[ordinal];
@@ -345,6 +337,195 @@ finalize_distributed_vector_aggregate_v2(
           (value.is_null() && !column.nullable) ||
           column.name.size() > limits.output_batch.maximum_column_name_bytes) {
         return common::make_unexpected(invalid("vector aggregate finalized scalar shape differs"));
+      }
+    }
+
+    std::size_t projection_working_bytes{};
+    if (projection != nullptr) {
+      const common::Status projected_schema_status =
+          query::validate_distributed_vector_result_schema_value(projection->result_schema);
+      if (!projected_schema_status.is_ok())
+        return common::make_unexpected(projected_schema_status);
+      if (projection->outputs.empty() ||
+          projection->outputs.size() != projection->result_schema.columns.size()) {
+        return common::make_unexpected(invalid("vector aggregate projection widths differ"));
+      }
+      const auto raw_collections = common::checked_multiply(
+          input.values.size(),
+          (sizeof(std::vector<std::byte>) + sizeof(query::detail::CanonicalVectorExpressionCell)) *
+              2U);
+      const auto projected_collections = common::checked_multiply(
+          projection->outputs.size(),
+          (sizeof(query::ScalarValue) + sizeof(query::DistributedVectorResultColumn)) * 2U);
+      const auto initial_projection =
+          raw_collections.has_value() && projected_collections.has_value()
+              ? common::checked_add(*raw_collections, *projected_collections)
+              : std::nullopt;
+      if (!initial_projection.has_value()) {
+        return common::make_unexpected(
+            exhausted("vector aggregate projection collections overflow"));
+      }
+      projection_working_bytes = *initial_projection;
+      for (const auto& column : projection->result_schema.columns) {
+        const auto retained_name = common::checked_multiply(column.name.size(), std::size_t{2U});
+        const auto next = retained_name.has_value()
+                              ? common::checked_add(projection_working_bytes, *retained_name)
+                              : std::nullopt;
+        if (!next.has_value()) {
+          return common::make_unexpected(
+              exhausted("vector aggregate projection schema size overflowed"));
+        }
+        projection_working_bytes = *next;
+      }
+      for (const query::ScalarValue& value : input.values) {
+        auto size = query::canonical_scalar_value_size(value);
+        if (!size.has_value())
+          return common::make_unexpected(size.error());
+        const auto retained = common::checked_multiply(*size, std::size_t{2U});
+        const auto next = retained.has_value()
+                              ? common::checked_add(projection_working_bytes, *retained)
+                              : std::nullopt;
+        if (!next.has_value())
+          return common::make_unexpected(exhausted("vector aggregate projection size overflowed"));
+        projection_working_bytes = *next;
+      }
+      for (const query::VectorExpression& expression : projection->outputs) {
+        const auto retained =
+            common::checked_multiply(expression.retained_configuration_bytes(), std::size_t{2U});
+        const auto next = retained.has_value()
+                              ? common::checked_add(projection_working_bytes, *retained)
+                              : std::nullopt;
+        if (!next.has_value()) {
+          return common::make_unexpected(
+              exhausted("vector aggregate projection configuration overflows"));
+        }
+        projection_working_bytes = *next;
+      }
+      if (projection_working_bytes > limits.maximum_working_bytes) {
+        return common::make_unexpected(
+            exhausted("vector aggregate projection working-memory limit is exhausted"));
+      }
+      std::vector<std::vector<std::byte>> canonical_storage;
+      canonical_storage.reserve(input.values.size());
+      std::vector<query::detail::CanonicalVectorExpressionCell> canonical_input;
+      canonical_input.reserve(input.values.size());
+      for (const query::ScalarValue& value : input.values) {
+        auto encoded = query::encode_canonical_scalar_value(value);
+        if (!encoded.has_value())
+          return common::make_unexpected(encoded.error());
+        canonical_storage.push_back(std::move(*encoded));
+      }
+      for (std::size_t ordinal = 0U; ordinal < input.values.size(); ++ordinal) {
+        canonical_input.push_back(
+            {.is_null = input.values[ordinal].is_null(), .bytes = canonical_storage[ordinal]});
+      }
+
+      std::vector<query::ScalarValue> projected_values;
+      projected_values.reserve(projection->outputs.size());
+      for (std::size_t ordinal = 0U; ordinal < projection->outputs.size(); ++ordinal) {
+        const query::VectorExpression& expression = projection->outputs[ordinal];
+        const query::DistributedVectorResultColumn& output =
+            projection->result_schema.columns[ordinal];
+        if (expression.result_shape().type != output.type ||
+            expression.result_shape().nullable != output.nullable) {
+          return common::make_unexpected(invalid("vector aggregate projection shape differs"));
+        }
+        for (const query::VectorExpressionInstruction& instruction : expression.instructions()) {
+          const auto* source = std::get_if<query::VectorInputExpression>(&instruction);
+          if (source == nullptr)
+            continue;
+          if (source->input_column_ordinal >= input.result_schema.columns.size()) {
+            return common::make_unexpected(
+                invalid("vector aggregate projection source is out of bounds"));
+          }
+          const auto& raw = input.result_schema.columns[source->input_column_ordinal];
+          if (source->type != raw.type || source->nullable != raw.nullable) {
+            return common::make_unexpected(
+                invalid("vector aggregate projection source shape differs"));
+          }
+        }
+        if (expression.result_shape().type.is_variable_width()) {
+          auto borrowed = query::detail::evaluate_variable_canonical_vector_expression_row(
+              expression, canonical_input);
+          if (!borrowed.has_value())
+            return common::make_unexpected(borrowed.error());
+          if (borrowed->is_null) {
+            projected_values.push_back(query::ScalarValue::null(output.type));
+          } else if (output.type.kind() == schema::LogicalTypeKind::kBinary) {
+            const auto retained = common::checked_multiply(borrowed->bytes.size(), std::size_t{2U});
+            const auto next = retained.has_value()
+                                  ? common::checked_add(projection_working_bytes, *retained)
+                                  : std::nullopt;
+            if (!next.has_value() || *next > limits.maximum_working_bytes) {
+              return common::make_unexpected(
+                  exhausted("vector aggregate projection working-memory limit is exhausted"));
+            }
+            std::vector<std::byte> bytes(borrowed->bytes.size());
+            for (std::size_t index = 0U; index < bytes.size(); ++index) {
+              bytes[index] = query::detail::transform_variable_byte(borrowed->bytes[index],
+                                                                    borrowed->transform);
+            }
+            projected_values.push_back(query::ScalarValue::binary(std::move(bytes)));
+          } else {
+            const auto retained = common::checked_multiply(borrowed->bytes.size(), std::size_t{2U});
+            const auto next = retained.has_value()
+                                  ? common::checked_add(projection_working_bytes, *retained)
+                                  : std::nullopt;
+            if (!next.has_value() || *next > limits.maximum_working_bytes) {
+              return common::make_unexpected(
+                  exhausted("vector aggregate projection working-memory limit is exhausted"));
+            }
+            std::string text(borrowed->bytes.size(), '\0');
+            for (std::size_t index = 0U; index < text.size(); ++index) {
+              text[index] = static_cast<char>(
+                  std::to_integer<unsigned char>(query::detail::transform_variable_byte(
+                      borrowed->bytes[index], borrowed->transform)));
+            }
+            auto value = query::ScalarValue::text(output.type, std::move(text));
+            if (!value.has_value())
+              return common::make_unexpected(value.error());
+            projected_values.push_back(std::move(*value));
+          }
+        } else {
+          auto value =
+              query::detail::evaluate_canonical_vector_expression_row(expression, canonical_input);
+          if (!value.has_value())
+            return common::make_unexpected(value.error());
+          projected_values.push_back(std::move(*value));
+        }
+        auto projected_size = query::canonical_scalar_value_size(projected_values.back());
+        if (!projected_size.has_value())
+          return common::make_unexpected(projected_size.error());
+        const auto retained = common::checked_multiply(*projected_size, std::size_t{2U});
+        const auto next = retained.has_value()
+                              ? common::checked_add(projection_working_bytes, *retained)
+                              : std::nullopt;
+        if (!next.has_value() || *next > limits.maximum_working_bytes)
+          return common::make_unexpected(exhausted("vector aggregate projection size overflowed"));
+        projection_working_bytes = *next;
+      }
+      input.result_schema = projection->result_schema;
+      input.values = std::move(projected_values);
+    }
+
+    if (input.values.size() > limits.output_batch.maximum_columns)
+      return common::make_unexpected(
+          exhausted("vector aggregate output column limit is exhausted"));
+
+    std::vector<std::size_t> scalar_sizes;
+    scalar_sizes.reserve(input.values.size());
+    auto planned_size = descriptor_size(input.result_schema);
+    if (!planned_size.has_value())
+      return common::make_unexpected(planned_size.error());
+    const bool emits_row = plan.limit.value_or(1U) != 0U;
+    std::size_t retained_scalar_bytes{};
+    for (std::size_t ordinal = 0U; ordinal < input.values.size(); ++ordinal) {
+      const query::DistributedVectorResultColumn& column = input.result_schema.columns[ordinal];
+      const query::ScalarValue& value = input.values[ordinal];
+      if (value.type() != std::optional<schema::LogicalType>{column.type} ||
+          (value.is_null() && !column.nullable) ||
+          column.name.size() > limits.output_batch.maximum_column_name_bytes) {
+        return common::make_unexpected(invalid("vector aggregate output scalar shape differs"));
       }
       auto size = scalar_size(value, column.type.kind());
       if (!size.has_value())
@@ -376,9 +557,13 @@ finalize_distributed_vector_aggregate_v2(
         collections_and_output.has_value()
             ? common::checked_add(*collections_and_output, retained_scalar_bytes)
             : std::nullopt;
-    const auto working_bytes =
+    const auto with_projection =
         with_scalar_bytes.has_value()
-            ? common::checked_add(*with_scalar_bytes, kConservativeOwnedAllocationOverheadBytes)
+            ? common::checked_add(*with_scalar_bytes, projection_working_bytes)
+            : std::nullopt;
+    const auto working_bytes =
+        with_projection.has_value()
+            ? common::checked_add(*with_projection, kConservativeOwnedAllocationOverheadBytes)
             : std::nullopt;
     if (!working_bytes.has_value() || *working_bytes > limits.maximum_working_bytes)
       return common::make_unexpected(
@@ -422,6 +607,23 @@ finalize_distributed_vector_aggregate_v2(
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("vector aggregate finalization exceeds limits"));
   }
+}
+
+common::Result<DistributedVectorAggregateFinalizedResultV2>
+finalize_distributed_vector_aggregate_v2(
+    const query::DistributedVectorPlanIntent& plan,
+    query::DistributedVectorAggregateQueryResultV2&& input,
+    const DistributedVectorAggregateFinalizationLimitsV2 limits) {
+  return finalize_distributed_vector_aggregate_impl_v2(plan, std::move(input), nullptr, limits);
+}
+
+common::Result<DistributedVectorAggregateFinalizedResultV2>
+finalize_distributed_vector_aggregate_with_projection_v2(
+    const query::DistributedVectorPlanIntent& plan,
+    query::DistributedVectorAggregateQueryResultV2&& input,
+    const query::DistributedVectorAggregateCoordinatorProjection& projection,
+    const DistributedVectorAggregateFinalizationLimitsV2 limits) {
+  return finalize_distributed_vector_aggregate_impl_v2(plan, std::move(input), &projection, limits);
 }
 
 } // namespace chronos::cluster

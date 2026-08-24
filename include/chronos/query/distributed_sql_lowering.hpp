@@ -81,6 +81,14 @@ struct DistributedVectorRowCoordinatorProjection {
                          const DistributedVectorRowCoordinatorProjection&) = default;
 };
 
+struct DistributedVectorAggregateCoordinatorProjection {
+  std::vector<VectorExpression> outputs;
+  DistributedVectorResultSchema result_schema;
+
+  friend bool operator==(const DistributedVectorAggregateCoordinatorProjection&,
+                         const DistributedVectorAggregateCoordinatorProjection&) = default;
+};
+
 // Complete schema-bound row intent for later authority binding. Source projection ordinals are
 // unique; direct-only plans preserve first use, while row-expression plans preserve complete schema
 // order. Row output indices may repeat and may append hidden direct order columns. A nonempty plan
@@ -119,23 +127,29 @@ lower_bound_sql_select_to_distributed_vector_rows(
 // projection ordinals are unique and preserve first aggregate-input use unless a source-dependent
 // coordinator predicate requires the complete source schema in ordinal order. COUNT(*) uses the
 // event-time column as a bounded fragment projection anchor when no aggregate or predicate reads a
-// source column. The aggregate intent alone carries global LIMIT. A sufficient-state worker may
-// consume the same projection without using the transitional row intent.
+// source column. result_schema names the internal aggregate vector; an optional coordinator
+// projection owns checked visible expressions and the client schema. The aggregate intent alone
+// carries global LIMIT. A sufficient-state worker may consume the same projection without using the
+// transitional row intent.
 struct DistributedVectorAggregateSqlPlan {
   DistributedVectorRowsSqlPlan input_rows;
   DistributedVectorPlanIntent intent;
+  // Exact internal schema of the sufficient aggregate values named by intent.
   DistributedVectorResultSchema result_schema;
   std::optional<VectorExpression> coordinator_predicate;
+  // Present only when visible SELECT expressions are not the identity aggregate vector.
+  std::optional<DistributedVectorAggregateCoordinatorProjection> coordinator_projection;
 
   friend bool operator==(const DistributedVectorAggregateSqlPlan&,
                          const DistributedVectorAggregateSqlPlan&) = default;
 };
 
-// Lowers the executable distributed global-aggregate subset: one current table, SELECT outputs
-// that are exactly COUNT(*), COUNT, SUM, AVG, MIN, MAX, VAR_POP, or VAR_SAMP over direct source
-// columns, an optional checked Boolean WHERE expression (with exact worker-side event-time range
-// specialization), and LIMIT. GROUP BY, ORDER BY, computed aggregate inputs/final outputs,
-// historical reads, and relational operators fail closed.
+// Lowers the executable distributed global-aggregate subset: one current table, checked scalar
+// SELECT expressions over COUNT(*), COUNT, SUM, AVG, MIN, MAX, VAR_POP, or VAR_SAMP calls with
+// direct source inputs; an optional checked Boolean WHERE expression (with exact worker-side event-
+// time range specialization); selected-output ORDER BY, which cannot reorder the single global row;
+// and LIMIT. GROUP BY, computed aggregate inputs, hidden ORDER BY expressions, historical reads,
+// and relational operators fail closed.
 [[nodiscard]] SqlResult<DistributedVectorAggregateSqlPlan>
 lower_bound_sql_select_to_distributed_vector_aggregate(
     const BoundSqlSelect& select, DistributedVectorAggregateSqlLoweringLimits limits = {});

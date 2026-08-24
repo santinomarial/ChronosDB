@@ -39,6 +39,8 @@ order expression may itself have observable failure semantics.
 
 [ADR 0456](0456-bounded-coordinator-global-aggregate-predicates.md) subsequently extends this
 boundary with checked coordinator predicates while preserving the event-time worker specialization.
+[ADR 0458](0458-bounded-coordinator-global-aggregate-output-expressions.md) subsequently admits
+checked final expressions and selected-output ORDER BY without changing aggregate-state bytes.
 
 ## Consequences
 

@@ -39,6 +39,9 @@ working-memory limit. Evaluation succeeds without per-row heap allocation. The s
 predicate-aware finalizer only when lowering produced the optional program. This decision changes
 no durable bytes, wire bytes, authority, retry, cancellation, or acknowledged-write guarantee.
 
+[ADR 0458](0458-bounded-coordinator-global-aggregate-output-expressions.md) subsequently composes
+this pre-aggregate predicate with checked post-aggregate visible expressions.
+
 ## Consequences
 
 Replicated Native global aggregates now accept the same checked WHERE expression intersection as

@@ -1,4 +1,5 @@
 #include "chronos/cluster/distributed_vector_aggregate_finalization_v2.hpp"
+#include "chronos/query/distributed_sql_lowering.hpp"
 #include "support/failing_allocator.hpp"
 
 #include <cstddef>
@@ -45,10 +46,22 @@ struct Input {
 TEST(DistributedVectorAggregateFinalizationV2AllocationFailureTest,
      ClassifiesEveryOwnedResultAllocation) {
   bool succeeded{};
+  const schema::LogicalType string_type =
+      schema::LogicalType::create(schema::LogicalTypeKind::kString).value();
+  query::DistributedVectorAggregateCoordinatorProjection projection{
+      .result_schema = {.columns = {{"upper_maximum", string_type, true}}}};
+  projection.outputs.push_back(
+      query::VectorExpression::create(
+          {query::VectorInputExpression{
+               .input_column_ordinal = 0U, .type = string_type, .nullable = true},
+           query::VectorUnaryExpression{.operation = query::VectorUnaryOperation::kUpperAscii,
+                                        .operand_instruction = 0U}})
+          .value());
   for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
     auto value = input();
     auto result = run_failure(fail_after, [&] {
-      return finalize_distributed_vector_aggregate_v2(value.plan, std::move(value.result));
+      return finalize_distributed_vector_aggregate_with_projection_v2(
+          value.plan, std::move(value.result), projection);
     });
     if (result.has_value()) {
       succeeded = true;

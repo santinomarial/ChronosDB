@@ -492,3 +492,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0455](0455-bounded-coordinator-row-predicate-execution.md) | Bounded coordinator row-predicate execution | accepted |
 | [0456](0456-bounded-coordinator-global-aggregate-predicates.md) | Bounded coordinator global-aggregate predicates | accepted |
 | [0457](0457-bounded-coordinator-computed-row-ordering.md) | Bounded coordinator computed row ordering | accepted |
+| [0458](0458-bounded-coordinator-global-aggregate-output-expressions.md) | Bounded coordinator global-aggregate output expressions | accepted |

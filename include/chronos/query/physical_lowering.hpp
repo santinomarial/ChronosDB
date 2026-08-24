@@ -8,6 +8,9 @@
 #include "chronos/query/vector_chunk.hpp"
 #include "chronos/query/vector_expression.hpp"
 
+#include <cstdint>
+#include <span>
+
 namespace chronos::query {
 
 struct PhysicalSelectLoweringLimits {
@@ -28,6 +31,19 @@ struct PhysicalSelectLoweringLimits {
 [[nodiscard]] SqlResult<VectorExpression>
 lower_bound_sql_scalar_expression(const BoundSqlSelect& select, const SqlExpression& expression,
                                   VectorExpressionLimits limits = {});
+
+struct VectorAggregateExpressionBinding {
+  SourceSpan expression_span;
+  std::uint32_t input_column_ordinal{};
+  schema::LogicalType type;
+  bool nullable{};
+};
+
+// Lowers one post-aggregate expression against exact finalized aggregate columns. Only aggregate
+// expressions named by bindings may become inputs; base-table columns fail closed.
+[[nodiscard]] SqlResult<VectorExpression> lower_bound_sql_aggregate_scalar_expression(
+    const BoundSqlSelect& select, const SqlExpression& expression,
+    std::span<const VectorAggregateExpressionBinding> bindings, VectorExpressionLimits limits = {});
 
 // Lowers the executable single-source SELECT or SUBSCRIBE SELECT SQL v1 subset, including global
 // and grouped aggregation, into one immutable physical pipeline. Unordered input is the primary

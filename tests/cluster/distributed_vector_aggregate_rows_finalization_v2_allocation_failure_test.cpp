@@ -1,4 +1,5 @@
 #include "chronos/cluster/distributed_vector_aggregate_rows_finalization_v2.hpp"
+#include "chronos/query/distributed_sql_lowering.hpp"
 #include "support/failing_allocator.hpp"
 
 #include <array>
@@ -76,14 +77,23 @@ TEST(DistributedVectorAggregateRowsFinalizationV2AllocationFailureTest,
                                     .right_instruction = 1U});
   const query::VectorExpression predicate =
       query::VectorExpression::create(std::move(predicate_instructions)).value();
+  query::DistributedVectorAggregateCoordinatorProjection projection{
+      .result_schema = {.columns = {{"upper_maximum", string_type, true}}}};
+  projection.outputs.push_back(
+      query::VectorExpression::create(
+          {query::VectorInputExpression{
+               .input_column_ordinal = 0U, .type = string_type, .nullable = true},
+           query::VectorUnaryExpression{.operation = query::VectorUnaryOperation::kUpperAscii,
+                                        .operand_instruction = 0U}})
+          .value());
 
   bool succeeded{};
   for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
     auto value_input = input(batch, string_type);
     auto result = run_failure(fail_after, [&] {
-      return finalize_distributed_vector_aggregate_rows_with_predicate_v2(
+      return finalize_distributed_vector_aggregate_rows_with_predicate_and_projection_v2(
           std::move(value_input.execution), value_input.aggregate, std::move(value_input.output),
-          predicate);
+          predicate, projection);
     });
     if (result.has_value()) {
       succeeded = true;

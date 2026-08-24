@@ -17,12 +17,12 @@ must add and independently validate those authorities.
 
 ## Projection and definitions
 
-Each SELECT output must be one aggregate call. `COUNT(*)` carries no input; every other supported
-operation names one direct source column. Without a source-dependent coordinator predicate, first
-use appends the source ordinal to the fragment projection. Repeated uses point at the same projected
-index but remain separate aggregate outputs. A source-dependent predicate instead causes the input
-row plan to carry the complete source schema in ordinal order, and aggregate inputs refer to those
-full-row positions.
+Each aggregate call nested in a SELECT output becomes one internal aggregate definition. `COUNT(*)`
+carries no input; every other supported operation names one direct source column. Without a source-
+dependent coordinator predicate, first use appends the source ordinal to the fragment projection.
+Repeated inputs point at the same projected index, while repeated aggregate occurrences remain
+separate internal states. A source-dependent predicate instead causes the input row plan to carry
+the complete source schema in ordinal order, and aggregate inputs refer to those full-row positions.
 
 For:
 
@@ -33,7 +33,7 @@ FROM metrics;
 ```
 
 the projection contains only `value`; the intent contains four ordered definitions with input
-indices `none, 0, 0, 0`. The result schema retains all four SQL names. If every operation is
+indices `none, 0, 0, 0`. The identity result schema retains all four SQL names. If every operation is
 `COUNT(*)`, lowering projects the table's event-time column solely to satisfy the current nonempty
 authority-bound fragment projection contract. That column is not an aggregate input or result.
 
@@ -62,10 +62,16 @@ LIMIT remains a coordinator operation after final aggregate construction. A glob
 one semantic row even for empty or fully filtered input; LIMIT zero removes that row while retaining
 its schema.
 
-ORDER BY currently fails closed. Although ordering cannot reorder one global row, evaluating a
-computed order expression could fail, so silently dropping the clause would broaden semantics.
-GROUP BY needs its keyed state protocol, and final scalar expressions need a coordinator expression
-stage; neither is represented as a direct ungrouped aggregate definition.
+If visible outputs differ from the raw aggregate vector, post-aggregate lowering maps aggregate call
+spans to internal result ordinals and makes source columns unavailable. The coordinator projection
+then evaluates the checked scalar surface used by row SQL. It owns the exact client schema; the
+internal schema is never published. Evaluation precedes LIMIT, preserving errors even for LIMIT
+zero.
+
+ORDER BY may name a selected output because that expression is already evaluated and one global row
+cannot be reordered. Hidden ORDER BY expressions fail closed rather than adding unseen aggregate
+state or silently discarding possible errors. GROUP BY still needs its keyed state protocol in this
+SQL path, and computed aggregate inputs still require a separately accepted worker vocabulary.
 
 ## Ownership, limits, and failures
 
@@ -75,8 +81,9 @@ never exceed the network hard limits. Owned allocation and container-growth fail
 `RESOURCE_EXHAUSTED`; invalid limit configurations become `INVALID_ARGUMENT`; unsupported SQL keeps
 the relevant source span and returns `NOT_SUPPORTED`. No partial product escapes.
 
-Work is `O(source columns + outputs + WHERE instructions)` and retained memory is
-`O(source columns + unique inputs + outputs)`. One thread constructs the immutable product.
+Work is `O(source columns + aggregate calls + output and WHERE instructions)` and retained memory is
+`O(source columns + unique inputs + aggregate calls + expression configuration)`. One thread
+constructs the immutable product.
 
 ## Tradeoffs and interview questions
 
@@ -99,3 +106,7 @@ stream terminates; Native finalization then publishes one all-or-none result.
 Keeping that exact ordinal mapping avoids a second rewrite language. This is a bounded correctness
 baseline; versioned worker predicate pushdown can later reduce transfer volume without changing
 truth.
+
+**Why evaluate final expressions after merge?** AVG, variance, extrema, and exact sums are globally
+meaningful only after all tablet states merge. Mapping aggregate spans to that one final vector keeps
+worker exchange bytes schema-neutral and prevents tablet-local finalization errors.

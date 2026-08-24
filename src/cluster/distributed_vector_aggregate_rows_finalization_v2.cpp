@@ -5,6 +5,7 @@
 #include "chronos/common/byte_reader.hpp"
 #include "chronos/common/byte_writer.hpp"
 #include "chronos/common/checked_math.hpp"
+#include "chronos/query/distributed_sql_lowering.hpp"
 #include "chronos/query/distributed_vector_aggregate_state.hpp"
 
 #include <array>
@@ -252,6 +253,7 @@ finalize_distributed_vector_aggregate_rows_impl_v2(
     const query::DistributedVectorPlanIntent& aggregate_plan,
     query::DistributedVectorResultSchema&& aggregate_result_schema,
     const query::VectorExpression* const predicate,
+    const query::DistributedVectorAggregateCoordinatorProjection* const projection,
     const DistributedVectorAggregateRowsFinalizationLimitsV2 limits) {
   try {
     if (!valid_limits(limits))
@@ -513,6 +515,10 @@ finalize_distributed_vector_aggregate_rows_impl_v2(
         .result_schema = std::move(aggregate_result_schema),
         .values = std::move(values),
         .retained_encoded_bytes = input_encoded_bytes};
+    if (projection != nullptr) {
+      return finalize_distributed_vector_aggregate_with_projection_v2(
+          aggregate_plan, std::move(aggregate_result), *projection, limits.output);
+    }
     return finalize_distributed_vector_aggregate_v2(aggregate_plan, std::move(aggregate_result),
                                                     limits.output);
   } catch (const std::bad_alloc&) {
@@ -528,8 +534,9 @@ finalize_distributed_vector_aggregate_rows_v2(
     const query::DistributedVectorPlanIntent& aggregate_plan,
     query::DistributedVectorResultSchema&& aggregate_result_schema,
     const DistributedVectorAggregateRowsFinalizationLimitsV2 limits) {
-  return finalize_distributed_vector_aggregate_rows_impl_v2(
-      std::move(input), aggregate_plan, std::move(aggregate_result_schema), nullptr, limits);
+  return finalize_distributed_vector_aggregate_rows_impl_v2(std::move(input), aggregate_plan,
+                                                            std::move(aggregate_result_schema),
+                                                            nullptr, nullptr, limits);
 }
 
 common::Result<DistributedVectorAggregateFinalizedResultV2>
@@ -539,8 +546,34 @@ finalize_distributed_vector_aggregate_rows_with_predicate_v2(
     query::DistributedVectorResultSchema&& aggregate_result_schema,
     const query::VectorExpression& predicate,
     const DistributedVectorAggregateRowsFinalizationLimitsV2 limits) {
-  return finalize_distributed_vector_aggregate_rows_impl_v2(
-      std::move(input), aggregate_plan, std::move(aggregate_result_schema), &predicate, limits);
+  return finalize_distributed_vector_aggregate_rows_impl_v2(std::move(input), aggregate_plan,
+                                                            std::move(aggregate_result_schema),
+                                                            &predicate, nullptr, limits);
+}
+
+common::Result<DistributedVectorAggregateFinalizedResultV2>
+finalize_distributed_vector_aggregate_rows_with_projection_v2(
+    DistributedVectorQueryExecutionResultV2&& input,
+    const query::DistributedVectorPlanIntent& aggregate_plan,
+    query::DistributedVectorResultSchema&& aggregate_result_schema,
+    const query::DistributedVectorAggregateCoordinatorProjection& projection,
+    const DistributedVectorAggregateRowsFinalizationLimitsV2 limits) {
+  return finalize_distributed_vector_aggregate_rows_impl_v2(std::move(input), aggregate_plan,
+                                                            std::move(aggregate_result_schema),
+                                                            nullptr, &projection, limits);
+}
+
+common::Result<DistributedVectorAggregateFinalizedResultV2>
+finalize_distributed_vector_aggregate_rows_with_predicate_and_projection_v2(
+    DistributedVectorQueryExecutionResultV2&& input,
+    const query::DistributedVectorPlanIntent& aggregate_plan,
+    query::DistributedVectorResultSchema&& aggregate_result_schema,
+    const query::VectorExpression& predicate,
+    const query::DistributedVectorAggregateCoordinatorProjection& projection,
+    const DistributedVectorAggregateRowsFinalizationLimitsV2 limits) {
+  return finalize_distributed_vector_aggregate_rows_impl_v2(std::move(input), aggregate_plan,
+                                                            std::move(aggregate_result_schema),
+                                                            &predicate, &projection, limits);
 }
 
 } // namespace chronos::cluster

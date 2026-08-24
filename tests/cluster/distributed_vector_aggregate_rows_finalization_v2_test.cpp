@@ -1,5 +1,6 @@
 #include "chronos/cluster/distributed_vector_aggregate_rows_finalization_v2.hpp"
 #include "chronos/common/byte_reader.hpp"
+#include "chronos/query/distributed_sql_lowering.hpp"
 
 #include <algorithm>
 #include <array>
@@ -257,6 +258,45 @@ TEST(DistributedVectorAggregateRowsFinalizationV2Test,
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);
+}
+
+TEST(DistributedVectorAggregateRowsFinalizationV2Test,
+     AppliesPredicateThenCheckedFinalAggregateProjection) {
+  auto input = execution_result({message(2U, 1U, true, encode_rows({{1, "z"}, {3, "a"}})),
+                                 message(3U, 1U, true, encode_rows({{5, "a"}}))});
+  auto plan = aggregate_plan();
+  const schema::LogicalType int64 = type(schema::LogicalTypeKind::kInt64);
+  const schema::LogicalType string = type(schema::LogicalTypeKind::kString);
+  query::DistributedVectorAggregateCoordinatorProjection projection{
+      .result_schema = {.columns = {{"shifted", int64, true}, {"minimum_lower", string, true}}}};
+  projection.outputs.push_back(
+      query::VectorExpression::create(
+          {query::VectorInputExpression{
+               .input_column_ordinal = 2U, .type = int64, .nullable = true},
+           query::VectorConstantExpression{query::ScalarValue::signed_value(int64, 1).value()},
+           query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kAdd,
+                                         .left_instruction = 0U,
+                                         .right_instruction = 1U}})
+          .value());
+  projection.outputs.push_back(
+      query::VectorExpression::create(
+          {query::VectorInputExpression{
+               .input_column_ordinal = 4U, .type = string, .nullable = true},
+           query::VectorUnaryExpression{.operation = query::VectorUnaryOperation::kLowerAscii,
+                                        .operand_instruction = 0U}})
+          .value());
+  const query::VectorExpression predicate = label_equals("a");
+  auto finalized = finalize_distributed_vector_aggregate_rows_with_predicate_and_projection_v2(
+      std::move(input), plan, output_schema(), predicate, projection);
+  ASSERT_TRUE(finalized.has_value()) << finalized.error().to_string();
+  auto batch = network::decode_query_result_batch(finalized->encoded_batch);
+  ASSERT_TRUE(batch.has_value()) << batch.error().to_string();
+  EXPECT_EQ(std::bit_cast<std::int64_t>(bits_cell(*batch, 0U)), 9);
+  const network::QueryResultCell* minimum = batch->cell(0U, 1U);
+  ASSERT_NE(minimum, nullptr);
+  EXPECT_EQ(
+      std::string(reinterpret_cast<const char*>(minimum->value.data()), minimum->value.size()),
+      "a");
 }
 
 TEST(DistributedVectorAggregateRowsFinalizationV2Test,

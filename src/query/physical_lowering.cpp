@@ -931,6 +931,77 @@ SqlResult<VectorExpression> lower_bound_sql_scalar_expression(const BoundSqlSele
   }
 }
 
+SqlResult<VectorExpression> lower_bound_sql_aggregate_scalar_expression(
+    const BoundSqlSelect& select, const SqlExpression& expression,
+    const std::span<const VectorAggregateExpressionBinding> bindings,
+    const VectorExpressionLimits limits) {
+  try {
+    if (limits.maximum_instructions == 0U ||
+        limits.maximum_instructions > kMaximumVectorExpressionInstructions ||
+        limits.maximum_retained_configuration_bytes == 0U) {
+      return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, expression.span(),
+                                        common::StatusCode::kInvalidArgument,
+                                        "Aggregate expression limits are invalid"));
+    }
+    if (select.sources().size() != 1U || !select.asof_joins().empty() ||
+        !select.aggregate_query() || bindings.empty()) {
+      return std::unexpected(diagnostic(SqlDiagnosticCode::kUnsupportedSyntax, expression.span(),
+                                        common::StatusCode::kNotSupported,
+                                        "Post-aggregate lowering requires bound aggregate inputs"));
+    }
+    std::vector<AggregatePhysicalBinding> physical_bindings;
+    physical_bindings.reserve(bindings.size());
+    for (const VectorAggregateExpressionBinding& binding : bindings) {
+      physical_bindings.push_back({.expression_span = binding.expression_span,
+                                   .column_ordinal = binding.input_column_ordinal,
+                                   .type = binding.type,
+                                   .nullable = binding.nullable});
+    }
+    ColumnOutputPosition output =
+        ExpressionLowerer{select, limits, physical_bindings, {}, false}.output(expression);
+    if (auto* computed = std::get_if<ComputedColumnOutputPosition>(&output); computed != nullptr)
+      return std::move(computed->expression);
+
+    const BoundExpressionInfo* information = select.find_expression(expression.span());
+    if (information == nullptr || !information->type.has_value()) {
+      return std::unexpected(diagnostic(SqlDiagnosticCode::kExecutionFailure, expression.span(),
+                                        common::StatusCode::kInternal,
+                                        "Bound aggregate expression has no result shape"));
+    }
+    std::vector<VectorExpressionInstruction> instructions;
+    instructions.reserve(1U);
+    if (const auto* source = std::get_if<SourceColumnOutputPosition>(&output); source != nullptr) {
+      instructions.emplace_back(
+          VectorInputExpression{.input_column_ordinal = source->input_column_ordinal,
+                                .type = *information->type,
+                                .nullable = information->nullable});
+    } else {
+      instructions.emplace_back(VectorConstantExpression{
+          .value = std::move(std::get<ConstantColumnOutputPosition>(output).value)});
+    }
+    auto program = VectorExpression::create(std::move(instructions), limits);
+    if (!program.has_value())
+      return std::unexpected(from_status(expression.span(), program.error()));
+    if (program->result_shape().type != *information->type ||
+        program->result_shape().nullable != information->nullable) {
+      return std::unexpected(diagnostic(SqlDiagnosticCode::kExecutionFailure, expression.span(),
+                                        common::StatusCode::kInternal,
+                                        "Bound aggregate expression shape is inconsistent"));
+    }
+    return std::move(*program);
+  } catch (LoweringFailure& failure) {
+    return std::unexpected(failure.take());
+  } catch (const std::bad_alloc&) {
+    return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, expression.span(),
+                                      common::StatusCode::kResourceExhausted,
+                                      "Aggregate expression lowering allocation failed"));
+  } catch (const std::length_error&) {
+    return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, expression.span(),
+                                      common::StatusCode::kResourceExhausted,
+                                      "Aggregate expression lowering exceeds container limits"));
+  }
+}
+
 SqlResult<PhysicalPipelinePlan> lower_bound_sql_select(const BoundSqlSelect& select,
                                                        const PhysicalSelectLoweringLimits limits) {
   try {

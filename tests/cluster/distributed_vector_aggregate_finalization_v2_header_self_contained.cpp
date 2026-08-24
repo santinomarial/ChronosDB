@@ -14,4 +14,12 @@ using Finalize =
         chronos::cluster::DistributedVectorAggregateFinalizationLimitsV2);
 [[maybe_unused]] const Finalize kFinalize =
     &chronos::cluster::finalize_distributed_vector_aggregate_v2;
+using FinalizeProjection =
+    chronos::common::Result<chronos::cluster::DistributedVectorAggregateFinalizedResultV2> (*)(
+        const chronos::query::DistributedVectorPlanIntent&,
+        chronos::query::DistributedVectorAggregateQueryResultV2&&,
+        const chronos::query::DistributedVectorAggregateCoordinatorProjection&,
+        chronos::cluster::DistributedVectorAggregateFinalizationLimitsV2);
+[[maybe_unused]] const FinalizeProjection kFinalizeProjection =
+    &chronos::cluster::finalize_distributed_vector_aggregate_with_projection_v2;
 } // namespace

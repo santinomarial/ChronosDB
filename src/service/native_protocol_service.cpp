@@ -1057,17 +1057,35 @@ NativeProtocolService::execute_query(network::NetworkTask request,
         if (!coordinated.has_value())
           return query_error(target, coordinated.error(), limits_.protocol);
         if (lowered_aggregate.has_value()) {
-          common::Result<cluster::DistributedVectorAggregateFinalizedResultV2> finalized =
-              lowered_aggregate->coordinator_predicate.has_value()
-                  ? cluster::finalize_distributed_vector_aggregate_rows_with_predicate_v2(
-                        {.plan = logical_identity->plan, .result = std::move(*coordinated)},
-                        lowered_aggregate->intent, std::move(lowered_aggregate->result_schema),
-                        *lowered_aggregate->coordinator_predicate,
-                        bounded_aggregate_finalization_limits(config, limits_))
-                  : cluster::finalize_distributed_vector_aggregate_rows_v2(
-                        {.plan = logical_identity->plan, .result = std::move(*coordinated)},
-                        lowered_aggregate->intent, std::move(lowered_aggregate->result_schema),
-                        bounded_aggregate_finalization_limits(config, limits_));
+          common::Result<cluster::DistributedVectorAggregateFinalizedResultV2> finalized = [&]() {
+            auto input = cluster::DistributedVectorQueryExecutionResultV2{
+                .plan = logical_identity->plan, .result = std::move(*coordinated)};
+            const auto finalization_limits = bounded_aggregate_finalization_limits(config, limits_);
+            if (lowered_aggregate->coordinator_projection.has_value() &&
+                lowered_aggregate->coordinator_predicate.has_value()) {
+              return cluster::
+                  finalize_distributed_vector_aggregate_rows_with_predicate_and_projection_v2(
+                      std::move(input), lowered_aggregate->intent,
+                      std::move(lowered_aggregate->result_schema),
+                      *lowered_aggregate->coordinator_predicate,
+                      *lowered_aggregate->coordinator_projection, finalization_limits);
+            }
+            if (lowered_aggregate->coordinator_projection.has_value()) {
+              return cluster::finalize_distributed_vector_aggregate_rows_with_projection_v2(
+                  std::move(input), lowered_aggregate->intent,
+                  std::move(lowered_aggregate->result_schema),
+                  *lowered_aggregate->coordinator_projection, finalization_limits);
+            }
+            if (lowered_aggregate->coordinator_predicate.has_value()) {
+              return cluster::finalize_distributed_vector_aggregate_rows_with_predicate_v2(
+                  std::move(input), lowered_aggregate->intent,
+                  std::move(lowered_aggregate->result_schema),
+                  *lowered_aggregate->coordinator_predicate, finalization_limits);
+            }
+            return cluster::finalize_distributed_vector_aggregate_rows_v2(
+                std::move(input), lowered_aggregate->intent,
+                std::move(lowered_aggregate->result_schema), finalization_limits);
+          }();
           if (!finalized.has_value())
             return query_error(target, finalized.error(), limits_.protocol);
           return distributed_aggregate_result(target, std::move(*finalized), limits_);

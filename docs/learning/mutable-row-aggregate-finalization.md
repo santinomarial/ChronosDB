@@ -34,7 +34,10 @@ optional checked Boolean predicate (TRUE only)
 shared MergeableVectorAggregateState instances
           |
           v
-existing global Native aggregate finalizer
+optional checked final aggregate projection
+          |
+          v
+global Native aggregate finalizer
 ```
 
 The input row plan must have outputs `0..N-1`, no hidden visibility mapping, no order keys, no
@@ -59,6 +62,12 @@ SUM, AVG, extrema, or variance implementation. Variable extrema retain their byt
 per-value ceiling and `QueryResourceContext` reservation. Batches and their decoded cell vectors
 are temporary; only aggregate state survives between batches.
 
+After every state produces its exact owned scalar, an optional coordinator projection canonicalizes
+that raw single row and evaluates visible checked expressions. Fixed-width results own scalar
+storage; transformed variable results are copied into owned STRING/SYMBOL/BINARY values before raw
+state is released. Source leaves are revalidated against the internal aggregate schema. Projection
+evaluation occurs even for LIMIT zero so SQL runtime errors are not hidden.
+
 ## Stream and resource invariants
 
 Messages for each tablet form one contiguous sequence starting at one and ending exactly once. All
@@ -66,8 +75,8 @@ messages share a nonnil query ID, tablet segments are unique, and even an empty 
 one canonical terminal message. No result can be finalized while any segment remains open.
 
 The caller separately bounds input rows, messages, encoded exchange bytes, decoded batch shape,
-predicate configuration/canonical row views, conservative working memory, query-accounted state,
-variable extrema, and final Native output.
+predicate and final-expression configuration/canonical row views, transformed payload ownership,
+conservative working memory, query-accounted state, variable extrema, and final Native output.
 Header shapes are checked before full decoding or cell-vector allocation. Complexity is
 `O(rows * aggregates)` time and `O(max batch cells + aggregate states + retained extrema)` extra
 memory.
@@ -107,6 +116,10 @@ tempting partial result. Publication still happens only after complete authority
 **Why filter at the coordinator?** It closes the SQL correctness surface using the shared checked
 expression engine and existing authenticated row carrier. The cost is transferring rows that a
 future versioned worker program could reject earlier.
+
+**Why project before LIMIT zero?** Local SQL evaluates the output expression stage before LIMIT. A
+checked division or cast failure must therefore remain observable rather than disappearing because
+the final row count is zero.
 
 **What should replace this at scale?** Bind the existing sufficient-state exchange to current
 TabletSnapshot/Raft proof authority and package it in the same authenticated service. The authority,

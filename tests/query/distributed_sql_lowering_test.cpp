@@ -443,7 +443,7 @@ TEST(DistributedSqlLoweringTest, OwnsCanonicalGlobalAggregateProjectionPredicate
 }
 
 TEST(DistributedSqlLoweringTest, AnchorsCountStarAndRejectsUnsupportedAggregateSemantics) {
-  BoundSqlSelect count = bind("SELECT count(*) AS n FROM metrics LIMIT 0");
+  BoundSqlSelect count = bind("SELECT count(*) AS n FROM metrics ORDER BY n DESC LIMIT 0");
   auto lowered = lower_bound_sql_select_to_distributed_vector_aggregate(count);
   ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
   EXPECT_EQ(lowered->input_rows.destination_column_ordinals, (std::vector<std::uint32_t>{0U}));
@@ -452,13 +452,12 @@ TEST(DistributedSqlLoweringTest, AnchorsCountStarAndRejectsUnsupportedAggregateS
   EXPECT_EQ(lowered->input_rows.result_schema.columns.front().name, "ts");
   EXPECT_FALSE(lowered->input_rows.intent.limit.has_value());
   EXPECT_EQ(lowered->intent.limit, 0U);
+  EXPECT_TRUE(lowered->intent.order_keys.empty());
 
   const std::vector<std::string_view> statements{
-      "SELECT value FROM metrics",
-      "SELECT sum(value + 1) FROM metrics",
-      "SELECT sum(value) + 1 FROM metrics",
+      "SELECT value FROM metrics", "SELECT sum(value + 1) FROM metrics",
       "SELECT sum(value) FROM metrics GROUP BY label",
-      "SELECT sum(value) AS total FROM metrics ORDER BY total",
+      "SELECT sum(value) AS total FROM metrics ORDER BY avg(value)",
       "SELECT sum(value) FROM metrics FOR SYSTEM_TIME AS OF "
       "TIMESTAMP '1970-01-01 00:00:00Z'"};
   for (const std::string_view statement : statements) {
@@ -470,6 +469,37 @@ TEST(DistributedSqlLoweringTest, AnchorsCountStarAndRejectsUnsupportedAggregateS
     EXPECT_EQ(unsupported_plan.error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
     EXPECT_EQ(unsupported_plan.error().status().code(), common::StatusCode::kNotSupported);
   }
+}
+
+TEST(DistributedSqlLoweringTest, LowersCheckedFinalGlobalAggregateExpressions) {
+  BoundSqlSelect select =
+      bind("SELECT sum(value) + 1 AS shifted, coalesce(min(label), 'none') AS minimum_label, "
+           "count(*) * 2 AS doubled FROM metrics ORDER BY shifted DESC LIMIT 1");
+  auto lowered = lower_bound_sql_select_to_distributed_vector_aggregate(select);
+  ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
+  EXPECT_EQ(lowered->input_rows.destination_column_ordinals, (std::vector<std::uint32_t>{2U, 1U}));
+  ASSERT_EQ(lowered->intent.aggregates.size(), 3U);
+  EXPECT_EQ(lowered->intent.aggregates[0].operation, VectorAggregateOperation::kSum);
+  EXPECT_EQ(lowered->intent.aggregates[1].operation, VectorAggregateOperation::kMinimum);
+  EXPECT_EQ(lowered->intent.aggregates[2].operation, VectorAggregateOperation::kCountStar);
+  EXPECT_TRUE(lowered->intent.order_keys.empty());
+  ASSERT_EQ(lowered->result_schema.columns.size(), 3U);
+  EXPECT_EQ(lowered->result_schema.columns[0].name, "_");
+  ASSERT_TRUE(lowered->coordinator_projection.has_value());
+  ASSERT_EQ(lowered->coordinator_projection->outputs.size(), 3U);
+  ASSERT_EQ(lowered->coordinator_projection->result_schema.columns.size(), 3U);
+  EXPECT_EQ(lowered->coordinator_projection->result_schema.columns[0].name, "shifted");
+  EXPECT_EQ(lowered->coordinator_projection->result_schema.columns[1].name, "minimum_label");
+  EXPECT_EQ(lowered->coordinator_projection->result_schema.columns[2].name, "doubled");
+  EXPECT_EQ(lowered->coordinator_projection->outputs[0].result_shape().type.kind(),
+            schema::LogicalTypeKind::kInt64);
+  EXPECT_EQ(lowered->coordinator_projection->outputs[1].result_shape().type.kind(),
+            schema::LogicalTypeKind::kString);
+
+  const auto bounded = lower_bound_sql_select_to_distributed_vector_aggregate(
+      select, {.maximum_expression_configuration_bytes = 1U});
+  ASSERT_FALSE(bounded.has_value());
+  EXPECT_EQ(bounded.error().code(), SqlDiagnosticCode::kResourceLimit);
 }
 
 TEST(DistributedSqlLoweringTest, OwnsGeneralGlobalAggregatePredicates) {

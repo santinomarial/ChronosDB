@@ -13,6 +13,10 @@
 #include <cstddef>
 #include <cstdint>
 
+namespace chronos::query {
+struct DistributedVectorAggregateCoordinatorProjection;
+}
+
 namespace chronos::cluster {
 
 inline constexpr std::uint64_t kDefaultDistributedVectorAggregateRowsInputRowsV2 = 1'048'576U;
@@ -56,6 +60,23 @@ finalize_distributed_vector_aggregate_rows_with_predicate_v2(
     const query::DistributedVectorPlanIntent& aggregate_plan,
     query::DistributedVectorResultSchema&& aggregate_result_schema,
     const query::VectorExpression& predicate,
+    DistributedVectorAggregateRowsFinalizationLimitsV2 limits = {});
+
+[[nodiscard]] common::Result<DistributedVectorAggregateFinalizedResultV2>
+finalize_distributed_vector_aggregate_rows_with_projection_v2(
+    DistributedVectorQueryExecutionResultV2&& input,
+    const query::DistributedVectorPlanIntent& aggregate_plan,
+    query::DistributedVectorResultSchema&& aggregate_result_schema,
+    const query::DistributedVectorAggregateCoordinatorProjection& projection,
+    DistributedVectorAggregateRowsFinalizationLimitsV2 limits = {});
+
+[[nodiscard]] common::Result<DistributedVectorAggregateFinalizedResultV2>
+finalize_distributed_vector_aggregate_rows_with_predicate_and_projection_v2(
+    DistributedVectorQueryExecutionResultV2&& input,
+    const query::DistributedVectorPlanIntent& aggregate_plan,
+    query::DistributedVectorResultSchema&& aggregate_result_schema,
+    const query::VectorExpression& predicate,
+    const query::DistributedVectorAggregateCoordinatorProjection& projection,
     DistributedVectorAggregateRowsFinalizationLimitsV2 limits = {});
 
 } // namespace chronos::cluster

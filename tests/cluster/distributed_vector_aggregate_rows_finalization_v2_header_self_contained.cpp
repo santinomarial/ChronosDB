@@ -22,4 +22,13 @@ using FinalizeWithPredicate =
         chronos::cluster::DistributedVectorAggregateRowsFinalizationLimitsV2);
 [[maybe_unused]] const FinalizeWithPredicate kFinalizeWithPredicate =
     &chronos::cluster::finalize_distributed_vector_aggregate_rows_with_predicate_v2;
+using FinalizeWithProjection =
+    chronos::common::Result<chronos::cluster::DistributedVectorAggregateFinalizedResultV2> (*)(
+        chronos::cluster::DistributedVectorQueryExecutionResultV2&&,
+        const chronos::query::DistributedVectorPlanIntent&,
+        chronos::query::DistributedVectorResultSchema&&,
+        const chronos::query::DistributedVectorAggregateCoordinatorProjection&,
+        chronos::cluster::DistributedVectorAggregateRowsFinalizationLimitsV2);
+[[maybe_unused]] const FinalizeWithProjection kFinalizeWithProjection =
+    &chronos::cluster::finalize_distributed_vector_aggregate_rows_with_projection_v2;
 } // namespace

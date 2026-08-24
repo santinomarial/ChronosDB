@@ -295,6 +295,17 @@ distributed_aggregate_operation(const std::string_view name) noexcept {
   return std::nullopt;
 }
 
+void collect_distributed_aggregates(const SqlExpression& expression,
+                                    std::vector<const SqlExpression*>& aggregates) {
+  if (expression.kind() == SqlExpressionKind::kFunction &&
+      distributed_aggregate_operation(expression.text()).has_value()) {
+    aggregates.push_back(&expression);
+    return;
+  }
+  for (const SqlExpression& child : expression.children())
+    collect_distributed_aggregates(child, aggregates);
+}
+
 } // namespace
 
 SqlResult<DistributedVectorRowsSqlPlan> lower_bound_sql_select_to_distributed_vector_rows(
@@ -822,9 +833,17 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
           common::StatusCode::kNotSupported,
           "Distributed aggregate lowering requires one current ungrouped aggregate source"));
     }
-    if (!select.syntax().order_by().empty()) {
-      unsupported(select.syntax().order_by().front().expression.span(),
-                  "Distributed global aggregate ORDER BY is not supported");
+    for (const SqlOrderItem& item : select.syntax().order_by()) {
+      const std::optional<std::size_t> output = order_output_ordinal(select, item);
+      if (!output.has_value()) {
+        unsupported(item.expression.span(),
+                    "Distributed global aggregate ORDER BY must name a SELECT output");
+      }
+      if (*output >= select.outputs().size()) {
+        return std::unexpected(diagnostic(SqlDiagnosticCode::kExecutionFailure,
+                                          item.expression.span(), common::StatusCode::kInternal,
+                                          "Distributed aggregate ORDER BY output is unavailable"));
+      }
     }
     if (select.outputs().empty() || select.outputs().size() > limits.maximum_aggregates) {
       return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, select.syntax().span(),
@@ -835,6 +854,23 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
       return std::unexpected(diagnostic(SqlDiagnosticCode::kExecutionFailure,
                                         select.syntax().span(), common::StatusCode::kInternal,
                                         "Bound aggregate output identity is inconsistent"));
+    }
+    std::vector<const SqlExpression*> aggregate_expressions;
+    for (const SqlSelectItem& item : select.syntax().items()) {
+      const SqlExpression* expression = item.expression();
+      if (expression != nullptr)
+        collect_distributed_aggregates(*expression, aggregate_expressions);
+    }
+    if (aggregate_expressions.empty() || aggregate_expressions.size() > limits.maximum_aggregates) {
+      return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, select.syntax().span(),
+                                        common::StatusCode::kResourceExhausted,
+                                        "Distributed aggregate state width exceeds the limit"));
+    }
+    bool identity_outputs = aggregate_expressions.size() == select.outputs().size();
+    for (std::size_t index = 0U; identity_outputs && index < select.outputs().size(); ++index) {
+      const SqlExpression* output = select.syntax().items()[index].expression();
+      identity_outputs =
+          output != nullptr && output->span() == aggregate_expressions[index]->span();
     }
 
     const schema::TableSchema& source = *select.sources().front().schema_ptr();
@@ -866,6 +902,7 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
                    .limit = select.syntax().limit()},
         .result_schema = {},
         .coordinator_predicate = std::nullopt,
+        .coordinator_projection = std::nullopt,
     };
     std::vector<std::int64_t> projected_index(source.columns().size(), -1);
     if (needs_full_source) {
@@ -892,28 +929,30 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
       result.input_rows.intent.row_output_indices.reserve(select.outputs().size());
       result.input_rows.result_schema.columns.reserve(select.outputs().size());
     }
-    result.intent.aggregates.reserve(select.outputs().size());
-    result.result_schema.columns.reserve(select.outputs().size());
-
     for (std::size_t output_index = 0U; output_index < select.outputs().size(); ++output_index) {
       const BoundOutputColumn& output = select.outputs()[output_index];
-      const SqlExpression* expression = select.syntax().items()[output_index].expression();
       const SourceSpan span = output.expression_span.value_or(select.syntax().span());
-      if (expression == nullptr || !output.expression_span.has_value() ||
-          expression->span() != *output.expression_span ||
-          expression->kind() != SqlExpressionKind::kFunction ||
-          expression->children().size() != 1U) {
-        unsupported(span, "Distributed aggregate outputs must be direct aggregate calls");
-      }
-      const std::optional<VectorAggregateOperation> operation =
-          distributed_aggregate_operation(expression->text());
-      if (!operation.has_value())
-        unsupported(expression->span(), "Distributed aggregate function is unsupported");
       if (output.name.empty() || output.name.size() > limits.maximum_result_name_bytes) {
         throw LoweringFailure{diagnostic(SqlDiagnosticCode::kResourceLimit, span,
                                          common::StatusCode::kResourceExhausted,
                                          "Distributed aggregate result name exceeds the limit")};
       }
+    }
+
+    result.intent.aggregates.reserve(aggregate_expressions.size());
+    result.result_schema.columns.reserve(aggregate_expressions.size());
+    std::vector<VectorAggregateExpressionBinding> aggregate_bindings;
+    aggregate_bindings.reserve(aggregate_expressions.size());
+    for (std::size_t aggregate_index = 0U; aggregate_index < aggregate_expressions.size();
+         ++aggregate_index) {
+      const SqlExpression* expression = aggregate_expressions[aggregate_index];
+      if (expression->children().size() != 1U) {
+        unsupported(expression->span(), "Distributed aggregate function arity is unsupported");
+      }
+      const std::optional<VectorAggregateOperation> operation =
+          distributed_aggregate_operation(expression->text());
+      if (!operation.has_value())
+        unsupported(expression->span(), "Distributed aggregate function is unsupported");
 
       const SqlExpression& child = expression->children().front();
       DistributedVectorAggregateIntent aggregate;
@@ -966,14 +1005,62 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
                 : SqlDiagnosticCode::kUnsupportedSyntax;
         throw LoweringFailure{SqlDiagnostic{code, expression->span(), shape.error()}};
       }
-      if (shape->type != output.type || shape->nullable != output.nullable) {
+      const BoundExpressionInfo* bound_aggregate = select.find_expression(expression->span());
+      if (bound_aggregate == nullptr || !bound_aggregate->type.has_value() ||
+          shape->type != *bound_aggregate->type || shape->nullable != bound_aggregate->nullable) {
         throw LoweringFailure{diagnostic(SqlDiagnosticCode::kExecutionFailure, expression->span(),
                                          common::StatusCode::kInternal,
                                          "Bound aggregate result shape disagrees with its kernel")};
       }
       result.intent.aggregates.push_back(aggregate);
       result.result_schema.columns.push_back(
-          {.name = output.name, .type = output.type, .nullable = output.nullable});
+          {.name = identity_outputs ? select.outputs()[aggregate_index].name : "_",
+           .type = shape->type,
+           .nullable = shape->nullable});
+      aggregate_bindings.push_back(
+          {.expression_span = expression->span(),
+           .input_column_ordinal = static_cast<std::uint32_t>(aggregate_index),
+           .type = shape->type,
+           .nullable = shape->nullable});
+    }
+
+    std::size_t expression_bytes{};
+    if (!identity_outputs) {
+      DistributedVectorAggregateCoordinatorProjection projection;
+      projection.outputs.reserve(select.outputs().size());
+      projection.result_schema.columns.reserve(select.outputs().size());
+      for (std::size_t output_index = 0U; output_index < select.outputs().size(); ++output_index) {
+        const BoundOutputColumn& output = select.outputs()[output_index];
+        const SqlExpression* expression = select.syntax().items()[output_index].expression();
+        if (expression == nullptr) {
+          unsupported(output.expression_span.value_or(select.syntax().span()),
+                      "Distributed aggregate output expression is unavailable");
+        }
+        auto lowered = lower_bound_sql_aggregate_scalar_expression(
+            select, *expression, aggregate_bindings, limits.expression_limits);
+        if (!lowered.has_value())
+          throw LoweringFailure{std::move(lowered.error())};
+        if (lowered->result_shape().type != output.type ||
+            lowered->result_shape().nullable != output.nullable) {
+          throw LoweringFailure{
+              diagnostic(SqlDiagnosticCode::kExecutionFailure, expression->span(),
+                         common::StatusCode::kInternal,
+                         "Distributed aggregate output expression shape is inconsistent")};
+        }
+        const auto next =
+            common::checked_add(expression_bytes, lowered->retained_configuration_bytes());
+        if (!next.has_value() || *next > limits.maximum_expression_configuration_bytes) {
+          throw LoweringFailure{
+              diagnostic(SqlDiagnosticCode::kResourceLimit, expression->span(),
+                         common::StatusCode::kResourceExhausted,
+                         "Distributed aggregate expression configuration bytes exceed the limit")};
+        }
+        expression_bytes = *next;
+        projection.outputs.push_back(std::move(*lowered));
+        projection.result_schema.columns.push_back(
+            {.name = output.name, .type = output.type, .nullable = output.nullable});
+      }
+      result.coordinator_projection.emplace(std::move(projection));
     }
 
     if (where != nullptr && !coordinator_where) {
@@ -994,7 +1081,9 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
                                          common::StatusCode::kInternal,
                                          "Distributed aggregate WHERE result is not Boolean")};
       }
-      if (lowered->retained_configuration_bytes() > limits.maximum_expression_configuration_bytes) {
+      const auto next =
+          common::checked_add(expression_bytes, lowered->retained_configuration_bytes());
+      if (!next.has_value() || *next > limits.maximum_expression_configuration_bytes) {
         throw LoweringFailure{
             diagnostic(SqlDiagnosticCode::kResourceLimit, where->span(),
                        common::StatusCode::kResourceExhausted,
@@ -1061,6 +1150,14 @@ SqlResult<DistributedVectorAggregateSqlPlan> lower_bound_sql_select_to_distribut
                                          ? SqlDiagnosticCode::kResourceLimit
                                          : SqlDiagnosticCode::kExecutionFailure;
       return std::unexpected(SqlDiagnostic{code, select.syntax().span(), schema_status});
+    }
+    if (result.coordinator_projection.has_value()) {
+      const common::Status projection_schema = validate_distributed_vector_result_schema_value(
+          result.coordinator_projection->result_schema);
+      if (!projection_schema.is_ok()) {
+        return std::unexpected(SqlDiagnostic{SqlDiagnosticCode::kExecutionFailure,
+                                             select.syntax().span(), projection_schema});
+      }
     }
     return result;
   } catch (LoweringFailure& failure) {

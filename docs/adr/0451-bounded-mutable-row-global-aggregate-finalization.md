@@ -37,6 +37,9 @@ reuses the current replicated authority and authenticated mutable-row endpoint. 
 memory ceilings make the tradeoff explicit until the sufficient-state carrier is composed with the
 same mutable snapshot authority.
 
+[ADR 0458](0458-bounded-coordinator-global-aggregate-output-expressions.md) subsequently adds a
+checked final projection over the complete raw scalar vector before Native encoding.
+
 ## Consequences
 
 Work is `O(rows * aggregates)` and peak additional decoded-batch memory is bounded independently of

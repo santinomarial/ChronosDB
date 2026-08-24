@@ -7,4 +7,5 @@ static_assert(std::is_move_constructible_v<chronos::query::DistributedVectorRows
 static_assert(std::is_aggregate_v<chronos::query::DistributedVectorRowsSqlLoweringLimits>);
 static_assert(std::is_aggregate_v<chronos::query::DistributedVectorAggregateSqlPlan>);
 static_assert(std::is_move_constructible_v<chronos::query::DistributedVectorAggregateSqlPlan>);
+static_assert(std::is_aggregate_v<chronos::query::DistributedVectorAggregateCoordinatorProjection>);
 static_assert(std::is_aggregate_v<chronos::query::DistributedVectorAggregateSqlLoweringLimits>);
