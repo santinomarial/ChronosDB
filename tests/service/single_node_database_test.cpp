@@ -22,6 +22,7 @@
 #include "ingest/ingest_test_support.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <fcntl.h>
@@ -29,6 +30,7 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -602,6 +604,130 @@ TEST(SingleNodeDatabaseTest, RejectsCorruptAnchoredRaftSegmentWithoutFallbackOrR
     EXPECT_EQ(read_binary_file(anchored.anchor), pristine_anchor);
     EXPECT_EQ(read_binary_file(anchored.retained_segment), corrupted_segment);
     EXPECT_FALSE(std::filesystem::exists(anchored.reclaimed_segment));
+  }
+}
+
+TEST(SingleNodeDatabaseTest, RejectsChecksumValidInvalidAnchoredRaftSegmentSemantics) {
+  enum class SegmentMutation : std::uint8_t {
+    kMagic,
+    kMajorVersion,
+    kMinorVersion,
+    kHeaderSize,
+    kSegmentNumber,
+    kZeroFirstSequence,
+    kNoncontiguousFirstSequence,
+    kReserved
+  };
+  struct SemanticCase {
+    const char* name;
+    SegmentMutation mutation;
+    common::StatusCode expected_code;
+    std::string_view expected_diagnostic;
+  };
+  constexpr std::array cases{
+      SemanticCase{"magic", SegmentMutation::kMagic, common::StatusCode::kCorruption,
+                   "Raft segment header is invalid"},
+      SemanticCase{"major version", SegmentMutation::kMajorVersion,
+                   common::StatusCode::kNotSupported, "Raft segment version is unsupported"},
+      SemanticCase{"minor version", SegmentMutation::kMinorVersion,
+                   common::StatusCode::kNotSupported, "Raft segment version is unsupported"},
+      SemanticCase{"header size", SegmentMutation::kHeaderSize, common::StatusCode::kCorruption,
+                   "Raft segment identity or reserved bytes are invalid"},
+      SemanticCase{"segment number", SegmentMutation::kSegmentNumber,
+                   common::StatusCode::kCorruption,
+                   "Raft segment identity or reserved bytes are invalid"},
+      SemanticCase{"zero first sequence", SegmentMutation::kZeroFirstSequence,
+                   common::StatusCode::kCorruption,
+                   "Raft segment identity or reserved bytes are invalid"},
+      SemanticCase{"noncontiguous first sequence", SegmentMutation::kNoncontiguousFirstSequence,
+                   common::StatusCode::kCorruption,
+                   "Raft segment first sequence is not contiguous"},
+      SemanticCase{"reserved", SegmentMutation::kReserved, common::StatusCode::kCorruption,
+                   "Raft segment identity or reserved bytes are invalid"}};
+
+  for (const SemanticCase& test_case : cases) {
+    SCOPED_TRACE(test_case.name);
+    TemporaryDirectory directory;
+    AnchoredMetadataLog anchored;
+    provision_anchored_metadata_log(directory, anchored);
+    ASSERT_TRUE(anchored.ready);
+    const std::string pristine_anchor = read_binary_file(anchored.anchor);
+    ASSERT_EQ(pristine_anchor.size(), 64U);
+    const std::string pristine_segment = read_binary_file(anchored.retained_segment);
+    ASSERT_GE(pristine_segment.size(), raft::kRaftSegmentHeaderSize);
+
+    std::string malformed_segment = pristine_segment;
+    common::MutableByteView segment_bytes =
+        std::as_writable_bytes(std::span{malformed_segment.data(), malformed_segment.size()});
+    common::MutableByteView header_bytes = segment_bytes.first(raft::kRaftSegmentHeaderSize);
+    common::ByteReader first_sequence_reader{common::ByteView{header_bytes}.subspan(24U, 8U)};
+    auto first_sequence = first_sequence_reader.read_u64_le();
+    ASSERT_TRUE(first_sequence.has_value());
+    ASSERT_LT(*first_sequence, std::numeric_limits<std::uint64_t>::max());
+    const auto write_u16 = [&header_bytes](const std::size_t offset, const std::uint16_t value) {
+      common::ByteWriter writer{header_bytes.subspan(offset, sizeof(value))};
+      return writer.write_u16_le(value);
+    };
+    const auto write_u32 = [&header_bytes](const std::size_t offset, const std::uint32_t value) {
+      common::ByteWriter writer{header_bytes.subspan(offset, sizeof(value))};
+      return writer.write_u32_le(value);
+    };
+    const auto write_u64 = [&header_bytes](const std::size_t offset, const std::uint64_t value) {
+      common::ByteWriter writer{header_bytes.subspan(offset, sizeof(value))};
+      return writer.write_u64_le(value);
+    };
+    switch (test_case.mutation) {
+    case SegmentMutation::kMagic:
+      header_bytes[0U] ^= std::byte{1U};
+      break;
+    case SegmentMutation::kMajorVersion:
+      ASSERT_TRUE(write_u16(8U, 2U).is_ok());
+      break;
+    case SegmentMutation::kMinorVersion:
+      ASSERT_TRUE(write_u16(10U, 1U).is_ok());
+      break;
+    case SegmentMutation::kHeaderSize:
+      ASSERT_TRUE(write_u32(12U, 63U).is_ok());
+      break;
+    case SegmentMutation::kSegmentNumber:
+      ASSERT_TRUE(write_u64(16U, 3U).is_ok());
+      break;
+    case SegmentMutation::kZeroFirstSequence:
+      ASSERT_TRUE(write_u64(24U, 0U).is_ok());
+      break;
+    case SegmentMutation::kNoncontiguousFirstSequence:
+      ASSERT_TRUE(write_u64(24U, *first_sequence + 1U).is_ok());
+      break;
+    case SegmentMutation::kReserved:
+      header_bytes[36U] = std::byte{1U};
+      break;
+    }
+    std::fill(header_bytes.begin() + 32, header_bytes.begin() + 36, std::byte{0U});
+    common::ByteWriter checksum_writer{header_bytes.subspan(32U, 4U)};
+    ASSERT_TRUE(
+        checksum_writer.write_u32_le(common::crc32c(common::ByteView{header_bytes})).is_ok());
+    ASSERT_TRUE(checksum_writer.full());
+
+    const int segment_file =
+        ::open(anchored.retained_segment.c_str(), O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+    ASSERT_GE(segment_file, 0);
+    ASSERT_EQ(::pwrite(segment_file, malformed_segment.data(), raft::kRaftSegmentHeaderSize, 0),
+              static_cast<ssize_t>(raft::kRaftSegmentHeaderSize));
+    ASSERT_EQ(::fsync(segment_file), 0);
+    ASSERT_EQ(::close(segment_file), 0);
+    ASSERT_EQ(read_binary_file(anchored.retained_segment), malformed_segment);
+
+    for (std::size_t attempt = 0U; attempt < 2U; ++attempt) {
+      SCOPED_TRACE(attempt);
+      auto rejected = SingleNodeDatabase::open_or_create(config(directory));
+      ASSERT_FALSE(rejected.has_value());
+      EXPECT_EQ(rejected.error().code(), test_case.expected_code);
+      EXPECT_NE(rejected.error().to_string().find(test_case.expected_diagnostic),
+                std::string::npos);
+      EXPECT_EQ(read_binary_file(anchored.anchor), pristine_anchor);
+      EXPECT_EQ(read_binary_file(anchored.retained_segment), malformed_segment);
+      EXPECT_FALSE(std::filesystem::exists(anchored.reclaimed_segment));
+    }
   }
 }
 
