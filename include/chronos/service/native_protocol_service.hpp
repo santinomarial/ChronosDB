@@ -56,13 +56,16 @@ struct NativeProtocolResponseSequence {
 using NativeIdentityGenerator = common::UuidGenerator;
 
 // Borrowed split-leader row-query client policy. source_node_id names the coordinator transport
-// identity and must differ from every routed worker because the carrier rejects self-routes. The
-// config, security owners, TLS contexts, and every referenced TLS client context must outlive the
-// NativeProtocolService.
+// identity. Fragments led by that node execute through local_worker; all others use authenticated
+// TLS routes because the carrier rejects self-routes. The config, worker, security owners, TLS
+// contexts, and every referenced TLS client context must outlive the NativeProtocolService.
 struct NativeDistributedMutableVectorRowsQueryConfig {
   raft::NodeId source_node_id{};
   network::ConnectionAuthenticator* authenticator{};
   const cluster::ClusterNodePrincipalAuthorizer* node_authorizer{};
+  // Optional synchronous worker for fragments whose serving node equals source_node_id. Required
+  // when a prepared query contains such a fragment; it must outlive the service.
+  cluster::DistributedMutableVectorQueryWorkerService* local_worker{};
   std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts;
   cluster::DistributedQueryRouteResolutionLimits route_resolution;
   query::DistributedVectorRowsSqlLoweringLimits sql_lowering;

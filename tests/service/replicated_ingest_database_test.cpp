@@ -1029,6 +1029,49 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   EXPECT_EQ(native_distributed->responses[1].frame.header.message_type,
             network::MessageType::kQueryEnd);
   ASSERT_TRUE(distributed_server->shutdown().is_ok());
+
+  auto local_worker = ReplicatedDistributedMutableVectorQueryWorker::create(
+      {.local_node_id = 1U, .context_provider = &*database});
+  ASSERT_TRUE(local_worker.has_value()) << local_worker.error().to_string();
+  auto local_distributed_config = distributed_config;
+  local_distributed_config.source_node_id = 1U;
+  local_distributed_config.local_worker = &*local_worker;
+  NativeProtocolService local_distributed_native{*database, *read_barrier,
+                                                 local_distributed_config};
+  auto native_local = local_distributed_native.execute_query(
+      query_request("SELECT tag AS label, ts, tag AS repeated FROM events "
+                    "WHERE ts >= TIMESTAMP '1970-01-01 00:00:00Z' "
+                    "ORDER BY label ASC, ts LIMIT 1"));
+  ASSERT_TRUE(native_local.has_value()) << native_local.error().to_string();
+  ASSERT_EQ(native_local->responses.size(), 2U);
+  EXPECT_EQ(native_local->result_rows, native_distributed->result_rows);
+  EXPECT_EQ(native_local->payload_bytes, native_distributed->payload_bytes);
+  ASSERT_EQ(native_local->responses[0].frame.header.message_type,
+            network::MessageType::kQueryResult);
+  EXPECT_EQ(native_local->responses[0].frame.payload,
+            native_distributed->responses[0].frame.payload);
+  EXPECT_EQ(native_local->responses[1].frame.header.message_type, network::MessageType::kQueryEnd);
+
+  auto missing_local_worker_config = local_distributed_config;
+  missing_local_worker_config.local_worker = nullptr;
+  NativeProtocolService missing_local_worker_native{*database, *read_barrier,
+                                                    missing_local_worker_config};
+  auto missing_local_worker = missing_local_worker_native.execute_query(
+      query_request("SELECT tag, ts FROM events ORDER BY tag ASC, ts LIMIT 1"));
+  ASSERT_TRUE(missing_local_worker.has_value()) << missing_local_worker.error().to_string();
+  ASSERT_EQ(missing_local_worker->responses.size(), 1U);
+  ASSERT_EQ(missing_local_worker->responses.front().frame.header.message_type,
+            network::MessageType::kError);
+  auto missing_local_worker_error =
+      network::decode_error_message(missing_local_worker->responses.front().frame.payload);
+  ASSERT_TRUE(missing_local_worker_error.has_value())
+      << missing_local_worker_error.error().to_string();
+  std::string missing_local_worker_message;
+  missing_local_worker_message.reserve(missing_local_worker_error->message.size());
+  for (const std::byte byte : missing_local_worker_error->message)
+    missing_local_worker_message.push_back(static_cast<char>(byte));
+  EXPECT_EQ(missing_local_worker_message, "distributed Native local fragment worker is absent");
+
   auto nil_sql_query = mutable_snapshot->prepare_linearizable_mutable_vector_rows_query(
       {.query_id = {}, .sql_plan = std::cref(*distributed_sql), .group_authorities = *authorities},
       mutable_tls_contexts);

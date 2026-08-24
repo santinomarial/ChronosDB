@@ -41,20 +41,24 @@ Every method is serialized by one caller thread. The class performs no atomic pu
 no memory-ordering argument. Borrowed security and TLS owners must outlive both execution and any
 rebind.
 
-The service-level config is also borrowed. Its source node is a coordinator transport identity and
-cannot equal a routed worker node. Its TLS-context span and every referenced client context must
-remain stable for the entire service lifetime. The current service bridge is synchronous and uses
-bounded polls under one finite deadline. It disables rebinding because safe rebinding requires a
-fresh all-group read-authority acquisition and correlation policy, and it cannot observe a later
-Native cancellation request while the call owns the service thread.
+The service-level config is also borrowed. Its source node is the coordinator transport identity.
+Fragments whose serving node equals that identity execute through the borrowed local production
+worker because the authenticated carrier rejects self-routes; other fragments use the configured
+TLS routes. The local worker, TLS-context span, and every referenced client context must remain
+stable for the entire service lifetime. The current service bridge is synchronous and uses bounded
+polls under one finite deadline. It disables rebinding because safe rebinding requires a fresh
+all-group read-authority acquisition and correlation policy, and it cannot observe a later Native
+cancellation request while the call owns the service thread.
 
 ## Complexity and tradeoffs
 
 Creation inherits `O(tablets log tablets + routes log routes)` validation and indexing. Each poll is
 `O(tablets)` plus descriptor readiness. Finalization is linear without order keys and
-`O(cells + rows log rows * order keys)` with global ordering. The finalizer intentionally consumes
-the intermediate messages: this avoids a potentially large encoded-batch copy and makes
-exactly-once publication clear, at the cost of making finalization failure terminal.
+`O(cells + rows log rows * order keys)` with global ordering. The standalone owner intentionally
+consumes the intermediate messages. Native local/remote composition instead revalidates remote
+subset messages in one complete coordinator so global ordering and LIMIT run exactly once; this can
+transiently retain the bounded remote messages twice. The extra copy favors an explicit atomic
+publication boundary over an unproven consuming merge interface.
 
 ## Verification and likely interview questions
 
@@ -65,11 +69,12 @@ Allocation injection covers construction and the finalizer separately.
 
 The Native integration gate uses a replicated two-tablet snapshot and a real production worker TCP
 server over mutual TLS. It submits projected, filtered, globally ordered and limited SQL, then
-decodes the returned Native payload and checks its schema, row, and `QUERY_END`. The test context
-is now the actual `ReplicatedIngestDatabase`: it reobserves the named local leader term, pins one
-committed metadata/tablet snapshot, and exact-matches the fragment before the worker performs its
-independent proof gates. Local-fragment coordinator handling and daemon composition remain explicit
-follow-on boundaries.
+decodes the returned Native payload and checks its schema, row, and `QUERY_END`. The context is the
+actual `ReplicatedIngestDatabase`: it reobserves the named local leader term, pins one committed
+metadata/tablet snapshot, and exact-matches the fragment before the worker performs its independent
+proof gates. The same query then executes through the local production worker and must produce the
+identical result payload; a missing local worker fails before row publication. Daemon composition
+remains the next deployment boundary.
 
 Useful interview questions include:
 
@@ -82,3 +87,5 @@ Useful interview questions include:
 6. Why does the Native bridge disable redirects and fresh-authority rebinding when distributed
    execution is configured?
 7. Which cancellation behavior changes when a synchronous request handler owns network polling?
+8. Why must local and remote tablet streams enter one global coordinator instead of being finalized
+   independently?
