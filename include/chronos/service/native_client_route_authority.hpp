@@ -2,7 +2,7 @@
 #define CHRONOS_SERVICE_NATIVE_CLIENT_ROUTE_AUTHORITY_HPP_
 
 #include "chronos/common/result.hpp"
-#include "chronos/network/native_quorum_ingest_tcp_client.hpp"
+#include "chronos/network/native_node_principal_authorizer.hpp"
 #include "chronos/network/security.hpp"
 #include "chronos/service/native_client_route_config.hpp"
 

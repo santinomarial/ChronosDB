@@ -2,6 +2,7 @@
 #include "chronos/ingest/columnar_append.hpp"
 #include "chronos/network/connection_buffers.hpp"
 #include "chronos/network/connection_state.hpp"
+#include "chronos/network/native_query_tcp_client.hpp"
 #include "chronos/network/native_quorum_ingest_tcp_client.hpp"
 #include "chronos/network/native_quorum_ingest_tcp_execution.hpp"
 #include "columnar/columnar_test_support.hpp"
@@ -21,6 +22,7 @@
 #include <memory>
 #include <optional>
 #include <poll.h>
+#include <span>
 #include <string>
 #include <string_view>
 #include <sys/wait.h>
@@ -135,7 +137,13 @@ public:
   mutable std::vector<std::uint64_t> observed_nodes;
 };
 
-enum class ServerReply : std::uint8_t { kRedirect, kAcknowledge, kClose };
+enum class ServerReply : std::uint8_t {
+  kRedirect,
+  kAcknowledge,
+  kClose,
+  kQueryRedirect,
+  kQueryResult,
+};
 
 class ScriptedNativeServer {
 public:
@@ -213,11 +221,12 @@ public:
   [[nodiscard]] const std::vector<std::vector<std::byte>>& commands() const noexcept {
     return commands_;
   }
+  [[nodiscard]] const std::vector<std::vector<std::byte>>& queries() const noexcept {
+    return queries_;
+  }
 
 private:
   [[nodiscard]] common::Status queue(const Frame& response) {
-    if (!output_.empty())
-      return status(common::StatusCode::kInternal, "test server output is already occupied");
     auto encoded = encode_frame({.protocol_major = response.header.protocol_major,
                                  .protocol_minor = response.header.protocol_minor,
                                  .message_type = response.header.message_type,
@@ -226,8 +235,7 @@ private:
                                 response.payload);
     if (!encoded.has_value())
       return encoded.error();
-    output_ = std::move(*encoded);
-    output_offset_ = 0U;
+    output_.insert(output_.end(), encoded->begin(), encoded->end());
     return common::Status::ok();
   }
 
@@ -248,9 +256,11 @@ private:
                                .request_id = 0U},
                     .payload = std::move(*payload)});
     }
-    if (action->kind != InboundActionKind::kIngest)
+    if (action->kind != InboundActionKind::kIngest && action->kind != InboundActionKind::kQuery)
       return status(common::StatusCode::kInvalidArgument,
                     "test server received an unexpected action");
+    if (action->kind == InboundActionKind::kQuery)
+      return handle_query(std::move(frame));
     auto ingest = decode_ingest_request(
         frame.payload, {.protocol_major = protocol_state_.negotiated_major(),
                         .protocol_minor = protocol_state_.negotiated_minor(),
@@ -296,6 +306,57 @@ private:
                    .payload = std::move(payload)};
     const common::Status accepted = protocol_state_.accept_response(response);
     return accepted.is_ok() ? queue(response) : accepted;
+  }
+
+  [[nodiscard]] common::Status handle_query(Frame frame) {
+    auto sql = decode_query_request(frame.payload);
+    if (!sql.has_value())
+      return sql.error();
+    request_ids_.push_back(frame.header.request_id);
+    queries_.emplace_back(sql->begin(), sql->end());
+    if (reply_ == ServerReply::kClose) {
+      tls_.reset();
+      TcpSocket* connection = optional_pointer(connection_);
+      if (connection != nullptr)
+        static_cast<void>(connection->close());
+      closed_after_request_ = true;
+      return common::Status::ok();
+    }
+    if (reply_ == ServerReply::kQueryRedirect) {
+      auto payload = encode_leader_redirect(
+          {.group_id = group(), .leader_node_id = 2U, .leader_term = 7U, .placement_epoch = 4U});
+      if (!payload.has_value())
+        return payload.error();
+      Frame response{.header = {.protocol_major = kProtocolV2Major,
+                                .message_type = MessageType::kLeaderRedirect,
+                                .request_id = frame.header.request_id},
+                     .payload = std::move(*payload)};
+      const common::Status accepted = protocol_state_.accept_response(response);
+      return accepted.is_ok() ? queue(response) : accepted;
+    }
+    if (reply_ != ServerReply::kQueryResult)
+      return status(common::StatusCode::kInvalidArgument, "test query server reply is invalid");
+    const std::array columns{QueryResultColumn{
+        .name = "value",
+        .type = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
+        .nullable = false}};
+    auto payload = encode_query_result_batch(0U, columns, {});
+    if (!payload.has_value())
+      return payload.error();
+    Frame result{.header = {.protocol_major = kProtocolV2Major,
+                            .message_type = MessageType::kQueryResult,
+                            .flags = kFrameFlagEndStream,
+                            .request_id = frame.header.request_id},
+                 .payload = std::move(*payload)};
+    if (const common::Status accepted = protocol_state_.accept_response(result); !accepted.is_ok())
+      return accepted;
+    if (const common::Status queued = queue(result); !queued.is_ok())
+      return queued;
+    Frame end{.header = {.protocol_major = kProtocolV2Major,
+                         .message_type = MessageType::kQueryEnd,
+                         .request_id = frame.header.request_id}};
+    const common::Status accepted = protocol_state_.accept_response(end);
+    return accepted.is_ok() ? queue(end) : accepted;
   }
 
   [[nodiscard]] common::Status read_input(TlsSocket& tls) {
@@ -345,6 +406,7 @@ private:
   std::size_t output_offset_{};
   std::vector<std::uint64_t> request_ids_;
   std::vector<std::vector<std::byte>> commands_;
+  std::vector<std::vector<std::byte>> queries_;
   bool closed_after_request_{};
 };
 
@@ -352,6 +414,24 @@ private:
 client_config(const TlsClientContext& context, const Ipv4Endpoint first, const Ipv4Endpoint second,
               Authenticator& authenticator, const NodeAuthorizer& authorizer,
               const std::size_t io_chunk_bytes = std::size_t{64U} * 1024U) {
+  return {.retry = {.routing = {.group_id = group(),
+                                .initial_node_id = 1U,
+                                .minimum_placement_epoch = 4U,
+                                .routes = {{1U, first, &context}, {2U, second, &context}},
+                                .limits = {.maximum_routes = 2U, .maximum_redirects = 2U}}},
+          .authenticator = &authenticator,
+          .node_authorizer = &authorizer,
+          .limits = {.connect_timeout = std::chrono::milliseconds{5000},
+                     .handshake_timeout = std::chrono::milliseconds{5000},
+                     .exchange_timeout = std::chrono::milliseconds{5000},
+                     .maximum_io_chunk_bytes = io_chunk_bytes}};
+}
+
+[[nodiscard]] NativeQueryTcpClientConfig
+query_client_config(const TlsClientContext& context, const Ipv4Endpoint first,
+                    const Ipv4Endpoint second, Authenticator& authenticator,
+                    const NodeAuthorizer& authorizer,
+                    const std::size_t io_chunk_bytes = std::size_t{64U} * 1024U) {
   return {.retry = {.routing = {.group_id = group(),
                                 .initial_node_id = 1U,
                                 .minimum_placement_epoch = 4U,
@@ -390,6 +470,119 @@ void drive_until_terminal(NativeQuorumIngestTcpClient& client,
         client.on_ready(readable, writable, NativeQuorumIngestTcpClient::TimePoint::clock::now()));
   }
   FAIL() << "native QUORUM_SYNC TCP client did not reach a terminal state";
+}
+
+void drive_until_terminal(NativeQueryTcpClient& client,
+                          const std::initializer_list<ScriptedNativeServer*> servers) {
+  for (std::size_t iteration = 0U; iteration < 20'000U; ++iteration) {
+    for (ScriptedNativeServer* server : servers) {
+      const common::Status server_status = server->poll_once();
+      ASSERT_TRUE(server_status.is_ok()) << server_status.to_string();
+    }
+    if (client.state() == NativeQueryTcpClientState::kComplete ||
+        client.state() == NativeQueryTcpClientState::kFailed) {
+      return;
+    }
+    const NativeQueryTcpInterest interest = client.interest();
+    pollfd descriptor{.fd = client.descriptor(),
+                      .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
+                                                   (interest.want_write ? POLLOUT : 0))};
+    const int ready = ::poll(&descriptor, 1U, 1);
+    ASSERT_GE(ready, 0);
+    const bool readable =
+        (descriptor.revents & static_cast<short>(POLLIN | POLLERR | POLLHUP)) != 0;
+    const bool writable =
+        (descriptor.revents & static_cast<short>(POLLOUT | POLLERR | POLLHUP)) != 0;
+    static_cast<void>(
+        client.on_ready(readable, writable, NativeQueryTcpClient::TimePoint::clock::now()));
+  }
+  FAIL() << "native query TCP client did not reach a terminal state";
+}
+
+TEST(NativeQueryTcpClientTest, ReconnectsThroughRealMutualTlsAndPublishesCompleteResult) {
+  auto first = ScriptedNativeServer::create(ServerReply::kQueryRedirect);
+  auto second = ScriptedNativeServer::create(ServerReply::kQueryResult);
+  auto context = TlsClientContext::create(tls_client_config());
+  ASSERT_TRUE(first.has_value()) << first.error().to_string();
+  ASSERT_TRUE(second.has_value()) << second.error().to_string();
+  ASSERT_TRUE(context.has_value()) << context.error().to_string();
+  Authenticator authenticator;
+  NodeAuthorizer authorizer;
+  const std::string sql = "SELECT value FROM events";
+  auto client = NativeQueryTcpClient::begin(query_client_config(*context, first->endpoint(),
+                                                                second->endpoint(), authenticator,
+                                                                authorizer, 1U),
+                                            sql, NativeQueryTcpClient::TimePoint::clock::now());
+  ASSERT_TRUE(client.has_value()) << client.error().to_string();
+
+  drive_until_terminal(*client, {&*first, &*second});
+
+  ASSERT_EQ(client->state(), NativeQueryTcpClientState::kComplete) << client->failure().to_string();
+  EXPECT_EQ(client->descriptor(), -1);
+  EXPECT_EQ(client->attempts_started(), 2U);
+  EXPECT_EQ(client->current_route().node_id, 2U);
+  const auto sql_bytes = std::as_bytes(std::span{sql.data(), sql.size()});
+  const std::vector<std::byte> expected_sql(sql_bytes.begin(), sql_bytes.end());
+  EXPECT_EQ(first->queries(), std::vector<std::vector<std::byte>>{expected_sql});
+  EXPECT_EQ(second->queries(), std::vector<std::vector<std::byte>>{expected_sql});
+  EXPECT_EQ(authenticator.calls, 2U);
+  EXPECT_EQ(authorizer.observed_nodes, (std::vector<std::uint64_t>{1U, 2U}));
+  ASSERT_TRUE(client->result().has_value());
+  EXPECT_EQ(client->result()->row_count, 0U);
+  ASSERT_EQ(client->result()->encoded_batches.size(), 1U);
+  EXPECT_TRUE(decode_query_result_batch(client->result()->encoded_batches.front()).has_value());
+}
+
+TEST(NativeQueryTcpClientTest, DoesNotReplayAnAmbiguousTransportClose) {
+  auto server = ScriptedNativeServer::create(ServerReply::kClose);
+  auto unused = ScriptedNativeServer::create(ServerReply::kQueryResult);
+  auto context = TlsClientContext::create(tls_client_config());
+  ASSERT_TRUE(server.has_value()) << server.error().to_string();
+  ASSERT_TRUE(unused.has_value()) << unused.error().to_string();
+  ASSERT_TRUE(context.has_value()) << context.error().to_string();
+  Authenticator authenticator;
+  NodeAuthorizer authorizer;
+  auto client = NativeQueryTcpClient::begin(
+      query_client_config(*context, server->endpoint(), unused->endpoint(), authenticator,
+                          authorizer),
+      "SELECT 1", NativeQueryTcpClient::TimePoint::clock::now());
+  ASSERT_TRUE(client.has_value()) << client.error().to_string();
+
+  drive_until_terminal(*client, {&*server});
+
+  EXPECT_EQ(client->state(), NativeQueryTcpClientState::kFailed);
+  EXPECT_EQ(client->failure().code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(client->attempts_started(), 1U);
+  EXPECT_EQ(server->requests(), 1U);
+  EXPECT_EQ(unused->requests(), 0U);
+  EXPECT_FALSE(client->result().has_value());
+}
+
+TEST(NativeQueryTcpClientTest, ValidatesBoundsAndExpiresConnectExactly) {
+  auto listener = TcpListener::bind();
+  auto context = TlsClientContext::create(tls_client_config());
+  ASSERT_TRUE(listener.has_value()) << listener.error().to_string();
+  ASSERT_TRUE(context.has_value()) << context.error().to_string();
+  Authenticator authenticator;
+  NodeAuthorizer authorizer;
+  const auto start = NativeQueryTcpClient::TimePoint{};
+  auto invalid = query_client_config(*context, listener->bound_endpoint(),
+                                     listener->bound_endpoint(), authenticator, authorizer, 0U);
+  EXPECT_EQ(NativeQueryTcpClient::begin(std::move(invalid), "SELECT 1", start).error().code(),
+            common::StatusCode::kInvalidArgument);
+
+  auto config = query_client_config(*context, listener->bound_endpoint(), {{127U, 0U, 0U, 1U}, 1U},
+                                    authenticator, authorizer);
+  config.limits.connect_timeout = std::chrono::milliseconds{5};
+  auto client = NativeQueryTcpClient::begin(std::move(config), "SELECT 2", start);
+  ASSERT_TRUE(client.has_value()) << client.error().to_string();
+  EXPECT_TRUE(client->on_ready(false, false, start + std::chrono::milliseconds{4}).is_ok());
+  const common::Status timed_out =
+      client->on_ready(false, false, start + std::chrono::milliseconds{5});
+  EXPECT_EQ(timed_out.code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(client->state(), NativeQueryTcpClientState::kFailed);
+  EXPECT_EQ(client->descriptor(), -1);
+  EXPECT_FALSE(client->result().has_value());
 }
 
 TEST(NativeQuorumIngestTcpClientTest, ReconnectsThroughRealMutualTlsAndFragmentsEveryByte) {

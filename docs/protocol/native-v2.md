@@ -92,10 +92,11 @@ handshake, and exchange deadlines. It reconnects only for a validated redirect; 
 transport failure is terminal. `NativeQuorumIngestTcpExecution` supplies the constant-storage poll
 owner above that client, bounding each wait by both the active carrier phase and an optional whole-
 operation deadline while preserving explicit cancellation and terminal-only receipt publication.
-`NativeQueryRetry` provides the corresponding transport-independent finite-query policy owner. It
-retains exact SQL across fresh Protocol 2 sessions, enforces aggregate batch/row/byte limits, and
-publishes owned encoded result batches only after `QUERY_END`. It does not yet supply a TCP/TLS
-carrier or make a multi-group query redirectable through one group.
+`NativeQueryRetry` provides the corresponding finite-query policy owner. It retains exact SQL across
+fresh Protocol 2 sessions, enforces aggregate batch/row/byte limits, and publishes owned encoded
+result batches only after `QUERY_END`. `NativeQueryTcpClient` composes it with the same nonblocking
+mutual-TLS, certificate-principal-to-node authorization, partial-I/O, reconnect, and phase-deadline
+rules as ingest. It does not make a multi-group query redirectable through one group.
 
 ## Compatibility and rejection
 

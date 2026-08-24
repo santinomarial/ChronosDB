@@ -2,6 +2,7 @@
 #define CHRONOS_NETWORK_NATIVE_QUORUM_INGEST_TCP_CLIENT_HPP_
 
 #include "chronos/common/result.hpp"
+#include "chronos/network/native_node_principal_authorizer.hpp"
 #include "chronos/network/native_quorum_ingest_retry.hpp"
 #include "chronos/network/security.hpp"
 
@@ -13,13 +14,6 @@
 #include <vector>
 
 namespace chronos::network {
-
-class NativeNodePrincipalAuthorizer {
-public:
-  virtual ~NativeNodePrincipalAuthorizer() = default;
-  [[nodiscard]] virtual common::Result<bool> authorize_node(std::uint64_t principal_id,
-                                                            std::uint64_t node_id) const = 0;
-};
 
 struct NativeQuorumIngestTcpClientLimits {
   std::chrono::milliseconds connect_timeout{5000};

@@ -203,7 +203,9 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/network/spsc_queue.hpp>
 #include <chronos/network/messages.hpp>
 #include <chronos/network/native_leader_redirect_router.hpp>
+#include <chronos/network/native_node_principal_authorizer.hpp>
 #include <chronos/network/native_query_retry.hpp>
+#include <chronos/network/native_query_tcp_client.hpp>
 #include <chronos/network/native_quorum_ingest_retry.hpp>
 #include <chronos/network/native_quorum_ingest_tcp_client.hpp>
 #include <chronos/network/native_quorum_ingest_tcp_execution.hpp>

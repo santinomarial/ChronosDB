@@ -37,6 +37,11 @@ requires Protocol 2 leader redirect, and buffers only canonical encoded result b
 explicit cumulative row, batch, and byte limits. `result()` remains empty until `QUERY_END`; any
 redirect is valid only before the first batch, and every failure erases the accumulated stream.
 The owner deliberately cannot collapse multiple query-group leaders into one route.
+`NativeQueryTcpClient` supplies its authenticated carrier. Like the ingest carrier, it proves
+nonblocking connect completion, completes mutual TLS, maps the verified certificate fingerprint to
+a stable principal, and authorizes that principal for the exact selected node before writing the
+native handshake. It reconnects only on the replay owner's validated redirect, gives connect,
+handshake, and exchange separate deadlines, and destroys TLS before closing each borrowed socket.
 `NativeQuorumIngestTcpClient` is that carrier boundary. It owns one nonblocking descriptor and TLS
 session at a time, authenticates the verified certificate fingerprint as a stable principal, and
 requires a node authorizer to bind that principal to the router's current node before writing the
