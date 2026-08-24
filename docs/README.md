@@ -333,9 +333,9 @@ existence of a design document alone is not implementation evidence.
   bound-SQL construction of schema-neutral global aggregate projection, sufficient-state intent,
   event-time truth, result descriptors, limits, and fail-closed semantics.
 - [Distributed row SQL lowering](learning/distributed-row-sql-lowering.md): checked direct-source,
-  source-independent, and row-dependent vector-expression outputs, exact event-time truth, hidden
-  direct-column global ordering inputs, bounded coordinator materialization, LIMIT, and fail-closed
-  computed-order semantics.
+  source-independent, and row-dependent vector-expression outputs, exact event-time specialization,
+  general checked coordinator predicates, hidden direct-column global ordering inputs, bounded
+  coordinator materialization, LIMIT, and fail-closed computed-order semantics.
 - [Mutable-row aggregate finalization](learning/mutable-row-aggregate-finalization.md): bounded
   coordinator accumulation over complete replicated tablet row streams using the shared aggregate
   kernel and existing all-or-none Native finalizer, including production service retry,

@@ -88,6 +88,15 @@ TEST(DistributedVectorRowFinalizationV2AllocationFailureTest,
       query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kAdd,
                                     .left_instruction = 0U,
                                     .right_instruction = 1U});
+  std::vector<query::VectorExpressionInstruction> predicate_instructions;
+  predicate_instructions.emplace_back(
+      query::VectorInputExpression{.input_column_ordinal = 0U, .type = type, .nullable = false});
+  predicate_instructions.emplace_back(
+      query::VectorConstantExpression{.value = query::ScalarValue::signed_value(type, 0).value()});
+  predicate_instructions.emplace_back(
+      query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kGreater,
+                                    .left_instruction = 0U,
+                                    .right_instruction = 1U});
   const query::DistributedVectorRowCoordinatorProjection projection{
       .outputs = {query::DistributedVectorRowSourceOutput{.worker_output_index = 0U},
                   query::DistributedVectorRowConstantOutput{
@@ -100,7 +109,8 @@ TEST(DistributedVectorRowFinalizationV2AllocationFailureTest,
                           query::VectorExpression::create(std::move(instructions)).value()}},
       .result_schema = {.columns = {{"source", type, false},
                                     {"constant", type, false},
-                                    {"computed", type, false}}}};
+                                    {"computed", type, false}}},
+      .predicate = query::VectorExpression::create(std::move(predicate_instructions)).value()};
 
   bool succeeded = false;
   for (std::size_t fail_after = 0U; fail_after < 224U; ++fail_after) {

@@ -171,6 +171,46 @@ void lower_event_time_leaf(const BoundSqlSelect& select, const schema::TableSche
                    expression.span());
 }
 
+[[nodiscard]] bool timestamp_literal_shape(const SqlExpression& expression) noexcept {
+  return expression.kind() == SqlExpressionKind::kLiteral &&
+         expression.literal_kind() == SqlLiteralKind::kTimestamp;
+}
+
+[[nodiscard]] bool event_time_predicate_shape(const BoundSqlSelect& select,
+                                              const schema::TableSchema& schema,
+                                              const SqlExpression& expression) noexcept {
+  if (expression.kind() == SqlExpressionKind::kBinary &&
+      expression.operation() == SqlOperator::kAnd && expression.children().size() == 2U) {
+    return event_time_predicate_shape(select, schema, expression.children()[0]) &&
+           event_time_predicate_shape(select, schema, expression.children()[1]);
+  }
+  if (expression.kind() == SqlExpressionKind::kBetween) {
+    return expression.operation() == SqlOperator::kBetween && expression.children().size() == 3U &&
+           event_time_reference(select.find_column_reference(expression.children()[0].span()),
+                                schema) &&
+           timestamp_literal_shape(expression.children()[1]) &&
+           timestamp_literal_shape(expression.children()[2]);
+  }
+  if (expression.kind() != SqlExpressionKind::kBinary || expression.children().size() != 2U)
+    return false;
+  switch (expression.operation()) {
+  case SqlOperator::kEqual:
+  case SqlOperator::kLess:
+  case SqlOperator::kLessEqual:
+  case SqlOperator::kGreater:
+  case SqlOperator::kGreaterEqual:
+    break;
+  default:
+    return false;
+  }
+  const SqlExpression& left = expression.children()[0];
+  const SqlExpression& right = expression.children()[1];
+  return (event_time_reference(select.find_column_reference(left.span()), schema) &&
+          timestamp_literal_shape(right)) ||
+         (event_time_reference(select.find_column_reference(right.span()), schema) &&
+          timestamp_literal_shape(left));
+}
+
 [[nodiscard]] ScalarNullPlacement null_placement(const SqlOrderItem& item) noexcept {
   if (item.null_order == SqlNullOrder::kFirst)
     return ScalarNullPlacement::kFirst;
@@ -308,6 +348,9 @@ SqlResult<DistributedVectorRowsSqlPlan> lower_bound_sql_select_to_distributed_ve
         .result_schema = {},
         .coordinator_projection = std::nullopt,
     };
+    const SqlExpression* const where = select.syntax().where();
+    const bool coordinator_where =
+        where != nullptr && !event_time_predicate_shape(select, source, *where);
     std::vector<std::int64_t> projected_index(source.columns().size(), -1);
     std::vector<std::int64_t> first_worker_output(source.columns().size(), -1);
     std::vector<std::optional<std::size_t>> select_worker_output(select.outputs().size());
@@ -334,13 +377,16 @@ SqlResult<DistributedVectorRowsSqlPlan> lower_bound_sql_select_to_distributed_ve
         select_row_dependent[output_index] = true;
       }
     }
-    if (has_row_dependent_output) {
+    const bool needs_full_source =
+        has_row_dependent_output ||
+        (coordinator_where && where != nullptr && !source_independent(select, *where));
+    if (needs_full_source) {
       if (source.columns().size() > limits.maximum_projection_columns ||
           source.columns().size() > limits.maximum_output_columns) {
         throw LoweringFailure{
             diagnostic(SqlDiagnosticCode::kResourceLimit, select.syntax().span(),
                        common::StatusCode::kResourceExhausted,
-                       "Distributed computed output source width exceeds the limit")};
+                       "Distributed coordinator expression source width exceeds the limit")};
       }
       result.destination_column_ordinals.reserve(source.columns().size());
       result.intent.row_output_indices.reserve(source.columns().size());
@@ -443,7 +489,7 @@ SqlResult<DistributedVectorRowsSqlPlan> lower_bound_sql_select_to_distributed_ve
         result.destination_column_ordinals.push_back(static_cast<std::uint32_t>(ordinal));
       }
       std::size_t worker_output{};
-      if (has_row_dependent_output) {
+      if (needs_full_source) {
         worker_output = ordinal;
       } else {
         result.intent.row_output_indices.push_back(
@@ -458,7 +504,7 @@ SqlResult<DistributedVectorRowsSqlPlan> lower_bound_sql_select_to_distributed_ve
       if (first_worker_output[ordinal] < 0) {
         first_worker_output[ordinal] = static_cast<std::int64_t>(worker_output);
       }
-      if (!has_row_dependent_output) {
+      if (!needs_full_source) {
         result.result_schema.columns.push_back(
             {.name = output.name, .type = output.type, .nullable = output.nullable});
       }
@@ -481,7 +527,7 @@ SqlResult<DistributedVectorRowsSqlPlan> lower_bound_sql_select_to_distributed_ve
           {.name = anchor.name(), .type = anchor.type(), .nullable = anchor.nullable()});
     }
 
-    if (const SqlExpression* where = select.syntax().where(); where != nullptr) {
+    if (where != nullptr && !coordinator_where) {
       cseg::EventTimePredicate predicate;
       lower_event_time_leaf(select, source, *where, predicate);
       if (!predicate.lower.has_value() && !predicate.upper.has_value()) {
@@ -490,6 +536,26 @@ SqlResult<DistributedVectorRowsSqlPlan> lower_bound_sql_select_to_distributed_ve
                                          "Distributed WHERE produced no event-time bound")};
       }
       result.event_time_predicate = predicate;
+    } else if (where != nullptr) {
+      auto lowered = lower_bound_sql_scalar_expression(select, *where, limits.expression_limits);
+      if (!lowered.has_value())
+        throw LoweringFailure{std::move(lowered.error())};
+      if (lowered->result_shape().type.kind() != schema::LogicalTypeKind::kBool) {
+        throw LoweringFailure{diagnostic(SqlDiagnosticCode::kExecutionFailure, where->span(),
+                                         common::StatusCode::kInternal,
+                                         "Distributed WHERE result is not Boolean")};
+      }
+      const auto next_expression =
+          common::checked_add(expression_bytes, lowered->retained_configuration_bytes());
+      if (!next_expression.has_value() ||
+          *next_expression > limits.maximum_expression_configuration_bytes) {
+        throw LoweringFailure{
+            diagnostic(SqlDiagnosticCode::kResourceLimit, where->span(),
+                       common::StatusCode::kResourceExhausted,
+                       "Distributed expression configuration bytes exceed the limit")};
+      }
+      coordinator_projection.predicate.emplace(std::move(*lowered));
+      needs_coordinator_projection = true;
     }
 
     std::vector<bool> ordered_outputs(result.intent.row_output_indices.size(), false);

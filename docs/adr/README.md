@@ -489,3 +489,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0452](0452-replicated-native-global-aggregate-execution.md) | Replicated Native global aggregate execution | accepted |
 | [0453](0453-coordinator-owned-source-independent-row-outputs.md) | Coordinator-owned source-independent row outputs | accepted |
 | [0454](0454-bounded-coordinator-row-expression-execution.md) | Bounded coordinator row-expression execution | accepted |
+| [0455](0455-bounded-coordinator-row-predicate-execution.md) | Bounded coordinator row-predicate execution | accepted |

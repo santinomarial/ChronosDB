@@ -196,6 +196,14 @@ visibility_working_bytes(const query::DistributedVectorPlanIntent& plan,
         total = next;
       }
     }
+    if (projection->predicate.has_value()) {
+      has_expression = true;
+      auto predicate =
+          add_product(*total, projection->predicate->retained_configuration_bytes(), 2U);
+      if (!predicate.has_value())
+        return predicate;
+      total = predicate;
+    }
     if (has_expression) {
       auto canonical_row = add_product(*total, schema.columns.size(),
                                        sizeof(query::detail::CanonicalVectorExpressionCell) * 2U);
@@ -217,6 +225,24 @@ visibility_working_bytes(const query::DistributedVectorPlanIntent& plan,
     total = next;
   }
   return total;
+}
+
+[[nodiscard]] common::Status
+validate_expression_sources(const query::VectorExpression& expression,
+                            const query::DistributedVectorResultSchema& worker_schema) {
+  for (const query::VectorExpressionInstruction& instruction : expression.instructions()) {
+    const auto* source = std::get_if<query::VectorInputExpression>(&instruction);
+    if (source == nullptr)
+      continue;
+    if (source->input_column_ordinal >= worker_schema.columns.size())
+      return invalid("vector row coordinator expression source is out of bounds");
+    const auto& worker = worker_schema.columns[source->input_column_ordinal];
+    if (worker.type != source->type || worker.nullable != source->nullable) {
+      return invalid(
+          "vector row coordinator expression source shape differs from its worker output");
+    }
+  }
+  return common::Status::ok();
 }
 
 [[nodiscard]] common::Status
@@ -261,17 +287,17 @@ validate_projection(const query::DistributedVectorRowCoordinatorProjection& proj
         expression.result_shape().nullable != descriptor.nullable) {
       return invalid("vector row coordinator expression result shape is invalid");
     }
-    for (const query::VectorExpressionInstruction& instruction : expression.instructions()) {
-      const auto* source = std::get_if<query::VectorInputExpression>(&instruction);
-      if (source == nullptr)
-        continue;
-      if (source->input_column_ordinal >= worker_schema.columns.size())
-        return invalid("vector row coordinator expression source is out of bounds");
-      const auto& worker = worker_schema.columns[source->input_column_ordinal];
-      if (worker.type != source->type || worker.nullable != source->nullable)
-        return invalid(
-            "vector row coordinator expression source shape differs from its worker output");
-    }
+    const common::Status sources = validate_expression_sources(expression, worker_schema);
+    if (!sources.is_ok())
+      return sources;
+  }
+  if (projection.predicate.has_value()) {
+    if (projection.predicate->result_shape().type.kind() != schema::LogicalTypeKind::kBool)
+      return invalid("vector row coordinator predicate result is not Boolean");
+    const common::Status sources =
+        validate_expression_sources(*projection.predicate, worker_schema);
+    if (!sources.is_ok())
+      return sources;
   }
   return common::Status::ok();
 }
@@ -289,6 +315,20 @@ load_canonical_row(const std::vector<network::QueryResultBatchView>& batches,
     output[column] = {.is_null = cell->is_null, .bytes = cell->value};
   }
   return {};
+}
+
+[[nodiscard]] common::Result<bool>
+predicate_matches(const query::VectorExpression& predicate,
+                  const std::span<const query::detail::CanonicalVectorExpressionCell> input) {
+  auto value = query::detail::evaluate_canonical_vector_expression_row(predicate, input);
+  if (!value.has_value())
+    return common::make_unexpected(value.error());
+  if (value->is_null())
+    return false;
+  const auto* boolean = std::get_if<bool>(&value->storage());
+  if (boolean == nullptr)
+    return common::make_unexpected(internal("vector row predicate produced non-Boolean storage"));
+  return *boolean;
 }
 
 [[nodiscard]] common::Result<std::size_t>
@@ -687,6 +727,34 @@ finalize_distributed_vector_rows_impl(
     if (rows.size() != total_rows)
       return common::make_unexpected(internal("vector row decoded count changed"));
 
+    std::size_t expression_output_count{};
+    if (projection != nullptr) {
+      expression_output_count = static_cast<std::size_t>(std::ranges::count_if(
+          projection->outputs, [](const query::DistributedVectorRowCoordinatorOutput& output) {
+            return std::holds_alternative<query::DistributedVectorRowExpressionOutput>(output);
+          }));
+    }
+    std::vector<query::detail::CanonicalVectorExpressionCell> canonical_row;
+    if (projection != nullptr &&
+        (projection->predicate.has_value() || expression_output_count > 0U)) {
+      canonical_row.resize(input.result.result_schema.columns.size());
+    }
+    if (projection != nullptr && projection->predicate.has_value()) {
+      std::size_t retained_rows{};
+      for (std::size_t index = 0U; index < rows.size(); ++index) {
+        const RowReference row = rows[index];
+        auto loaded = load_canonical_row(batches, row, canonical_row);
+        if (!loaded.has_value())
+          return common::make_unexpected(loaded.error());
+        auto matches = predicate_matches(*projection->predicate, canonical_row);
+        if (!matches.has_value())
+          return common::make_unexpected(matches.error());
+        if (*matches)
+          rows[retained_rows++] = row;
+      }
+      rows.resize(retained_rows);
+    }
+
     if (!input.plan.order_keys.empty() && rows.size() > 1U) {
       std::vector<RowReference> scratch;
       auto sorted = stable_sort_rows(rows, scratch, batches, input.result.result_schema,
@@ -694,9 +762,9 @@ finalize_distributed_vector_rows_impl(
       if (!sorted.has_value())
         return common::make_unexpected(sorted.error());
     }
-    const std::uint64_t requested_rows = input.plan.limit.value_or(total_rows);
+    const std::uint64_t requested_rows = input.plan.limit.value_or(rows.size());
     const std::size_t selected_rows =
-        static_cast<std::size_t>(std::min<std::uint64_t>(requested_rows, total_rows));
+        static_cast<std::size_t>(std::min<std::uint64_t>(requested_rows, rows.size()));
     rows.resize(selected_rows);
 
     const std::size_t maximum_staged_output_rows =
@@ -712,13 +780,6 @@ finalize_distributed_vector_rows_impl(
     if (*state_with_output_cells > limits.maximum_working_bytes - *visibility_bytes)
       return common::make_unexpected(exhausted("vector row working-memory limit is exhausted"));
 
-    std::size_t expression_output_count{};
-    if (projection != nullptr) {
-      expression_output_count = static_cast<std::size_t>(std::ranges::count_if(
-          projection->outputs, [](const query::DistributedVectorRowCoordinatorOutput& output) {
-            return std::holds_alternative<query::DistributedVectorRowExpressionOutput>(output);
-          }));
-    }
     const auto computed_cell_count =
         common::checked_multiply(selected_rows, expression_output_count);
     if (!computed_cell_count.has_value())
@@ -729,9 +790,6 @@ finalize_distributed_vector_rows_impl(
       return common::make_unexpected(state_with_computed_sizes.error());
     if (*state_with_computed_sizes > limits.maximum_working_bytes - *visibility_bytes)
       return common::make_unexpected(exhausted("vector row working-memory limit is exhausted"));
-    std::vector<query::detail::CanonicalVectorExpressionCell> canonical_row;
-    if (expression_output_count > 0U)
-      canonical_row.resize(input.result.result_schema.columns.size());
     std::vector<std::size_t> computed_value_sizes;
     computed_value_sizes.reserve(*computed_cell_count);
 

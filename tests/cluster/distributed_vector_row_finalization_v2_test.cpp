@@ -120,6 +120,17 @@ struct TestRow {
   return query::VectorExpression::create(std::move(instructions)).value();
 }
 
+[[nodiscard]] query::VectorExpression nonnull_label_predicate() {
+  std::vector<query::VectorExpressionInstruction> instructions;
+  instructions.emplace_back(
+      query::VectorInputExpression{.input_column_ordinal = 1U,
+                                   .type = type(schema::LogicalTypeKind::kString),
+                                   .nullable = true});
+  instructions.emplace_back(query::VectorUnaryExpression{
+      .operation = query::VectorUnaryOperation::kIsNotNull, .operand_instruction = 0U});
+  return query::VectorExpression::create(std::move(instructions)).value();
+}
+
 [[nodiscard]] query::VectorExpression divide_score_expression(const std::int64_t divisor) {
   std::vector<query::VectorExpressionInstruction> instructions;
   instructions.emplace_back(
@@ -133,6 +144,28 @@ struct TestRow {
       query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kDivide,
                                     .left_instruction = 0U,
                                     .right_instruction = 1U});
+  return query::VectorExpression::create(std::move(instructions)).value();
+}
+
+[[nodiscard]] query::VectorExpression divide_score_predicate(const std::int64_t divisor) {
+  std::vector<query::VectorExpressionInstruction> instructions;
+  instructions.emplace_back(
+      query::VectorInputExpression{.input_column_ordinal = 0U,
+                                   .type = type(schema::LogicalTypeKind::kInt64),
+                                   .nullable = false});
+  instructions.emplace_back(query::VectorConstantExpression{
+      .value = query::ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), divisor)
+                   .value()});
+  instructions.emplace_back(
+      query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kDivide,
+                                    .left_instruction = 0U,
+                                    .right_instruction = 1U});
+  instructions.emplace_back(query::VectorConstantExpression{
+      .value = query::ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), 0).value()});
+  instructions.emplace_back(
+      query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kGreater,
+                                    .left_instruction = 2U,
+                                    .right_instruction = 3U});
   return query::VectorExpression::create(std::move(instructions)).value();
 }
 
@@ -311,6 +344,32 @@ TEST(DistributedVectorRowFinalizationV2Test,
       common::StatusCode::kInvalidArgument);
 }
 
+TEST(DistributedVectorRowFinalizationV2Test, AppliesCoordinatorPredicateBeforeGlobalOrderAndLimit) {
+  auto plan = row_plan();
+  plan.order_keys = {{.output_index = 0U,
+                      .direction = query::PhysicalSortDirection::kAscending,
+                      .null_placement = query::ScalarNullPlacement::kLast}};
+  plan.limit = 2U;
+  auto input = execution_result(
+      std::move(plan), {message(2U, 1U, true, encode_rows({{5, "middle"}, {3, std::nullopt}})),
+                        message(3U, 1U, true, encode_rows({{7, "first"}}))});
+  const query::DistributedVectorRowCoordinatorProjection projection{
+      .outputs = {query::DistributedVectorRowSourceOutput{.worker_output_index = 0U},
+                  query::DistributedVectorRowSourceOutput{.worker_output_index = 1U}},
+      .result_schema = result_schema(),
+      .predicate = nonnull_label_predicate()};
+  auto finalized =
+      finalize_distributed_vector_rows_with_projection_v2(std::move(input), projection);
+  ASSERT_TRUE(finalized.has_value()) << finalized.error().to_string();
+  EXPECT_EQ(finalized->row_count, 2U);
+  const std::vector<TestRow> rows = decode_rows(*finalized);
+  ASSERT_EQ(rows.size(), 2U);
+  EXPECT_EQ(rows[0].score, 5);
+  EXPECT_EQ(rows[0].label, "middle");
+  EXPECT_EQ(rows[1].score, 7);
+  EXPECT_EQ(rows[1].label, "first");
+}
+
 TEST(DistributedVectorRowFinalizationV2Test,
      EvaluatesCheckedFixedAndTextExpressionsAfterGlobalOrderAndLimit) {
   auto plan = row_plan();
@@ -422,6 +481,27 @@ TEST(DistributedVectorRowFinalizationV2Test,
       execution_result(row_plan(), {message(2U, 1U, true, encode_rows({{1, "x"}}))});
   EXPECT_EQ(finalize_distributed_vector_rows_with_projection_v2(std::move(failing_input),
                                                                 failing_projection)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  query::DistributedVectorRowCoordinatorProjection invalid_predicate{
+      .outputs = {query::DistributedVectorRowSourceOutput{.worker_output_index = 0U}},
+      .result_schema = {.columns = {{"score", type(schema::LogicalTypeKind::kInt64), false}}},
+      .predicate = add_score_expression(1)};
+  auto invalid_predicate_input =
+      execution_result(row_plan(), {message(2U, 1U, true, encode_rows({{1, "x"}}))});
+  EXPECT_EQ(finalize_distributed_vector_rows_with_projection_v2(std::move(invalid_predicate_input),
+                                                                invalid_predicate)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  invalid_predicate.predicate = divide_score_predicate(0);
+  auto failing_predicate_input =
+      execution_result(row_plan(), {message(2U, 1U, true, encode_rows({{1, "x"}}))});
+  EXPECT_EQ(finalize_distributed_vector_rows_with_projection_v2(std::move(failing_predicate_input),
+                                                                invalid_predicate)
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);

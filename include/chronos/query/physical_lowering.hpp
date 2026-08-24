@@ -22,9 +22,9 @@ struct PhysicalSelectLoweringLimits {
   AsofJoinLimits asof_join_limits{};
 };
 
-// Lowers one nontrivial bound scalar expression against the primary source's exact schema-ordinal
-// input into the shared checked vector program. Direct source and literal outputs are intentionally
-// rejected because their cheaper physical forms do not require a program.
+// Lowers one bound scalar expression against the primary source's exact schema-ordinal input into
+// the shared checked vector program. Direct source and literal expressions become one-instruction
+// programs so coordinator consumers can retain one uniform immutable execution contract.
 [[nodiscard]] SqlResult<VectorExpression>
 lower_bound_sql_scalar_expression(const BoundSqlSelect& select, const SqlExpression& expression,
                                   VectorExpressionLimits limits = {});

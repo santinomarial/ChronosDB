@@ -63,6 +63,7 @@ using DistributedVectorRowCoordinatorOutput =
 struct DistributedVectorRowCoordinatorProjection {
   std::vector<DistributedVectorRowCoordinatorOutput> outputs;
   DistributedVectorResultSchema result_schema;
+  std::optional<VectorExpression> predicate;
 
   friend bool operator==(const DistributedVectorRowCoordinatorProjection&,
                          const DistributedVectorRowCoordinatorProjection&) = default;
@@ -73,9 +74,10 @@ struct DistributedVectorRowCoordinatorProjection {
 // order. Row output indices may repeat and may append hidden direct order columns. A nonempty plan
 // visibility vector retains the SELECT outputs. ORDER BY and LIMIT remain global coordinator
 // semantics. A coordinator projection is present only when source-independent
-// expressions must be evaluated or injected after the complete worker streams are ordered and
-// limited. Row-dependent programs use source-schema ordinals and therefore cause workers to carry
-// the full source row; computed ORDER BY remains outside this boundary. The
+// expressions must be evaluated or injected. A coordinator predicate is applied after every worker
+// stream closes and before global ordering and limit; visible expressions are evaluated afterward.
+// Row-dependent programs use source-schema ordinals and therefore cause workers to carry the full
+// source row; computed ORDER BY remains outside this boundary. The
 // optional event-time predicate is exact row truth, not merely storage-pruning evidence.
 struct DistributedVectorRowsSqlPlan {
   schema::TableId table_id;
@@ -91,10 +93,10 @@ struct DistributedVectorRowsSqlPlan {
 };
 
 // Lowers the executable distributed row subset: one current table, direct source-column,
-// source-independent scalar, or checked vector-expression outputs; an optional AND-conjunction of
-// event-time/TIMESTAMP comparisons or inclusive BETWEEN leaves, direct-column ORDER BY (including
-// hidden helpers), and LIMIT. Computed ORDER BY remains unsupported. No scalar or relational
-// fallback is inferred.
+// source-independent scalar, or checked vector-expression outputs; an optional checked Boolean
+// WHERE expression (with exact worker-side event-time range specialization), direct-column ORDER BY
+// (including hidden helpers), and LIMIT. Computed ORDER BY remains unsupported. No scalar or
+// relational fallback is inferred.
 [[nodiscard]] SqlResult<DistributedVectorRowsSqlPlan>
 lower_bound_sql_select_to_distributed_vector_rows(
     const BoundSqlSelect& select, DistributedVectorRowsSqlLoweringLimits limits = {});

@@ -98,6 +98,11 @@ The new expression variant is coordinator-owned and in-memory only. Existing dir
 plans retain their previous projection and wire bytes. Rollback removes expression admission and
 the finalizer branch without changing durable state or protocol compatibility.
 
+## Subsequent decision
+
+[ADR 0455](0455-bounded-coordinator-row-predicate-execution.md) uses the same canonical-row adapter
+to execute general checked Boolean WHERE programs before global ordering and LIMIT.
+
 ## References
 
 - [Distributed row SQL lowering](../learning/distributed-row-sql-lowering.md)

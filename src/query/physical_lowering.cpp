@@ -888,14 +888,36 @@ SqlResult<VectorExpression> lower_bound_sql_scalar_expression(const BoundSqlSele
                                         "Physical scalar lowering requires one SQL source"));
     }
     ColumnOutputPosition output = ExpressionLowerer{select, limits}.output(expression);
-    auto* computed = std::get_if<ComputedColumnOutputPosition>(&output);
-    if (computed == nullptr) {
-      return std::unexpected(
-          diagnostic(SqlDiagnosticCode::kUnsupportedSyntax, expression.span(),
-                     common::StatusCode::kNotSupported,
-                     "Physical scalar lowering requires a source-dependent computed expression"));
+    if (auto* computed = std::get_if<ComputedColumnOutputPosition>(&output); computed != nullptr)
+      return std::move(computed->expression);
+
+    const BoundExpressionInfo* information = select.find_expression(expression.span());
+    if (information == nullptr || !information->type.has_value()) {
+      return std::unexpected(diagnostic(SqlDiagnosticCode::kExecutionFailure, expression.span(),
+                                        common::StatusCode::kInternal,
+                                        "Bound scalar expression has no physical result shape"));
     }
-    return std::move(computed->expression);
+    std::vector<VectorExpressionInstruction> instructions;
+    instructions.reserve(1U);
+    if (const auto* source = std::get_if<SourceColumnOutputPosition>(&output); source != nullptr) {
+      instructions.emplace_back(
+          VectorInputExpression{.input_column_ordinal = source->input_column_ordinal,
+                                .type = *information->type,
+                                .nullable = information->nullable});
+    } else {
+      instructions.emplace_back(VectorConstantExpression{
+          .value = std::move(std::get<ConstantColumnOutputPosition>(output).value)});
+    }
+    auto program = VectorExpression::create(std::move(instructions), limits);
+    if (!program.has_value())
+      return std::unexpected(from_status(expression.span(), program.error()));
+    if (program->result_shape().type != *information->type ||
+        program->result_shape().nullable != information->nullable) {
+      return std::unexpected(diagnostic(SqlDiagnosticCode::kExecutionFailure, expression.span(),
+                                        common::StatusCode::kInternal,
+                                        "Bound scalar expression shape is inconsistent"));
+    }
+    return std::move(*program);
   } catch (LoweringFailure& failure) {
     return std::unexpected(failure.take());
   } catch (const std::bad_alloc&) {

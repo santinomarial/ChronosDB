@@ -14,11 +14,11 @@ output names. The output is an owned `DistributedVectorRowsSqlPlan` containing:
 
 - the exact table and destination schema identities;
 - unique destination source-column ordinals;
-- an optional exact event-time predicate;
+- an optional exact worker event-time predicate;
 - the canonical row-mode intent with output mapping, final order, and final limit; and
 - the exact worker result schema; and
-- when needed, a coordinator-only source/constant/expression projection with the final named result
-  schema.
+- when needed, a coordinator-only source/constant/expression projection with an optional Boolean
+  predicate and the final named result schema.
 
 It owns no query ID, tablet set, Raft proof, route, TLS context, socket, or Native response. Those
 belong to later authority and lifecycle layers.
@@ -49,9 +49,10 @@ that projection. If no output reads a source column, the event-time column is pr
 real row-count anchor; it is never exposed to the client.
 
 The coordinator validates source shapes and canonical bytes after every tablet stream closes. It
-sorts and applies LIMIT against real worker outputs first, then injects constants while encoding the
-final Native batches. A selected constant ORDER BY key is removed because it cannot distinguish
-rows. Constant evaluation errors are planning errors.
+evaluates any retained WHERE predicate, sorts and applies LIMIT against the surviving real worker
+outputs, then injects constants while encoding the final Native batches. Predicate TRUE retains a
+row; FALSE and NULL discard it. A selected constant ORDER BY key is removed because it cannot
+distinguish rows. Constant output evaluation errors are planning errors.
 
 A row-dependent SELECT output is now lowered through the same checked `VectorExpression` program
 used by the local physical engine. Because that program addresses schema ordinals, the worker
@@ -66,15 +67,23 @@ remain borrowed with an identity/lower/upper transform until their final bytes a
 errors abort the complete result before publication. Computed order keys still fail closed because
 global ordering precedes coordinator expression evaluation.
 
-## Exact event-time normalization
+## WHERE execution and event-time specialization
 
-The accepted WHERE grammar is an AND tree whose leaves either compare the schema's declared event-
-time column with a `TIMESTAMP` literal or use positive `event_time BETWEEN lower AND upper` with two
-`TIMESTAMP` literals. Comparison operand order is normalized first. `BETWEEN` contributes inclusive
+General bound Boolean WHERE expressions lower through the same checked vector program. A
+source-dependent predicate causes the complete source schema to cross the worker boundary so its
+schema ordinals remain exact. A source-independent predicate retains the otherwise sufficient
+worker projection. Predicate evaluation happens over every decoded row after all streams close and
+before global ordering or LIMIT. This preserves three-valued SQL truth and ensures LIMIT counts only
+matching rows.
+
+The existing event-time range form remains a worker-side specialization. Its accepted grammar is
+an AND tree whose leaves either compare the schema's declared event-time column with a `TIMESTAMP`
+literal or use positive `event_time BETWEEN lower AND upper` with two `TIMESTAMP` literals.
+Comparison operand order is normalized first. `BETWEEN` contributes inclusive
 bounds and never reorders a reversed range. Lower bounds retain the greatest endpoint; upper bounds
 retain the least endpoint. Equal endpoints combine inclusivity with logical AND, so any strict
-comparison keeps the combined endpoint strict. `NOT BETWEEN` fails closed because one range cannot
-represent its generally disjoint truth set.
+comparison keeps the combined endpoint strict. `NOT BETWEEN` cannot be represented by one generally
+contiguous range, so it bypasses this specialization and executes as a general coordinator program.
 
 No endpoint is incremented or decremented. `INT64_MIN` and `INT64_MAX` are therefore safe. Reversed
 or equal-open bounds are retained as valid empty predicates and evaluated exactly by the worker's
@@ -103,20 +112,24 @@ Unsupported SQL returns a source-spanned `NOT_SUPPORTED` diagnostic. Invalid lim
 `RESOURCE_EXHAUSTED`. No partial product is returned.
 
 The implementation is single-threaded. Lowering is linear in source width, outputs, WHERE leaves,
-expression instructions, and order keys. Finalization adds two checked expression evaluations per
-selected row, plus transformed output bytes. Retained memory is linear in projected columns, worker
-and visible outputs, expression configuration, selected computed cells, one canonical payload
-arena, and order keys, all under caller-configurable bounds.
+expression instructions, and order keys. Finalization adds one checked predicate evaluation per
+input row and two checked output-expression evaluations per selected row, plus transformed output
+bytes. Retained memory is linear in projected columns, worker and visible outputs, expression
+configuration, selected computed cells, one canonical payload arena, and order keys, all under
+caller-configurable bounds.
 
 ## Tradeoffs and likely interview questions
 
 **Why not serialize `PhysicalPipelinePlan`?** It contains implementation variants, resource-policy
 objects, and process-sized ordinals. The canonical intent keeps the protocol stable and small.
 
-**Why carry the full source row for one computed output?** The existing checked program uses bound
-schema ordinals. Preserving those ordinals makes the coordinator baseline simple and auditable while
-leaving Plan Intent unchanged. Projection remapping or worker execution is worthwhile only with a
-versioned contract and evidence that the extra bandwidth matters.
+**Why carry the full source row for one computed output or predicate?** The existing checked program
+uses bound schema ordinals. Preserving those ordinals makes the coordinator baseline simple and
+auditable while leaving Plan Intent unchanged. Projection remapping or worker execution is
+worthwhile only with a versioned contract and evidence that the extra bandwidth matters.
+
+**Why evaluate WHERE before LIMIT?** LIMIT counts rows after SQL filtering. Applying it first could
+discard later matching rows and return too few or the wrong rows.
 
 **Why evaluate expressions after LIMIT?** ORDER BY currently accepts only direct worker columns.
 Rows discarded by the global limit cannot affect the visible result, so evaluating them would waste

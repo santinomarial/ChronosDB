@@ -129,6 +129,32 @@ TEST(DistributedSqlLoweringAllocationFailureTest,
 }
 
 TEST(DistributedSqlLoweringAllocationFailureTest,
+     ClassifiesEveryCoordinatorPredicateAllocationFailure) {
+  BoundSqlSelect select = bound_select(
+      "SELECT value FROM metrics WHERE value + 2 > 4 AND value IS NOT NULL ORDER BY ts LIMIT 2");
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    std::optional<SqlResult<DistributedVectorRowsSqlPlan>> result;
+    std::size_t observed = 0U;
+    {
+      ::chronos::test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(lower_bound_sql_select_to_distributed_vector_rows(select));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+    EXPECT_GT(observed, 0U);
+    if (result->has_value()) {
+      reached_success = true;
+      break;
+    }
+    EXPECT_EQ(result->error().code(), SqlDiagnosticCode::kResourceLimit);
+    EXPECT_EQ(result->error().status().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(DistributedSqlLoweringAllocationFailureTest,
      ClassifiesEveryGlobalAggregateOwnedAllocationFailure) {
   BoundSqlSelect select = bound_select(
       "SELECT count(*) AS n, sum(value) AS total, avg(value) AS mean_value FROM metrics "

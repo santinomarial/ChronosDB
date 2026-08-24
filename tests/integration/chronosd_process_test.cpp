@@ -1146,9 +1146,10 @@ void expect_replicated_rows(const int client, const std::uint64_t request_id) {
   response = network::decode_frame(receive_frame(client)).value_or(network::Frame{});
   EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
 
-  response = send_replicated_query(
-      client, request_id + 3U,
-      "SELECT lower(tag) AS folded, NOT enabled AS disabled FROM events ORDER BY ts LIMIT 1");
+  response =
+      send_replicated_query(client, request_id + 3U,
+                            "SELECT lower(tag) AS folded, NOT enabled AS disabled FROM events "
+                            "WHERE enabled AND lower(tag) = 'x' ORDER BY ts LIMIT 1");
   if (response.header.message_type == network::MessageType::kError) {
     auto decoded = network::decode_error_message(response.payload);
     ASSERT_TRUE(decoded.has_value());

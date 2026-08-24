@@ -3,6 +3,7 @@
 #include "chronos/query/catalog.hpp"
 #include "chronos/query/distributed_sql_lowering.hpp"
 #include "chronos/query/parser.hpp"
+#include "chronos/query/physical_lowering.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/table_schema.hpp"
 
@@ -241,14 +242,58 @@ TEST(DistributedSqlLoweringTest, OwnsCheckedRowDependentCoordinatorExpressions) 
   EXPECT_EQ(bounded.error().code(), SqlDiagnosticCode::kResourceLimit);
 }
 
+TEST(DistributedSqlLoweringTest, OwnsGeneralBooleanCoordinatorPredicates) {
+  BoundSqlSelect direct_select = bind("SELECT value FROM metrics");
+  const SqlExpression* direct_expression = direct_select.syntax().items().front().expression();
+  ASSERT_NE(direct_expression, nullptr);
+  auto direct_program = lower_bound_sql_scalar_expression(direct_select, *direct_expression);
+  ASSERT_TRUE(direct_program.has_value()) << direct_program.error().status().to_string();
+  ASSERT_EQ(direct_program->instructions().size(), 1U);
+  EXPECT_EQ(
+      std::get<VectorInputExpression>(direct_program->instructions().front()).input_column_ordinal,
+      2U);
+
+  BoundSqlSelect select =
+      bind("SELECT value, label FROM metrics WHERE (value + 1 > 5 AND lower(label) = 'ok') "
+           "OR label IS NULL ORDER BY value DESC LIMIT 2");
+  auto lowered = lower_bound_sql_select_to_distributed_vector_rows(select);
+  ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
+  EXPECT_EQ(lowered->destination_column_ordinals, (std::vector<std::uint32_t>{0U, 1U, 2U}));
+  EXPECT_EQ(lowered->intent.row_output_indices, (std::vector<std::uint32_t>{0U, 1U, 2U}));
+  EXPECT_FALSE(lowered->event_time_predicate.has_value());
+  ASSERT_TRUE(lowered->coordinator_projection.has_value());
+  ASSERT_TRUE(lowered->coordinator_projection->predicate.has_value());
+  EXPECT_EQ(lowered->coordinator_projection->predicate->result_shape().type.kind(),
+            schema::LogicalTypeKind::kBool);
+  EXPECT_TRUE(lowered->coordinator_projection->predicate->result_shape().nullable);
+  ASSERT_EQ(lowered->intent.order_keys.size(), 1U);
+  EXPECT_EQ(lowered->intent.order_keys.front().output_index, 2U);
+
+  auto constant = lower_bound_sql_select_to_distributed_vector_rows(
+      bind("SELECT label FROM metrics WHERE FALSE"));
+  ASSERT_TRUE(constant.has_value()) << constant.error().status().to_string();
+  EXPECT_EQ(constant->destination_column_ordinals, (std::vector<std::uint32_t>{1U}));
+  ASSERT_TRUE(constant->coordinator_projection.has_value());
+  ASSERT_TRUE(constant->coordinator_projection->predicate.has_value());
+  EXPECT_EQ(constant->coordinator_projection->predicate->instructions().size(), 1U);
+
+  auto disjoint_time = lower_bound_sql_select_to_distributed_vector_rows(
+      bind("SELECT value FROM metrics WHERE ts NOT BETWEEN "
+           "TIMESTAMP '1970-01-01 00:00:00Z' AND TIMESTAMP '1970-01-01 00:00:01Z'"));
+  ASSERT_TRUE(disjoint_time.has_value()) << disjoint_time.error().status().to_string();
+  EXPECT_FALSE(disjoint_time->event_time_predicate.has_value());
+  ASSERT_TRUE(disjoint_time->coordinator_projection.has_value());
+  EXPECT_TRUE(disjoint_time->coordinator_projection->predicate.has_value());
+
+  const auto bounded = lower_bound_sql_select_to_distributed_vector_rows(
+      select, {.maximum_expression_configuration_bytes = 1U});
+  ASSERT_FALSE(bounded.has_value());
+  EXPECT_EQ(bounded.error().code(), SqlDiagnosticCode::kResourceLimit);
+}
+
 TEST(DistributedSqlLoweringTest, RejectsEveryUnsupportedSemanticWithoutFallback) {
   const std::vector<std::string_view> statements{
-      "SELECT value FROM metrics WHERE value > 1",
-      "SELECT count(*) AS n FROM metrics",
-      "SELECT value FROM metrics WHERE ts NOT BETWEEN "
-      "TIMESTAMP '1970-01-01 00:00:00Z' AND TIMESTAMP '1970-01-01 00:00:01Z'",
-      "SELECT value FROM metrics WHERE value BETWEEN 1 AND 2",
-      "SELECT value FROM metrics LATEST BY (value) ON ts",
+      "SELECT count(*) AS n FROM metrics", "SELECT value FROM metrics LATEST BY (value) ON ts",
       "SELECT value FROM metrics FOR SYSTEM_TIME AS OF "
       "TIMESTAMP '1970-01-01 00:00:00Z'"};
   for (const std::string_view statement : statements) {

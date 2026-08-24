@@ -1088,7 +1088,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   direct-column sort helpers, and result descriptors while rejecting computed ordering or relational
   semantics. The coordinator injects constants and evaluates row expressions only after complete
   global sort/limit; computed plans carry the full source schema in ordinal order, all-constant
-  queries retain a real event-time row-count anchor, and Plan Intent bytes remain unchanged. Bound global aggregate SQL now also produces
+  queries retain a real event-time row-count anchor, and Plan Intent bytes remain unchanged.
+  General checked Boolean WHERE programs now execute at the coordinator after every tablet stream
+  closes and before global ordering/LIMIT; FALSE and NULL discard rows, source-dependent predicates
+  carry the full schema, and exact event-time-only ranges retain worker execution. Mixed predicates
+  currently remain wholly coordinator-side, and computed ordering is still rejected. Bound global
+  aggregate SQL now also produces
   exact unique projection, sufficient-state definitions, event-time truth, LIMIT, and result
   descriptors for direct aggregate calls plus an exact unlimited identity input-row plan. The
   replicated Native service and packaged daemon now execute that input through the existing local/
