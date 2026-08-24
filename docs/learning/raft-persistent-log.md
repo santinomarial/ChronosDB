@@ -142,6 +142,9 @@ The anchor companion reopens the daemon's metadata log through `RaftPersistentLo
 exact recovered group state into a fresh retained base, and proves one clean packaged reopen. It
 then damages a checksum-covered base field; packaged startup rejects the highest anchor without
 fallback and preserves both the 64-byte image and retained checkpoint segment.
+A portable owner companion truncates that anchor to 63 bytes. Repeated recovery rejects its exact
+invalid-size corruption, releases ownership, preserves the truncated anchor and retained segment,
+and never consults reclaimed history as fallback authority.
 A portable database-owner companion removes that anchor after segment 1 has been reclaimed. Without
 the anchor, recovery requires base segment 1, rejects the surviving segment-2 checkpoint as an absent
 base, and leaves it unchanged rather than treating its filename as authority.

@@ -52,6 +52,9 @@ Linux packaged-daemon qualification checkpoints the recovered one-group metadata
 public log owner and first proves a clean process reopen. It then damages one checksum-covered anchor
 field, requires the exact checksum failure before socket admission, and preserves the anchor and
 retained checkpoint segment byte-for-byte.
+Portable qualification truncates the authoritative anchor by one byte. Two owner reopens return the
+exact invalid-size corruption, release ownership, preserve the truncated anchor and retained
+segment, and never fall back to reclaimed segment 1.
 Portable aggregate-owner qualification separately removes the synchronized authoritative anchor
 after segment 1 is reclaimed. Two database reopens require the exact absent-base corruption, release
 ownership, and leave segment 2 unchanged, proving a retained segment number cannot substitute for

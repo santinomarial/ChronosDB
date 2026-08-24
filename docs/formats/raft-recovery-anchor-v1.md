@@ -74,6 +74,10 @@ checkpoint-and-reclaim path and proves a clean reopen before damage. Flipping on
 byte then requires the exact anchor-checksum failure before socket admission and leaves both the
 damaged 64-byte anchor and retained checkpoint segment unchanged.
 
+A portable `SingleNodeDatabase` case truncates that anchor to 63 bytes. Two database starts report
+`Raft recovery anchor has an invalid size`, release ownership, preserve the truncated anchor and
+retained checkpoint segment, and do not fall back to reclaimed segment 1.
+
 A portable `SingleNodeDatabase` case removes the authoritative anchor only after the public
 checkpoint path has reclaimed segment 1 and a clean database reopen has accepted the new base. The
 next two startups report `Raft recovery base segment is absent`, release ownership, do not infer an

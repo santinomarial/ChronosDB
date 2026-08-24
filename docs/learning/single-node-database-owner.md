@@ -134,6 +134,9 @@ preserves both the entry and established Raft segment. A symlink to that segment
 projection, remains a symlink, and cannot redirect recovery into following or rewriting its target.
 The owner also reopens a real anchored metadata checkpoint. Once the highest anchor is damaged, it
 fails before projection and does not fall back to removed history or rewrite the retained base.
+A portable truncation case cuts that anchor to 63 bytes. Two startup attempts return its exact
+invalid-size corruption before projection, release ownership, preserve both authority files, and do
+not reconstruct segment 1.
 If that anchor is missing after segment-1 reclamation, the owner likewise fails before projection:
 it cannot infer the retained base from segment 2 alone. Portable coverage synchronizes the removal,
 twice requires the exact absent-base diagnostic with ownership release, and preserves segment 2.

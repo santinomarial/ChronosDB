@@ -408,6 +408,36 @@ TEST(SingleNodeDatabaseTest, RejectsMissingAuthoritativeRaftAnchorWithoutAdoptin
   }
 }
 
+TEST(SingleNodeDatabaseTest, RejectsTruncatedAuthoritativeRaftAnchorWithoutFallbackOrRewrite) {
+  TemporaryDirectory directory;
+  AnchoredMetadataLog anchored;
+  provision_anchored_metadata_log(directory, anchored);
+  ASSERT_TRUE(anchored.ready);
+  const std::string pristine_anchor = read_binary_file(anchored.anchor);
+  ASSERT_EQ(pristine_anchor.size(), 64U);
+  const std::string pristine_segment = read_binary_file(anchored.retained_segment);
+
+  const std::string truncated_anchor = pristine_anchor.substr(0U, pristine_anchor.size() - 1U);
+  const int anchor_file = ::open(anchored.anchor.c_str(), O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+  ASSERT_GE(anchor_file, 0);
+  ASSERT_EQ(::ftruncate(anchor_file, static_cast<off_t>(truncated_anchor.size())), 0);
+  ASSERT_EQ(::fsync(anchor_file), 0);
+  ASSERT_EQ(::close(anchor_file), 0);
+  ASSERT_EQ(read_binary_file(anchored.anchor), truncated_anchor);
+
+  for (std::size_t attempt = 0U; attempt < 2U; ++attempt) {
+    SCOPED_TRACE(attempt);
+    auto rejected = SingleNodeDatabase::open_or_create(config(directory));
+    ASSERT_FALSE(rejected.has_value());
+    EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
+    EXPECT_NE(rejected.error().to_string().find("Raft recovery anchor has an invalid size"),
+              std::string::npos);
+    EXPECT_EQ(read_binary_file(anchored.anchor), truncated_anchor);
+    EXPECT_EQ(read_binary_file(anchored.retained_segment), pristine_segment);
+    EXPECT_FALSE(std::filesystem::exists(anchored.reclaimed_segment));
+  }
+}
+
 TEST(SingleNodeDatabaseTest, RejectsCorruptAnchoredRaftSegmentWithoutFallbackOrRewrite) {
   TemporaryDirectory directory;
   AnchoredMetadataLog anchored;
