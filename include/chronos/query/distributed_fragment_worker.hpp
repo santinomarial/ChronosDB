@@ -8,6 +8,7 @@
 #include "chronos/query/distributed.hpp"
 #include "chronos/query/distributed_fragment_dispatch.hpp"
 #include "chronos/query/distributed_grouped_exchange.hpp"
+#include "chronos/query/distributed_mutable_vector_fragment.hpp"
 #include "chronos/query/distributed_vector_aggregate_exchange.hpp"
 #include "chronos/query/distributed_vector_fragment_v2.hpp"
 #include "chronos/query/scalar_snapshot_scan.hpp"
@@ -137,6 +138,17 @@ struct DistributedVectorRowsWorkerResultV2 {
   std::size_t output_chunks{};
 };
 
+struct DistributedMutableVectorRowsWorkerRequest {
+  std::reference_wrapper<const DistributedMutableVectorFragment> fragment;
+  std::reference_wrapper<const ingest::TabletSnapshot> snapshot;
+  std::reference_wrapper<const schema::SchemaLineage> lineage;
+  std::reference_wrapper<const raft::TabletPlacementMetadata> placement;
+  common::Uuid raft_group_id;
+  std::uint64_t local_node{};
+  std::optional<raft::ReadBarrier> local_linearizable_barrier;
+  DistributedVectorRowsWorkerLimitsV2 limits;
+};
+
 // Synchronous, borrowed-chunk publication seam. A successful call may invoke consume repeatedly;
 // each chunk remains valid only for that invocation. The caller must discard prior consumed output
 // if this method or the enclosing worker later fails.
@@ -150,6 +162,14 @@ public:
 
   [[nodiscard]] virtual common::Status consume(const VectorChunk& chunk) = 0;
 };
+
+// Executes row-mode projection over exactly one immutable committed/applied TabletState
+// publication. No durable Manifest position is inferred or substituted. Output remains
+// fragment-local and unordered; final ORDER BY/LIMIT are coordinator responsibilities.
+[[nodiscard]] common::Result<DistributedVectorRowsWorkerResultV2>
+execute_distributed_mutable_vector_rows_fragment(
+    const DistributedMutableVectorRowsWorkerRequest& request,
+    DistributedVectorRowsChunkConsumerV2& consumer);
 
 // Reuses the complete worker authority and real-CSEG winner-resolution gates, then emits every
 // fragment-local row in source order under the Fragment-v2 result schema. Final ORDER BY and LIMIT

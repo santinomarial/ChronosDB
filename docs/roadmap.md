@@ -1059,7 +1059,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   route/attempt metrics. `chronosctl routed-sql` now packages that composition for one explicit
   group and emits only a terminally validated TSV result. The packaged service now derives a
   single-table-group route and redirects only when ordered observations prove one common stable
-  remote leader across its entire read gate; split leadership still requires remote fragments.
+  remote leader across its entire read gate. A distinct proof-bound mutable vector fragment now
+  binds and locally executes one exact committed/applied TabletState publication without
+  reinterpreting Manifest-fragment positions; authenticated transport and split-leader native
+  composition remain.
   The packaged daemon now accepts an atomic native-server TLS credential
   and strict client-certificate-principal bundle, owns the immutable authority beyond its reactor
   borrow, permits non-loopback canonical IPv4 binding only in that mode, and fails closed instead of

@@ -4,6 +4,7 @@
 #include "chronos/query/column_output.hpp"
 #include "chronos/query/physical_operator.hpp"
 #include "chronos/query/resource_context.hpp"
+#include "chronos/query/tablet_state_pipeline.hpp"
 
 #include <algorithm>
 #include <array>
@@ -943,6 +944,165 @@ execute_distributed_grouped_float64_fragment(const DistributedGroupedFloat64Work
   } catch (const std::length_error&) {
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
                                                   "distributed grouped worker exceeded limits"});
+  }
+}
+
+common::Result<DistributedVectorRowsWorkerResultV2>
+execute_distributed_mutable_vector_rows_fragment(
+    const DistributedMutableVectorRowsWorkerRequest& request,
+    DistributedVectorRowsChunkConsumerV2& consumer) {
+  const DistributedMutableVectorFragment& fragment = request.fragment.get();
+  const ingest::TabletSnapshot& snapshot = request.snapshot.get();
+  const schema::SchemaLineage& lineage = request.lineage.get();
+  const raft::TabletPlacementMetadata& placement = request.placement.get();
+  const common::Status structural = validate_distributed_mutable_vector_fragment(fragment);
+  if (!structural.is_ok())
+    return common::make_unexpected(structural);
+  if (request.limits.maximum_query_memory_bytes == 0U ||
+      request.limits.maximum_query_memory_bytes >
+          kMaximumDistributedVectorRowsWorkerMemoryBytesV2 ||
+      request.limits.scan.maximum_rows_per_chunk == 0U ||
+      request.limits.scan.chunk.maximum_rows == 0U ||
+      request.limits.scan.chunk.maximum_columns == 0U ||
+      request.limits.scan.chunk.maximum_buffer_bytes == 0U ||
+      request.limits.scan.chunk.maximum_retained_buffer_bytes == 0U ||
+      request.limits.output.maximum_rows == 0U || request.limits.output.maximum_columns == 0U ||
+      request.limits.output.maximum_buffer_bytes == 0U ||
+      request.limits.output.maximum_retained_buffer_bytes == 0U ||
+      request.limits.output.maximum_rows < std::min(request.limits.scan.maximum_rows_per_chunk,
+                                                    request.limits.scan.chunk.maximum_rows)) {
+    return common::make_unexpected(invalid("mutable vector worker limits are invalid"));
+  }
+  if (fragment.plan.mode != DistributedVectorPlanMode::kRows) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotSupported,
+                       "mutable vector row worker requires a row-mode fragment"});
+  }
+  if (request.local_node == 0U || request.raft_group_id.is_nil() ||
+      fragment.raft_group_id != request.raft_group_id ||
+      fragment.serving_node != request.local_node) {
+    return common::make_unexpected(unavailable("mutable vector worker route differs"));
+  }
+  const common::Status placement_status =
+      validate_local_placement(placement, fragment, request.local_node);
+  if (!placement_status.is_ok())
+    return common::make_unexpected(placement_status);
+  if (fragment.read_policy.consistency == DistributedReadConsistency::kLeaderLinearizable) {
+    if (!request.local_linearizable_barrier.has_value() ||
+        request.local_linearizable_barrier != fragment.linearizable_barrier) {
+      return common::make_unexpected(
+          unavailable("mutable vector worker local Raft read barrier differs"));
+    }
+  } else if (request.local_linearizable_barrier.has_value()) {
+    return common::make_unexpected(
+        invalid("mutable vector non-linearizable request supplied a leader barrier"));
+  }
+  const std::shared_ptr<const schema::TableSchema> schema_value = lineage.current();
+  const std::optional<head::HeadCommitPosition>& position = snapshot.applied_position();
+  if (schema_value == nullptr || lineage.table_id() != fragment.table_id ||
+      schema_value->schema_id() != fragment.destination_schema_id ||
+      snapshot.table_id() != fragment.table_id || snapshot.tablet_id() != fragment.tablet_id ||
+      snapshot.schema_ptr()->schema_id() != fragment.destination_schema_id ||
+      !position.has_value() || position->source != head::CommitSource::kRaft ||
+      position->raft_group_id != request.raft_group_id ||
+      position->record_sequence != fragment.applied_position) {
+    return common::make_unexpected(
+        unavailable("mutable vector worker publication authority differs"));
+  }
+  const std::optional<std::size_t> event_ordinal =
+      schema_value->column_ordinal(schema_value->event_time_column());
+  if (!event_ordinal.has_value()) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kNotSupported, "mutable vector worker requires an event-time column"});
+  }
+
+  try {
+    std::vector<PhysicalColumnShape> projected_inputs;
+    projected_inputs.reserve(fragment.destination_column_ordinals.size());
+    for (const std::uint32_t ordinal : fragment.destination_column_ordinals) {
+      if (ordinal >= schema_value->columns().size()) {
+        return common::make_unexpected(
+            invalid("mutable vector worker projection is out of bounds"));
+      }
+      const schema::ColumnDefinition& column = schema_value->columns()[ordinal];
+      projected_inputs.push_back({column.type(), column.nullable()});
+    }
+    const common::Status result_status = validate_distributed_vector_result_schema(
+        fragment.plan, projected_inputs, fragment.result_schema);
+    if (!result_status.is_ok())
+      return common::make_unexpected(result_status);
+
+    auto resources = QueryResourceContext::create(request.limits.maximum_query_memory_bytes);
+    if (!resources.has_value())
+      return common::make_unexpected(resources.error());
+    std::vector<PhysicalColumnShape> source_shape;
+    source_shape.reserve(schema_value->columns().size());
+    for (const schema::ColumnDefinition& column : schema_value->columns())
+      source_shape.push_back({column.type(), column.nullable()});
+    auto pipeline = create_tablet_states_source(*resources, std::span{&snapshot, 1U}, lineage,
+                                                fragment.destination_schema_id, source_shape,
+                                                {.scan = {.chunk = request.limits.scan.chunk}});
+    if (!pipeline.has_value())
+      return common::make_unexpected(pipeline.error());
+    if (fragment.event_time_predicate.has_value()) {
+      pipeline =
+          TimestampRangeFilterOperator::create(std::move(*pipeline), *event_ordinal,
+                                               timestamp_predicate(*fragment.event_time_predicate));
+      if (!pipeline.has_value())
+        return common::make_unexpected(pipeline.error());
+    }
+    std::vector<std::size_t> output_ordinals;
+    output_ordinals.reserve(fragment.plan.row_output_indices.size());
+    for (const std::uint32_t projected_index : fragment.plan.row_output_indices)
+      output_ordinals.push_back(fragment.destination_column_ordinals[projected_index]);
+    pipeline = SourceColumnOutputOperator::create(std::move(*pipeline), std::move(output_ordinals),
+                                                  request.limits.output);
+    if (!pipeline.has_value())
+      return common::make_unexpected(pipeline.error());
+
+    DistributedVectorRowsWorkerResultV2 result;
+    for (;;) {
+      auto step = (*pipeline)->next(*resources);
+      if (!step.has_value())
+        return common::make_unexpected(step.error());
+      if (step->kind() == PhysicalOperatorStepKind::kEnd)
+        return result;
+      const AccountedVectorChunk* accounted = step->chunk();
+      if (accounted == nullptr || !accounted->belongs_to(*resources)) {
+        return common::make_unexpected(
+            corruption("mutable vector worker chunk ownership is invalid"));
+      }
+      const VectorChunk& chunk = accounted->chunk();
+      if (chunk.column_count() != fragment.result_schema.columns.size()) {
+        return common::make_unexpected(
+            corruption("mutable vector worker output width differs from its schema"));
+      }
+      for (std::size_t column = 0U; column < chunk.column_count(); ++column) {
+        const columnar::PhysicalColumnView* physical = chunk.column(column);
+        const DistributedVectorResultColumn& expected = fragment.result_schema.columns[column];
+        if (physical == nullptr || physical->type() != expected.type ||
+            physical->nullable() != expected.nullable) {
+          return common::make_unexpected(
+              corruption("mutable vector worker output shape differs from its schema"));
+        }
+      }
+      const std::size_t rows = chunk.selected_row_count();
+      if (rows == 0U)
+        continue;
+      if (rows > std::numeric_limits<std::uint64_t>::max() - result.output_rows ||
+          result.output_chunks == std::numeric_limits<std::size_t>::max()) {
+        return common::make_unexpected(exhausted("mutable vector worker output overflows"));
+      }
+      const common::Status consumed = consumer.consume(chunk);
+      if (!consumed.is_ok())
+        return common::make_unexpected(consumed);
+      result.output_rows += static_cast<std::uint64_t>(rows);
+      ++result.output_chunks;
+    }
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("mutable vector worker allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("mutable vector worker exceeds limits"));
   }
 }
 

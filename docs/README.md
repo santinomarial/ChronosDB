@@ -123,6 +123,10 @@ existence of a design document alone is not implementation evidence.
 - [Distributed Vector Fragment v2](formats/distributed-vector-fragment-v2.md): schema-bound wrapper
   around exact Vector Fragment v1 authority and one exact result schema, with bounded partial I/O
   and compatible multi-tablet ownership that retains the shared schema once.
+- [Distributed Mutable Vector Fragment
+  v1](formats/distributed-mutable-vector-fragment-v1.md): distinct exact-applied TabletState
+  authority, checksummed nested plan/result schema, and proof-revalidated mutable row execution
+  without reinterpreting durable Manifest fragment positions.
 - [Distributed Aggregate Fragment Dispatch v1](formats/distributed-aggregate-fragment-dispatch-v1.md):
   group-scoped executable envelope around one exact aggregate fragment request.
   Runtime construction binds admission, committed placement, schema, and one exact Raft-backed

@@ -72,6 +72,11 @@ derives admissions from stable plan-ordered Raft observations and policy-specifi
 enters the same compatible Manifest binder.
 `execute_distributed_aggregate_fragment` repeats local authority checks, resolves temporal winners
 from validated generation-pinned parts, filters event time, and emits one terminal partial state.
+The distinct `DistributedMutableVectorFragment` instead names one immutable committed/applied
+`TabletSnapshot` and contains no Manifest generation. Its binder and row worker exact-match the
+Raft group, applied position, current placement, local barrier, active schema, projection, plan, and
+result schema before scanning heads. The `CHDMVFR1` format carries independent header, nested-plan,
+nested-schema, and complete-frame CRCs and cannot be decoded as the durable vector fragment.
 Distributed Query Transport v1 wraps the dispatch and terminal exchange in correlated cluster
 request/response frames. `DistributedQueryReceiver` authenticates and authorizes the source before
 an embedding-owned worker service can execute the dispatch. `ReplicatedDistributedQueryWorker`

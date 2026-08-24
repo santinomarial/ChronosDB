@@ -978,8 +978,10 @@ were deliberately not run.
   redirect carrier, whole-operation-aware poll execution, and an explicit packaged single-group
   `chronosctl routed-sql` command. The packaged service now emits an authoritative whole-query
   redirect for an exact single table-group route only when fresh ordered observations show one
-  common stable remote leader across its complete read gate. Split-leader and remote mutable-tablet
-  fragments are still absent.
+  common stable remote leader across its complete read gate. A distinct checksummed mutable vector
+  fragment now binds and locally executes one exact committed/applied TabletState publication with
+  complete route, placement, barrier, schema, projection, and result-shape revalidation. Its
+  authenticated transport and split-leader native composition remain absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

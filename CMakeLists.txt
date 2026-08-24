@@ -421,6 +421,7 @@ add_library(
   src/query/decimal_internal.cpp
   src/query/diagnostic.cpp
   src/query/distributed.cpp
+  src/query/distributed_mutable_vector_fragment.cpp
   src/query/distributed_grouped_exchange.cpp
   src/query/distributed_vector_aggregate_coordinator.cpp
   src/query/distributed_vector_aggregate_exchange.cpp
@@ -1994,6 +1995,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/diagnostic_header_self_contained.cpp
     tests/query/distributed_header_self_contained.cpp
     tests/query/distributed_test.cpp
+    tests/query/distributed_mutable_vector_fragment_header_self_contained.cpp
+    tests/query/distributed_mutable_vector_fragment_test.cpp
     tests/query/distributed_grouped_exchange_header_self_contained.cpp
     tests/query/distributed_grouped_exchange_test.cpp
     tests/query/distributed_vector_aggregate_coordinator_header_self_contained.cpp
