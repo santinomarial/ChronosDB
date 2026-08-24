@@ -421,6 +421,7 @@ add_library(
   src/query/decimal_internal.cpp
   src/query/diagnostic.cpp
   src/query/distributed.cpp
+  src/query/distributed_sql_lowering.cpp
   src/query/distributed_mutable_vector_fragment.cpp
   src/query/distributed_grouped_exchange.cpp
   src/query/distributed_vector_aggregate_coordinator.cpp
@@ -2014,6 +2015,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/diagnostic_header_self_contained.cpp
     tests/query/distributed_header_self_contained.cpp
     tests/query/distributed_test.cpp
+    tests/query/distributed_sql_lowering_header_self_contained.cpp
+    tests/query/distributed_sql_lowering_test.cpp
     tests/query/distributed_mutable_vector_fragment_header_self_contained.cpp
     tests/query/distributed_mutable_vector_fragment_test.cpp
     tests/query/distributed_grouped_exchange_header_self_contained.cpp
@@ -2139,6 +2142,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/column_output_allocation_failure_test.cpp
     tests/query/database_cseg_scan_allocation_failure_test.cpp
     tests/query/distributed_fragment_worker_allocation_failure_test.cpp
+    tests/query/distributed_sql_lowering_allocation_failure_test.cpp
     tests/query/distributed_vector_aggregate_coordinator_allocation_failure_test.cpp
     tests/query/distributed_vector_aggregate_exchange_allocation_failure_test.cpp
     tests/query/distributed_vector_aggregate_state_allocation_failure_test.cpp

@@ -164,6 +164,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/distributed_vector_fragment_v2.hpp>
 #include <chronos/query/distributed_vector_plan.hpp>
 #include <chronos/query/distributed_vector_result_schema.hpp>
+#include <chronos/query/distributed_sql_lowering.hpp>
 #include <chronos/query/distributed.hpp>
 #include <chronos/query/distributed_fragment.hpp>
 #include <chronos/query/distributed_fragment_binding.hpp>
@@ -288,6 +289,8 @@ int main() {
   const auto finish_vector_exchange = &chronos::query::DistributedVectorCoordinator::finish;
   const auto decode_vector_plan = &chronos::query::decode_distributed_vector_plan_intent_exact;
   const auto validate_vector_plan = &chronos::query::validate_distributed_vector_plan_intent;
+  const auto lower_distributed_vector_rows_sql =
+      &chronos::query::lower_bound_sql_select_to_distributed_vector_rows;
   const auto encode_vector_aggregate_state =
       &chronos::query::encode_mergeable_vector_aggregate_state;
   const auto decode_vector_aggregate_state =
@@ -643,6 +646,7 @@ int main() {
   (void)bind_follower_group_vector_snapshot_v2;
   (void)encode_vector_aggregate_state;
   (void)decode_vector_aggregate_state;
+  (void)lower_distributed_vector_rows_sql;
   (void)bind_vector_aggregate_exchange;
   (void)encode_vector_aggregate_exchange;
   (void)decode_vector_aggregate_exchange;

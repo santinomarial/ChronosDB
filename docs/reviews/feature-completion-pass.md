@@ -1001,8 +1001,10 @@ were deliberately not run.
   publications, placements, group bindings, projection, plan, and result schema. Those mutable
   fragments now use the shared committed-node/TLS resolver, and one snapshot call returns the
   complete owning fragment set plus deduplicated bounded routes from the same metadata
-  publication. Native SQL lowering, scheduler/finalizer ownership, and process composition remain
-  absent.
+  publication. Bound direct-column SQL now lowers to the exact schema identity, unique projection,
+  normalized event-time predicate, global row order/limit intent, and result descriptors required
+  by that fragment path; computed/aggregate/relational semantics fail closed. Authority-plan
+  construction, scheduler/finalizer Native ownership, and process composition remain absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
