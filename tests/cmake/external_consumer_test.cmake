@@ -96,6 +96,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/service/replicated_distributed_query.hpp>
 #include <chronos/service/replicated_distributed_grouped_query_receiver.hpp>
 #include <chronos/service/replicated_distributed_grouped_query_tcp_server.hpp>
+#include <chronos/service/replicated_distributed_mutable_vector_query_tcp_server.hpp>
 #include <chronos/service/replicated_distributed_query_tcp_server.hpp>
 #include <chronos/service/replicated_distributed_query_worker.hpp>
 #include <chronos/service/replicated_distributed_vector_aggregate_query_tcp_server_v2.hpp>
@@ -425,6 +426,8 @@ int main() {
       &chronos::service::ReplicatedDistributedGroupedQueryWorker::create;
   const auto create_replicated_vector_query_worker_v2 =
       &chronos::service::ReplicatedDistributedVectorQueryWorkerV2::create;
+  const auto create_replicated_mutable_vector_query_worker =
+      &chronos::service::ReplicatedDistributedMutableVectorQueryWorker::create;
   const auto create_replicated_vector_aggregate_query_worker_v2 =
       &chronos::service::ReplicatedDistributedVectorAggregateQueryWorkerV2::create;
   const auto create_replicated_grouped_query_receiver =
@@ -435,6 +438,8 @@ int main() {
       &chronos::service::ReplicatedDistributedQueryTcpServer::start;
   const auto start_replicated_vector_query_server_v2 =
       &chronos::service::ReplicatedDistributedVectorQueryTcpServerV2::start;
+  const auto start_replicated_mutable_vector_query_server =
+      &chronos::service::ReplicatedDistributedMutableVectorQueryTcpServer::start;
   const auto start_replicated_vector_aggregate_query_server_v2 =
       &chronos::service::ReplicatedDistributedVectorAggregateQueryTcpServerV2::start;
   const auto create_distributed_query_tls_client =
@@ -652,11 +657,13 @@ int main() {
   (void)create_vector_query_tls_server_v2;
   (void)create_replicated_query_worker;
   (void)create_replicated_grouped_query_worker;
+  (void)create_replicated_mutable_vector_query_worker;
   (void)create_replicated_vector_aggregate_query_worker_v2;
   (void)create_replicated_grouped_query_receiver;
   (void)start_replicated_grouped_query_server;
   (void)start_replicated_query_server;
   (void)start_replicated_vector_query_server_v2;
+  (void)start_replicated_mutable_vector_query_server;
   (void)start_replicated_vector_aggregate_query_server_v2;
   (void)create_distributed_query_tls_client;
   (void)create_distributed_query_tls_server;
@@ -1622,6 +1629,8 @@ int main() {
                  create_distributed_vector_aggregate_coordinator_v2 != nullptr &&
                  finalize_distributed_vector_aggregate_v2 != nullptr &&
                  create_replicated_vector_query_worker_v2 != nullptr &&
+                 create_replicated_mutable_vector_query_worker != nullptr &&
+                 start_replicated_mutable_vector_query_server != nullptr &&
                  execute_distributed_fragment != nullptr &&
                  execute_distributed_grouped_fragment != nullptr &&
                  execute_distributed_vector_rows_fragment_v2 != nullptr &&

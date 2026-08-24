@@ -986,8 +986,10 @@ were deliberately not run.
   mutual-TLS client/server carrier now authenticates and node-authorizes certificates before
   request bytes or worker execution. Dedicated TCP owners now add prevalidated nonblocking connect,
   a separate exact connect deadline, bounded listener admission and polling, stable carrier/socket
-  lifetimes, metrics, and idempotent shutdown. Packaged worker integration and split-leader native
-  composition remain absent.
+  lifetimes, metrics, and idempotent shutdown. A packaged request-local mutable worker now
+  reacquires and pins the exact TabletSnapshot/schema/placement/group/barrier authority, emits only
+  a complete bounded Native result stream, and is composed with the receiver/TCP server in
+  reverse-safe lifetime order. Split-leader native composition remains absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
@@ -1005,10 +1007,9 @@ were deliberately not run.
 The exact subsystem/category ledger is
 [`deferred-validation.md`](../development/deferred-validation.md). Recommended order:
 
-1. Compose the implemented remote mutable-tablet fragment/TLS/TCP boundaries with the packaged
-   worker and native split-leader scheduler, then extend the existing three-process quorum-ingest/
-   failover gate through applied read-barrier native SELECT and the remaining real data-plane
-   sequence.
+1. Compose the implemented packaged mutable-tablet inbound service with the native split-leader
+   scheduler, then extend the existing three-process quorum-ingest/failover gate through applied
+   read-barrier native SELECT and the remaining real data-plane sequence.
 2. Specify database namespaces/catalog tombstones and placement-driven membership orchestration
    without changing Metadata Command v1 or Metadata Application Snapshot 1.0 bytes in place.
 3. Finish direct vector temporal winner lowering, mixed WAL/Raft recovery, durable retention

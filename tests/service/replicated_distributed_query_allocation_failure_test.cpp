@@ -10,6 +10,7 @@
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
 #include "chronos/schema/schema_lineage.hpp"
+#include "chronos/service/replicated_distributed_mutable_vector_query_tcp_server.hpp"
 #include "chronos/service/replicated_distributed_query.hpp"
 #include "support/failing_allocator.hpp"
 
@@ -214,6 +215,16 @@ public:
   }
 };
 
+class RejectingMutableContextProvider final
+    : public ReplicatedDistributedMutableVectorQueryWorkerContextProvider {
+public:
+  common::Result<ReplicatedDistributedMutableVectorQueryWorkerContext>
+  acquire(const query::DistributedMutableVectorFragment&) override {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "mutable context is unavailable"});
+  }
+};
+
 class ObservationService final : public cluster::RaftObservationService {
 public:
   ObservationService(const raft::NodeId node, const raft::Role role, const raft::LogIndex position)
@@ -355,6 +366,44 @@ make_count_plan(const schema::TabletId& tablet_id, const raft::LogIndex applied_
   query::DistributedVectorQueryPlan plan = make_plan(tablet_id, applied_position);
   plan.intent.aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}};
   return plan;
+}
+
+TEST(ReplicatedDistributedMutableVectorQueryAllocationFailureTest,
+     ClassifiesPackagedInboundOwnerAllocations) {
+  RejectingMutableContextProvider provider;
+  QueryAuthenticator authenticator;
+  QueryNodeAuthorizer authorizer;
+  bool saw_failure = false;
+  bool saw_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
+    SCOPED_TRACE(testing::Message{} << "fail_after=" << fail_after);
+    auto tls = observation_server_tls_config();
+    auto result = run_failure(fail_after, [&] {
+      return ReplicatedDistributedMutableVectorQueryTcpServer::start(
+          {.worker = {.local_node_id = 11U, .context_provider = &provider},
+           .listener = {},
+           .tls = std::move(tls),
+           .authenticator = &authenticator,
+           .node_authorizer = &authorizer,
+           .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                              .exchange_timeout = std::chrono::milliseconds{1000},
+                              .maximum_response_frames = 2U,
+                              .maximum_response_bytes = 1024U},
+           .maximum_connections = 4U,
+           .maximum_accepts_per_poll = 4U});
+    });
+    if (!result.has_value()) {
+      saw_failure = true;
+      EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted)
+          << result.error().to_string();
+      continue;
+    }
+    saw_success = true;
+    EXPECT_TRUE(result->shutdown().is_ok());
+    break;
+  }
+  EXPECT_TRUE(saw_failure);
+  EXPECT_TRUE(saw_success);
 }
 
 TEST(ReplicatedDistributedQueryAllocationFailureTest,

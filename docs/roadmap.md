@@ -1067,8 +1067,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   carrier authenticates and node-authorizes both certificate roles before request bytes or worker
   execution. Dedicated nonblocking TCP owners now validate and retain one exact attempt across a
   separate connect deadline, bound listener admission and poll storage, expose saturated lifecycle
-  metrics, and preserve TLS-before-descriptor teardown. Packaged worker integration and
-  split-leader native composition remain.
+  metrics, and preserve TLS-before-descriptor teardown. A request-local production worker now
+  reacquires and retains one exact TabletSnapshot/schema/placement/group/barrier context, encodes
+  bounded Native result batches, and is composed with the authenticated receiver and TCP server in
+  one reverse-safe owner. Split-leader native composition remains.
   The packaged daemon now accepts an atomic native-server TLS credential
   and strict client-certificate-principal bundle, owns the immutable authority beyond its reactor
   borrow, permits non-loopback canonical IPv4 binding only in that mode, and fails closed instead of

@@ -43,13 +43,46 @@ namespace {
          limits.maximum_retained_configuration_bytes > 0U;
 }
 
+[[nodiscard]] bool valid_vector_row_worker_limits(
+    const ReplicatedDistributedVectorQueryWorkerLimitsV2& limits) noexcept {
+  return limits.maximum_messages > 0U &&
+         limits.maximum_messages <= query::kMaximumDistributedCoordinatorMessages &&
+         limits.rows.maximum_query_memory_bytes > 0U &&
+         limits.rows.maximum_query_memory_bytes <=
+             query::kMaximumDistributedVectorRowsWorkerMemoryBytesV2 &&
+         limits.rows.scan.maximum_rows_per_chunk > 0U && limits.rows.scan.chunk.maximum_rows > 0U &&
+         limits.rows.scan.chunk.maximum_columns > 0U &&
+         limits.rows.scan.chunk.maximum_buffer_bytes > 0U &&
+         limits.rows.scan.chunk.maximum_retained_buffer_bytes > 0U &&
+         limits.rows.output.maximum_rows > 0U && limits.rows.output.maximum_columns > 0U &&
+         limits.rows.output.maximum_buffer_bytes > 0U &&
+         limits.rows.output.maximum_retained_buffer_bytes > 0U &&
+         limits.maximum_total_encoded_bytes >=
+             cluster::distributed_vector_result_exchange_v2_format::kHeaderLength +
+                 cluster::distributed_vector_result_exchange_v2_format::kTrailerLength &&
+         limits.maximum_total_encoded_bytes <=
+             cluster::kMaximumDistributedVectorResultCoordinatorBytesV2 &&
+         limits.result.protocol.maximum_payload_size > 0U &&
+         limits.result.protocol.maximum_payload_size <= network::kDefaultMaximumPayloadSize &&
+         limits.result.maximum_rows > 0U && limits.result.maximum_columns > 0U &&
+         limits.result.maximum_columns <=
+             query::distributed_vector_result_schema_format::kMaximumColumns &&
+         limits.result.maximum_column_name_bytes > 0U &&
+         limits.result.maximum_column_name_bytes <= 65'536U &&
+         limits.rows.output.maximum_rows >= std::min(limits.rows.scan.maximum_rows_per_chunk,
+                                                     limits.rows.scan.chunk.maximum_rows) &&
+         limits.result.maximum_rows >=
+             std::min(limits.rows.scan.maximum_rows_per_chunk, limits.rows.scan.chunk.maximum_rows);
+}
+
 class VectorResultCollector final : public query::DistributedVectorRowsChunkConsumerV2 {
 public:
-  VectorResultCollector(const query::DistributedVectorFragmentDispatchV2& dispatch,
+  VectorResultCollector(const common::Uuid query_id, const schema::TabletId tablet_id,
+                        const query::DistributedVectorResultSchema& result_schema,
                         const ReplicatedDistributedVectorQueryWorkerLimitsV2& limits)
-      : dispatch_(dispatch), limits_(limits) {
-    columns_.reserve(dispatch.result_schema.columns.size());
-    for (const query::DistributedVectorResultColumn& column : dispatch.result_schema.columns)
+      : query_id_(query_id), tablet_id_(tablet_id), limits_(limits) {
+    columns_.reserve(result_schema.columns.size());
+    for (const query::DistributedVectorResultColumn& column : result_schema.columns)
       columns_.push_back({column.name, column.type, column.nullable});
   }
 
@@ -103,8 +136,8 @@ public:
           *frame_bytes > limits_.get().maximum_total_encoded_bytes - retained_encoded_bytes_) {
         return exhausted("replicated vector worker encoded-byte limit exceeded");
       }
-      messages_.push_back({.query_id = dispatch_.get().dispatch.query_id,
-                           .tablet_id = dispatch_.get().dispatch.tablet_id,
+      messages_.push_back({.query_id = query_id_,
+                           .tablet_id = tablet_id_,
                            .sequence = static_cast<std::uint64_t>(messages_.size()) + 1U,
                            .encoded_result_batch = std::move(*encoded)});
       retained_encoded_bytes_ += *frame_bytes;
@@ -128,10 +161,8 @@ public:
           return common::make_unexpected(
               exhausted("replicated vector worker terminal exceeds limits"));
         }
-        messages_.push_back({.query_id = dispatch_.get().dispatch.query_id,
-                             .tablet_id = dispatch_.get().dispatch.tablet_id,
-                             .sequence = 1U,
-                             .terminal = true});
+        messages_.push_back(
+            {.query_id = query_id_, .tablet_id = tablet_id_, .sequence = 1U, .terminal = true});
       } else {
         messages_.back().terminal = true;
       }
@@ -146,7 +177,8 @@ public:
   }
 
 private:
-  std::reference_wrapper<const query::DistributedVectorFragmentDispatchV2> dispatch_;
+  common::Uuid query_id_;
+  schema::TabletId tablet_id_;
   std::reference_wrapper<const ReplicatedDistributedVectorQueryWorkerLimitsV2> limits_;
   std::vector<network::QueryResultColumn> columns_;
   std::vector<cluster::DistributedVectorResultExchangeMessage> messages_;
@@ -239,37 +271,7 @@ common::Result<ReplicatedDistributedVectorQueryWorkerV2>
 ReplicatedDistributedVectorQueryWorkerV2::create(
     ReplicatedDistributedVectorQueryWorkerConfigV2 config) {
   if (config.local_node_id == 0U || config.storage == nullptr ||
-      config.context_provider == nullptr || config.limits.maximum_messages == 0U ||
-      config.limits.maximum_messages > query::kMaximumDistributedCoordinatorMessages ||
-      config.limits.rows.maximum_query_memory_bytes == 0U ||
-      config.limits.rows.maximum_query_memory_bytes >
-          query::kMaximumDistributedVectorRowsWorkerMemoryBytesV2 ||
-      config.limits.rows.scan.maximum_rows_per_chunk == 0U ||
-      config.limits.rows.scan.chunk.maximum_rows == 0U ||
-      config.limits.rows.scan.chunk.maximum_columns == 0U ||
-      config.limits.rows.scan.chunk.maximum_buffer_bytes == 0U ||
-      config.limits.rows.scan.chunk.maximum_retained_buffer_bytes == 0U ||
-      config.limits.rows.output.maximum_rows == 0U ||
-      config.limits.rows.output.maximum_columns == 0U ||
-      config.limits.rows.output.maximum_buffer_bytes == 0U ||
-      config.limits.rows.output.maximum_retained_buffer_bytes == 0U ||
-      config.limits.maximum_total_encoded_bytes <
-          cluster::distributed_vector_result_exchange_v2_format::kHeaderLength +
-              cluster::distributed_vector_result_exchange_v2_format::kTrailerLength ||
-      config.limits.maximum_total_encoded_bytes >
-          cluster::kMaximumDistributedVectorResultCoordinatorBytesV2 ||
-      config.limits.result.protocol.maximum_payload_size == 0U ||
-      config.limits.result.protocol.maximum_payload_size > network::kDefaultMaximumPayloadSize ||
-      config.limits.result.maximum_rows == 0U || config.limits.result.maximum_columns == 0U ||
-      config.limits.result.maximum_columns >
-          query::distributed_vector_result_schema_format::kMaximumColumns ||
-      config.limits.result.maximum_column_name_bytes == 0U ||
-      config.limits.result.maximum_column_name_bytes > 65'536U ||
-      config.limits.rows.output.maximum_rows <
-          std::min(config.limits.rows.scan.maximum_rows_per_chunk,
-                   config.limits.rows.scan.chunk.maximum_rows) ||
-      config.limits.result.maximum_rows < std::min(config.limits.rows.scan.maximum_rows_per_chunk,
-                                                   config.limits.rows.scan.chunk.maximum_rows)) {
+      config.context_provider == nullptr || !valid_vector_row_worker_limits(config.limits)) {
     return common::make_unexpected(
         invalid("replicated distributed vector worker configuration is invalid"));
   }
@@ -287,7 +289,8 @@ ReplicatedDistributedVectorQueryWorkerV2::execute(
       return common::make_unexpected(
           invalid("replicated distributed vector worker context has no schema lineage"));
     }
-    VectorResultCollector collector{dispatch, config_.limits};
+    VectorResultCollector collector{dispatch.dispatch.query_id, dispatch.dispatch.tablet_id,
+                                    dispatch.result_schema, config_.limits};
     auto executed = query::execute_distributed_vector_rows_fragment_v2(
         {.dispatch = std::cref(dispatch),
          .storage = std::cref(*config_.storage),
@@ -311,6 +314,60 @@ ReplicatedDistributedVectorQueryWorkerV2::execute(
     return common::make_unexpected(exhausted("replicated vector worker allocation failed"));
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("replicated vector worker exceeds container limits"));
+  }
+}
+
+ReplicatedDistributedMutableVectorQueryWorker::ReplicatedDistributedMutableVectorQueryWorker(
+    ReplicatedDistributedMutableVectorQueryWorkerConfig config) noexcept
+    : config_(config) {}
+
+common::Result<ReplicatedDistributedMutableVectorQueryWorker>
+ReplicatedDistributedMutableVectorQueryWorker::create(
+    ReplicatedDistributedMutableVectorQueryWorkerConfig config) {
+  if (config.local_node_id == 0U || config.context_provider == nullptr ||
+      !valid_vector_row_worker_limits(config.limits)) {
+    return common::make_unexpected(
+        invalid("replicated distributed mutable vector worker configuration is invalid"));
+  }
+  return ReplicatedDistributedMutableVectorQueryWorker{config};
+}
+
+common::Result<std::vector<cluster::DistributedVectorResultExchangeMessage>>
+ReplicatedDistributedMutableVectorQueryWorker::execute(
+    const query::DistributedMutableVectorFragment& fragment) {
+  try {
+    auto context = config_.context_provider->acquire(fragment);
+    if (!context.has_value())
+      return common::make_unexpected(context.error());
+    if (!context->lineage) {
+      return common::make_unexpected(
+          invalid("replicated mutable vector worker context has no schema lineage"));
+    }
+    VectorResultCollector collector{fragment.query_id, fragment.tablet_id, fragment.result_schema,
+                                    config_.limits};
+    auto executed = query::execute_distributed_mutable_vector_rows_fragment(
+        {.fragment = std::cref(fragment),
+         .snapshot = std::cref(context->snapshot),
+         .lineage = std::cref(*context->lineage),
+         .placement = std::cref(context->placement),
+         .raft_group_id = context->raft_group_id,
+         .local_node = config_.local_node_id,
+         .local_linearizable_barrier = context->local_linearizable_barrier,
+         .limits = config_.limits.rows},
+        collector);
+    if (!executed.has_value())
+      return common::make_unexpected(executed.error());
+    if (executed->output_chunks == 0U && executed->output_rows != 0U) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kCorruption,
+                         "replicated mutable vector worker output accounting is invalid"});
+    }
+    return std::move(collector).finish();
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("replicated mutable vector worker allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("replicated mutable vector worker exceeds container limits"));
   }
 }
 

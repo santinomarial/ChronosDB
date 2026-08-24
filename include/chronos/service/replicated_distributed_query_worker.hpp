@@ -2,6 +2,7 @@
 #define CHRONOS_SERVICE_REPLICATED_DISTRIBUTED_QUERY_WORKER_HPP_
 
 #include "chronos/cluster/distributed_grouped_query_transport.hpp"
+#include "chronos/cluster/distributed_mutable_vector_query_transport.hpp"
 #include "chronos/cluster/distributed_query_transport.hpp"
 #include "chronos/cluster/distributed_vector_aggregate_query_transport_v2.hpp"
 #include "chronos/cluster/distributed_vector_query_transport_v2.hpp"
@@ -148,6 +149,63 @@ struct ReplicatedDistributedVectorQueryWorkerConfigV2 {
   const manifest::ManifestStorage* storage{};
   ReplicatedDistributedVectorQueryWorkerContextProviderV2* context_provider{};
   ReplicatedDistributedVectorQueryWorkerLimitsV2 limits;
+};
+
+// One coherent current mutable publication and its matching schema/Raft authority. The snapshot
+// owns every head generation through synchronous execution.
+struct ReplicatedDistributedMutableVectorQueryWorkerContext {
+  ingest::TabletSnapshot snapshot;
+  std::shared_ptr<const schema::SchemaLineage> lineage;
+  raft::TabletPlacementMetadata placement;
+  raft::GroupId raft_group_id;
+  std::optional<raft::ReadBarrier> local_linearizable_barrier;
+};
+
+class ReplicatedDistributedMutableVectorQueryWorkerContextProvider {
+public:
+  ReplicatedDistributedMutableVectorQueryWorkerContextProvider() = default;
+  ReplicatedDistributedMutableVectorQueryWorkerContextProvider(
+      const ReplicatedDistributedMutableVectorQueryWorkerContextProvider&) = delete;
+  ReplicatedDistributedMutableVectorQueryWorkerContextProvider&
+  operator=(const ReplicatedDistributedMutableVectorQueryWorkerContextProvider&) = delete;
+  virtual ~ReplicatedDistributedMutableVectorQueryWorkerContextProvider() = default;
+
+  [[nodiscard]] virtual common::Result<ReplicatedDistributedMutableVectorQueryWorkerContext>
+  acquire(const query::DistributedMutableVectorFragment& fragment) = 0;
+};
+
+struct ReplicatedDistributedMutableVectorQueryWorkerConfig {
+  raft::NodeId local_node_id{};
+  ReplicatedDistributedMutableVectorQueryWorkerContextProvider* context_provider{};
+  ReplicatedDistributedVectorQueryWorkerLimitsV2 limits;
+};
+
+// Request-local production adapter for one proof-bound mutable TabletState fragment. It reacquires
+// and pins current publication authority, revalidates it in the query worker, and returns only a
+// complete value-owned terminal stream.
+class ReplicatedDistributedMutableVectorQueryWorker final
+    : public cluster::DistributedMutableVectorQueryWorkerService {
+public:
+  ReplicatedDistributedMutableVectorQueryWorker() = delete;
+  ReplicatedDistributedMutableVectorQueryWorker(
+      const ReplicatedDistributedMutableVectorQueryWorker&) = delete;
+  ReplicatedDistributedMutableVectorQueryWorker&
+  operator=(const ReplicatedDistributedMutableVectorQueryWorker&) = delete;
+  ReplicatedDistributedMutableVectorQueryWorker(
+      ReplicatedDistributedMutableVectorQueryWorker&&) noexcept = default;
+  ReplicatedDistributedMutableVectorQueryWorker&
+  operator=(ReplicatedDistributedMutableVectorQueryWorker&&) noexcept = default;
+  ~ReplicatedDistributedMutableVectorQueryWorker() override = default;
+
+  [[nodiscard]] static common::Result<ReplicatedDistributedMutableVectorQueryWorker>
+  create(ReplicatedDistributedMutableVectorQueryWorkerConfig config);
+  [[nodiscard]] common::Result<std::vector<cluster::DistributedVectorResultExchangeMessage>>
+  execute(const query::DistributedMutableVectorFragment& fragment) override;
+
+private:
+  explicit ReplicatedDistributedMutableVectorQueryWorker(
+      ReplicatedDistributedMutableVectorQueryWorkerConfig config) noexcept;
+  ReplicatedDistributedMutableVectorQueryWorkerConfig config_;
 };
 
 // Request-local production adapter for schema-bound row fragments. It retains one coherent
