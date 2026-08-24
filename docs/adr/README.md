@@ -458,3 +458,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0421](0421-descriptor-bound-in-memory-tls-credentials.md) | Descriptor-bound in-memory TLS credentials | accepted |
 | [0422](0422-transactional-native-tls-security-reload.md) | Transactional native TLS security reload | accepted |
 | [0423](0423-packaged-loopback-sql-client.md) | Packaged loopback SQL client command | accepted |
+| [0424](0424-exact-native-query-redirect-replay.md) | Exact native finite-query redirect replay | accepted |

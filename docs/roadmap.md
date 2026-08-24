@@ -1052,7 +1052,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   plus a whole-operation-deadline-aware poll owner and strict native endpoint/certificate-principal
   configuration with secure address-stable TLS-context ownership. The packaged `chronosctl`
   command now exact-validates one canonical append and drives that complete bounded route/TLS
-  execution to a receipt. The packaged daemon now accepts an atomic native-server TLS credential
+  execution to a receipt. A finite-query replay owner now retains exact SQL across fresh Protocol 2
+  sessions and withholds bounded owned result batches until `QUERY_END`; its authenticated carrier,
+  packaged command, and authoritative single-group server redirect remain. The packaged daemon now
+  accepts an atomic native-server TLS credential
   and strict client-certificate-principal bundle, owns the immutable authority beyond its reactor
   borrow, permits non-loopback canonical IPv4 binding only in that mode, and fails closed instead of
   downgrading io_uring or partial configuration. A Linux-only gate invokes the actual client against

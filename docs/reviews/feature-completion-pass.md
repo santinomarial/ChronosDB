@@ -973,7 +973,9 @@ were deliberately not run.
   endpoint/certificate-principal configuration, secure TLS-route/context ownership, redirect
   selection, exact QUORUM_SYNC body/session replay, the deadline-bound authenticated TCP/TLS
   reconnect carrier, single-operation poll scheduling, and the packaged `chronosctl quorum-sync`
-  composition now have bounded, fail-closed owners.
+  composition now have bounded, fail-closed owners. Finite queries now also have exact SQL/session
+  replay with bounded terminal-only result ownership, but its authenticated TCP/TLS carrier,
+  packaged command, and authoritative server emission are still absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
@@ -991,8 +993,8 @@ were deliberately not run.
 The exact subsystem/category ledger is
 [`deferred-validation.md`](../development/deferred-validation.md). Recommended order:
 
-1. Add remote mutable-tablet query fragments and a packaged command for the native redirect TCP/TLS
-   execution, then extend the existing three-process
+1. Add remote mutable-tablet query fragments, compose the implemented finite-query redirect replay
+   with authenticated TCP/TLS execution and a packaged command, then extend the existing three-process
    quorum-ingest/failover gate through applied read-barrier native SELECT and the remaining real
    data-plane sequence.
 2. Specify database namespaces/catalog tombstones and placement-driven membership orchestration

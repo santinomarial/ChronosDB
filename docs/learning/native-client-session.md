@@ -32,6 +32,11 @@ context, so protected parent directories and atomic deployment remain required.
 requires both Protocol 2 features, creates a fresh session/request ID per accepted redirect, and
 publishes only a group/current-leader/nonregressing-term receipt. Its reconnect event tells a later
 carrier exactly when the old transport must be replaced.
+`NativeQueryRetry` applies the same lifecycle discipline to one finite query. It retains exact SQL,
+requires Protocol 2 leader redirect, and buffers only canonical encoded result batches within
+explicit cumulative row, batch, and byte limits. `result()` remains empty until `QUERY_END`; any
+redirect is valid only before the first batch, and every failure erases the accumulated stream.
+The owner deliberately cannot collapse multiple query-group leaders into one route.
 `NativeQuorumIngestTcpClient` is that carrier boundary. It owns one nonblocking descriptor and TLS
 session at a time, authenticates the verified certificate fingerprint as a stable principal, and
 requires a node authorizer to bind that principal to the router's current node before writing the

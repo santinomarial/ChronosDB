@@ -2,7 +2,8 @@
 
 > **Status: Protocol 2.0 framing, negotiation, QUORUM_SYNC request/receipt, and negotiated leader
 > redirect are implemented. Packaged replicated QUORUM_SYNC, exact ingest leader redirect,
-> deadline-bound native TCP/mutual-TLS client replay, and applied-barrier SELECT execute.**
+> deadline-bound native TCP/mutual-TLS client replay, exact transport-independent finite-query
+> redirect replay, and applied-barrier SELECT execute.**
 
 Protocol 2.0 inherits the complete [Native Protocol v1](native-v1.md) framing, limits, type
 assignments, request lifecycle, security boundary, and Protocol 1.1 subscription payloads except
@@ -91,6 +92,10 @@ handshake, and exchange deadlines. It reconnects only for a validated redirect; 
 transport failure is terminal. `NativeQuorumIngestTcpExecution` supplies the constant-storage poll
 owner above that client, bounding each wait by both the active carrier phase and an optional whole-
 operation deadline while preserving explicit cancellation and terminal-only receipt publication.
+`NativeQueryRetry` provides the corresponding transport-independent finite-query policy owner. It
+retains exact SQL across fresh Protocol 2 sessions, enforces aggregate batch/row/byte limits, and
+publishes owned encoded result batches only after `QUERY_END`. It does not yet supply a TCP/TLS
+carrier or make a multi-group query redirectable through one group.
 
 ## Compatibility and rejection
 
