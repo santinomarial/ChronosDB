@@ -39,6 +39,9 @@ negotiation, terminal completion, and rejection after partial query output.
 
 This decision supplies the transport response but does not configure native endpoints or retry a
 request. Whole-query selection remains separate because required groups may have different leaders.
+[ADR 0428](0428-authoritative-co-located-native-query-redirect.md) later permits the conservative
+case where an exact single table-group route exists and every group in the packaged read gate has
+one identical ordered remote leader; split authority still does not redirect.
 
 ## References
 

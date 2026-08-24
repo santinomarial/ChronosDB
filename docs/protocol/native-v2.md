@@ -23,7 +23,10 @@ owner MUST omit it even if its frame parser understands Protocol 2.
 
 Feature bit 2 (`0x4`) enables `LEADER_REDIRECT`. A server MUST omit it until its request service can
 derive exact redirect observations from authoritative placement and ordered Raft state. The
-packaged replicated-ingest service satisfies that condition for its one derived tablet group.
+packaged replicated-ingest service satisfies that condition for its one derived tablet group. The
+packaged finite-query service emits it only for a table with one exact group/epoch/replica route
+when every group in its read-barrier vector has one identical stable remote leader after fresh
+metadata revalidation.
 
 ## Ingest request durability
 

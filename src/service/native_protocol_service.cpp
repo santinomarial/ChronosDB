@@ -127,12 +127,14 @@ struct ResponseRoute {
   std::uint64_t connection_id;
   std::uint64_t principal_id;
   std::uint64_t request_id;
+  network::NetworkTaskProtocolContext protocol;
 };
 
 [[nodiscard]] ResponseRoute route(const network::NetworkTask& request) noexcept {
   return {.connection_id = request.connection_id,
           .principal_id = request.principal_id,
-          .request_id = request.frame.header.request_id};
+          .request_id = request.frame.header.request_id,
+          .protocol = request.protocol};
 }
 
 [[nodiscard]] network::NetworkTask make_response(const ResponseRoute& target,
@@ -140,7 +142,10 @@ struct ResponseRoute {
                                                  std::vector<std::byte> payload = {}) {
   return {.connection_id = target.connection_id,
           .principal_id = target.principal_id,
-          .frame = {.header = {.message_type = type,
+          .protocol = target.protocol,
+          .frame = {.header = {.protocol_major = target.protocol.protocol_major,
+                               .protocol_minor = target.protocol.protocol_minor,
+                               .message_type = type,
                                .request_id = target.request_id,
                                .payload_size = static_cast<std::uint32_t>(payload.size())},
                     .payload = std::move(payload)}};
@@ -152,7 +157,10 @@ query_error(const ResponseRoute& target, const common::Status& status,
   network::NetworkTask shell{
       .connection_id = target.connection_id,
       .principal_id = target.principal_id,
-      .frame = {.header = {.message_type = network::MessageType::kQueryRequest,
+      .protocol = target.protocol,
+      .frame = {.header = {.protocol_major = target.protocol.protocol_major,
+                           .protocol_minor = target.protocol.protocol_minor,
+                           .message_type = network::MessageType::kQueryRequest,
                            .request_id = target.request_id}}};
   auto encoded = error_response(std::move(shell), status, limits);
   if (!encoded.has_value())
@@ -164,6 +172,28 @@ query_error(const ResponseRoute& target, const common::Status& status,
     return result;
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("query error response allocation failed"));
+  }
+}
+
+[[nodiscard]] common::Result<NativeProtocolResponseSequence>
+query_redirect(const ResponseRoute& target, const ReplicatedQueryLeaderRoute& route,
+               const network::ProtocolLimits& limits) {
+  if (limits.maximum_payload_size < network::kLeaderRedirectSize)
+    return common::make_unexpected(exhausted("query redirect exceeds the protocol payload limit"));
+  auto payload = network::encode_leader_redirect({.group_id = route.group_id,
+                                                  .leader_node_id = route.leader_node_id,
+                                                  .leader_term = route.leader_term,
+                                                  .placement_epoch = route.placement_epoch});
+  if (!payload.has_value())
+    return common::make_unexpected(payload.error());
+  try {
+    NativeProtocolResponseSequence result;
+    result.payload_bytes = payload->size();
+    result.responses.push_back(
+        make_response(target, network::MessageType::kLeaderRedirect, std::move(*payload)));
+    return result;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("query redirect response allocation failed"));
   }
 }
 
@@ -561,6 +591,34 @@ NativeProtocolService::execute_query(network::NetworkTask request) {
     auto parsed = query::parse_sql_v1_select(sql_text, limits_.sql_parser);
     if (!parsed.has_value())
       return query_error(target, parsed.error().status(), limits_.protocol);
+    if (replicated_database_ != nullptr && replicated_read_barrier_ != nullptr &&
+        target.protocol.protocol_major == network::kProtocolV2Major &&
+        (target.protocol.feature_bits & network::kProtocolV2LeaderRedirectFeature) != 0U) {
+      auto preliminary = replicated_database_->acquire_query_snapshot();
+      if (!preliminary.has_value())
+        return query_error(target, preliminary.error(), limits_.protocol);
+      auto preliminary_bound =
+          query::bind_sql_v1_select(std::move(*parsed), preliminary->catalog(), limits_.sql_binder);
+      if (!preliminary_bound.has_value())
+        return query_error(target, preliminary_bound.error().status(), limits_.protocol);
+      if (!preliminary_bound->syntax().system_time().has_value() &&
+          preliminary_bound->asof_joins().empty() && preliminary_bound->sources().size() == 1U) {
+        const schema::TableId& table_id =
+            preliminary_bound->sources().front().schema_ptr()->table_id();
+        const ReplicatedSingleGroupQueryRoute* const query_route =
+            preliminary->single_group_route(table_id);
+        if (query_route != nullptr) {
+          auto leader = replicated_database_->resolve_query_leader(*query_route);
+          if (!leader.has_value())
+            return query_error(target, leader.error(), limits_.protocol);
+          if (leader->has_value())
+            return query_redirect(target, **leader, limits_.protocol);
+        }
+      }
+      parsed = query::parse_sql_v1_select(sql_text, limits_.sql_parser);
+      if (!parsed.has_value())
+        return query_error(target, parsed.error().status(), limits_.protocol);
+    }
     std::optional<ReplicatedQuerySnapshot> replicated_snapshot;
     std::shared_ptr<const query::QueryCatalogSnapshot> query_catalog;
     if (replicated_database_ != nullptr) {

@@ -20,6 +20,26 @@
 
 namespace chronos::service {
 
+struct ReplicatedSingleGroupQueryRoute {
+  schema::TableId table_id;
+  raft::GroupId group_id;
+  std::uint64_t placement_epoch{};
+  std::vector<raft::NodeId> replicas;
+
+  friend bool operator==(const ReplicatedSingleGroupQueryRoute&,
+                         const ReplicatedSingleGroupQueryRoute&) = default;
+};
+
+struct ReplicatedQueryLeaderRoute {
+  raft::GroupId group_id;
+  raft::NodeId leader_node_id{};
+  raft::Term leader_term{};
+  std::uint64_t placement_epoch{};
+
+  friend bool operator==(const ReplicatedQueryLeaderRoute&,
+                         const ReplicatedQueryLeaderRoute&) = default;
+};
+
 enum class ReplicatedIngestDatabaseStartupStage : std::uint8_t {
   kRootOwnerReady,
   kCatalogRecovered,
@@ -66,6 +86,10 @@ public:
   // The catalog and all resident tablet publications are retained by this owner and remain valid
   // independently of later Raft application or database shutdown.
   [[nodiscard]] const std::shared_ptr<const query::QueryCatalogSnapshot>& catalog() const noexcept;
+  // Returns a borrowed route only when every committed placement for the table maps to one group,
+  // one placement epoch, and one replica set. The pointer remains valid for this snapshot's life.
+  [[nodiscard]] const ReplicatedSingleGroupQueryRoute*
+  single_group_route(const schema::TableId& table_id) const noexcept;
   // Executes only when every committed placement for table_id was resident and successfully
   // pinned at acquisition. Distributed/partial-table reads fail closed rather than return a
   // locally incomplete result.
@@ -125,6 +149,11 @@ public:
   [[nodiscard]] common::Result<ReplicatedQuerySnapshot>
   acquire_query_snapshot(std::span<const raft::GroupReadBarrier> barriers) const;
   [[nodiscard]] std::span<const raft::GroupId> query_barrier_groups() const noexcept;
+  // Obtains ordered observations for the complete packaged query-barrier group vector. It returns
+  // a redirect only when every group has the same stable remote leader and committed placement is
+  // unchanged; all-local leadership returns an empty optional. Split or unknown authority fails.
+  [[nodiscard]] common::Result<std::optional<ReplicatedQueryLeaderRoute>>
+  resolve_query_leader(const ReplicatedSingleGroupQueryRoute& route);
   [[nodiscard]] bool is_running() const noexcept;
   [[nodiscard]] common::Status shutdown();
   [[nodiscard]] common::Status shutdown(ReplicatedIngestDatabaseShutdownObserver& observer);

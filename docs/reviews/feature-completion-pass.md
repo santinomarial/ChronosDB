@@ -976,8 +976,10 @@ were deliberately not run.
   composition now have bounded, fail-closed owners. Finite queries now also have exact SQL/session
   replay with bounded terminal-only result ownership, an authenticated deadline-bound TCP/TLS
   redirect carrier, whole-operation-aware poll execution, and an explicit packaged single-group
-  `chronosctl routed-sql` command. Authoritative server emission and remote mutable-tablet fragments
-  are still absent.
+  `chronosctl routed-sql` command. The packaged service now emits an authoritative whole-query
+  redirect for an exact single table-group route only when fresh ordered observations show one
+  common stable remote leader across its complete read gate. Split-leader and remote mutable-tablet
+  fragments are still absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
@@ -995,8 +997,8 @@ were deliberately not run.
 The exact subsystem/category ledger is
 [`deferred-validation.md`](../development/deferred-validation.md). Recommended order:
 
-1. Add authoritative single-group query redirects and remote mutable-tablet query fragments, then
-   extend the existing three-process
+1. Add remote mutable-tablet query fragments for split leadership, then extend the existing
+   three-process
    quorum-ingest/failover gate through applied read-barrier native SELECT and the remaining real
    data-plane sequence.
 2. Specify database namespaces/catalog tombstones and placement-driven membership orchestration

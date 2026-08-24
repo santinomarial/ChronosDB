@@ -132,6 +132,10 @@ private:
   return {{metadata_group(), {1U}}, {tablet_group(), {1U, 2U}}};
 }
 
+[[nodiscard]] std::vector<raft::RaftGroupConfiguration> two_node_groups() {
+  return {{metadata_group(), {1U, 2U}}, {tablet_group(), {1U, 2U}}};
+}
+
 [[nodiscard]] std::vector<raft::RaftGroupConfiguration> multi_tablet_groups() {
   return {{metadata_group(), {1U}}, {tablet_group(), {1U}}, {second_tablet_group(), {1U}}};
 }
@@ -184,13 +188,16 @@ private:
                     .payload = std::move(payload)}};
 }
 
-[[nodiscard]] network::NetworkTask query_request(const std::string_view sql) {
+[[nodiscard]] network::NetworkTask query_request(const std::string_view sql,
+                                                 const bool redirects = false) {
   auto payload = network::encode_query_request(sql).value();
+  const std::uint64_t features = network::kProtocolV2QuorumSyncFeature |
+                                 (redirects ? network::kProtocolV2LeaderRedirectFeature : 0U);
   return {.connection_id = 21U,
           .principal_id = 19U,
           .protocol = {.protocol_major = network::kProtocolV2Major,
                        .protocol_minor = network::kProtocolV2LatestMinor,
-                       .feature_bits = network::kProtocolV2QuorumSyncFeature,
+                       .feature_bits = features,
                        .maximum_payload_size = network::kDefaultMaximumPayloadSize},
           .frame = {.header = {.protocol_major = network::kProtocolV2Major,
                                .protocol_minor = network::kProtocolV2LatestMinor,
@@ -296,6 +303,82 @@ void elect_and_provision(ReplicatedIngestRuntime& owner, const bool include_remo
   election = owner.runtime()->try_submit({{tablet_group(), raft::StartElectionOperation{}}});
   ASSERT_TRUE(election.has_value());
   ASSERT_TRUE(election->wait().has_value());
+}
+
+[[nodiscard]] raft::RaftGroupObservation observe(ReplicatedIngestRuntime& owner,
+                                                 const raft::GroupId& group_id) {
+  auto completion = owner.runtime()->try_observe_group(group_id);
+  EXPECT_TRUE(completion.has_value());
+  if (!completion.has_value())
+    return {};
+  auto results = completion->wait();
+  EXPECT_TRUE(results.has_value());
+  if (!results.has_value() || results->size() != 1U || !results->front().observation.has_value())
+    return {};
+  EXPECT_TRUE(results->front().status.is_ok()) << results->front().status.to_string();
+  EXPECT_FALSE(results->front().transition.has_value());
+  return *results->front().observation;
+}
+
+void replicate_current(ReplicatedIngestRuntime& owner, const raft::GroupId& group_id) {
+  const raft::RaftGroupObservation observation = observe(owner, group_id);
+  auto replicated = owner.runtime()->try_submit(
+      {{group_id, raft::ReceiveOperation{2U, raft::AppendEntriesResponse{
+                                                 .term = observation.current_term,
+                                                 .success = true,
+                                                 .match_index = observation.last_log_index}}}});
+  ASSERT_TRUE(replicated.has_value()) << replicated.error().to_string();
+  ASSERT_TRUE(replicated->wait().has_value());
+}
+
+void elect_two_node_group(ReplicatedIngestRuntime& owner, const raft::GroupId& group_id) {
+  auto election = owner.runtime()->try_submit({{group_id, raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  ASSERT_TRUE(election->wait().has_value());
+  const raft::RaftGroupObservation candidate = observe(owner, group_id);
+  auto vote = owner.runtime()->try_submit(
+      {{group_id,
+        raft::ReceiveOperation{2U, raft::RequestVoteResponse{candidate.current_term, true}}}});
+  ASSERT_TRUE(vote.has_value()) << vote.error().to_string();
+  ASSERT_TRUE(vote->wait().has_value());
+  replicate_current(owner, group_id);
+}
+
+void propose_and_replicate(ReplicatedIngestRuntime& owner, const raft::GroupId& group_id,
+                           raft::ProposeOperation operation) {
+  auto proposed = owner.runtime()->try_submit({{group_id, std::move(operation)}});
+  ASSERT_TRUE(proposed.has_value()) << proposed.error().to_string();
+  ASSERT_TRUE(proposed->wait().has_value());
+  replicate_current(owner, group_id);
+}
+
+void provision_two_node_query(ReplicatedIngestRuntime& owner) {
+  elect_two_node_group(owner, metadata_group());
+  propose_and_replicate(
+      owner, metadata_group(),
+      {raft::kRaftSchemaDefinitionEntryType,
+       raft::encode_schema_definition_v1(
+           {.name = "events", .quoted = false, .schema = columnar::test::batch_schema()})
+           .value()});
+  propose_and_replicate(
+      owner, metadata_group(),
+      {raft::kRaftMetadataCommandEntryType,
+       raft::encode_metadata_command_v1(
+           raft::TablePolicyMetadata{columnar::test::batch_schema()->table_id(), 1'000'000'000LL,
+                                     86'400'000'000'000LL, 86'400'000'000'000LL, 0LL, 8U})
+           .value()});
+  propose_and_replicate(
+      owner, metadata_group(),
+      {raft::kRaftMetadataCommandEntryType,
+       raft::encode_metadata_command_v1(
+           raft::TabletPlacementMetadata{
+               columnar::test::batch_schema()->table_id(), tablet_id(), 1U, {1U, 2U}, 1U})
+           .value()});
+  propose_and_replicate(
+      owner, metadata_group(),
+      {raft::kRaftTabletGroupBindingEntryType,
+       raft::encode_tablet_group_binding_v1({tablet_id(), tablet_group()}).value()});
+  elect_two_node_group(owner, tablet_group());
 }
 
 void elect_and_provision_multiple_tablets(ReplicatedIngestRuntime& owner) {
@@ -983,7 +1066,7 @@ TEST(ReplicatedIngestDatabaseTest, PinsCommittedWholeTableQueryStateBeyondOwnerS
                                        .requests = &requests,
                                        .responses = &responses});
   ASSERT_TRUE(native_service.has_value()) << native_service.error().to_string();
-  ASSERT_TRUE(requests.try_push(query_request("SELECT count(*) AS rows FROM events")));
+  ASSERT_TRUE(requests.try_push(query_request("SELECT count(*) AS rows FROM events", true)));
   auto polled = native_service->poll_once();
   ASSERT_TRUE(polled.has_value()) << polled.error().to_string();
   ASSERT_FALSE(polled->response_enqueued);
@@ -1028,6 +1111,15 @@ TEST(ReplicatedIngestDatabaseTest, PinsCommittedWholeTableQueryStateBeyondOwnerS
   auto snapshot = database->acquire_query_snapshot();
   ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
   ASSERT_EQ(snapshot->catalog()->tables().size(), 1U);
+  const ReplicatedSingleGroupQueryRoute* const query_route =
+      snapshot->single_group_route(columnar::test::batch_schema()->table_id());
+  ASSERT_NE(query_route, nullptr);
+  EXPECT_EQ(query_route->group_id, tablet_group());
+  EXPECT_EQ(query_route->placement_epoch, 1U);
+  EXPECT_EQ(query_route->replicas, std::vector<raft::NodeId>{1U});
+  auto local_leader = database->resolve_query_leader(*query_route);
+  ASSERT_TRUE(local_leader.has_value()) << local_leader.error().to_string();
+  EXPECT_FALSE(local_leader->has_value());
   const auto catalog_publication =
       database->ingest_runtime()->metadata_application()->catalog_snapshot();
   const auto tablet_publication =
@@ -1083,6 +1175,94 @@ TEST(ReplicatedIngestDatabaseTest, PinsCommittedWholeTableQueryStateBeyondOwnerS
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
+TEST(ReplicatedIngestDatabaseTest, EmitsAnAuthoritativeRedirectForOneCommonRemoteQueryLeader) {
+  TemporaryDirectory directory;
+  runtime::DatabaseBootstrapConfig bootstrap_config{.database_root = directory.path().string(),
+                                                    .new_database = descriptor()};
+  auto bootstrap = runtime::DatabaseBootstrap::open_or_create(bootstrap_config);
+  ASSERT_TRUE(bootstrap.has_value()) << bootstrap.error().to_string();
+  auto config = initial_runtime_config(*bootstrap);
+  config.groups = two_node_groups();
+  auto initial = ReplicatedIngestRuntime::create_new(std::move(config));
+  ASSERT_TRUE(initial.has_value()) << initial.error().to_string();
+  provision_two_node_query(*initial);
+  ASSERT_TRUE(initial->shutdown().is_ok());
+  ASSERT_TRUE(bootstrap->close().is_ok());
+
+  auto database = ReplicatedIngestDatabase::open_existing(
+      {.bootstrap = bootstrap_config, .groups = two_node_groups()});
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  ReplicatedIngestRuntime* const runtime = database->ingest_runtime();
+  ASSERT_NE(runtime, nullptr);
+  for (const raft::GroupId group_id : {metadata_group(), tablet_group()}) {
+    const raft::RaftGroupObservation before = observe(*runtime, group_id);
+    ASSERT_NE(before.current_term, 0U);
+    auto followed = runtime->runtime()->try_submit(
+        {{group_id,
+          raft::ReceiveOperation{
+              2U, raft::AppendEntriesRequest{
+                      .term = before.current_term + 1U,
+                      .leader_id = 2U,
+                      .previous_log_index = before.last_log_index,
+                      .previous_log_term = before.last_log_index == 0U ? 0U : before.current_term,
+                      .entries = {},
+                      .leader_commit = before.commit_index}}}});
+    ASSERT_TRUE(followed.has_value()) << followed.error().to_string();
+    auto result = followed->wait();
+    ASSERT_TRUE(result.has_value()) << result.error().to_string();
+    ASSERT_EQ(result->size(), 1U);
+    ASSERT_TRUE(result->front().status.is_ok()) << result->front().status.to_string();
+  }
+
+  auto snapshot = database->acquire_query_snapshot();
+  ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+  const ReplicatedSingleGroupQueryRoute* const query_route =
+      snapshot->single_group_route(columnar::test::batch_schema()->table_id());
+  ASSERT_NE(query_route, nullptr);
+  auto resolved = database->resolve_query_leader(*query_route);
+  ASSERT_TRUE(resolved.has_value()) << resolved.error().to_string();
+  ASSERT_TRUE(resolved->has_value());
+  EXPECT_EQ((**resolved).group_id, tablet_group());
+  EXPECT_EQ((**resolved).leader_node_id, 2U);
+  EXPECT_EQ((**resolved).leader_term, 2U);
+  EXPECT_EQ((**resolved).placement_epoch, 1U);
+
+  auto read_barrier = ReplicatedReadBarrier::create_local(
+      runtime->runtime(),
+      {database->query_barrier_groups().begin(), database->query_barrier_groups().end()});
+  ASSERT_TRUE(read_barrier.has_value()) << read_barrier.error().to_string();
+  NativeProtocolService service{*database, *read_barrier};
+  auto response = service.execute_query(query_request("SELECT count(*) AS rows FROM events", true));
+  ASSERT_TRUE(response.has_value()) << response.error().to_string();
+  ASSERT_EQ(response->responses.size(), 1U);
+  const network::NetworkTask& redirected = response->responses.front();
+  EXPECT_EQ(redirected.protocol.protocol_major, network::kProtocolV2Major);
+  EXPECT_EQ(redirected.frame.header.protocol_major, network::kProtocolV2Major);
+  ASSERT_EQ(redirected.frame.header.message_type, network::MessageType::kLeaderRedirect);
+  auto redirect = network::decode_leader_redirect(redirected.frame.payload);
+  ASSERT_TRUE(redirect.has_value()) << redirect.error().to_string();
+  EXPECT_EQ(redirect->group_id, tablet_group());
+  EXPECT_EQ(redirect->leader_node_id, 2U);
+  EXPECT_EQ(redirect->leader_term, 2U);
+  EXPECT_EQ(redirect->placement_epoch, 1U);
+
+  auto election =
+      runtime->runtime()->try_submit({{metadata_group(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  ASSERT_TRUE(election->wait().has_value());
+  const raft::RaftGroupObservation candidate = observe(*runtime, metadata_group());
+  auto vote = runtime->runtime()->try_submit(
+      {{metadata_group(),
+        raft::ReceiveOperation{2U, raft::RequestVoteResponse{candidate.current_term, true}}}});
+  ASSERT_TRUE(vote.has_value()) << vote.error().to_string();
+  ASSERT_TRUE(vote->wait().has_value());
+  auto split = database->resolve_query_leader(*query_route);
+  ASSERT_FALSE(split.has_value());
+  EXPECT_EQ(split.error().code(), common::StatusCode::kUnavailable);
+  ASSERT_TRUE(read_barrier->shutdown().is_ok());
+  ASSERT_TRUE(database->shutdown().is_ok());
+}
+
 TEST(ReplicatedIngestDatabaseTest, RejectsAQueryOverAPartiallyResidentTable) {
   TemporaryDirectory directory;
   runtime::DatabaseBootstrapConfig bootstrap_config{.database_root = directory.path().string(),
@@ -1100,6 +1280,7 @@ TEST(ReplicatedIngestDatabaseTest, RejectsAQueryOverAPartiallyResidentTable) {
   ASSERT_TRUE(database.has_value()) << database.error().to_string();
   auto snapshot = database->acquire_query_snapshot();
   ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+  EXPECT_EQ(snapshot->single_group_route(columnar::test::batch_schema()->table_id()), nullptr);
   auto parsed = query::parse_sql_v1_select("SELECT count(*) FROM events");
   ASSERT_TRUE(parsed.has_value());
   auto bound = query::bind_sql_v1_select(std::move(*parsed), snapshot->catalog());

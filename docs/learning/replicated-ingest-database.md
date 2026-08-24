@@ -104,3 +104,13 @@ positions, so this is not a globally atomic cross-group instant. If any placemen
 the table remains visible to the binder but execution fails `UNAVAILABLE`; a local subset is never
 presented as a whole-table result. The physical source concatenates all pinned tablet generations
 beneath one pipeline, so global SQL operators run once rather than independently per shard.
+
+For negotiated query routing, the local-applied snapshot also owns an optional table route. It is
+present only when every table placement has one identical group, placement epoch, and replica set.
+This preliminary snapshot is used only to bind and select authority; it never supplies returned
+rows. The database enqueues ordered observations for the complete packaged barrier vector, then
+reacquires metadata and exact-compares the route and each resident group's placement membership.
+All-local leadership proceeds to the normal barrier snapshot. Only a common stable remote leader
+across the entire vector becomes a Protocol 2 redirect for the table group. Split, candidate,
+reconfiguring, or changed authority fails closed, leaving remote fragments as the required design
+for independently led groups.

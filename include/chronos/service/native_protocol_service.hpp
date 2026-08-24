@@ -56,8 +56,9 @@ using NativeIdentityGenerator = common::UuidGenerator;
 // the read-barrier constructor first confirms every resident group and then requires publication
 // coverage. Replicated ingest remains asynchronous and CREATE/INSERT/ASOF fail explicitly.
 // Returned tasks retain the connection/principal routing envelope.
-// Ingest returns one terminal response; query returns a bounded result sequence ending in QUERY_END
-// or one terminal ERROR. Queueing and socket backpressure remain owned by the reactor worker.
+// Ingest returns one terminal response; query returns a bounded result sequence ending in
+// QUERY_END, one terminal ERROR, or an authoritative negotiated redirect before output. Queueing
+// and socket backpressure remain owned by the reactor worker.
 class NativeProtocolService {
 public:
   explicit NativeProtocolService(SingleNodeDatabase& database,

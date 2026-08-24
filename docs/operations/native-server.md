@@ -143,7 +143,10 @@ constructs one client context per route, and publishes the complete borrowed map
 still supply request-specific group/initial-node/placement authority. `chronosctl quorum-sync`
 supplies that command composition and can target packaged `chronosd` when its mutual-TLS server
 bundle authorizes the client's leaf certificate. Multi-group SELECT is not redirected to one
-arbitrary group leader.
+arbitrary group leader. A negotiated finite SELECT is redirectable only when its table has one
+exact group/epoch/replica route and ordered observations show that every group in the packaged read
+gate has the same stable remote leader. Split leadership and multi-group table placement fail
+closed pending remote fragments.
 
 For multi-voter groups, configure the complete transport bundle:
 

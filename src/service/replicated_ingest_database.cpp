@@ -84,6 +84,95 @@ find_group(const std::vector<raft::RaftGroupConfiguration>& groups, const raft::
   return found == groups.end() ? nullptr : std::addressof(*found);
 }
 
+[[nodiscard]] common::Result<std::optional<ReplicatedSingleGroupQueryRoute>>
+single_group_route(const raft::MetadataCatalogSnapshot& catalog, const schema::TableId& table_id) {
+  std::optional<ReplicatedSingleGroupQueryRoute> route;
+  bool incompatible{};
+  for (const raft::TabletPlacementMetadata& placement : catalog.tablet_placements) {
+    if (placement.table_id != table_id)
+      continue;
+    const auto binding = std::ranges::find(catalog.tablet_group_bindings, placement.tablet_id,
+                                           &raft::TabletGroupBindingMetadata::tablet_id);
+    if (binding == catalog.tablet_group_bindings.end())
+      return common::make_unexpected(corruption("replicated query tablet has no group binding"));
+    if (!route.has_value()) {
+      route = ReplicatedSingleGroupQueryRoute{.table_id = table_id,
+                                              .group_id = binding->group_id,
+                                              .placement_epoch = placement.placement_epoch,
+                                              .replicas = placement.replicas};
+    } else if (route->group_id != binding->group_id ||
+               route->placement_epoch != placement.placement_epoch ||
+               route->replicas != placement.replicas) {
+      incompatible = true;
+    }
+  }
+  if (incompatible)
+    route.reset();
+  return route;
+}
+
+[[nodiscard]] common::Status
+validate_observation_shape(const raft::RaftGroupObservation& observation,
+                           const raft::GroupId& expected_group, const raft::NodeId expected_node) {
+  if (observation.group_id != expected_group || observation.node_id != expected_node ||
+      observation.node_id == 0U || observation.current_term == 0U ||
+      observation.last_log_index < observation.commit_index ||
+      observation.commit_index < observation.applied_index || observation.joint_membership_active ||
+      observation.joint_membership_can_finalize || observation.final_membership_pending ||
+      observation.voters.empty() || observation.voters != observation.committed_voters ||
+      !observation.joint_old_voters.empty() || !observation.joint_new_voters.empty()) {
+    return unavailable("replicated query group authority is invalid or reconfiguring");
+  }
+  if (observation.role == raft::Role::kLeader) {
+    if (observation.leader_id != observation.node_id ||
+        !std::ranges::binary_search(observation.voters, observation.node_id))
+      return unavailable("replicated query local leader authority is invalid");
+  } else if (observation.role == raft::Role::kFollower) {
+    if (!observation.leader_id.has_value() || *observation.leader_id == observation.node_id ||
+        !std::ranges::binary_search(observation.voters, *observation.leader_id))
+      return unavailable("replicated query remote leader authority is invalid");
+  } else {
+    return unavailable("replicated query group has no authoritative leader");
+  }
+  return common::Status::ok();
+}
+
+[[nodiscard]] common::Status validate_group_placement(const raft::MetadataCatalogSnapshot& catalog,
+                                                      const raft::RaftGroupObservation& observation,
+                                                      const raft::GroupId& metadata_group) {
+  if (observation.group_id == metadata_group)
+    return common::Status::ok();
+  bool found{};
+  for (const raft::TabletGroupBindingMetadata& binding : catalog.tablet_group_bindings) {
+    if (binding.group_id != observation.group_id)
+      continue;
+    const auto placement = std::ranges::find(catalog.tablet_placements, binding.tablet_id,
+                                             &raft::TabletPlacementMetadata::tablet_id);
+    if (placement == catalog.tablet_placements.end())
+      return corruption("replicated query group binding has no placement");
+    if (placement->replicas != observation.voters)
+      return unavailable("replicated query group membership differs from committed placement");
+    found = true;
+  }
+  return found ? common::Status::ok()
+               : corruption("replicated query resident group has no committed tablet binding");
+}
+
+[[nodiscard]] common::Result<raft::RaftGroupObservation>
+observe_group(raft::AsyncDurableMultiRaftRuntime& runtime, const raft::GroupId& group_id) {
+  auto completion = runtime.try_observe_group(group_id);
+  if (!completion.has_value())
+    return common::make_unexpected(completion.error());
+  auto results = completion->wait();
+  if (!results.has_value())
+    return common::make_unexpected(results.error());
+  if (results->size() != 1U || !results->front().status.is_ok() ||
+      results->front().transition.has_value() || !results->front().observation.has_value()) {
+    return common::make_unexpected(corruption("replicated query group observation is malformed"));
+  }
+  return std::move(*results->front().observation);
+}
+
 [[nodiscard]] const raft::CatalogTableDefinition*
 active_definition(const raft::MetadataCatalogSnapshot& catalog, const schema::TableId& table_id) {
   const auto active =
@@ -296,6 +385,7 @@ public:
   struct Table {
     schema::SchemaLineage lineage;
     std::vector<ingest::TabletSnapshot> tablets;
+    std::optional<ReplicatedSingleGroupQueryRoute> single_group;
     bool complete_residency{};
   };
 
@@ -318,6 +408,16 @@ ReplicatedQuerySnapshot::operator=(ReplicatedQuerySnapshot&&) noexcept = default
 const std::shared_ptr<const query::QueryCatalogSnapshot>&
 ReplicatedQuerySnapshot::catalog() const noexcept {
   return impl_->catalog;
+}
+
+const ReplicatedSingleGroupQueryRoute*
+ReplicatedQuerySnapshot::single_group_route(const schema::TableId& table_id) const noexcept {
+  const auto table = std::ranges::find_if(impl_->tables, [&](const Impl::Table& candidate) {
+    return candidate.lineage.table_id() == table_id;
+  });
+  return table != impl_->tables.end() && table->single_group.has_value()
+             ? std::addressof(*table->single_group)
+             : nullptr;
 }
 
 common::Result<std::unique_ptr<query::PhysicalOperator>>
@@ -507,6 +607,9 @@ common::Result<ReplicatedQuerySnapshot> ReplicatedIngestDatabase::acquire_query_
             lineage.has_value() ? corruption("replicated query active schema is not lineage tail")
                                 : lineage.error());
       }
+      auto query_route = single_group_route(**catalog, active.table_id);
+      if (!query_route.has_value())
+        return common::make_unexpected(query_route.error());
       std::vector<ingest::TabletSnapshot> pinned;
       bool complete_residency = true;
       std::size_t placement_count{};
@@ -553,6 +656,7 @@ common::Result<ReplicatedQuerySnapshot> ReplicatedIngestDatabase::acquire_query_
           {.name = definition->name, .quoted = definition->quoted, .schema = definition->schema});
       tables.push_back({.lineage = std::move(*lineage),
                         .tablets = std::move(pinned),
+                        .single_group = std::move(*query_route),
                         .complete_residency = complete_residency});
     }
     auto query_catalog = query::QueryCatalogSnapshot::create(
@@ -573,6 +677,91 @@ common::Result<ReplicatedQuerySnapshot> ReplicatedIngestDatabase::acquire_query_
 std::span<const raft::GroupId> ReplicatedIngestDatabase::query_barrier_groups() const noexcept {
   return is_running() ? std::span<const raft::GroupId>{impl_->query_groups}
                       : std::span<const raft::GroupId>{};
+}
+
+common::Result<std::optional<ReplicatedQueryLeaderRoute>>
+ReplicatedIngestDatabase::resolve_query_leader(const ReplicatedSingleGroupQueryRoute& route) {
+  if (!is_running())
+    return common::make_unexpected(invalid("replicated query database is unavailable"));
+  if (route.group_id.is_nil() || route.placement_epoch == 0U || route.replicas.empty() ||
+      !std::ranges::is_sorted(route.replicas) ||
+      std::ranges::adjacent_find(route.replicas) != route.replicas.end() ||
+      std::ranges::any_of(route.replicas, [](const raft::NodeId node) { return node == 0U; })) {
+    return common::make_unexpected(invalid("replicated single-group query route is invalid"));
+  }
+  raft::AsyncDurableMultiRaftRuntime* const runtime = impl_->runtime.runtime();
+  raft::AsyncRaftMetadataApplication* const metadata = impl_->runtime.metadata_application();
+  if (runtime == nullptr || metadata == nullptr)
+    return common::make_unexpected(invalid("replicated query authority is unavailable"));
+  try {
+    std::vector<raft::RaftGroupObservation> observations;
+    observations.reserve(impl_->query_groups.size());
+    for (const raft::GroupId& group_id : impl_->query_groups) {
+      auto observed = observe_group(*runtime, group_id);
+      if (!observed.has_value())
+        return common::make_unexpected(observed.error());
+      observations.push_back(std::move(*observed));
+    }
+
+    auto catalog = metadata->catalog_snapshot();
+    if (!catalog.has_value())
+      return common::make_unexpected(catalog.error());
+    auto current_route = single_group_route(**catalog, route.table_id);
+    if (!current_route.has_value())
+      return common::make_unexpected(current_route.error());
+    if (!current_route->has_value() || **current_route != route)
+      return common::make_unexpected(
+          unavailable("replicated single-group query route changed during observation"));
+
+    const auto& descriptor = impl_->bootstrap_owner.descriptor();
+    std::optional<raft::NodeId> remote_leader;
+    const raft::RaftGroupObservation* table_observation{};
+    bool saw_local_leader{};
+    for (std::size_t index = 0U; index < observations.size(); ++index) {
+      const raft::RaftGroupObservation& observation = observations[index];
+      const common::Status shaped = validate_observation_shape(
+          observation, impl_->query_groups[index], descriptor.local_node_id);
+      if (!shaped.is_ok())
+        return common::make_unexpected(shaped);
+      const common::Status placed =
+          validate_group_placement(**catalog, observation, descriptor.metadata_group_id);
+      if (!placed.is_ok())
+        return common::make_unexpected(placed);
+      if (observation.group_id == route.group_id)
+        table_observation = std::addressof(observation);
+      if (observation.role == raft::Role::kLeader) {
+        saw_local_leader = true;
+      } else if (!remote_leader.has_value()) {
+        remote_leader = observation.leader_id;
+      } else if (remote_leader != observation.leader_id) {
+        return common::make_unexpected(
+            unavailable("replicated query groups have different remote leaders"));
+      }
+    }
+    if (table_observation == nullptr)
+      return common::make_unexpected(
+          corruption("replicated query route group is absent from the barrier vector"));
+    if (table_observation->voters != route.replicas)
+      return common::make_unexpected(
+          unavailable("replicated query route membership changed during observation"));
+    if (saw_local_leader && remote_leader.has_value())
+      return common::make_unexpected(
+          unavailable("replicated query groups have split local and remote leadership"));
+    if (saw_local_leader)
+      return std::optional<ReplicatedQueryLeaderRoute>{};
+    if (!remote_leader.has_value() || table_observation->leader_id != remote_leader)
+      return common::make_unexpected(
+          unavailable("replicated query route has no common remote leader"));
+    return std::optional<ReplicatedQueryLeaderRoute>{
+        ReplicatedQueryLeaderRoute{.group_id = route.group_id,
+                                   .leader_node_id = *remote_leader,
+                                   .leader_term = table_observation->current_term,
+                                   .placement_epoch = route.placement_epoch}};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("replicated query authority allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("replicated query authority exceeds limits"));
+  }
 }
 
 bool ReplicatedIngestDatabase::is_running() const noexcept {

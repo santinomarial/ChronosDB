@@ -462,3 +462,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0425](0425-deadline-bound-native-query-tcp-client.md) | Deadline-bound native finite-query TCP client | accepted |
 | [0426](0426-bounded-native-query-tcp-execution.md) | Bounded native finite-query TCP execution | accepted |
 | [0427](0427-packaged-single-group-routed-sql-client.md) | Packaged single-group routed SQL client | accepted |
+| [0428](0428-authoritative-co-located-native-query-redirect.md) | Authoritative co-located native query redirect | accepted |
