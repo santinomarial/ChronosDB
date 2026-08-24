@@ -165,7 +165,9 @@ report the exact segment-header CRC32C mismatch before socket admission. It then
 complete damaged segment before and after rejection, proving that this corruption is neither
 rewritten nor treated as a repairable tail. A second packaged case creates a real SQL INSERT record,
 damages one byte after its validated physical/application headers, requires the complete-record
-CRC32C mismatch, and proves startup does not truncate or otherwise rewrite the segment.
+CRC32C mismatch, and proves startup does not truncate or otherwise rewrite the segment. A third
+appends one byte after a valid empty active segment and proves the packaged no-repair policy reports
+the incomplete tail, demands explicit authorization, and preserves the full segment.
 
 ## Deferred decisions
 

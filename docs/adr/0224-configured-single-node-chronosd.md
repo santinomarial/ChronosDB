@@ -67,7 +67,9 @@ Another case damages the active WAL segment header, requires its exact CRC32C di
 same pre-listen exit, and preserves the complete segment byte-for-byte. The existing unconfigured
 PING/rejection subprocess case remains. A complete-record case first creates the record through
 native SQL INSERT, then damages its body and requires the full-record CRC32C diagnostic, pre-listen
-exit, and byte-for-byte segment preservation.
+exit, and byte-for-byte segment preservation. The incomplete-tail case appends one byte at the clean
+active end and requires the explicit-repair diagnostic, nonzero exit, and unchanged segment because
+the packaged configuration does not authorize truncation.
 
 ## References
 

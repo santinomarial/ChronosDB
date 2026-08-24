@@ -35,7 +35,9 @@ trusted, identity-consistent backup. A WAL segment-header checksum failure is al
 never eligible for incomplete-tail repair. Startup preserves that segment; diagnose and restore an
 identity-consistent root rather than editing a checksum or deleting WAL history. The same applies to
 a complete final record with a bad header or full-record checksum: do not authorize tail repair or
-truncate it merely because it is last. To serve one durable row-preserving plan, supply the paired
+truncate it merely because it is last. A genuinely incomplete final tail is repairable only through
+an explicit recovery workflow; packaged `chronosd` does not authorize that mutation and preserves
+the suffix while refusing startup. To serve one durable row-preserving plan, supply the paired
 `--subscription-sql SQL` and `--subscription-key-file PATH` options. The table must already exist.
 The key file must contain exactly 32 nonzero bytes and be inaccessible to group/other; preserve the
 same secret across restarts or old resume tokens will fail authentication. The daemon reports

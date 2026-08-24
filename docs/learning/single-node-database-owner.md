@@ -119,6 +119,9 @@ packaged process coverage verifies the entire damaged segment is preserved.
 A checksum-invalid complete application record fails at the same pre-replay boundary even when it
 is the last record in the active segment. The owner neither truncates it nor publishes the table's
 recovered rows; packaged coverage compares the entire segment after rejection.
+An actual incomplete final suffix has a different classification but the same default availability
+result: this owner configures no repair authorization, returns the explicit-repair requirement, and
+leaves the segment unchanged. Repair remains an intentional operator/tool boundary.
 
 Malformed transport/command bytes become client-invalid protocol errors. Database corruption stays
 distinguishable as an internal error; I/O, unavailability, and unsupported operations are execution

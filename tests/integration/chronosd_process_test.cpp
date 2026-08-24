@@ -1250,6 +1250,39 @@ TEST(ChronosdProcessTest, RejectsCorruptCompleteWalRecordWithoutTruncatingSegmen
   EXPECT_EQ(read_text_file(segment), corrupted);
 }
 
+TEST(ChronosdProcessTest, PreservesIncompleteFinalWalTailWithoutRepairAuthorization) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  ChildProcess child;
+  ASSERT_TRUE(child.start(directory.path()));
+  const std::string startup = child.read_startup_line();
+  EXPECT_NE(startup.find("data_plane=configured"), std::string::npos);
+  EXPECT_EQ(child.stop(), 0);
+
+  const auto segment_name = wal::wal_segment_file_name(1U);
+  ASSERT_TRUE(segment_name.has_value()) << segment_name.error().to_string();
+  const std::string segment =
+      directory.path() + "/" + runtime::kDatabaseWalDirectoryName + "/" + *segment_name;
+  const std::string pristine = read_text_file(segment);
+  ASSERT_EQ(pristine.size(), wal::kSegmentHeaderSize);
+  constexpr char kIncompleteTailByte = '\x44';
+  const int segment_file = ::open(segment.c_str(), O_WRONLY | O_APPEND | O_CLOEXEC | O_NOFOLLOW);
+  ASSERT_GE(segment_file, 0);
+  ASSERT_EQ(::write(segment_file, &kIncompleteTailByte, 1U), static_cast<ssize_t>(1));
+  ASSERT_EQ(::fsync(segment_file), 0);
+  ASSERT_EQ(::close(segment_file), 0);
+  const std::string damaged = pristine + kIncompleteTailByte;
+  ASSERT_EQ(read_text_file(segment), damaged);
+
+  ASSERT_TRUE(child.start_with_captured_errors(directory.path()));
+  const std::string failure = child.read_startup_line();
+  EXPECT_NE(failure.find("database start failed"), std::string::npos);
+  EXPECT_NE(failure.find("WAL has an incomplete final tail"), std::string::npos);
+  EXPECT_NE(failure.find("explicit repair authorization is required"), std::string::npos);
+  EXPECT_EQ(child.wait_for_exit(), 1);
+  EXPECT_EQ(read_text_file(segment), damaged);
+}
+
 TEST(ChronosdProcessTest, RejectsCreateEntropyFailureWithoutDurableMetadata) {
   constexpr std::string_view create_sql =
       "CREATE TABLE trades (ts TIMESTAMP_NS NOT NULL, symbol SYMBOL NOT NULL, price "

@@ -950,7 +950,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   matrices remain deferred. An adjacent case rejects a CRC-covered active WAL segment-header
   corruption and preserves the complete segment. A second WAL case creates a real SQL INSERT,
   rejects its complete-record CRC32C corruption, and proves the segment is not truncated; remaining
-  record/tail and Raft corruption matrices remain deferred. The
+  record and Raft corruption matrices remain deferred. A minimal one-byte final-tail case also
+  proves packaged startup requires explicit repair authorization and preserves the suffix; other
+  incomplete-tail shapes and authorized packaged repair remain deferred. The
   process target remains intentionally unregistered on non-Linux hosts because the server reactor
   is Linux-only.
 - Native ingest service adapter allocation/fault injection, event-time and ancestor-schema retry

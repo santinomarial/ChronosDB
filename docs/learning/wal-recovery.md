@@ -172,7 +172,10 @@ segment header, requires the exact header-checksum failure before socket admissi
 complete segment is not rewritten by the failed startup. Another case creates a complete application
 record through packaged SQL INSERT, corrupts a body byte while leaving its header intact, and
 requires the complete-record CRC32C failure plus byte-for-byte segment preservation. This executes
-the rule that a complete corrupt final record is never an incomplete-tail repair candidate.
+the rule that a complete corrupt final record is never an incomplete-tail repair candidate. The
+complementary packaged case appends a one-byte incomplete tail after a valid active header. Default
+startup requires explicit repair authorization and preserves the complete segment, including that
+suffix.
 
 The subprocess crash harness interrupts initial and successor installation, complete/short append,
 data synchronization, grouped completion, repair/reopen, and locking on real host files, then runs
