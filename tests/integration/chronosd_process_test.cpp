@@ -1190,6 +1190,66 @@ TEST(ChronosdProcessTest, RejectsCorruptWalHeaderWithoutRewritingDurableSegment)
   EXPECT_EQ(read_text_file(segment), corrupted);
 }
 
+TEST(ChronosdProcessTest, RejectsCorruptCompleteWalRecordWithoutTruncatingSegment) {
+  constexpr std::string_view create_sql =
+      "CREATE TABLE trades (ts TIMESTAMP_NS NOT NULL, symbol SYMBOL NOT NULL, price "
+      "DECIMAL(20, 8) NOT NULL, note STRING) EVENT TIME ts ORDER KEY (symbol, ts) "
+      "PARTITION BY time_bucket(INTERVAL '1 day', ts) SHARD KEY (symbol) DEDUP KEY "
+      "(symbol, ts) RETENTION INTERVAL '30 days' SYSTEM HISTORY RETENTION INTERVAL "
+      "'7 days' ALLOWED LATENESS INTERVAL '0 seconds'";
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  ChildProcess child;
+  ASSERT_TRUE(child.start(directory.path()));
+  const std::string startup = child.read_startup_line();
+  EXPECT_NE(startup.find("data_plane=configured"), std::string::npos);
+  const std::uint16_t port = parse_port(startup);
+  ASSERT_NE(port, 0U);
+  const int client = connect_client(port);
+  ASSERT_GE(client, 0);
+  handshake(client);
+  auto response = send_query(client, 1U, create_sql);
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
+  response = network::decode_frame(receive_frame(client)).value();
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
+  response = send_query(client, 2U,
+                        "INSERT INTO trades VALUES "
+                        "(TIMESTAMP '1970-01-01 00:00:00.000000001Z', "
+                        "CAST('A' AS SYMBOL), 1, NULL)");
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
+  response = network::decode_frame(receive_frame(client)).value();
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
+  ::close(client);
+  EXPECT_EQ(child.stop(), 0);
+
+  const auto segment_name = wal::wal_segment_file_name(1U);
+  ASSERT_TRUE(segment_name.has_value()) << segment_name.error().to_string();
+  const std::string segment =
+      directory.path() + "/" + runtime::kDatabaseWalDirectoryName + "/" + *segment_name;
+  const std::string pristine = read_text_file(segment);
+  constexpr std::size_t kCoveredRecordBodyByte =
+      wal::kSegmentHeaderSize + wal::kRecordHeaderSize + wal::kApplicationEnvelopeSize;
+  ASSERT_GT(pristine.size(), kCoveredRecordBodyByte);
+  std::string corrupted = pristine;
+  corrupted.at(kCoveredRecordBodyByte) =
+      static_cast<char>(static_cast<unsigned char>(corrupted.at(kCoveredRecordBodyByte)) ^ 1U);
+  const int segment_file = ::open(segment.c_str(), O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+  ASSERT_GE(segment_file, 0);
+  ASSERT_EQ(::pwrite(segment_file, corrupted.data() + kCoveredRecordBodyByte, 1U,
+                     static_cast<off_t>(kCoveredRecordBodyByte)),
+            static_cast<ssize_t>(1));
+  ASSERT_EQ(::fsync(segment_file), 0);
+  ASSERT_EQ(::close(segment_file), 0);
+  ASSERT_EQ(read_text_file(segment), corrupted);
+
+  ASSERT_TRUE(child.start_with_captured_errors(directory.path()));
+  const std::string failure = child.read_startup_line();
+  EXPECT_NE(failure.find("database start failed"), std::string::npos);
+  EXPECT_NE(failure.find("WAL complete-record CRC32C mismatch"), std::string::npos);
+  EXPECT_EQ(child.wait_for_exit(), 1);
+  EXPECT_EQ(read_text_file(segment), corrupted);
+}
+
 TEST(ChronosdProcessTest, RejectsCreateEntropyFailureWithoutDurableMetadata) {
   constexpr std::string_view create_sql =
       "CREATE TABLE trades (ts TIMESTAMP_NS NOT NULL, symbol SYMBOL NOT NULL, price "

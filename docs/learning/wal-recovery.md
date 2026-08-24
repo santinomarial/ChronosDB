@@ -169,7 +169,10 @@ sync failure, temporary cleanup, exact reopen state, subsequent rotation, writer
 the inspector's output and exit codes. Public recovery headers also compile independently. A
 Linux-only packaged-daemon case damages one CRC-covered identity byte in the established active
 segment header, requires the exact header-checksum failure before socket admission, and proves the
-complete segment is not rewritten by the failed startup.
+complete segment is not rewritten by the failed startup. Another case creates a complete application
+record through packaged SQL INSERT, corrupts a body byte while leaving its header intact, and
+requires the complete-record CRC32C failure plus byte-for-byte segment preservation. This executes
+the rule that a complete corrupt final record is never an incomplete-tail repair candidate.
 
 The subprocess crash harness interrupts initial and successor installation, complete/short append,
 data synchronization, grouped completion, repair/reopen, and locking on real host files, then runs

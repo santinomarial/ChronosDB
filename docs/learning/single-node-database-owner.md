@@ -116,6 +116,9 @@ packaged process coverage verifies the exact 128 bytes are preserved.
 If bootstrap is valid but the active WAL segment header fails CRC32C validation, recovery stops
 before replay or service publication. It does not invoke incomplete-tail repair or patch the header;
 packaged process coverage verifies the entire damaged segment is preserved.
+A checksum-invalid complete application record fails at the same pre-replay boundary even when it
+is the last record in the active segment. The owner neither truncates it nor publishes the table's
+recovered rows; packaged coverage compares the entire segment after rejection.
 
 Malformed transport/command bytes become client-invalid protocol errors. Database corruption stays
 distinguishable as an internal error; I/O, unavailability, and unsupported operations are execution

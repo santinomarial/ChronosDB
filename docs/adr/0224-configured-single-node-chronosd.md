@@ -65,7 +65,9 @@ damages one checksum-covered bootstrap byte, and then requires startup to report
 corruption, exit before its listening banner, and preserve the complete damaged image byte-for-byte.
 Another case damages the active WAL segment header, requires its exact CRC32C diagnostic and the
 same pre-listen exit, and preserves the complete segment byte-for-byte. The existing unconfigured
-PING/rejection subprocess case remains.
+PING/rejection subprocess case remains. A complete-record case first creates the record through
+native SQL INSERT, then damages its body and requires the full-record CRC32C diagnostic, pre-listen
+exit, and byte-for-byte segment preservation.
 
 ## References
 

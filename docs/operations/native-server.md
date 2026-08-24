@@ -33,8 +33,9 @@ startup preserves the damaged descriptor and fails before listening. Do not dele
 proposed identities to replace it; diagnose the storage failure and recover the database root from a
 trusted, identity-consistent backup. A WAL segment-header checksum failure is also terminal and is
 never eligible for incomplete-tail repair. Startup preserves that segment; diagnose and restore an
-identity-consistent root rather than editing a checksum or deleting WAL history. To serve one
-durable row-preserving plan, supply the paired
+identity-consistent root rather than editing a checksum or deleting WAL history. The same applies to
+a complete final record with a bad header or full-record checksum: do not authorize tail repair or
+truncate it merely because it is last. To serve one durable row-preserving plan, supply the paired
 `--subscription-sql SQL` and `--subscription-key-file PATH` options. The table must already exist.
 The key file must contain exactly 32 nonzero bytes and be inaccessible to group/other; preserve the
 same secret across restarts or old resume tokens will fail authentication. The daemon reports

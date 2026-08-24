@@ -91,6 +91,10 @@ An established WAL segment-header CRC32C failure has the same admission result b
 recovery after bootstrap and metadata startup. It is complete corruption, not an incomplete final
 tail: `chronosd` preserves the entire damaged segment and exits before listening.
 
+A checksum-invalid complete application record is equally terminal even at the active segment end.
+The process matrix creates that record through native CREATE/SQL INSERT, damages its body, and
+requires the full-record CRC32C failure without truncation or socket admission.
+
 ## Complexity and tradeoffs
 
 Each dispatch and response handoff is amortized O(1); protocol parsing remains linear in frame size.
@@ -116,8 +120,9 @@ second-candidate cases prove database and metadata-group identity errors leave t
 the shipped daemon can then initialize it and answer PING. An ordinary-daemon corruption case flips
 one covered bootstrap byte, requires the checksum diagnostic and nonzero exit, and compares the
 complete damaged image after rejection. The adjacent WAL case corrupts a covered active-header byte
-and requires the exact CRC32C diagnostic plus complete-segment preservation. Its replicated case
-negotiates Protocol 2, applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact
+and requires the exact CRC32C diagnostic plus complete-segment preservation. A complete-record case
+corrupts a packaged SQL INSERT body and proves the active segment is not truncated. Its replicated
+case negotiates Protocol 2, applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact
 retry, and queries the same recovered row count. A separate replicated gate provisions three
 retained roots and distinct mutual-TLS identities, starts three actual daemon processes, obtains an
 applied quorum acknowledgement, kills the acknowledged tablet leader, observes a higher-term

@@ -163,7 +163,9 @@ Current packaged-daemon qualification creates an ordinary empty database, corrup
 checksum-covered WAL identity byte in its active segment header, and requires the next startup to
 report the exact segment-header CRC32C mismatch before socket admission. It then compares the
 complete damaged segment before and after rejection, proving that this corruption is neither
-rewritten nor treated as a repairable tail.
+rewritten nor treated as a repairable tail. A second packaged case creates a real SQL INSERT record,
+damages one byte after its validated physical/application headers, requires the complete-record
+CRC32C mismatch, and proves startup does not truncate or otherwise rewrite the segment.
 
 ## Deferred decisions
 

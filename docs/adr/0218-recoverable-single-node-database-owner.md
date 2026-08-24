@@ -63,8 +63,10 @@ tests cover empty create/reopen and a catalog + `LOCAL_SYNC` append + shutdown +
 checksum, requires startup to return that exact corruption before service admission, and proves the
 descriptor is not rewritten. A second packaged case corrupts a covered WAL segment-header byte,
 requires the exact CRC32C failure after bootstrap/metadata recovery, and proves the complete segment
-is unchanged. Broader crash injection, incomplete-DDL matrices, corruption/fault injection,
-concurrent workload shutdown, Manifest/CSEG recovery, and process qualification remain deferred.
+is unchanged. A third creates a table and SQL INSERT through the socket, corrupts the complete WAL
+record body, requires its full-record CRC32C failure before replay, and proves the segment is not
+truncated. Broader crash injection, incomplete-DDL matrices, corruption/fault injection, concurrent
+workload shutdown, Manifest/CSEG recovery, and process qualification remain deferred.
 
 ## References
 
