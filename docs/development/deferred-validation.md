@@ -952,7 +952,9 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   rejects its complete-record CRC32C corruption, and proves the segment is not truncated; remaining
   record and Raft corruption matrices remain deferred. A minimal one-byte final-tail case also
   proves packaged startup requires explicit repair authorization and preserves the suffix; other
-  incomplete-tail shapes and authorized packaged repair remain deferred. The
+  incomplete-tail shapes and authorized packaged repair remain deferred. The packaged matrix now
+  also rejects one CRC-covered metadata-Raft segment-header corruption and preserves the complete
+  segment; Raft record, anchor, namespace, and tail corruption matrices remain deferred. The
   process target remains intentionally unregistered on non-Linux hosts because the server reactor
   is Linux-only.
 - Native ingest service adapter allocation/fault injection, event-time and ancestor-schema retry

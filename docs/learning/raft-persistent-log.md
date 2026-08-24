@@ -124,6 +124,11 @@ After each original file is restored, clean recovery must reproduce base 3, both
 records, both latest group states, and physical sequence 4. This is exhaustive for single low-bit
 mutations and truncations of that bounded image, not for coordinated adversarial checksum repair.
 
+Linux-only packaged-daemon coverage adds the aggregate-owner boundary. It damages one
+checksum-covered segment-number byte in the established metadata-Raft segment header, requires the
+exact header-checksum failure before native socket admission, and compares the complete segment
+after process rejection. The database owner does not patch the segment or proceed to WAL recovery.
+
 The recovery-layout matrix checks a different dimension: target-size arithmetic and latest-state
 selection. A canonical state encodes to 213 bytes. Eight targets straddle the exact one-, two-,
 three-, and four-record capacities after the 64-byte header, and each runs with 1, 3, and 8 groups.

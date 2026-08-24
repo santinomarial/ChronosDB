@@ -60,6 +60,12 @@ This decision directly governs invariants [1, 4, 5, 6, 8, 10, 11, 12, 14, and 17
 - Inject failure at every snapshot and rebalancing step and require old or new complete membership/storage state.
 - Test every consistency mode against a formal history/checker and label returned commit/applied positions.
 
+Current packaged-daemon qualification creates an ordinary single-node metadata group, damages one
+checksum-covered physical segment-number byte in its active Raft segment header, and requires the
+next startup to report the exact header-checksum corruption before socket admission. It compares the
+complete segment before and after rejection, proving startup does not patch or rewrite the damaged
+metadata authority.
+
 ## Deferred decisions
 
 Tablet partitioning, metadata schema, Raft wire/persistent formats, election/read protocol details, membership algorithm, physical-log record/layout and sync policy, scheduler, fairness bounds, snapshot transport, consistency-mode definitions, placement policy, and distributed query snapshot coordination remain deferred.

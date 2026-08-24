@@ -69,7 +69,9 @@ PING/rejection subprocess case remains. A complete-record case first creates the
 native SQL INSERT, then damages its body and requires the full-record CRC32C diagnostic, pre-listen
 exit, and byte-for-byte segment preservation. The incomplete-tail case appends one byte at the clean
 active end and requires the explicit-repair diagnostic, nonzero exit, and unchanged segment because
-the packaged configuration does not authorize truncation.
+the packaged configuration does not authorize truncation. A metadata-Raft case damages the active
+segment header, requires its exact checksum diagnostic and pre-listen exit, and preserves the
+complete segment byte-for-byte.
 
 ## References
 

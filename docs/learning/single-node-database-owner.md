@@ -122,6 +122,9 @@ recovered rows; packaged coverage compares the entire segment after rejection.
 An actual incomplete final suffix has a different classification but the same default availability
 result: this owner configures no repair authorization, returns the explicit-repair requirement, and
 leaves the segment unchanged. Repair remains an intentional operator/tool boundary.
+Metadata Raft opens before WAL. A checksum-invalid Raft segment header therefore stops startup at
+that earlier authority boundary: no catalog is projected and no WAL recovery or service publication
+begins. Packaged coverage proves the complete damaged segment is preserved.
 
 Malformed transport/command bytes become client-invalid protocol errors. Database corruption stays
 distinguishable as an internal error; I/O, unavailability, and unsupported operations are execution

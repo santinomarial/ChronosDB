@@ -68,7 +68,9 @@ record body, requires its full-record CRC32C failure before replay, and proves t
 truncated. A fourth appends the minimal incomplete final tail and proves the owner's default
 no-repair configuration exits while preserving it. Broader crash injection, incomplete-DDL
 matrices, corruption/fault injection, concurrent workload shutdown, Manifest/CSEG recovery, and
-process qualification remain deferred.
+process qualification remain deferred. The packaged matrix also corrupts a checksum-covered
+metadata-Raft segment-header byte, requires its exact diagnostic before WAL recovery or service
+admission, and proves the complete durable segment is unchanged.
 
 ## References
 

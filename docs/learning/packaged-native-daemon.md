@@ -99,6 +99,10 @@ The packaged single-node configuration also does not authorize repair of a genui
 final tail. A one-byte suffix after a valid active header produces the explicit-repair diagnostic;
 the daemon exits before listening and preserves the suffix for an intentional recovery workflow.
 
+A metadata-Raft segment-header checksum failure stops even earlier, after Bootstrap v1 validation
+but before catalog projection or WAL recovery. The daemon reports the exact Raft corruption, exits
+before listening, and preserves the complete damaged segment.
+
 ## Complexity and tradeoffs
 
 Each dispatch and response handoff is amortized O(1); protocol parsing remains linear in frame size.
@@ -126,8 +130,9 @@ one covered bootstrap byte, requires the checksum diagnostic and nonzero exit, a
 complete damaged image after rejection. The adjacent WAL case corrupts a covered active-header byte
 and requires the exact CRC32C diagnostic plus complete-segment preservation. A complete-record case
 corrupts a packaged SQL INSERT body and proves the active segment is not truncated. A one-byte
-incomplete-tail case proves the packaged no-repair policy preserves the suffix. Its replicated case
-negotiates Protocol 2, applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact
+incomplete-tail case proves the packaged no-repair policy preserves the suffix. A metadata-Raft
+header case proves the complete segment remains unchanged. Its replicated case negotiates Protocol
+2, applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact
 retry, and queries the same recovered row count. A separate replicated gate provisions three
 retained roots and distinct mutual-TLS identities, starts three actual daemon processes, obtains an
 applied quorum acknowledgement, kills the acknowledged tablet leader, observes a higher-term
