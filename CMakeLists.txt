@@ -677,6 +677,7 @@ add_library(
   src/cluster/distributed_vector_grouped_aggregate_shuffle_authority.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_retry.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_stream.cpp
+  src/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_client.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_tls.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_transport.cpp
   src/cluster/distributed_vector_grouped_aggregate_query_tcp_client_v2.cpp
@@ -1434,6 +1435,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_retry_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_stream_header_self_contained.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_stream_test.cpp
+    tests/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_client_header_self_contained.cpp
+    tests/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_client_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_tls_header_self_contained.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_tls_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_transport_header_self_contained.cpp
@@ -1596,6 +1599,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_authority_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_retry_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_stream_allocation_failure_test.cpp
+    tests/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_client_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_tls_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_transport_allocation_failure_test.cpp
     tests/cluster/distributed_query_tcp_client_allocation_failure_test.cpp

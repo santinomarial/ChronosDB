@@ -542,3 +542,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0505](0505-correlated-grouped-shuffle-success-acknowledgment.md) | Correlated grouped shuffle success acknowledgment | accepted |
 | [0506](0506-bounded-grouped-shuffle-mutual-tls-session.md) | Bounded grouped shuffle mutual-TLS session | accepted |
 | [0507](0507-finite-immutable-route-grouped-shuffle-retry.md) | Finite immutable-route grouped shuffle retry | accepted |
+| [0508](0508-deadline-bound-grouped-shuffle-tcp-client.md) | Deadline-bound grouped shuffle TCP client | accepted |

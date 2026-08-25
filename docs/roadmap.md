@@ -1558,9 +1558,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   skew/byte failure. One complete bounded shuffle authority now binds source order, destination
   nodes, partition count, hash version, and grouped shape. A finite whole-stream retry owner now
   reconstructs byte-identical attempts for one immutable edge, applies capped exponential backoff,
-  and recognizes success only after the authenticated receipt. Computed pre-group plan splitting,
-  catalog-derived destination selection, TCP connection/listener transport, duplicate admission,
-  and partition reducer ownership are still missing; scheduler request
+  and recognizes success only after the authenticated receipt. A deadline-bound nonblocking TCP
+  client now validates route identity before connect, proves `SO_ERROR`, and transfers exactly one
+  attempt into that TLS/receipt lifecycle. Computed pre-group plan splitting, catalog-derived
+  destination selection, TCP listener/admission transport, duplicate admission, and partition
+  reducer ownership are still missing; scheduler request
   ownership, authenticated transport/read authority, and final SQL projection/order/limit are now
   integrated. The one committed private query-control endpoint now dispatches exact decoded mutable
   plans to row or grouped receivers and retains distinct bounded response codecs, so remote grouped

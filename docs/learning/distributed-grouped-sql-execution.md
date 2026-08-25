@@ -123,8 +123,8 @@ receipt binds successful extraction to the exact edge and accepted frame/byte ex
 mutual-TLS owner now authenticates both certificate fingerprints before application I/O, authorizes
 the destination before the source writes, and completes only after that receipt. A finite policy
 owner reconstructs byte-identical attempts for the unchanged edge under capped exponential backoff
-and recognizes success only after that receipt. TCP and duplicate-admission ownership, partition
-reduction, packaged selection, and broader fault/
+and recognizes success only after that receipt. TCP listener and duplicate-admission ownership,
+partition reduction, packaged selection, and broader fault/
 measurement evidence remain open. The row-backed path remains the differential oracle for that work.
 
 ### Canonical source-side partition boundary
@@ -157,8 +157,10 @@ mutual-TLS client/server pair authenticates before application bytes, applies ex
 destination node authorization, enforces handshake/exchange deadlines, and retains no failed
 prefix. A separate finite policy owner retains the immutable edge and canonical nested bytes,
 reconstructs byte-identical whole-stream attempts, applies capped exponential backoff, and records
-success only after that TLS session validates the exact receipt. It does not yet own TCP
-acquisition/listening or idempotent duplicate admission, and the current packaged path therefore
+success only after that TLS session validates the exact receipt. One outbound TCP owner validates
+the route before opening a descriptor, enforces a separate connect deadline, proves `SO_ERROR`, and
+transfers the attempt into TLS with carrier-before-descriptor teardown. It does not yet own bounded
+listener admission or idempotent duplicate admission, and the current packaged path therefore
 continues to send complete tablet streams to one coordinator.
 
 ### Portable sufficient-state execution boundary

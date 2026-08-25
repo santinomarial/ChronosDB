@@ -1281,6 +1281,14 @@ were deliberately not run.
   allocation-failure tests pass. LLVM 18 reaches only the known macOS 26 libc++ incompatibility
   without a source diagnostic. TCP connection/listener ownership, duplicate admission, reducers,
   and packaged selection remain open.
+- Deadline-bound grouped shuffle TCP client: one move-only composite validates attempt/edge/route
+  identity before connect, owns the nonblocking descriptor through exact connect timeout and
+  `SO_ERROR`, then transfers the stream sender into the existing authenticated receipt-gated TLS
+  carrier. Sticky failure tears down TLS before closing the descriptor. Real loopback mTLS,
+  route/target negatives, exact deadline, and allocation injection pass under the warning-as-error
+  ASan/UBSan build. All 282 cluster tests and 46 cluster allocation-failure tests pass. LLVM 18
+  reaches only the known macOS 26 libc++ incompatibility without a source diagnostic. Bounded
+  listener admission, duplicate arbitration, reducers, and packaged scheduling remain open.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
