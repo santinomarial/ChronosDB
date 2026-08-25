@@ -224,6 +224,18 @@ DistributedMutableVectorGroupedAggregateShuffleExecution::result() const noexcep
              : empty;
 }
 
+common::Result<DistributedVectorRowsFinalizedResultV2>
+DistributedMutableVectorGroupedAggregateShuffleExecution::take_result() {
+  if (!implementation_ ||
+      implementation_->execution_state !=
+          DistributedMutableVectorGroupedAggregateShuffleExecutionState::kComplete ||
+      !implementation_->shuffle.has_value()) {
+    return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
+                                                  "mutable grouped shuffle result is unavailable"});
+  }
+  return implementation_->shuffle->take_result();
+}
+
 const common::Status&
 DistributedMutableVectorGroupedAggregateShuffleExecution::failure() const noexcept {
   static const common::Status empty{common::StatusCode::kInvalidArgument,

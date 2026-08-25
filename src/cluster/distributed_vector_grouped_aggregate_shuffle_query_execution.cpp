@@ -308,6 +308,20 @@ DistributedVectorGroupedAggregateShuffleQueryExecution::result() const noexcept 
   return implementation_ ? implementation_->finalized_result : empty;
 }
 
+common::Result<DistributedVectorRowsFinalizedResultV2>
+DistributedVectorGroupedAggregateShuffleQueryExecution::take_result() {
+  if (!implementation_ ||
+      implementation_->execution_state !=
+          DistributedVectorGroupedAggregateShuffleQueryExecutionState::kComplete ||
+      !implementation_->finalized_result.has_value()) {
+    return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
+                                                  "grouped shuffle query result is unavailable"});
+  }
+  auto result = std::move(*implementation_->finalized_result);
+  implementation_->finalized_result.reset();
+  return result;
+}
+
 const common::Status&
 DistributedVectorGroupedAggregateShuffleQueryExecution::failure() const noexcept {
   static const common::Status empty{common::StatusCode::kInvalidArgument,

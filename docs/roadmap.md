@@ -1584,14 +1584,17 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   finalizes Native output; a two-node bidirectional mTLS loopback exercises that composition.
   Mutable worker scheduling now composes with this lifecycle through a one-shot, complete canonical
   source-stream handoff while retaining the existing direct path as the default. Computed pre-group
-  plan splitting, Native selection/configuration of the composed path, and cross-process result
-  transport are still missing;
+  plan splitting and cross-process result transport are still missing. Replicated Native SQL can
+  now explicitly select the composition through a deployment-owned per-query provider that supplies
+  fresh destination/listener/route configuration while service-owned SQL and protocol bounds remain
+  authoritative;
   scheduler request ownership, authenticated transport/read authority, and final SQL
   projection/order/limit are now
   integrated. The one committed private query-control endpoint now dispatches exact decoded mutable
   plans to row or grouped receivers and retains distinct bounded response codecs, so remote grouped
-  work no longer requires an unadvertised second listener. Native SQL preparation still has to
-  select that lifecycle before the row-backed oracle can become fallback-only.
+  work no longer requires an unadvertised second listener. Computed pre-group lowering and
+  independent-process result return still block making the
+  row-backed oracle fallback-only.
   The full phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.

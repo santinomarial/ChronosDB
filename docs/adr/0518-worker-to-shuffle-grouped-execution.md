@@ -29,8 +29,9 @@ Allocation failure before source transfer remains retryable where the nested own
 failure after one-shot transfer is terminal.
 
 The new owner requires destination execution configurations from its embedding. It does not claim
-that independently running database daemons can yet return reduced partitions to the coordinator,
-and the Native SQL service does not select this path until that deployment policy is configured.
+that independently running database daemons can yet return reduced partitions to the coordinator.
+[ADR 0519](0519-explicit-native-grouped-shuffle-selection.md) subsequently adds explicit Native SQL
+selection through a deployment-owned per-query configuration provider.
 
 ## Consequences
 
@@ -78,7 +79,7 @@ and composite owner without changing request/response bytes or the direct Native
 
 ## Unresolved questions
 
-- Select and configure this owner from replicated Native SQL execution.
+- Package independent-process destination execution and result return.
 - Return reduced partitions from independent destination processes.
 - Carry computed pre-group expressions in an owned, versioned worker program.
 - Qualify node loss, skew, scale-out, and multi-process differential behavior.

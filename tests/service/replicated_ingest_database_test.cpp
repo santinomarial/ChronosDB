@@ -76,6 +76,33 @@ public:
   }
 };
 
+class LocalGroupedShuffleProvider final : public NativeDistributedGroupedShuffleProvider {
+public:
+  common::Result<NativeDistributedGroupedShufflePlan>
+  prepare(const std::span<const query::DistributedMutableVectorFragment> fragments,
+          std::span<const query::VectorGroupKeyDefinition>,
+          std::span<const query::VectorAggregateDefinition>,
+          const std::chrono::steady_clock::time_point execution_deadline) override {
+    ++calls;
+    if (fragments.empty() || execution_deadline <= std::chrono::steady_clock::now()) {
+      return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
+                                                    "local grouped shuffle plan is invalid"});
+    }
+    const raft::NodeId node = fragments.front().serving_node;
+    for (const auto& fragment : fragments) {
+      if (fragment.serving_node != node) {
+        return common::make_unexpected(common::Status{
+            common::StatusCode::kNotSupported, "test shuffle provider requires one local node"});
+      }
+    }
+    NativeDistributedGroupedShufflePlan plan;
+    plan.execution.destinations.push_back({.local_node_id = node});
+    return plan;
+  }
+
+  std::size_t calls{};
+};
+
 class EmptyRowsMutableWorker final : public cluster::DistributedMutableVectorQueryWorkerService {
 public:
   common::Result<std::vector<cluster::DistributedVectorResultExchangeMessage>>
@@ -1410,6 +1437,8 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   local_distributed_config.source_node_id = 1U;
   local_distributed_config.local_worker = &*local_worker;
   local_distributed_config.local_grouped_worker = &*local_grouped_worker;
+  LocalGroupedShuffleProvider local_shuffle_provider;
+  local_distributed_config.grouped_shuffle_provider = &local_shuffle_provider;
   NativeProtocolService local_distributed_native{*database, *read_barrier,
                                                  local_distributed_config};
   auto native_local = local_distributed_native.execute_query(
@@ -1440,6 +1469,7 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
             native_distributed_grouped_sufficient->responses[0].frame.payload);
   EXPECT_EQ(native_local_grouped_sufficient->responses[1].frame.header.message_type,
             network::MessageType::kQueryEnd);
+  EXPECT_EQ(local_shuffle_provider.calls, 1U);
 
   auto native_local_aggregate = local_distributed_native.execute_query(
       query_request("SELECT count(*) + 1 AS rows_plus, count(tag) * 2 AS tags_twice, "

@@ -64,6 +64,7 @@ public:
   metrics() const noexcept;
   [[nodiscard]] const std::optional<DistributedVectorRowsFinalizedResultV2>&
   result() const noexcept;
+  [[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2> take_result();
   [[nodiscard]] const common::Status& failure() const noexcept;
 
 private:

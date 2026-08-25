@@ -226,7 +226,14 @@ draining them through its direct coordinator. A second stable owner derives shuf
 the same fragments, schedules local or authenticated remote workers, performs that one-shot source
 handoff, and then delegates to the full shuffle lifecycle. Source publication and direct grouped
 finalization are mutually exclusive, so the embedding cannot accidentally expose both answers.
-Replicated Native SQL selection and independent-process partition-result return remain separate.
+At this layer, Native SQL selection and independent-process partition-result return remain separate.
+
+Replicated Native SQL now has an explicit optional selector for that composition. A borrowed
+deployment provider creates fresh destination/listener/route configuration for each proof-bound
+attempt, while the service retains final projection, protocol output bounds, cancellation,
+deadline, and whole-query rebinding authority. With no provider, the direct grouped coordinator
+remains the default. Selection never silently falls back after worker or shuffle work begins.
+Independent-process result return is still separate.
 
 ### Portable sufficient-state execution boundary
 

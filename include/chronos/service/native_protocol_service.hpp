@@ -2,6 +2,7 @@
 #define CHRONOS_SERVICE_NATIVE_PROTOCOL_SERVICE_HPP_
 
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_execution.hpp"
+#include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_execution.hpp"
 #include "chronos/cluster/distributed_mutable_vector_rows_query_tcp_execution.hpp"
 #include "chronos/cluster/distributed_vector_aggregate_rows_finalization_v2.hpp"
 #include "chronos/cluster/distributed_vector_physical_rows_finalization_v2.hpp"
@@ -83,6 +84,23 @@ public:
 
 using NativeIdentityGenerator = common::UuidGenerator;
 
+struct NativeDistributedGroupedShufflePlan {
+  cluster::DistributedVectorGroupedAggregateShuffleQueryExecutionConfig execution;
+  cluster::DistributedVectorGroupedAggregateShuffleAuthorityLimits authority;
+};
+
+// Deployment seam for per-query destination listeners, routes, TLS contexts, and reducer resource
+// owners. Returned borrowed dependencies must outlive the synchronous execute_query() call.
+class NativeDistributedGroupedShuffleProvider {
+public:
+  virtual ~NativeDistributedGroupedShuffleProvider() = default;
+  [[nodiscard]] virtual common::Result<NativeDistributedGroupedShufflePlan>
+  prepare(std::span<const query::DistributedMutableVectorFragment> fragments,
+          std::span<const query::VectorGroupKeyDefinition> keys,
+          std::span<const query::VectorAggregateDefinition> aggregates,
+          std::chrono::steady_clock::time_point execution_deadline) = 0;
+};
+
 // Borrowed split-leader mutable-query client policy for direct rows, transitional global
 // aggregates, and direct-input grouped sufficient state. source_node_id names the coordinator
 // transport identity. Fragments led by that node execute through the matching local worker; all
@@ -100,6 +118,9 @@ struct NativeDistributedMutableVectorRowsQueryConfig {
   // source_node_id. Required when an eligible grouped query contains such a fragment; it must
   // outlive the service.
   cluster::DistributedMutableVectorGroupedAggregateQueryWorkerService* local_grouped_worker{};
+  // Optional explicit selection of the partitioned grouped path. The provider and every borrowed
+  // dependency it returns must outlive the service/synchronous query call.
+  NativeDistributedGroupedShuffleProvider* grouped_shuffle_provider{};
   std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts;
   cluster::DistributedQueryRouteResolutionLimits route_resolution;
   query::DistributedVectorRowsSqlLoweringLimits sql_lowering;

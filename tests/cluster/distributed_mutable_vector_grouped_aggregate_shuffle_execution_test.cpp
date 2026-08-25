@@ -160,6 +160,12 @@ TEST(DistributedMutableVectorGroupedAggregateShuffleExecutionTest,
   EXPECT_EQ(std::get<std::string>(region->storage()), "east");
   common::ByteReader count{decoded->cell(0U, 1U)->value};
   EXPECT_EQ(count.read_i64_le().value(), 3);
+  auto transferred = owner->take_result();
+  ASSERT_TRUE(transferred.has_value()) << transferred.error().to_string();
+  EXPECT_EQ(transferred->row_count, 1U);
+  EXPECT_FALSE(owner->result().has_value());
+  EXPECT_EQ(owner->take_result().error().code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(owner->metrics().shuffle.local_edges, 1U);
 }
 
 TEST(DistributedMutableVectorGroupedAggregateShuffleExecutionTest,
