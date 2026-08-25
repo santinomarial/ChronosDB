@@ -22,9 +22,10 @@ one ordered observation to the same durable batch. The barrier-only `await` path
 When the required group leader is on another node, Raft Read Authority Transport v1 provides the
 same proof through a distinct authenticated request/response boundary. A success nests the canonical
 leader observation alongside the barrier tuple and repeats the route, group, and correlation in both
-layers. Bounded partial-I/O, mutual-TLS, TCP connect/listen, and finite route-retry owners are
-implemented, but daemon service integration and packaged split-leader fan-out are still required
-before Native admission can use remote authorities.
+layers. Bounded partial-I/O, mutual-TLS, TCP connect/listen, finite route retry, and concurrent
+all-group fan-out owners are implemented. The batch withholds its canonical vector until every
+group succeeds and cancels all siblings on one failure. Daemon service and Native query integration
+are still required before packaged admission can use those remote authorities.
 
 ## Data structures and invariants
 

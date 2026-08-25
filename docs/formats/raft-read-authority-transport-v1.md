@@ -1,7 +1,7 @@
 # Raft Read Authority Transport v1
 
 > **Status:** accepted with implemented codecs, bounded stream ownership, authenticated receiver,
-> and maintained mutual-TLS sessions.
+> maintained mutual-TLS sessions, finite TCP retry, and all-group attempt fan-out.
 
 This cluster protocol asks one exact node to issue one linearizable read barrier for one Raft group
 and returns that barrier with the leader observation that proves its meaning. It is distinct from
@@ -89,5 +89,6 @@ authenticate both node claims before request dispatch and impose exact handshake
 Maintained TCP endpoints now own exact nonblocking connect completion, a separate connect deadline,
 bounded listener admission, finite accepts per poll, metrics, and TLS-before-descriptor shutdown. A
 finite retry owner rotates a bounded immutable address snapshot under one capped attempt/backoff
-budget without changing request authority. Daemon integration and all-group query fan-out remain
-subsequent consumers.
+budget without changing request authority. An all-or-nothing batch owner concurrently drives one
+finite acquisition per canonical group, cancels every sibling on failure, and publishes only the
+complete authority vector. Daemon service and Native query integration remain subsequent consumers.
