@@ -1244,6 +1244,16 @@ were deliberately not run.
   Changed-file formatting and whitespace pass. LLVM 18 reaches only the known installed macOS 26
   libc++ builtin incompatibility after no ChronosDB-source diagnostic. Mutual-TLS stream ownership,
   retries, reducers, and packaged selection remain unimplemented.
+- Atomic grouped shuffle stream boundary: a self-contained sender now exact-decodes a complete
+  source partition and constructs all same-edge outer frames before exposing bytes. The receiver
+  requires a preauthenticated principal, authorizes its claimed source node, locks all frames to
+  the configured local destination and first edge, validates contiguous empty or nonempty terminal
+  closure, and publishes only one exact-once complete query-accounted result. Count, byte, nested
+  decode, duplicate-position, suffix, incomplete-input, local-edge, and allocation failures discard
+  every prefix. The warning-as-error build, 274 cluster tests, 42 cluster allocation-failure tests,
+  and focused ASan/UBSan cases pass. LLVM 18 reaches only the known macOS 26 libc++ incompatibility
+  after its two source findings were fixed. Mutual TLS, acknowledgment/retry, reducers, and packaged
+  selection remain open.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

@@ -1,8 +1,9 @@
 # Distributed Vector Grouped Aggregate Shuffle Frame v1
 
 > **Status: accepted and implemented for exact encoding, decoding, bounded partial-I/O ownership,
-> and immutable authority validation.** Mutual-TLS session ownership, whole-stream retry, and
-> destination reduction remain enclosing responsibilities.
+> immutable authority validation, and atomic authorized complete-stream ownership.** Mutual-TLS
+> session ownership, terminal acknowledgment/retry, and destination reduction remain enclosing
+> responsibilities.
 
 This frame carries one canonical
 [Distributed Vector Grouped Aggregate Exchange v1](distributed-vector-grouped-aggregate-exchange-v1.md)
@@ -79,6 +80,14 @@ consumed prefix, leaves a coalesced successor caller-owned, resets after complet
 frame failure sticky. The move-only write cursor owns one completely encoded frame, exposes only
 its unwritten suffix, rejects over-advance without progress, and leaves its moved-from owner
 complete.
+
+The complete-stream sender exact-decodes one canonical partitioner output, requires an empty
+terminal or contiguous nonempty positions, and constructs all same-edge outer cursors before
+exposing the first byte. The receiver requires an already authenticated principal, authorizes that
+principal for the first frame's source node, requires the configured local destination, locks every
+later frame to the same edge, and withholds all query-accounted messages until terminal. Missing or
+duplicate position, edge drift, count/byte overflow, terminal suffix, decode failure, and allocation
+failure discard the whole prefix. This owner does not itself perform TLS or acknowledge receipt.
 
 CRC32C detects accidental damage; it does not authenticate either peer. An enclosing mutually
 authenticated connection must bind certificate principals to the exact source and destination
