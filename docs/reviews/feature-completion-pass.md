@@ -901,7 +901,20 @@ Focused executions passed:
   clearing between valid frames. All 16 focused grouped cases pass under ASan/UBSan; the full cluster
   and allocation-failure suites pass 238 of 238 and 31 of 31. LLVM 18 static analysis remains
   blocked by the installed macOS 26 libc++ headers with no project-local finding emitted first.
-  TCP acquisition/listening, multi-address routing, cancellation, and all-tablet scheduling remain.
+  Outbound TCP acquisition is continued immediately below; listener admission, multi-address
+  routing, cancellation, and all-tablet scheduling remain.
+- Deadline-bound grouped sufficient-state TCP-client continuation: one move-only owner validates the
+  Fragment-v2 target, complete group-key/aggregate authority, endpoint identity, every nested bound,
+  and all three deadlines before opening a nonblocking socket. It retains request, authority, and
+  query resources until `SO_ERROR` proves connection success, then atomically transfers them into
+  the grouped mutual-TLS carrier and always tears that carrier down before its descriptor. A real
+  IPv4 loopback case proves two-group terminal publication, both certificate fingerprints, and one
+  fresh worker invocation; a companion proves exact connect expiry, descriptor closure, unavailable
+  response prefixes, and pre-acquisition validation. Both focused cases pass normally and under
+  ASan/UBSan; the full cluster and allocation-failure suites pass 240 of 240 and 31 of 31. Header
+  self-containment, formatting, and whitespace checks pass. LLVM 18 static analysis remains blocked
+  by the installed macOS 26 libc++ headers with no project-local finding emitted first. Listener
+  admission, multi-address routing, cancellation, and all-tablet scheduling remain.
 - Bounded global vector-row finalization continuation: one consuming final pass independently
   validates row-mode plan/schema shape, tablet-stream closure, native descriptors, and exact
   row/message/input/working/output bounds before decoded-state allocation. It stably orders every

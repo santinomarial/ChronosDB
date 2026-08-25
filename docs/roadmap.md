@@ -1415,8 +1415,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   nested stream under query memory, and retries only whole attempts while treating leader hints as
   advisory. A mutual-TLS carrier now authenticates both certificate fingerprints before application
   I/O, authorizes the exact target before request write, retains complete authority and query memory,
-  supports the distinct empty terminal, and clears every incomplete response prefix on failure.
-  Computed pre-group plan splitting, TCP ownership and all-tablet scheduling, final grouped SQL
+  supports the distinct empty terminal, and clears every incomplete response prefix on failure. A
+  one-attempt TCP client now retains the immutable request, complete grouped authority, and query
+  resources through deadline-bound nonblocking connect, proves `SO_ERROR`, transfers ownership only
+  into an authenticated TLS carrier, and closes that carrier before its descriptor on failure.
+  Computed pre-group plan splitting, listener ownership and all-tablet scheduling, final grouped SQL
   integration, and shuffle routing remain deferred. The
   distinct
   bounded-stale constructor carries correlated leader/follower observations through the same

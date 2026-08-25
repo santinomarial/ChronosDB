@@ -1,9 +1,9 @@
 # Distributed Vector Grouped Aggregate Query Transport v2
 
 > **Status:** accepted and implemented exact response codec, partial-I/O contract, authenticated
-> receiver, finite sender/retry owner, and mutual-TLS session carrier. Requests reuse the exact
-> Fragment-v2 `CHDVREQ2` carrier. TCP ownership and multi-tablet scheduling remain separate
-> follow-on boundaries.
+> receiver, finite sender/retry owner, mutual-TLS session carrier, and outbound nonblocking TCP
+> owner. Requests reuse the exact Fragment-v2 `CHDVREQ2` carrier. Listener ownership and multi-
+> tablet scheduling remain separate follow-on boundaries.
 
 All integers are unsigned little-endian. Reserved bytes are zero. CRC32C detects accidental damage
 and is not authentication. The nested grouped payload retains its own independent checksums.
@@ -105,5 +105,11 @@ write. It retains complete grouped authority and query resources while reading a
 complete empty-or-contiguous response vector. Its server independently revalidates the receiver's
 bound authority and complete response vector before constructing any write cursor.
 
-The transport still owns no TCP connection acquisition, listener, multi-address route, wall-clock
-source, multi-tablet scheduler, cancellation, or process lifecycle.
+The outbound TCP owner retains the immutable attempt, complete grouped authority, and query
+resources through a deadline-bound nonblocking connection. It validates all authority and limits
+before opening a descriptor, exact-binds the authentication address to the endpoint, proves
+`SO_ERROR` completion, transfers ownership into TLS only afterward, and destroys TLS before its
+descriptor on failure.
+
+The transport still owns no listener, multi-address route, wall-clock source, multi-tablet
+scheduler, cancellation, or process lifecycle.
