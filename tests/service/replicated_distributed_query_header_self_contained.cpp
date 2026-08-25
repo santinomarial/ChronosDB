@@ -23,6 +23,8 @@ namespace {
     &chronos::service::create_replicated_distributed_vector_aggregate_query_v2;
 [[maybe_unused]] const auto kCreateReplicatedFollowerDistributedVectorAggregateQueryV2 =
     &chronos::service::create_replicated_follower_distributed_vector_aggregate_query_v2;
+[[maybe_unused]] const auto kCreateReplicatedDistributedVectorGroupedAggregateSqlQueryV2 =
+    &chronos::service::create_replicated_distributed_vector_grouped_aggregate_sql_query_v2;
 [[maybe_unused]] const auto kCreateReplicatedFollowerDistributedVectorAggregateLifecycleV2 =
     &chronos::service::ReplicatedFollowerDistributedVectorAggregateQueryV2::create;
 } // namespace

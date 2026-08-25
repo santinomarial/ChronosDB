@@ -369,6 +369,21 @@ make_count_plan(const schema::TabletId& tablet_id, const raft::LogIndex applied_
   return plan;
 }
 
+[[nodiscard]] query::DistributedVectorGroupedAggregateSqlPlan
+make_grouped_sql_plan(const schema::TableSchema& schema_value) {
+  return {.table_id = schema_value.table_id(),
+          .destination_schema_id = schema_value.schema_id(),
+          .destination_column_ordinals = {1U},
+          .intent = {.mode = query::DistributedVectorPlanMode::kGroupedAggregate,
+                     .group_key_input_indices = {0U},
+                     .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}}},
+          .result_schema = {
+              .columns = {{"value", schema_value.columns()[1].type(), true},
+                          {"row_count",
+                           schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
+                           false}}}};
+}
+
 TEST(ReplicatedDistributedMutableVectorQueryAllocationFailureTest,
      ClassifiesPackagedInboundOwnerAllocations) {
   RejectingMutableContextProvider provider;
@@ -447,6 +462,131 @@ TEST(ReplicatedDistributedMutableQueryControlAllocationFailureTest,
   EXPECT_TRUE(saw_failure);
   EXPECT_TRUE(saw_success);
   EXPECT_TRUE(read_barrier->shutdown().is_ok());
+}
+
+TEST(ReplicatedDistributedQueryAllocationFailureTest,
+     ClassifiesEveryGroupedSqlPreparationAllocationAndReleasesSnapshotPin) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  ASSERT_TRUE(std::filesystem::create_directory(directory.path() / "raft"));
+  const raft::GroupId metadata_group = uuid(21U);
+  const raft::GroupId tablet_group = uuid(22U);
+  auto runtime = raft::AsyncDurableMultiRaftRuntime::create_new(
+      11U, {.directory_path = (directory.path() / "raft").string()},
+      {{metadata_group, {11U}}, {tablet_group, {11U}}});
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  for (const raft::GroupId group_id : {metadata_group, tablet_group}) {
+    auto election = runtime->try_submit({{group_id, raft::StartElectionOperation{}}});
+    ASSERT_TRUE(election.has_value()) << election.error().to_string();
+    auto elected = election->wait();
+    ASSERT_TRUE(elected.has_value()) << elected.error().to_string();
+    ASSERT_EQ(elected->size(), 1U);
+    ASSERT_TRUE(elected->front().status.is_ok()) << elected->front().status.to_string();
+  }
+  auto barrier =
+      ReplicatedReadBarrier::create_local(std::addressof(*runtime), {tablet_group, metadata_group});
+  ASSERT_TRUE(barrier.has_value()) << barrier.error().to_string();
+  auto inspected = barrier->await_authority();
+  ASSERT_TRUE(inspected.has_value()) << inspected.error().to_string();
+  for (const ReplicatedReadAuthority& authority : *inspected) {
+    auto applied = runtime->try_submit(
+        {{authority.observation.group_id,
+          raft::MarkAppliedOperation{.index = authority.barrier.barrier.read_index}}});
+    ASSERT_TRUE(applied.has_value()) << applied.error().to_string();
+    auto applied_result = applied->wait();
+    ASSERT_TRUE(applied_result.has_value()) << applied_result.error().to_string();
+    ASSERT_EQ(applied_result->size(), 1U);
+    ASSERT_TRUE(applied_result->front().status.is_ok())
+        << applied_result->front().status.to_string();
+  }
+  const auto tablet_authority =
+      std::ranges::find(*inspected, tablet_group, [](const ReplicatedReadAuthority& authority) {
+        return authority.observation.group_id;
+      });
+  const auto metadata_authority =
+      std::ranges::find(*inspected, metadata_group, [](const ReplicatedReadAuthority& authority) {
+        return authority.observation.group_id;
+      });
+  ASSERT_NE(tablet_authority, inspected->end());
+  ASSERT_NE(metadata_authority, inspected->end());
+  const raft::LogIndex tablet_position = tablet_authority->barrier.barrier.read_index;
+
+  const schema::TableSchema schema_value = make_schema();
+  const schema::SchemaLineage lineage = schema::SchemaLineage::create(schema_value).value();
+  const schema::TabletId tablet_id = id<schema::TabletId>(23U);
+  auto publisher = make_publisher(directory.path() / "database", lineage, tablet_id, tablet_group,
+                                  tablet_position);
+  ASSERT_TRUE(publisher.has_value()) << publisher.error().to_string();
+  const raft::MetadataCatalogSnapshot catalog{
+      .applied_index = metadata_authority->barrier.barrier.read_index,
+      .cluster_nodes = {{11U, "127.0.0.1:1"}},
+      .schema_definitions = {{"metrics", false,
+                              std::make_shared<const schema::TableSchema>(schema_value)}},
+      .active_schemas = {{schema_value.table_id(), schema_value.schema_id()}},
+      .tablet_placements =
+          {{schema_value.table_id(), tablet_id, 1U, {11U}, std::optional<raft::NodeId>{11U}}},
+      .tablet_group_bindings = {{tablet_id, tablet_group}}};
+  auto tls_context = network::TlsClientContext::create(
+      {.certificate_chain_file = tls_fixture("client.pem").string(),
+       .private_key_file = tls_fixture("client-key.pem").string(),
+       .trust_store_file = tls_fixture("ca.pem").string(),
+       .expected_server_identity = "127.0.0.1"});
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  const std::array tls_contexts{
+      cluster::DistributedQueryNodeTlsContext{11U, std::addressof(*tls_context)}};
+  const std::array<std::uint32_t, 1U> projection{1U};
+  QueryAuthenticator authenticator;
+  QueryNodeAuthorizer authorizer;
+  const ReplicatedDistributedVectorGroupedAggregateQueryConfigV2 config{
+      .source_node_id = 1U,
+      .read_barrier = std::addressof(*barrier),
+      .metadata_group_id = metadata_group,
+      .catalog = std::cref(catalog),
+      .table_id = schema_value.table_id(),
+      .destination_column_ordinals = projection,
+      .tls_contexts = tls_contexts,
+      .authenticator = std::addressof(authenticator),
+      .node_authorizer = std::addressof(authorizer),
+      .binding_limits = {.maximum_fragments = 1U,
+                         .maximum_total_projection_ordinals = projection.size()}};
+  std::shared_ptr<const manifest::LoadedTemporalManifestGeneration> selected_manifest;
+  {
+    auto snapshot = publisher->snapshot();
+    ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+    selected_manifest = snapshot->selected_manifest();
+  }
+  const long baseline_use_count = selected_manifest.use_count();
+
+  bool saw_failure = false;
+  bool saw_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 512U; ++fail_after) {
+    SCOPED_TRACE(testing::Message{} << "fail_after=" << fail_after);
+    {
+      auto snapshot = publisher->snapshot();
+      ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+      auto sql_plan = make_grouped_sql_plan(schema_value);
+      auto result = run_failure(fail_after, [&] {
+        return create_replicated_distributed_vector_grouped_aggregate_sql_query_v2(
+            uuid(24U), std::move(sql_plan), std::move(*snapshot), config);
+      });
+      if (!result.has_value()) {
+        saw_failure = true;
+        EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted)
+            << result.error().to_string();
+      } else {
+        saw_success = true;
+        EXPECT_EQ(result->state(),
+                  cluster::DistributedVectorGroupedAggregateQueryTcpExecutionStateV2::kRunning);
+      }
+    }
+    EXPECT_EQ(selected_manifest.use_count(), baseline_use_count) << "fail_after=" << fail_after;
+    if (saw_success)
+      break;
+  }
+  EXPECT_TRUE(saw_failure);
+  EXPECT_TRUE(saw_success);
+  EXPECT_TRUE(barrier->shutdown().is_ok());
+  EXPECT_TRUE(runtime->shutdown().is_ok());
 }
 
 TEST(ReplicatedDistributedQueryAllocationFailureTest,

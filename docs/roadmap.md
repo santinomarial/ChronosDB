@@ -1438,8 +1438,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   worker integration remains deferred. Schema-bound grouped SQL now has a separate direct-input
   lowerer that emits the exact unique projection, key/aggregate intent, event-time predicate,
   selected-output global order/limit, and typed result schema consumed by this scheduler. It fails
-  closed to the row-backed path for computed/reordered/hidden semantics. Replicated SQL plan-tablet
-  preparation, computed pre-group/final projection splitting, and shuffle routing remain deferred.
+  closed to the row-backed path for computed/reordered/hidden semantics. A replicated SQL
+  constructor now acquires authority once, derives every committed table fragment through the same
+  catalog and Manifest publication, rejects catalog/Manifest set drift, and transfers the moved SQL
+  schema into the atomic scheduler. Computed pre-group/final projection splitting and shuffle
+  routing remain deferred.
   The
   distinct
   bounded-stale constructor carries correlated leader/follower observations through the same

@@ -11,6 +11,7 @@
 #include "chronos/manifest/temporal_publication.hpp"
 #include "chronos/query/distributed.hpp"
 #include "chronos/query/distributed_fragment_binding.hpp"
+#include "chronos/query/distributed_sql_lowering.hpp"
 #include "chronos/service/replicated_read_barrier.hpp"
 
 #include <chrono>
@@ -130,6 +131,16 @@ create_replicated_distributed_vector_grouped_aggregate_query_v2(
     const query::DistributedVectorQueryPlan& plan,
     manifest::TemporalDatabaseStorageSnapshot snapshot,
     query::DistributedVectorResultSchema&& result_schema,
+    const ReplicatedDistributedVectorGroupedAggregateQueryConfigV2& config);
+
+// Consumes one direct schema-bound grouped SQL product, acquires authority once, and derives the
+// complete table plan from the same committed catalog and Manifest epoch before entering the
+// grouped sufficient-state lifecycle. The redundant table/projection/predicate fields in config
+// must exactly match the SQL product, preventing an embedding from joining different bindings.
+[[nodiscard]] common::Result<cluster::DistributedVectorGroupedAggregateQueryTcpExecutionV2>
+create_replicated_distributed_vector_grouped_aggregate_sql_query_v2(
+    common::Uuid query_id, query::DistributedVectorGroupedAggregateSqlPlan&& sql_plan,
+    manifest::TemporalDatabaseStorageSnapshot snapshot,
     const ReplicatedDistributedVectorGroupedAggregateQueryConfigV2& config);
 
 // Applies the same grouped sufficient-state lifecycle to one canonical already-correlated

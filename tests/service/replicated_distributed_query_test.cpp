@@ -291,6 +291,25 @@ make_follower_vector_grouped_aggregate_plan(const schema::TabletId& tablet_id,
   return plan;
 }
 
+[[nodiscard]] query::DistributedVectorGroupedAggregateSqlPlan
+make_vector_grouped_aggregate_sql_plan(const schema::TableSchema& schema_value) {
+  return {.table_id = schema_value.table_id(),
+          .destination_schema_id = schema_value.schema_id(),
+          .destination_column_ordinals = {1U},
+          .intent = {.mode = query::DistributedVectorPlanMode::kGroupedAggregate,
+                     .group_key_input_indices = {0U},
+                     .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}},
+                     .order_keys = {{.output_index = 0U,
+                                     .direction = query::PhysicalSortDirection::kDescending,
+                                     .null_placement = query::ScalarNullPlacement::kLast}},
+                     .limit = 1U},
+          .result_schema = {
+              .columns = {{"value", schema_value.columns()[1].type(), true},
+                          {"row_count",
+                           schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
+                           false}}}};
+}
+
 class CountStarVectorAggregateWorker final
     : public cluster::DistributedVectorAggregateQueryWorkerServiceV2 {
 public:
@@ -526,6 +545,60 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
   ASSERT_EQ(vector_grouped_execution->snapshot().grouped_aggregate_definitions().size(), 1U);
   EXPECT_EQ(vector_grouped_execution->snapshot().grouped_aggregate_definitions().front().operation,
             query::VectorAggregateOperation::kCountStar);
+
+  const std::array<std::uint32_t, 1U> grouped_sql_projection{1U};
+  const ReplicatedDistributedVectorGroupedAggregateQueryConfigV2 grouped_sql_config{
+      .source_node_id = 1U,
+      .read_barrier = std::addressof(*barrier),
+      .metadata_group_id = metadata_group,
+      .catalog = std::cref(catalog),
+      .table_id = schema_value.table_id(),
+      .destination_column_ordinals = grouped_sql_projection,
+      .tls_contexts = tls_contexts,
+      .authenticator = std::addressof(authenticator),
+      .node_authorizer = std::addressof(authorizer),
+      .binding_limits = {.maximum_fragments = 1U,
+                         .maximum_total_projection_ordinals = grouped_sql_projection.size()}};
+  auto grouped_sql_snapshot = publisher->snapshot();
+  ASSERT_TRUE(grouped_sql_snapshot.has_value()) << grouped_sql_snapshot.error().to_string();
+  auto grouped_sql_execution = create_replicated_distributed_vector_grouped_aggregate_sql_query_v2(
+      uuid(41U), make_vector_grouped_aggregate_sql_plan(schema_value),
+      std::move(*grouped_sql_snapshot), grouped_sql_config);
+  ASSERT_TRUE(grouped_sql_execution.has_value()) << grouped_sql_execution.error().to_string();
+  EXPECT_EQ(grouped_sql_execution->state(),
+            cluster::DistributedVectorGroupedAggregateQueryTcpExecutionStateV2::kRunning);
+  ASSERT_EQ(grouped_sql_execution->snapshot().dispatches().size(), 1U);
+  const query::DistributedVectorFragmentDispatch& grouped_sql_dispatch =
+      grouped_sql_execution->snapshot().dispatches().front();
+  EXPECT_EQ(grouped_sql_dispatch.query_id, uuid(41U));
+  EXPECT_EQ(grouped_sql_dispatch.tablet_id, tablet_id);
+  EXPECT_EQ(grouped_sql_dispatch.raft_group_id, tablet_group);
+  EXPECT_EQ(grouped_sql_dispatch.applied_position, applied_position);
+  EXPECT_EQ(grouped_sql_dispatch.destination_column_ordinals, (std::vector<std::uint32_t>{1U}));
+  EXPECT_EQ(grouped_sql_dispatch.plan.group_key_input_indices, (std::vector<std::uint32_t>{0U}));
+  EXPECT_EQ(grouped_sql_execution->snapshot().snapshot().generation(), 1U);
+  EXPECT_EQ(grouped_sql_execution->snapshot().result_schema().columns[1].name, "row_count");
+
+  auto missing_grouped_sql_snapshot = publisher->snapshot();
+  ASSERT_TRUE(missing_grouped_sql_snapshot.has_value());
+  ReplicatedDistributedVectorGroupedAggregateQueryConfigV2 missing_grouped_sql_config =
+      grouped_sql_config;
+  missing_grouped_sql_config.read_barrier = std::addressof(*missing_tablet_barrier);
+  auto missing_grouped_sql = create_replicated_distributed_vector_grouped_aggregate_sql_query_v2(
+      uuid(42U), make_vector_grouped_aggregate_sql_plan(schema_value),
+      std::move(*missing_grouped_sql_snapshot), missing_grouped_sql_config);
+  ASSERT_FALSE(missing_grouped_sql.has_value());
+  EXPECT_EQ(missing_grouped_sql.error().code(), common::StatusCode::kUnavailable);
+
+  auto mismatched_grouped_sql_snapshot = publisher->snapshot();
+  ASSERT_TRUE(mismatched_grouped_sql_snapshot.has_value());
+  auto mismatched_grouped_sql_plan = make_vector_grouped_aggregate_sql_plan(schema_value);
+  mismatched_grouped_sql_plan.destination_column_ordinals = {0U};
+  auto mismatched_grouped_sql = create_replicated_distributed_vector_grouped_aggregate_sql_query_v2(
+      uuid(43U), std::move(mismatched_grouped_sql_plan),
+      std::move(*mismatched_grouped_sql_snapshot), grouped_sql_config);
+  ASSERT_FALSE(mismatched_grouped_sql.has_value());
+  EXPECT_EQ(mismatched_grouped_sql.error().code(), common::StatusCode::kInvalidArgument);
 
   auto row_snapshot = publisher->snapshot();
   ASSERT_TRUE(row_snapshot.has_value());

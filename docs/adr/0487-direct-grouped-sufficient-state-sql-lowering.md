@@ -36,6 +36,9 @@ Computed, reordered, omitted, or hidden expressions return `NOT_SUPPORTED`. That
 deliberate routing signal: the caller may invoke the established row-backed grouped lowerer, which
 remains the semantic oracle. No implicit fallback occurs inside either lowerer.
 
+[ADR 0488](0488-coherent-replicated-grouped-sql-preparation.md) subsequently consumes this product
+and derives its complete table plan from one catalog, Manifest, and acquired authority publication.
+
 ## Consequences
 
 Direct grouped SQL can now enter the existing multi-key/all-type sufficient-state execution path

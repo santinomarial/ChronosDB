@@ -109,10 +109,12 @@ batch. The second linear pass is an explicit recoverability and memory-bound tra
 frame, shared query-accounted group table, plan-ordered coordinator, proof-revalidated real-CSEG
 worker, authenticated transport, all-tablet scheduler, and atomic Native finalizer are implemented.
 The direct SQL lowerer now produces their exact projection/key/aggregate/result contract without a
-second binding oracle. Replicated SQL preparation must next construct the plan tablets from one
-coherent authority and Manifest publication. Computed pre-group and final expressions still need
-an owned physical-plan split, and partitioned shuffle routing plus broader fault/measurement
-evidence remain open. The row-backed path remains the differential oracle for that work.
+second binding oracle. The replicated SQL constructor derives every committed table fragment from
+one catalog, Manifest epoch, and single acquired authority vector; it rejects missing/extra
+Manifest tablets and transfers the complete owned contract into the scheduler. Computed pre-group
+and final expressions still need an owned physical-plan split, and partitioned shuffle routing plus
+broader fault/measurement evidence remain open. The row-backed path remains the differential
+oracle for that work.
 
 ### Portable sufficient-state execution boundary
 
@@ -171,6 +173,13 @@ of it: acquire metadata barrier coverage, bind one leader-linearizable or correl
 Manifest authority, resolve routes from the same catalog, create the portable execution, and
 transfer all finite policies into the scheduler. The resulting owner retains the Manifest pin
 through terminal output.
+
+For direct grouped SQL, `create_replicated_distributed_vector_grouped_aggregate_sql_query_v2()`
+also constructs the plan rather than trusting one supplied by the embedding. It checks the lowered
+table/projection/predicate against configuration, selects the complete committed table placement
+set, joins each tablet to its immutable group, exact Manifest recovery schema/source/position, and
+the same acquired leader authority, then requires equal catalog/Manifest table cardinality. Only
+that complete derived vector can enter compatible binding and route resolution.
 
 This is intentionally a Manifest/CSEG path. The packaged Native service currently binds mutable
 `TabletState` fragments. Its row-backed grouped execution remains the correctness oracle until a

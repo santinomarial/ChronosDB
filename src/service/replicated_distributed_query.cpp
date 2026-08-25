@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <limits>
 #include <memory>
 #include <new>
 #include <optional>
@@ -140,6 +141,143 @@ create_vector_grouped_aggregate_tcp_execution(
                               .finalization_limits = config.finalization_limits,
                               .connect_timeout = config.connect_timeout,
                               .execution_deadline = config.execution_deadline});
+}
+
+[[nodiscard]] common::Result<cluster::DistributedVectorGroupedAggregateQueryTcpExecutionV2>
+bind_and_create_vector_grouped_aggregate_tcp_execution(
+    const query::DistributedVectorQueryPlan& plan,
+    manifest::TemporalDatabaseStorageSnapshot snapshot,
+    query::DistributedVectorResultSchema&& result_schema,
+    const std::span<const ReplicatedReadAuthority> authority,
+    const ReplicatedDistributedVectorGroupedAggregateQueryConfigV2& config) {
+  auto compatible = query::bind_group_backed_distributed_vector_snapshot_v2(
+      plan, std::move(snapshot),
+      {.catalog = config.catalog,
+       .table_id = config.table_id,
+       .group_authorities = authority,
+       .destination_column_ordinals = config.destination_column_ordinals,
+       .event_time_predicate = config.event_time_predicate},
+      std::move(result_schema), config.binding_limits);
+  if (!compatible.has_value())
+    return common::make_unexpected(compatible.error());
+  return create_vector_grouped_aggregate_tcp_execution(std::move(*compatible), config);
+}
+
+[[nodiscard]] common::Status validate_vector_grouped_aggregate_sql_binding(
+    const common::Uuid query_id, const query::DistributedVectorGroupedAggregateSqlPlan& sql_plan,
+    const ReplicatedDistributedVectorGroupedAggregateQueryConfigV2& config) {
+  if (query_id.is_nil() || sql_plan.table_id != config.table_id ||
+      !std::ranges::equal(sql_plan.destination_column_ordinals,
+                          config.destination_column_ordinals) ||
+      sql_plan.event_time_predicate != config.event_time_predicate ||
+      sql_plan.intent.mode != query::DistributedVectorPlanMode::kGroupedAggregate) {
+    return {common::StatusCode::kInvalidArgument,
+            "replicated grouped SQL binding differs from its execution config"};
+  }
+  if (config.binding_limits.maximum_fragments == 0U ||
+      config.binding_limits.maximum_fragments > query::DistributedPlanLimits{}.maximum_fragments) {
+    return {common::StatusCode::kInvalidArgument,
+            "replicated grouped SQL fragment limit is invalid"};
+  }
+  return common::Status::ok();
+}
+
+[[nodiscard]] common::Result<query::DistributedVectorQueryPlan>
+prepare_vector_grouped_aggregate_sql_plan(
+    const common::Uuid query_id, const query::DistributedVectorGroupedAggregateSqlPlan& sql_plan,
+    const manifest::TemporalDatabaseStorageSnapshot& snapshot,
+    const std::span<const ReplicatedReadAuthority> authority,
+    const ReplicatedDistributedVectorGroupedAggregateQueryConfigV2& config) {
+  const common::Status binding_status =
+      validate_vector_grouped_aggregate_sql_binding(query_id, sql_plan, config);
+  if (!binding_status.is_ok())
+    return common::make_unexpected(binding_status);
+  const auto active_schema = resolve_active_schema(config.catalog.get(), sql_plan.table_id);
+  if (!active_schema.has_value())
+    return common::make_unexpected(active_schema.error());
+  if (active_schema->get().schema_id() != sql_plan.destination_schema_id) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kUnavailable, "replicated grouped SQL schema publication differs"});
+  }
+  std::size_t planned_tablets{};
+  for (const raft::TabletPlacementMetadata& placement : config.catalog.get().tablet_placements) {
+    if (placement.table_id == sql_plan.table_id) {
+      ++planned_tablets;
+      if (planned_tablets > config.binding_limits.maximum_fragments) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kResourceExhausted,
+                           "replicated grouped SQL table exceeds the fragment limit"});
+      }
+    }
+  }
+  if (planned_tablets == 0U) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kNotFound, "replicated grouped SQL table has no committed tablets"});
+  }
+
+  try {
+    query::DistributedVectorQueryPlan plan{
+        .query_id = query_id,
+        .read_policy = {.consistency = query::DistributedReadConsistency::kLeaderLinearizable},
+        .intent = sql_plan.intent,
+    };
+    plan.fragments.reserve(planned_tablets);
+    for (const raft::TabletPlacementMetadata& placement : config.catalog.get().tablet_placements) {
+      if (placement.table_id != sql_plan.table_id)
+        continue;
+      const auto group =
+          std::ranges::lower_bound(config.catalog.get().tablet_group_bindings, placement.tablet_id,
+                                   {}, &raft::TabletGroupBindingMetadata::tablet_id);
+      const auto tablet = std::ranges::lower_bound(snapshot.tablets(), placement.tablet_id, {},
+                                                   &manifest::TemporalTabletDescriptor::tablet_id);
+      if (group == config.catalog.get().tablet_group_bindings.end() ||
+          group->tablet_id != placement.tablet_id || tablet == snapshot.tablets().end() ||
+          tablet->tablet_id != placement.tablet_id) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kUnavailable,
+                           "replicated grouped SQL tablet authority is incomplete"});
+      }
+      const auto group_authority = std::ranges::lower_bound(
+          authority, group->group_id, {},
+          [](const ReplicatedReadAuthority& value) { return value.observation.group_id; });
+      if (group_authority == authority.end() ||
+          group_authority->observation.group_id != group->group_id) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kUnavailable,
+                           "replicated grouped SQL tablet read authority is missing"});
+      }
+      if (tablet->table_id != sql_plan.table_id ||
+          tablet->recovery_schema_id != sql_plan.destination_schema_id ||
+          tablet->commit_source != manifest::ManifestCommitSource::kRaft ||
+          tablet->source_id != group->group_id) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kUnavailable,
+                           "replicated grouped SQL Manifest tablet differs from metadata"});
+      }
+      plan.fragments.push_back(
+          {.tablet_id = placement.tablet_id,
+           .minimum_event_time = std::numeric_limits<std::int64_t>::min(),
+           .maximum_event_time = std::numeric_limits<std::int64_t>::max(),
+           .leader_node = group_authority->observation.node_id,
+           .local_applied_position = tablet->durable_position,
+           .known_leader_commit_position = group_authority->observation.commit_index});
+    }
+    const std::size_t manifest_tablets = static_cast<std::size_t>(std::ranges::count(
+        snapshot.tablets(), sql_plan.table_id, &manifest::TemporalTabletDescriptor::table_id));
+    if (manifest_tablets != plan.fragments.size()) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kUnavailable,
+                         "replicated grouped SQL catalog and Manifest tablet sets differ"});
+    }
+    return plan;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "replicated grouped SQL plan allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "replicated grouped SQL plan exceeds container limits"});
+  }
 }
 
 [[nodiscard]] common::Result<cluster::DistributedGroupedQueryTcpExecution>
@@ -292,17 +430,31 @@ create_replicated_distributed_vector_grouped_aggregate_query_v2(
   auto authority = acquire_catalog_authority(config);
   if (!authority.has_value())
     return common::make_unexpected(authority.error());
-  auto compatible = query::bind_group_backed_distributed_vector_snapshot_v2(
-      plan, std::move(snapshot),
-      {.catalog = config.catalog,
-       .table_id = config.table_id,
-       .group_authorities = *authority,
-       .destination_column_ordinals = config.destination_column_ordinals,
-       .event_time_predicate = config.event_time_predicate},
-      std::move(result_schema), config.binding_limits);
-  if (!compatible.has_value())
-    return common::make_unexpected(compatible.error());
-  return create_vector_grouped_aggregate_tcp_execution(std::move(*compatible), config);
+  return bind_and_create_vector_grouped_aggregate_tcp_execution(
+      plan, std::move(snapshot), std::move(result_schema), *authority, config);
+}
+
+common::Result<cluster::DistributedVectorGroupedAggregateQueryTcpExecutionV2>
+create_replicated_distributed_vector_grouped_aggregate_sql_query_v2(
+    const common::Uuid query_id, query::DistributedVectorGroupedAggregateSqlPlan&& sql_plan,
+    manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const ReplicatedDistributedVectorGroupedAggregateQueryConfigV2& config) {
+  const common::Status config_status = validate_config(config);
+  if (!config_status.is_ok())
+    return common::make_unexpected(config_status);
+  const common::Status binding_status =
+      validate_vector_grouped_aggregate_sql_binding(query_id, sql_plan, config);
+  if (!binding_status.is_ok())
+    return common::make_unexpected(binding_status);
+  auto authority = acquire_catalog_authority(config);
+  if (!authority.has_value())
+    return common::make_unexpected(authority.error());
+  auto plan =
+      prepare_vector_grouped_aggregate_sql_plan(query_id, sql_plan, snapshot, *authority, config);
+  if (!plan.has_value())
+    return common::make_unexpected(plan.error());
+  return bind_and_create_vector_grouped_aggregate_tcp_execution(
+      *plan, std::move(snapshot), std::move(sql_plan.result_schema), *authority, config);
 }
 
 common::Result<cluster::DistributedVectorGroupedAggregateQueryTcpExecutionV2>
