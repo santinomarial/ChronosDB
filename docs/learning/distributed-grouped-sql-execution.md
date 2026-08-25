@@ -17,6 +17,13 @@ row exchange and the local bounded physical GROUP BY engine. It deliberately doe
 result, synchronously borrows the immutable physical plan, owns the output schema, and returns the
 same all-or-none Native batch product used by distributed row finalization.
 
+`lower_bound_sql_select_to_distributed_vector_grouped_aggregate()` is the distinct scalable-path
+entry point for direct grouped SQL. It owns the unique source projection, remapped direct group
+keys and aggregate inputs, exact event-time range, global selected-output ordering and limit, and
+the typed result schema consumed by the grouped sufficient-state scheduler. It deliberately
+returns `NOT_SUPPORTED` for computed or reordered shapes so the caller can select the row-backed
+plan explicitly.
+
 ## Execution sequence
 
 ```text
@@ -99,18 +106,13 @@ group state can publish output. Lazy decoding then keeps peak canonical input ow
 batch. The second linear pass is an explicit recoverability and memory-bound tradeoff.
 
 **What remains for scalable distributed grouping?** The versioned multi-key, all-type grouped-state
-frame now exists, and the local grouped hash/equality/state table now exposes stable borrowed groups
-to its synchronous encoder without a second grouping oracle. That same query-accounted table now
-coalesces decoded equal-key states and finalizes rows; every logical type, signed zero, and NaN share
-the physical-row identity rules. A bounded in-memory coordinator now retains exact retry identity,
-requires terminal closure for every planned tablet, merges in plan order rather than arrival order,
-and seals input before output. A proof-revalidated real-CSEG worker now executes direct projected
-keys and aggregate inputs through the same table and constructs bounded canonical streams.
-Computed pre-group expressions still need a physical-plan split; the service path still needs
-owned scheduler request composition, partition/shuffle policy, authenticated transport, and fault
-evidence. The compatible Fragment-v2 snapshot now retains exact cross-tablet-equal grouped key and
-aggregate definitions rather than asking those later owners to reconstruct them. The row-backed
-path remains the differential oracle for that work.
+frame, shared query-accounted group table, plan-ordered coordinator, proof-revalidated real-CSEG
+worker, authenticated transport, all-tablet scheduler, and atomic Native finalizer are implemented.
+The direct SQL lowerer now produces their exact projection/key/aggregate/result contract without a
+second binding oracle. Replicated SQL preparation must next construct the plan tablets from one
+coherent authority and Manifest publication. Computed pre-group and final expressions still need
+an owned physical-plan split, and partitioned shuffle routing plus broader fault/measurement
+evidence remain open. The row-backed path remains the differential oracle for that work.
 
 ### Portable sufficient-state execution boundary
 

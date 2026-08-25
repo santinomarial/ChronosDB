@@ -42,6 +42,15 @@ struct DistributedVectorGroupedSqlLoweringLimits {
   PhysicalSelectLoweringLimits physical{};
 };
 
+struct DistributedVectorGroupedAggregateSqlLoweringLimits {
+  std::uint32_t maximum_projection_columns{distributed_vector_plan_format::kMaximumInputColumns};
+  std::uint32_t maximum_group_keys{distributed_vector_plan_format::kMaximumGroupKeys};
+  std::uint32_t maximum_aggregates{distributed_vector_plan_format::kMaximumAggregates};
+  std::uint32_t maximum_order_keys{distributed_vector_plan_format::kMaximumOrderKeys};
+  std::uint32_t maximum_result_name_bytes{
+      distributed_vector_result_schema_format::kMaximumNameLength};
+};
+
 struct DistributedVectorRowSourceOutput {
   std::uint32_t worker_output_index{};
 
@@ -173,6 +182,28 @@ struct DistributedVectorGroupedSqlPlan {
 [[nodiscard]] SqlResult<DistributedVectorGroupedSqlPlan>
 lower_bound_sql_select_to_distributed_vector_grouped(
     const BoundSqlSelect& select, DistributedVectorGroupedSqlLoweringLimits limits = {});
+
+// Direct sufficient-state GROUP BY intent for later authority binding. Group keys must be direct
+// unique source columns and appear first in SELECT in GROUP BY order. Remaining outputs must be
+// direct supported aggregate calls. WHERE may contain only an exact event-time range; ORDER BY may
+// name only selected raw key/aggregate outputs. Any computed pre-group or final expression,
+// reordered/omitted key, or hidden order expression fails closed so callers may deliberately use
+// the row-backed grouped plan instead.
+struct DistributedVectorGroupedAggregateSqlPlan {
+  schema::TableId table_id;
+  schema::SchemaId destination_schema_id;
+  std::vector<std::uint32_t> destination_column_ordinals;
+  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  DistributedVectorPlanIntent intent;
+  DistributedVectorResultSchema result_schema;
+
+  friend bool operator==(const DistributedVectorGroupedAggregateSqlPlan&,
+                         const DistributedVectorGroupedAggregateSqlPlan&) = default;
+};
+
+[[nodiscard]] SqlResult<DistributedVectorGroupedAggregateSqlPlan>
+lower_bound_sql_select_to_distributed_vector_grouped_aggregate(
+    const BoundSqlSelect& select, DistributedVectorGroupedAggregateSqlLoweringLimits limits = {});
 
 } // namespace chronos::query
 

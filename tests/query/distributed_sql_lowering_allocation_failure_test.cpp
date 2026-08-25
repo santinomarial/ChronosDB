@@ -209,5 +209,34 @@ TEST(DistributedSqlLoweringAllocationFailureTest,
   EXPECT_TRUE(reached_success);
 }
 
+TEST(DistributedSqlLoweringAllocationFailureTest,
+     ClassifiesEveryDirectGroupedAggregateOwnedAllocationFailure) {
+  BoundSqlSelect select = bound_select(
+      "SELECT value, count(*) AS rows, sum(value) AS total FROM metrics WHERE ts BETWEEN "
+      "TIMESTAMP '1970-01-01 00:00:00.000000001Z' AND "
+      "TIMESTAMP '1970-01-01 00:00:00.000000009Z' GROUP BY value "
+      "ORDER BY total DESC, value LIMIT 2");
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    std::optional<SqlResult<DistributedVectorGroupedAggregateSqlPlan>> result;
+    std::size_t observed = 0U;
+    {
+      ::chronos::test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(lower_bound_sql_select_to_distributed_vector_grouped_aggregate(select));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+    EXPECT_GT(observed, 0U);
+    if (result->has_value()) {
+      reached_success = true;
+      break;
+    }
+    EXPECT_EQ(result->error().code(), SqlDiagnosticCode::kResourceLimit);
+    EXPECT_EQ(result->error().status().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
 } // namespace
 } // namespace chronos::query

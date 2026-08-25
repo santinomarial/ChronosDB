@@ -1435,8 +1435,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   leader-linearizable and bounded-stale constructors now acquire metadata coverage, bind one
   compatible Manifest authority and result schema, resolve authenticated committed routes, and
   transfer the complete bounded lifecycle into that scheduler. Mutable Native sufficient-state
-  worker integration, computed pre-group/final projection splitting, and shuffle routing remain
-  deferred.
+  worker integration remains deferred. Schema-bound grouped SQL now has a separate direct-input
+  lowerer that emits the exact unique projection, key/aggregate intent, event-time predicate,
+  selected-output global order/limit, and typed result schema consumed by this scheduler. It fails
+  closed to the row-backed path for computed/reordered/hidden semantics. Replicated SQL plan-tablet
+  preparation, computed pre-group/final projection splitting, and shuffle routing remain deferred.
   The
   distinct
   bounded-stale constructor carries correlated leader/follower observations through the same

@@ -174,9 +174,7 @@ TEST(DistributedSqlLoweringTest, OwnsSourceIndependentOutputsAndARealRowAnchor) 
   EXPECT_FALSE(seven.is_null);
   EXPECT_EQ(seven_reader.read_i64_le(), 7);
   const auto& word = std::get<DistributedVectorRowConstantOutput>(projection.outputs[1]);
-  EXPECT_EQ(std::string_view(reinterpret_cast<const char*>(word.canonical_value.data()),
-                             word.canonical_value.size()),
-            "OK");
+  EXPECT_EQ(word.canonical_value, (std::vector<std::byte>{std::byte{0x4f}, std::byte{0x4b}}));
   EXPECT_EQ(std::get<DistributedVectorRowSourceOutput>(projection.outputs[2]).worker_output_index,
             0U);
   ASSERT_EQ(projection.result_schema.columns.size(), 3U);
@@ -458,6 +456,7 @@ TEST(DistributedSqlLoweringTest, AnchorsCountStarAndRejectsUnsupportedAggregateS
       "SELECT value FROM metrics", "SELECT sum(value + 1) FROM metrics",
       "SELECT sum(value) FROM metrics GROUP BY label",
       "SELECT sum(value) AS total FROM metrics ORDER BY avg(value)",
+      // NOLINTNEXTLINE(bugprone-suspicious-missing-comma)
       "SELECT sum(value) FROM metrics FOR SYSTEM_TIME AS OF "
       "TIMESTAMP '1970-01-01 00:00:00Z'"};
   for (const std::string_view statement : statements) {
@@ -533,6 +532,89 @@ TEST(DistributedSqlLoweringTest, LowersCompleteSourceForCoordinatorGroupedExecut
       select, {.rows = {.maximum_projection_columns = 1U}});
   ASSERT_FALSE(bounded.has_value());
   EXPECT_EQ(bounded.error().code(), SqlDiagnosticCode::kResourceLimit);
+}
+
+TEST(DistributedSqlLoweringTest, LowersDirectGroupedSufficientStateIntent) {
+  BoundSqlSelect select =
+      bind("SELECT label AS category, value AS raw_value, count(*) AS rows, "
+           "sum(value) AS total, min(label) AS first_label FROM metrics WHERE ts BETWEEN "
+           "TIMESTAMP '1970-01-01 00:00:00.000000002Z' AND "
+           "TIMESTAMP '1970-01-01 00:00:00.000000009Z' GROUP BY label, value "
+           "ORDER BY total DESC, category ASC NULLS FIRST, total ASC LIMIT 3");
+  auto lowered = lower_bound_sql_select_to_distributed_vector_grouped_aggregate(select);
+  ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
+  EXPECT_EQ(lowered->table_id, id<schema::TableId>(1U));
+  EXPECT_EQ(lowered->destination_schema_id, id<schema::SchemaId>(2U));
+  EXPECT_EQ(lowered->destination_column_ordinals, (std::vector<std::uint32_t>{1U, 2U}));
+  ASSERT_TRUE(lowered->event_time_predicate.has_value());
+  EXPECT_EQ(lowered->event_time_predicate->lower,
+            (cseg::EventTimeBound{.value = 2, .inclusive = true}));
+  EXPECT_EQ(lowered->event_time_predicate->upper,
+            (cseg::EventTimeBound{.value = 9, .inclusive = true}));
+  EXPECT_EQ(lowered->intent.mode, DistributedVectorPlanMode::kGroupedAggregate);
+  EXPECT_EQ(lowered->intent.group_key_input_indices, (std::vector<std::uint32_t>{0U, 1U}));
+  ASSERT_EQ(lowered->intent.aggregates.size(), 3U);
+  EXPECT_EQ(lowered->intent.aggregates[0],
+            (DistributedVectorAggregateIntent{.operation = VectorAggregateOperation::kCountStar,
+                                              .input_index = std::nullopt}));
+  EXPECT_EQ(lowered->intent.aggregates[1],
+            (DistributedVectorAggregateIntent{.operation = VectorAggregateOperation::kSum,
+                                              .input_index = 1U}));
+  EXPECT_EQ(lowered->intent.aggregates[2],
+            (DistributedVectorAggregateIntent{.operation = VectorAggregateOperation::kMinimum,
+                                              .input_index = 0U}));
+  ASSERT_EQ(lowered->intent.order_keys.size(), 2U);
+  EXPECT_EQ(lowered->intent.order_keys[0],
+            (DistributedVectorOrderKey{.output_index = 3U,
+                                       .direction = PhysicalSortDirection::kDescending,
+                                       .null_placement = ScalarNullPlacement::kFirst}));
+  EXPECT_EQ(lowered->intent.order_keys[1],
+            (DistributedVectorOrderKey{.output_index = 0U,
+                                       .direction = PhysicalSortDirection::kAscending,
+                                       .null_placement = ScalarNullPlacement::kFirst}));
+  EXPECT_EQ(lowered->intent.limit, 3U);
+  ASSERT_EQ(lowered->result_schema.columns.size(), 5U);
+  EXPECT_EQ(lowered->result_schema.columns[0].name, "category");
+  EXPECT_EQ(lowered->result_schema.columns[1].name, "raw_value");
+  EXPECT_EQ(lowered->result_schema.columns[2].name, "rows");
+  EXPECT_EQ(lowered->result_schema.columns[3].name, "total");
+  EXPECT_EQ(lowered->result_schema.columns[4].name, "first_label");
+  EXPECT_EQ(lowered->result_schema.columns[0].type.kind(), schema::LogicalTypeKind::kString);
+  EXPECT_TRUE(lowered->result_schema.columns[0].nullable);
+  EXPECT_EQ(lowered->result_schema.columns[2].type.kind(), schema::LogicalTypeKind::kInt64);
+  EXPECT_FALSE(lowered->result_schema.columns[2].nullable);
+}
+
+TEST(DistributedSqlLoweringTest, RejectsNonDirectGroupedSufficientStateSemanticsAndBounds) {
+  const std::vector<std::string_view> statements{
+      "SELECT value % 3 AS bucket, count(*) FROM metrics GROUP BY value % 3",
+      "SELECT count(*) AS rows, label FROM metrics GROUP BY label",
+      "SELECT label, sum(value + 1) FROM metrics GROUP BY label",
+      "SELECT label, sum(value) + 1 FROM metrics GROUP BY label",
+      "SELECT label, count(*) FROM metrics WHERE value > 0 GROUP BY label",
+      "SELECT label, count(*) FROM metrics GROUP BY label ORDER BY max(value)"};
+  for (const std::string_view statement : statements) {
+    SCOPED_TRACE(statement);
+    auto lowered = lower_bound_sql_select_to_distributed_vector_grouped_aggregate(bind(statement));
+    ASSERT_FALSE(lowered.has_value());
+    EXPECT_EQ(lowered.error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
+    EXPECT_EQ(lowered.error().status().code(), common::StatusCode::kNotSupported);
+  }
+
+  BoundSqlSelect direct =
+      bind("SELECT label, value, count(*) AS rows, sum(value) AS total FROM metrics "
+           "GROUP BY label, value ORDER BY total, label");
+  const std::vector<DistributedVectorGroupedAggregateSqlLoweringLimits> limits{
+      {.maximum_projection_columns = 1U},
+      {.maximum_group_keys = 1U},
+      {.maximum_aggregates = 1U},
+      {.maximum_order_keys = 1U},
+      {.maximum_result_name_bytes = 1U}};
+  for (const auto& limit : limits) {
+    auto lowered = lower_bound_sql_select_to_distributed_vector_grouped_aggregate(direct, limit);
+    ASSERT_FALSE(lowered.has_value());
+    EXPECT_EQ(lowered.error().code(), SqlDiagnosticCode::kResourceLimit);
+  }
 }
 
 TEST(DistributedSqlLoweringTest, OwnsGeneralGlobalAggregatePredicates) {
