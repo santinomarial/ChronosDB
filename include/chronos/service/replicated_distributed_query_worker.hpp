@@ -5,6 +5,7 @@
 #include "chronos/cluster/distributed_mutable_vector_query_transport.hpp"
 #include "chronos/cluster/distributed_query_transport.hpp"
 #include "chronos/cluster/distributed_vector_aggregate_query_transport_v2.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_query_transport_v2.hpp"
 #include "chronos/cluster/distributed_vector_query_transport_v2.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/manifest/storage.hpp"
@@ -274,6 +275,42 @@ private:
   explicit ReplicatedDistributedVectorAggregateQueryWorkerV2(
       ReplicatedDistributedVectorAggregateQueryWorkerConfigV2 config) noexcept;
   ReplicatedDistributedVectorAggregateQueryWorkerConfigV2 config_;
+};
+
+struct ReplicatedDistributedVectorGroupedAggregateQueryWorkerConfigV2 {
+  raft::NodeId local_node_id{};
+  const manifest::ManifestStorage* storage{};
+  ReplicatedDistributedVectorQueryWorkerContextProviderV2* context_provider{};
+  query::DistributedVectorGroupedAggregateWorkerLimitsV2 limits;
+};
+
+// Production grouped sufficient-state counterpart. Authority binding and execution independently
+// acquire fresh coherent contexts and enter the same proof-revalidating real-CSEG boundary.
+class ReplicatedDistributedVectorGroupedAggregateQueryWorkerV2 final
+    : public cluster::DistributedVectorGroupedAggregateQueryWorkerServiceV2 {
+public:
+  ReplicatedDistributedVectorGroupedAggregateQueryWorkerV2() = delete;
+  ReplicatedDistributedVectorGroupedAggregateQueryWorkerV2(
+      const ReplicatedDistributedVectorGroupedAggregateQueryWorkerV2&) = delete;
+  ReplicatedDistributedVectorGroupedAggregateQueryWorkerV2&
+  operator=(const ReplicatedDistributedVectorGroupedAggregateQueryWorkerV2&) = delete;
+  ReplicatedDistributedVectorGroupedAggregateQueryWorkerV2(
+      ReplicatedDistributedVectorGroupedAggregateQueryWorkerV2&&) noexcept = default;
+  ReplicatedDistributedVectorGroupedAggregateQueryWorkerV2&
+  operator=(ReplicatedDistributedVectorGroupedAggregateQueryWorkerV2&&) noexcept = default;
+  ~ReplicatedDistributedVectorGroupedAggregateQueryWorkerV2() override = default;
+
+  [[nodiscard]] static common::Result<ReplicatedDistributedVectorGroupedAggregateQueryWorkerV2>
+  create(ReplicatedDistributedVectorGroupedAggregateQueryWorkerConfigV2 config);
+  [[nodiscard]] common::Result<query::DistributedVectorGroupedAggregateAuthority>
+  bind_authority(const query::DistributedVectorFragmentDispatchV2& dispatch) override;
+  [[nodiscard]] common::Result<query::DistributedVectorGroupedAggregateWorkerResultV2>
+  execute(const query::DistributedVectorFragmentDispatchV2& dispatch) override;
+
+private:
+  explicit ReplicatedDistributedVectorGroupedAggregateQueryWorkerV2(
+      ReplicatedDistributedVectorGroupedAggregateQueryWorkerConfigV2 config) noexcept;
+  ReplicatedDistributedVectorGroupedAggregateQueryWorkerConfigV2 config_;
 };
 
 } // namespace chronos::service

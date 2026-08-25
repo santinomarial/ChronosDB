@@ -1421,8 +1421,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   into an authenticated TLS carrier, and closes that carrier before its descriptor on failure. A
   bounded inbound TCP owner now adds finite listener admission, stable descriptor/carrier records,
   per-poll work limits, connection metrics, and ordered shutdown while preserving the authenticated
-  grouped receiver boundary. Computed pre-group plan splitting, production service composition,
-  all-tablet scheduling, final grouped SQL integration, and shuffle routing remain deferred. The
+  grouped receiver boundary. A production service adapter reacquires coherent Manifest/schema/
+  placement/group/barrier authority independently for binding and real-CSEG execution, while one
+  heap-stable owner preserves worker/receiver/server dependency order across public moves. Computed
+  pre-group plan splitting, all-tablet scheduling, final grouped SQL integration, and shuffle
+  routing remain deferred. The
   distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;

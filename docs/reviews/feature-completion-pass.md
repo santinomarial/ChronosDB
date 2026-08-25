@@ -927,8 +927,21 @@ Focused executions passed:
   normally and under ASan/UBSan; the full cluster and allocation-failure suites pass 242 of 242 and
   31 of 31. Header self-containment, formatting, and whitespace checks pass. LLVM 18 static analysis
   remains blocked by the installed macOS 26 libc++ headers with no project-local finding emitted
-  first. Production inbound composition, multi-address routing, cancellation, and all-tablet
-  scheduling remain.
+  first. Production inbound composition is continued immediately below; multi-address routing,
+  cancellation, and all-tablet scheduling remain.
+- Owned grouped sufficient-state TCP-service continuation: a production adapter now acquires a fresh
+  coherent Manifest/schema/placement/group/barrier context for binding-only authority and again for
+  proof-revalidated real-CSEG execution. A separate move-only owner heap-stabilizes that worker, the
+  authenticated receiver, and bounded TCP server in dependency order and delegates endpoint,
+  polling, metrics, and shutdown without accepting external worker pointers. A real installed-CSEG
+  test changes placement between bind and execute to prove fresh rejection, restores authority,
+  produces two FLOAT64/COUNT groups, moves the packaged service, and then completes the same result
+  through mutual TLS with both fingerprints and exact completed metrics. The focused case passes
+  normally and under ASan/UBSan; the full service and service allocation-failure suites pass 107 of
+  107 and 4 of 4, while the cluster suite remains green at 242 of 242. Header self-containment,
+  formatting, and whitespace checks pass. LLVM 18 static analysis remains blocked by the installed
+  macOS 26 libc++ headers after two project-local test findings were corrected. Multi-address
+  routing, cancellation, all-tablet scheduling, and final grouped Native integration remain.
 - Bounded global vector-row finalization continuation: one consuming final pass independently
   validates row-mode plan/schema shape, tablet-stream closure, native descriptors, and exact
   row/message/input/working/output bounds before decoded-state allocation. It stably orders every

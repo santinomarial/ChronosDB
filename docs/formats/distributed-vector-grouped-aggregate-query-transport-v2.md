@@ -2,8 +2,9 @@
 
 > **Status:** accepted and implemented exact response codec, partial-I/O contract, authenticated
 > receiver, finite sender/retry owner, mutual-TLS session carrier, outbound nonblocking TCP owner,
-> and bounded inbound TCP server. Requests reuse the exact Fragment-v2 `CHDVREQ2` carrier. Multi-
-> tablet scheduling and production service composition remain separate follow-on boundaries.
+> bounded inbound TCP server, and production real-CSEG inbound composition. Requests reuse the
+> exact Fragment-v2 `CHDVREQ2` carrier. Multi-tablet scheduling remains a separate follow-on
+> boundary.
 
 All integers are unsigned little-endian. Reserved bytes are zero. CRC32C detects accidental damage
 and is not authentication. The nested grouped payload retains its own independent checksums.
@@ -115,5 +116,9 @@ The bounded TCP server owns the listener, TLS context, fixed poll storage, finit
 descriptor/carrier records, saturating metrics, and ordered shutdown. Every admitted session still
 enters the same authenticated grouped receiver and publishes no partial stream.
 
+The production inbound owner heap-stabilizes the proof-revalidating real-CSEG worker, receiver, and
+server in dependency order. Binding and execution reacquire independent coherent Manifest, schema,
+placement, group, and barrier authority; a changed proof cannot reuse the binding result.
+
 The transport still owns no multi-address route, wall-clock source, multi-tablet scheduler,
-cancellation, production service composition, or process lifecycle.
+cancellation, or process lifecycle.

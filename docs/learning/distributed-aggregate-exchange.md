@@ -440,9 +440,11 @@ retains one exact cross-tablet-equal grouped key/state authority vector beside i
 result schema. The grouped receiver, finite sender, connected mutual-TLS carrier, and one-attempt
 nonblocking TCP client now preserve that exact authority through a complete remote attempt.
 A bounded grouped TCP server now adds finite listener admission, stable accepted descriptor/carrier
-records, per-poll work bounds, saturating metrics, and TLS-before-descriptor shutdown. Production
-receiver/worker/server composition and all-tablet TCP scheduling remain separate, so production
-sufficient-state grouped queries continue to fail closed.
+records, per-poll work bounds, saturating metrics, and TLS-before-descriptor shutdown. A production
+owner now adapts the proof-revalidating real-CSEG worker through independently fresh binding and
+execution contexts, then heap-stabilizes worker, receiver, and server in reverse-safe dependency
+order. All-tablet TCP scheduling remains separate, so coordinator-driven production sufficient-
+state grouped queries continue to fail closed.
 The compatible Fragment-v2 snapshot now retains that definition vector once after deriving it under
 each tablet's exact destination schema and rejecting any cross-tablet difference. This matters when
 COUNT, AVG, or variance result descriptors hide the input type; later owners no longer need to

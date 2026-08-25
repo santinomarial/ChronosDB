@@ -1,6 +1,7 @@
 #include "chronos/cluster/distributed_grouped_query_tcp_client.hpp"
 #include "chronos/cluster/distributed_query_tcp_client.hpp"
 #include "chronos/cluster/distributed_vector_aggregate_query_tcp_client_v2.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_query_tcp_client_v2.hpp"
 #include "chronos/cluster/distributed_vector_query_tcp_client_v2.hpp"
 #include "chronos/cluster/raft_observation_tcp_server.hpp"
 #include "chronos/common/byte_reader.hpp"
@@ -18,6 +19,7 @@
 #include "chronos/service/replicated_distributed_query_tcp_server.hpp"
 #include "chronos/service/replicated_distributed_query_worker.hpp"
 #include "chronos/service/replicated_distributed_vector_aggregate_query_tcp_server_v2.hpp"
+#include "chronos/service/replicated_distributed_vector_grouped_aggregate_query_tcp_server_v2.hpp"
 #include "chronos/service/replicated_distributed_vector_query_tcp_server_v2.hpp"
 #include "cseg/cseg_test_fixture.hpp"
 
@@ -120,7 +122,7 @@ private:
 
 class NodeAuthorizer final : public cluster::ClusterNodePrincipalAuthorizer {
 public:
-  // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+  // NOLINTNEXTLINE(readability-convert-member-functions-to-static,bugprone-easily-swappable-parameters)
   common::Result<bool> authorize_node(const std::uint64_t principal_id,
                                       const raft::NodeId node_id) const override {
     return common::Result<bool>{(principal_id == 91U && node_id == 1U) ||
@@ -257,9 +259,9 @@ public:
     raft_group_id_ = group_id;
   }
 
-  void set_authority(raft::TabletPlacementMetadata placement,
+  void set_authority(const raft::TabletPlacementMetadata& placement,
                      std::optional<raft::ReadBarrier> barrier) {
-    placement_ = std::move(placement);
+    placement_ = placement;
     barrier_ = barrier;
   }
 
@@ -624,6 +626,136 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
   EXPECT_TRUE(aggregate_vector_server_authenticator.saw_fingerprint);
   EXPECT_EQ(moved_aggregate_vector_server.metrics().completed_connections, 1U);
   EXPECT_TRUE(moved_aggregate_vector_server.shutdown().is_ok());
+
+  EXPECT_EQ(ReplicatedDistributedVectorGroupedAggregateQueryWorkerV2::create({}).error().code(),
+            common::StatusCode::kInvalidArgument);
+  auto grouped_vector = vector_dispatch;
+  grouped_vector.dispatch.plan = {
+      .mode = query::DistributedVectorPlanMode::kGroupedAggregate,
+      .group_key_input_indices = {1U},
+      .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}}};
+  grouped_vector.result_schema = {
+      .columns = {{.name = "value", .type = schema_value->columns()[1].type(), .nullable = false},
+                  {.name = "count",
+                   .type = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
+                   .nullable = false}}};
+  auto grouped_vector_worker = ReplicatedDistributedVectorGroupedAggregateQueryWorkerV2::create(
+      {.local_node_id = 11U, .storage = &*storage, .context_provider = &provider});
+  ASSERT_TRUE(grouped_vector_worker.has_value()) << grouped_vector_worker.error().to_string();
+  auto grouped_authority = grouped_vector_worker->bind_authority(grouped_vector);
+  ASSERT_TRUE(grouped_authority.has_value()) << grouped_authority.error().to_string();
+  ASSERT_EQ(grouped_authority->keys.size(), 1U);
+  ASSERT_EQ(grouped_authority->aggregates.size(), 1U);
+  EXPECT_EQ(grouped_authority->keys.front().type, schema_value->columns()[1].type());
+  EXPECT_EQ(grouped_authority->aggregates.front().operation,
+            query::VectorAggregateOperation::kCountStar);
+  provider.set_placement_epoch(13U);
+  EXPECT_EQ(grouped_vector_worker->execute(grouped_vector).error().code(),
+            common::StatusCode::kUnavailable);
+  provider.set_placement_epoch(12U);
+  auto grouped_vector_result = grouped_vector_worker->execute(grouped_vector);
+  ASSERT_TRUE(grouped_vector_result.has_value()) << grouped_vector_result.error().to_string();
+  ASSERT_EQ(grouped_vector_result->authority.keys.size(), grouped_authority->keys.size());
+  EXPECT_EQ(grouped_vector_result->authority.keys.front().column_ordinal,
+            grouped_authority->keys.front().column_ordinal);
+  EXPECT_EQ(grouped_vector_result->authority.keys.front().type,
+            grouped_authority->keys.front().type);
+  EXPECT_EQ(grouped_vector_result->authority.keys.front().nullable,
+            grouped_authority->keys.front().nullable);
+  EXPECT_EQ(grouped_vector_result->authority.aggregates, grouped_authority->aggregates);
+  EXPECT_EQ(grouped_vector_result->group_count, 2U);
+  ASSERT_EQ(grouped_vector_result->messages.size(), 2U);
+
+  NodeAuthorizer grouped_vector_authorizer;
+  EXPECT_EQ(ReplicatedDistributedVectorGroupedAggregateQueryTcpServerV2::start({}).error().code(),
+            common::StatusCode::kInvalidArgument);
+  Authenticator grouped_vector_client_authenticator{91U};
+  Authenticator grouped_vector_server_authenticator{92U};
+  const std::size_t grouped_vector_calls_before_tcp = provider.vector_calls;
+  auto grouped_vector_server = ReplicatedDistributedVectorGroupedAggregateQueryTcpServerV2::start(
+      {.worker = {.local_node_id = 11U, .storage = &*storage, .context_provider = &provider},
+       .listener = {},
+       .tls = tls_server_config(),
+       .authenticator = &grouped_vector_client_authenticator,
+       .node_authorizer = &grouped_vector_authorizer,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000},
+                          .maximum_response_frames = 4U,
+                          .maximum_response_bytes = std::size_t{1024U} * 1024U},
+       .maximum_connections = 4U,
+       .maximum_accepts_per_poll = 4U});
+  ASSERT_TRUE(grouped_vector_server.has_value()) << grouped_vector_server.error().to_string();
+  auto moved_grouped_vector_server = std::move(*grouped_vector_server);
+  EXPECT_FALSE(grouped_vector_server->is_running());
+  EXPECT_EQ(grouped_vector_server->poll_once(std::chrono::milliseconds{0}).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(grouped_vector_server->shutdown().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(moved_grouped_vector_server.is_running());
+  auto grouped_vector_tls_context = network::TlsClientContext::create(tls_client_config());
+  auto grouped_vector_request = cluster::encode_distributed_vector_query_request_v2(
+      {.source_node_id = 1U, .target_node_id = 11U, .dispatch = grouped_vector});
+  auto grouped_vector_resources = query::QueryResourceContext::create(1U << 20U);
+  ASSERT_TRUE(grouped_vector_tls_context.has_value());
+  ASSERT_TRUE(grouped_vector_request.has_value());
+  ASSERT_TRUE(grouped_vector_resources.has_value());
+  auto client_keys = grouped_authority->keys;
+  auto client_aggregates = grouped_authority->aggregates;
+  auto grouped_vector_client = cluster::DistributedVectorGroupedAggregateQueryTcpClientV2::begin(
+      {1U, 11U, std::move(*grouped_vector_request)}, std::move(client_keys),
+      std::move(client_aggregates), std::move(*grouped_vector_resources),
+      {.remote_endpoint = moved_grouped_vector_server.bound_endpoint(),
+       .tls_context = std::addressof(*grouped_vector_tls_context),
+       .carrier = {.authenticator = &grouped_vector_server_authenticator,
+                   .node_authorizer = &grouped_vector_authorizer,
+                   .peer_ipv4_address = {127U, 0U, 0U, 1U},
+                   .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                              .exchange_timeout = std::chrono::milliseconds{1000},
+                              .maximum_response_frames = 4U,
+                              .maximum_response_bytes = std::size_t{1024U} * 1024U}},
+       .connect_timeout = std::chrono::milliseconds{1000}},
+      cluster::DistributedVectorGroupedAggregateQueryTcpClientV2::TimePoint::clock::now());
+  ASSERT_TRUE(grouped_vector_client.has_value()) << grouped_vector_client.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       grouped_vector_client->state() !=
+           cluster::DistributedVectorGroupedAggregateQueryTcpClientStateV2::kComplete;
+       ++iteration) {
+    const auto interest = grouped_vector_client->interest();
+    pollfd descriptor{.fd = grouped_vector_client->descriptor(),
+                      .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
+                                                   (interest.want_write ? POLLOUT : 0))};
+    ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
+    ASSERT_TRUE(
+        grouped_vector_client
+            ->on_ready(
+                (descriptor.revents & POLLIN) != 0, (descriptor.revents & POLLOUT) != 0,
+                cluster::DistributedVectorGroupedAggregateQueryTcpClientV2::TimePoint::clock::now())
+            .is_ok())
+        << grouped_vector_client->failure().to_string();
+    ASSERT_TRUE(moved_grouped_vector_server.poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(grouped_vector_client->state(),
+            cluster::DistributedVectorGroupedAggregateQueryTcpClientStateV2::kComplete)
+      << grouped_vector_client->failure().to_string();
+  const auto grouped_vector_tcp_responses = grouped_vector_client->responses();
+  ASSERT_TRUE(grouped_vector_tcp_responses.has_value())
+      << grouped_vector_tcp_responses.error().to_string();
+  ASSERT_EQ(grouped_vector_tcp_responses->size(), 2U);
+  for (std::size_t ordinal = 0U; ordinal < grouped_vector_tcp_responses->size(); ++ordinal) {
+    ASSERT_TRUE((*grouped_vector_tcp_responses)[ordinal].payload.has_value());
+    const auto& payload = *(*grouped_vector_tcp_responses)[ordinal].payload;
+    EXPECT_EQ(payload.position().group_ordinal, ordinal);
+    EXPECT_EQ(payload.position().group_count, 2U);
+    EXPECT_EQ(payload.position().terminal, ordinal == 1U);
+    ASSERT_EQ(payload.keys().size(), 1U);
+    ASSERT_EQ(payload.states().size(), 1U);
+    EXPECT_EQ(payload.states().front().definition(), grouped_authority->aggregates.front());
+  }
+  EXPECT_EQ(provider.vector_calls, grouped_vector_calls_before_tcp + 2U);
+  EXPECT_TRUE(grouped_vector_client_authenticator.saw_fingerprint);
+  EXPECT_TRUE(grouped_vector_server_authenticator.saw_fingerprint);
+  EXPECT_EQ(moved_grouped_vector_server.metrics().completed_connections, 1U);
+  EXPECT_TRUE(moved_grouped_vector_server.shutdown().is_ok());
 
   auto empty_vector = vector_dispatch;
   empty_vector.dispatch.event_time_predicate =
