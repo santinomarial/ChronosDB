@@ -19,6 +19,12 @@ context. Local one-voter mode executes the same no-op/barrier pair directly.
 completed barrier. Transported mode captures it from the correlated completion; local mode appends
 one ordered observation to the same durable batch. The barrier-only `await` path does neither.
 
+When the required group leader is on another node, Raft Read Authority Transport v1 provides the
+same proof through a distinct authenticated request/response boundary. A success nests the canonical
+leader observation alongside the barrier tuple and repeats the route, group, and correlation in both
+layers. The receiver is implemented, but the partial-I/O/TLS carrier and packaged split-leader
+fan-out are still required before Native admission can use remote authorities.
+
 ## Data structures and invariants
 
 One pending barrier stores its leader term, nonzero context, committed index, frozen stable or joint
@@ -98,3 +104,4 @@ owner-controlled operation.
 - Why are voter sets frozen at barrier issuance?
 - Why can a lagging follower safely acknowledge without matching the leader's log?
 - What makes an old response harmless after restart or reelection?
+- Why is a remote observation insufficient without a barrier issued by that exact leader?

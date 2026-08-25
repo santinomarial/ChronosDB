@@ -1438,9 +1438,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   grouped SQL through safe common-leader redirect, kills that leader, repeats the retry and query
   surface through the two-node replacement quorum, shuts down cleanly, and verifies all retained
   roots. Strict cross-source durable completion FIFO, connected-peer election routing, terminal
-  Native result framing, and advisory placement hints are exercised by that composition. Arbitrary
-  split-leader process coordination, partitions, multi-process real-CSEG scans, and sufficient-state
-  multi-key shuffle remain open; the full phase exit gate is not claimed.
+  Native result framing, and advisory placement hints are exercised by that composition. A distinct
+  canonical remote read-authority protocol and authenticated receiver now return one exact
+  quorum-confirmed barrier with its correlated stable-leader observation; partial-I/O/TLS carriage,
+  daemon integration, and all-group attempt fan-out remain before arbitrary split-leader process
+  coordination is implemented. Partitions, multi-process real-CSEG scans, and sufficient-state
+  multi-key shuffle also remain open; the full phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
 - **Explicit non-scope:** general cross-tablet write transactions, silent consistency downgrade, unlimited shuffle, and topology changes that invalidate tokens without an explicit error/mapping protocol.
