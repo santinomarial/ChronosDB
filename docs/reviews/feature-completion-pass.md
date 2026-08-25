@@ -955,6 +955,14 @@ Focused executions passed:
   Header self-containment, formatting, and whitespace checks pass. LLVM 18 static analysis remains
   blocked by the installed macOS 26 libc++ headers after its one new test finding was corrected.
   Final grouped Native integration, computed pre-group splitting, and shuffle routing remain.
+- Grouped sufficient-state Native-finalization continuation: a consuming boundary revalidates the
+  pinned direct grouped plan, key/state authority, aggregate shapes, and result schema; runs global
+  ORDER BY and LIMIT through the shared physical operators under the coordinator's same query-memory
+  authority; and emits bounded Native batches only after complete success. A two-tablet case proves
+  descending key order plus global limit one selects the correct key/count, while invalid limits and
+  unfinished input expose no prefix. Four focused cases pass under ASan/UBSan; the complete cluster
+  and allocation-failure suites pass 246 of 246 and 31 of 31. TCP/service composition, computed
+  grouped projection, pre-group splitting, and shuffle routing remain.
 - Bounded global vector-row finalization continuation: one consuming final pass independently
   validates row-mode plan/schema shape, tablet-stream closure, native descriptors, and exact
   row/message/input/working/output bounds before decoded-state allocation. It stably orders every

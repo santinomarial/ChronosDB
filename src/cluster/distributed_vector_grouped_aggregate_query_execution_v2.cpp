@@ -211,4 +211,9 @@ DistributedVectorGroupedAggregateQueryExecutionV2::decode_resources() const noex
   return decode_resources_;
 }
 
+std::optional<query::QueryResourceContext>
+DistributedVectorGroupedAggregateQueryExecutionV2::output_resources() const noexcept {
+  return coordinator_.output_resources();
+}
+
 } // namespace chronos::cluster

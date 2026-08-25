@@ -10,6 +10,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace chronos::query {
@@ -69,6 +70,7 @@ public:
   [[nodiscard]] std::size_t retained_message_count() const noexcept;
   [[nodiscard]] std::size_t retained_encoded_bytes() const noexcept;
   [[nodiscard]] std::size_t group_count() const noexcept;
+  [[nodiscard]] std::optional<QueryResourceContext> output_resources() const noexcept;
 
 private:
   class Impl;

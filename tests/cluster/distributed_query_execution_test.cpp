@@ -7,6 +7,7 @@
 #include "chronos/cluster/distributed_vector_aggregate_query_execution_v2.hpp"
 #include "chronos/cluster/distributed_vector_aggregate_query_tcp_execution_v2.hpp"
 #include "chronos/cluster/distributed_vector_aggregate_query_tcp_server_v2.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_finalization_v2.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_query_execution_v2.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_query_tcp_execution_v2.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_query_tcp_server_v2.hpp"
@@ -258,7 +259,11 @@ make_input(const TemporaryDirectory& directory, const std::uint8_t query_seed = 
       .fragments = plan.fragments,
       .intent = {.mode = query::DistributedVectorPlanMode::kGroupedAggregate,
                  .group_key_input_indices = {1U},
-                 .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}}}};
+                 .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}},
+                 .order_keys = {{.output_index = 0U,
+                                 .direction = query::PhysicalSortDirection::kDescending,
+                                 .null_placement = query::ScalarNullPlacement::kLast}},
+                 .limit = 1U}};
   auto vector_grouped_aggregate = query::bind_compatible_distributed_vector_snapshot_v2(
       vector_grouped_aggregate_plan, *snapshot, vector_bindings,
       query::DistributedVectorResultSchema{
@@ -338,7 +343,8 @@ vector_aggregate_responses(const query::CompatibleDistributedVectorSnapshotV2& s
 
 [[nodiscard]] std::vector<query::EncodedDistributedVectorGroupedAggregateExchangeMessage>
 vector_grouped_aggregate_frames(const query::CompatibleDistributedVectorSnapshotV2& snapshot,
-                                const std::size_t tablet_index, const bool terminal = true) {
+                                const std::size_t tablet_index, const bool terminal = true,
+                                const double key = 1.5) {
   const query::DistributedVectorFragmentDispatch& dispatch = snapshot.dispatches()[tablet_index];
   const auto keys = snapshot.grouped_key_definitions();
   const auto definitions = snapshot.grouped_aggregate_definitions();
@@ -348,7 +354,7 @@ vector_grouped_aggregate_frames(const query::CompatibleDistributedVectorSnapshot
   for (std::size_t count = 0U; count < tablet_index + 1U; ++count)
     EXPECT_TRUE(state.accumulate_count_star().has_value());
   std::vector<query::ScalarValue> values;
-  values.push_back(query::ScalarValue::float64(1.5).value());
+  values.push_back(query::ScalarValue::float64(key).value());
   std::vector<query::MergeableVectorAggregateState> states;
   states.push_back(std::move(state));
   query::DistributedVectorGroupedAggregateExchangeMessage message{
@@ -1082,6 +1088,87 @@ TEST(DistributedVectorGroupedAggregateQueryExecutionV2Test,
   EXPECT_EQ(DistributedVectorGroupedAggregateQueryExecutionV2::create(
                 std::move(limits_input->vector_grouped_aggregate_snapshot),
                 {.maximum_decode_memory_bytes = 0U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+}
+
+TEST(DistributedVectorGroupedAggregateFinalizationV2Test,
+     AppliesPinnedGlobalOrderAndLimitBeforeNativePublication) {
+  TemporaryDirectory directory;
+  auto input = make_input(directory);
+  ASSERT_TRUE(input.has_value()) << input.error().to_string();
+  const auto dispatches = input->vector_grouped_aggregate_snapshot.dispatches();
+  ASSERT_EQ(dispatches.size(), 2U);
+  const std::array tablets{dispatches[0].tablet_id, dispatches[1].tablet_id};
+  auto first =
+      vector_grouped_aggregate_frames(input->vector_grouped_aggregate_snapshot, 0U, true, 1.5);
+  auto second =
+      vector_grouped_aggregate_frames(input->vector_grouped_aggregate_snapshot, 1U, true, 2.5);
+  auto execution = DistributedVectorGroupedAggregateQueryExecutionV2::create(
+      std::move(input->vector_grouped_aggregate_snapshot),
+      {.coordinator = {.messages = {.maximum_messages_per_fragment = 1U,
+                                    .maximum_total_messages = 2U},
+                       .maximum_total_encoded_bytes = std::size_t{1024U} * 1024U},
+       .maximum_decode_memory_bytes = std::size_t{1024U} * 1024U});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+  ASSERT_TRUE(execution->accept_worker_frames(tablets[0], first).is_ok());
+  ASSERT_TRUE(execution->accept_worker_frames(tablets[1], second).is_ok());
+  ASSERT_TRUE(execution->finish().is_ok());
+
+  auto finalized = finalize_distributed_vector_grouped_aggregate_v2(
+      std::move(*execution), {.maximum_output_rows = 1U,
+                              .maximum_output_batches = 1U,
+                              .maximum_output_encoded_bytes = std::size_t{1024U} * 1024U,
+                              .sort = {.maximum_rows = 2U,
+                                       .maximum_keys = 1U,
+                                       .maximum_state_bytes = std::size_t{1024U} * 1024U}});
+  ASSERT_TRUE(finalized.has_value()) << finalized.error().to_string();
+  EXPECT_EQ(finalized->row_count, 1U);
+  ASSERT_EQ(finalized->encoded_batches.size(), 1U);
+  auto decoded = network::decode_query_result_batch(finalized->encoded_batches.front());
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  ASSERT_EQ(decoded->row_count(), 1U);
+  ASSERT_EQ(decoded->columns().size(), 2U);
+  EXPECT_EQ(decoded->columns()[0].name, "value");
+  EXPECT_EQ(decoded->columns()[1].name, "row_count");
+  const network::QueryResultCell* key = decoded->cell(0U, 0U);
+  const network::QueryResultCell* count = decoded->cell(0U, 1U);
+  ASSERT_NE(key, nullptr);
+  ASSERT_NE(count, nullptr);
+  common::ByteReader key_reader{key->value};
+  common::ByteReader count_reader{count->value};
+  auto key_value = key_reader.read_float64_le();
+  auto count_value = count_reader.read_i64_le();
+  ASSERT_TRUE(key_value.has_value());
+  ASSERT_TRUE(count_value.has_value());
+  EXPECT_EQ(*key_value, 2.5);
+  EXPECT_EQ(*count_value, 2);
+  EXPECT_TRUE(key_reader.empty());
+  EXPECT_TRUE(count_reader.empty());
+}
+
+TEST(DistributedVectorGroupedAggregateFinalizationV2Test,
+     RejectsInvalidLimitsAndUnfinishedInputWithoutNativePrefix) {
+  TemporaryDirectory limits_directory;
+  auto limits_input = make_input(limits_directory);
+  ASSERT_TRUE(limits_input.has_value()) << limits_input.error().to_string();
+  auto limits_execution = DistributedVectorGroupedAggregateQueryExecutionV2::create(
+      std::move(limits_input->vector_grouped_aggregate_snapshot));
+  ASSERT_TRUE(limits_execution.has_value());
+  EXPECT_EQ(finalize_distributed_vector_grouped_aggregate_v2(std::move(*limits_execution),
+                                                             {.maximum_output_batches = 0U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  TemporaryDirectory unfinished_directory;
+  auto unfinished_input = make_input(unfinished_directory);
+  ASSERT_TRUE(unfinished_input.has_value()) << unfinished_input.error().to_string();
+  auto unfinished_execution = DistributedVectorGroupedAggregateQueryExecutionV2::create(
+      std::move(unfinished_input->vector_grouped_aggregate_snapshot));
+  ASSERT_TRUE(unfinished_execution.has_value());
+  EXPECT_EQ(finalize_distributed_vector_grouped_aggregate_v2(std::move(*unfinished_execution))
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);

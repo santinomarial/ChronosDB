@@ -1427,8 +1427,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   all-tablet TCP scheduler now prevalidates complete routes, owns one finite sender and at most one
   grouped client per tablet, rotates addresses only within immutable target authority, caps waits by
   retry and query deadlines, cancels all active clients on failure, and exposes merged physical rows
-  only after every terminal stream closes. Computed pre-group plan splitting, final grouped Native
-  SQL integration, and shuffle routing remain deferred. The
+  only after every terminal stream closes. A consuming finalizer now revalidates the exact raw
+  key/aggregate result schema, runs pinned global order and limit through the shared physical
+  operators under the coordinator's same query-memory authority, and emits bounded Native batches
+  only after full success. TCP/replicated-service composition, computed pre-group/final projection
+  splitting, and shuffle routing remain deferred. The
   distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;

@@ -447,7 +447,9 @@ order. The all-tablet grouped TCP scheduler now retains that portable execution,
 sender and at most one authority-bound client per tablet, rotates only within prevalidated target
 addresses, caps polling at retry and whole-query deadlines, cancels every active client on terminal
 failure, and delivers each complete stream once. Merged physical rows remain unavailable until
-global closure; final Native grouped SQL packaging remains separate.
+global closure. A consuming finalizer now runs the pinned direct-result ORDER BY and LIMIT through
+the ordinary physical operators under that same query-memory authority, then emits bounded Native
+batches atomically. TCP/service composition and computed grouped projection remain separate.
 The compatible Fragment-v2 snapshot now retains that definition vector once after deriving it under
 each tablet's exact destination schema and rejecting any cross-tablet difference. This matters when
 COUNT, AVG, or variance result descriptors hide the input type; later owners no longer need to

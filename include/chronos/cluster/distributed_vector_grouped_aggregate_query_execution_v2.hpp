@@ -64,6 +64,7 @@ public:
   [[nodiscard]] std::span<const query::VectorAggregateDefinition>
   aggregate_definitions() const noexcept;
   [[nodiscard]] const query::QueryResourceContext& decode_resources() const noexcept;
+  [[nodiscard]] std::optional<query::QueryResourceContext> output_resources() const noexcept;
 
 private:
   DistributedVectorGroupedAggregateQueryExecutionV2(

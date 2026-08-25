@@ -518,3 +518,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0481](0481-bounded-grouped-sufficient-state-tcp-server.md) | Bounded grouped sufficient-state TCP server | accepted |
 | [0482](0482-owned-grouped-sufficient-state-tcp-service.md) | Owned grouped sufficient-state TCP service | accepted |
 | [0483](0483-pinned-grouped-sufficient-state-tcp-scheduling.md) | Pinned grouped sufficient-state TCP scheduling | accepted |
+| [0484](0484-bounded-grouped-sufficient-state-native-finalization.md) | Bounded grouped sufficient-state Native finalization | accepted |

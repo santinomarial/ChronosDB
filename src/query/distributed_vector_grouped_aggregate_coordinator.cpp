@@ -370,4 +370,9 @@ std::size_t DistributedVectorGroupedAggregateCoordinator::group_count() const no
       .value_or(0U);
 }
 
+std::optional<QueryResourceContext>
+DistributedVectorGroupedAggregateCoordinator::output_resources() const noexcept {
+  return impl_->resources;
+}
+
 } // namespace chronos::query
