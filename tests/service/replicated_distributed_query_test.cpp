@@ -293,21 +293,39 @@ make_follower_vector_grouped_aggregate_plan(const schema::TabletId& tablet_id,
 
 [[nodiscard]] query::DistributedVectorGroupedAggregateSqlPlan
 make_vector_grouped_aggregate_sql_plan(const schema::TableSchema& schema_value) {
+  const auto int64 = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  auto doubled_count =
+      query::VectorExpression::create(
+          {query::VectorInputExpression{
+               .input_column_ordinal = 1U, .type = int64, .nullable = false},
+           query::VectorConstantExpression{query::ScalarValue::signed_value(int64, 2).value()},
+           query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kMultiply,
+                                         .left_instruction = 0U,
+                                         .right_instruction = 1U}})
+          .value();
+  auto group_value = query::VectorExpression::create(
+                         {query::VectorInputExpression{.input_column_ordinal = 0U,
+                                                       .type = schema_value.columns()[1].type(),
+                                                       .nullable = true}})
+                         .value();
   return {.table_id = schema_value.table_id(),
           .destination_schema_id = schema_value.schema_id(),
           .destination_column_ordinals = {1U},
           .intent = {.mode = query::DistributedVectorPlanMode::kGroupedAggregate,
                      .group_key_input_indices = {0U},
                      .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}},
-                     .order_keys = {{.output_index = 0U,
-                                     .direction = query::PhysicalSortDirection::kDescending,
-                                     .null_placement = query::ScalarNullPlacement::kLast}},
-                     .limit = 1U},
-          .result_schema = {
-              .columns = {{"value", schema_value.columns()[1].type(), true},
-                          {"row_count",
-                           schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
-                           false}}}};
+                     .order_keys = {},
+                     .limit = std::nullopt},
+          .result_schema = {.columns = {{"_", schema_value.columns()[1].type(), true},
+                                        {"_", int64, false}}},
+          .coordinator_projection = query::DistributedVectorGroupedAggregateCoordinatorProjection{
+              .outputs = {std::move(doubled_count), std::move(group_value)},
+              .result_schema = {.columns = {{"doubled_count", int64, false},
+                                            {"value", schema_value.columns()[1].type(), true}}},
+              .order_keys = {{.output_index = 0U,
+                              .direction = query::PhysicalSortDirection::kDescending,
+                              .null_placement = query::ScalarNullPlacement::kLast}},
+              .limit = 1U}};
 }
 
 class CountStarVectorAggregateWorker final
@@ -577,7 +595,17 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
   EXPECT_EQ(grouped_sql_dispatch.destination_column_ordinals, (std::vector<std::uint32_t>{1U}));
   EXPECT_EQ(grouped_sql_dispatch.plan.group_key_input_indices, (std::vector<std::uint32_t>{0U}));
   EXPECT_EQ(grouped_sql_execution->snapshot().snapshot().generation(), 1U);
-  EXPECT_EQ(grouped_sql_execution->snapshot().result_schema().columns[1].name, "row_count");
+  EXPECT_EQ(grouped_sql_execution->snapshot().result_schema().columns[1].name, "_");
+
+  auto conflicting_projection_snapshot = publisher->snapshot();
+  ASSERT_TRUE(conflicting_projection_snapshot.has_value());
+  auto conflicting_projection_plan = make_vector_grouped_aggregate_sql_plan(schema_value);
+  conflicting_projection_plan.intent.limit = 1U;
+  auto conflicting_projection = create_replicated_distributed_vector_grouped_aggregate_sql_query_v2(
+      uuid(44U), std::move(conflicting_projection_plan),
+      std::move(*conflicting_projection_snapshot), grouped_sql_config);
+  ASSERT_FALSE(conflicting_projection.has_value());
+  EXPECT_EQ(conflicting_projection.error().code(), common::StatusCode::kInvalidArgument);
 
   auto missing_grouped_sql_snapshot = publisher->snapshot();
   ASSERT_TRUE(missing_grouped_sql_snapshot.has_value());

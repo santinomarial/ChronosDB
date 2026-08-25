@@ -6,6 +6,8 @@ static_assert(!std::is_copy_constructible_v<
               chronos::cluster::DistributedVectorGroupedAggregateQueryTcpExecutionV2>);
 static_assert(std::is_move_constructible_v<
               chronos::cluster::DistributedVectorGroupedAggregateQueryTcpExecutionV2>);
+static_assert(std::is_move_constructible_v<
+              chronos::cluster::DistributedVectorGroupedAggregateQueryTcpExecutionConfigV2>);
 
 namespace {
 [[maybe_unused]] const auto kCreate =

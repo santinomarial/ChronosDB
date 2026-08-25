@@ -212,10 +212,11 @@ TEST(DistributedSqlLoweringAllocationFailureTest,
 TEST(DistributedSqlLoweringAllocationFailureTest,
      ClassifiesEveryDirectGroupedAggregateOwnedAllocationFailure) {
   BoundSqlSelect select = bound_select(
-      "SELECT value, count(*) AS rows, sum(value) AS total FROM metrics WHERE ts BETWEEN "
+      "SELECT sum(value) + 1 AS adjusted, value, count(*) * 2 AS doubled FROM metrics WHERE ts "
+      "BETWEEN "
       "TIMESTAMP '1970-01-01 00:00:00.000000001Z' AND "
       "TIMESTAMP '1970-01-01 00:00:00.000000009Z' GROUP BY value "
-      "ORDER BY total DESC, value LIMIT 2");
+      "ORDER BY adjusted DESC, value LIMIT 2");
   bool reached_success = false;
   for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
     SCOPED_TRACE(fail_after);

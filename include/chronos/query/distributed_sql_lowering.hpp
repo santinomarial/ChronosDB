@@ -49,6 +49,8 @@ struct DistributedVectorGroupedAggregateSqlLoweringLimits {
   std::uint32_t maximum_order_keys{distributed_vector_plan_format::kMaximumOrderKeys};
   std::uint32_t maximum_result_name_bytes{
       distributed_vector_result_schema_format::kMaximumNameLength};
+  VectorExpressionLimits expression_limits{};
+  std::size_t maximum_expression_configuration_bytes{std::size_t{4U} * 1024U * 1024U};
 };
 
 struct DistributedVectorRowSourceOutput {
@@ -102,6 +104,19 @@ struct DistributedVectorAggregateCoordinatorProjection {
 
   friend bool operator==(const DistributedVectorAggregateCoordinatorProjection&,
                          const DistributedVectorAggregateCoordinatorProjection&) = default;
+};
+
+// Coordinator-visible expressions over raw grouped output (keys followed by aggregate values).
+// When present, ordering and LIMIT address the projected client outputs and the raw distributed
+// plan must carry neither operation.
+struct DistributedVectorGroupedAggregateCoordinatorProjection {
+  std::vector<VectorExpression> outputs;
+  DistributedVectorResultSchema result_schema;
+  std::vector<DistributedVectorOrderKey> order_keys;
+  std::optional<std::uint64_t> limit;
+
+  friend bool operator==(const DistributedVectorGroupedAggregateCoordinatorProjection&,
+                         const DistributedVectorGroupedAggregateCoordinatorProjection&) = default;
 };
 
 // Complete schema-bound row intent for later authority binding. Source projection ordinals are
@@ -183,19 +198,21 @@ struct DistributedVectorGroupedSqlPlan {
 lower_bound_sql_select_to_distributed_vector_grouped(
     const BoundSqlSelect& select, DistributedVectorGroupedSqlLoweringLimits limits = {});
 
-// Direct sufficient-state GROUP BY intent for later authority binding. Group keys must be direct
-// unique source columns and appear first in SELECT in GROUP BY order. Remaining outputs must be
-// direct supported aggregate calls. WHERE may contain only an exact event-time range; ORDER BY may
-// name only selected raw key/aggregate outputs. Any computed pre-group or final expression,
-// reordered/omitted key, or hidden order expression fails closed so callers may deliberately use
-// the row-backed grouped plan instead.
+// Sufficient-state GROUP BY intent for later authority binding. Group keys and aggregate inputs
+// remain direct source columns. Workers return raw keys followed by aggregate values. A checked
+// coordinator projection owns computed, reordered, or omitted final outputs and their global
+// selected-output ORDER BY/LIMIT. WHERE may contain only an exact event-time range. Computed
+// pre-group keys/aggregate inputs and hidden order expressions fail closed so callers may
+// deliberately use the row-backed grouped plan instead.
 struct DistributedVectorGroupedAggregateSqlPlan {
   schema::TableId table_id;
   schema::SchemaId destination_schema_id;
   std::vector<std::uint32_t> destination_column_ordinals;
   std::optional<cseg::EventTimePredicate> event_time_predicate;
   DistributedVectorPlanIntent intent;
+  // Raw grouped sufficient-state schema consumed by finalization.
   DistributedVectorResultSchema result_schema;
+  std::optional<DistributedVectorGroupedAggregateCoordinatorProjection> coordinator_projection;
 
   friend bool operator==(const DistributedVectorGroupedAggregateSqlPlan&,
                          const DistributedVectorGroupedAggregateSqlPlan&) = default;

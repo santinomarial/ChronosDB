@@ -10,6 +10,10 @@
 #include <cstddef>
 #include <cstdint>
 
+namespace chronos::query {
+struct DistributedVectorGroupedAggregateCoordinatorProjection;
+}
+
 namespace chronos::cluster {
 
 struct DistributedVectorGroupedAggregateFinalizationLimitsV2 {
@@ -30,6 +34,14 @@ struct DistributedVectorGroupedAggregateFinalizationLimitsV2 {
 [[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2>
 finalize_distributed_vector_grouped_aggregate_v2(
     DistributedVectorGroupedAggregateQueryExecutionV2& input,
+    DistributedVectorGroupedAggregateFinalizationLimitsV2 limits = {});
+
+// Applies checked coordinator expressions to every globally merged raw group before projected
+// ORDER BY/LIMIT and Native encoding. The projection is synchronously borrowed.
+[[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2>
+finalize_distributed_vector_grouped_aggregate_with_projection_v2(
+    DistributedVectorGroupedAggregateQueryExecutionV2& input,
+    const query::DistributedVectorGroupedAggregateCoordinatorProjection& projection,
     DistributedVectorGroupedAggregateFinalizationLimitsV2 limits = {});
 
 } // namespace chronos::cluster

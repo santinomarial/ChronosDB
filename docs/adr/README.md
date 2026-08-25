@@ -523,3 +523,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0486](0486-replicated-grouped-sufficient-state-preparation.md) | Replicated grouped sufficient-state preparation | accepted |
 | [0487](0487-direct-grouped-sufficient-state-sql-lowering.md) | Direct grouped sufficient-state SQL lowering | accepted |
 | [0488](0488-coherent-replicated-grouped-sql-preparation.md) | Coherent replicated grouped SQL preparation | accepted |
+| [0489](0489-owned-grouped-sufficient-state-final-projection.md) | Owned grouped sufficient-state final projection | accepted |

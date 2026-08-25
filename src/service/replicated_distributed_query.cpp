@@ -122,6 +122,8 @@ create_vector_aggregate_tcp_execution(
 [[nodiscard]] common::Result<cluster::DistributedVectorGroupedAggregateQueryTcpExecutionV2>
 create_vector_grouped_aggregate_tcp_execution(
     query::CompatibleDistributedVectorSnapshotV2 compatible,
+    std::optional<query::DistributedVectorGroupedAggregateCoordinatorProjection>
+        coordinator_projection,
     const ReplicatedDistributedVectorGroupedAggregateQueryConfigV2& config) {
   auto routes = cluster::resolve_distributed_query_node_routes(
       config.catalog.get(), compatible.dispatches(), config.tls_contexts, config.route_limits);
@@ -139,6 +141,7 @@ create_vector_grouped_aggregate_tcp_execution(
                               .sender_limits = config.sender_limits,
                               .carrier_limits = config.carrier_limits,
                               .finalization_limits = config.finalization_limits,
+                              .coordinator_projection = std::move(coordinator_projection),
                               .connect_timeout = config.connect_timeout,
                               .execution_deadline = config.execution_deadline});
 }
@@ -149,6 +152,8 @@ bind_and_create_vector_grouped_aggregate_tcp_execution(
     manifest::TemporalDatabaseStorageSnapshot snapshot,
     query::DistributedVectorResultSchema&& result_schema,
     const std::span<const ReplicatedReadAuthority> authority,
+    std::optional<query::DistributedVectorGroupedAggregateCoordinatorProjection>
+        coordinator_projection,
     const ReplicatedDistributedVectorGroupedAggregateQueryConfigV2& config) {
   auto compatible = query::bind_group_backed_distributed_vector_snapshot_v2(
       plan, std::move(snapshot),
@@ -160,7 +165,8 @@ bind_and_create_vector_grouped_aggregate_tcp_execution(
       std::move(result_schema), config.binding_limits);
   if (!compatible.has_value())
     return common::make_unexpected(compatible.error());
-  return create_vector_grouped_aggregate_tcp_execution(std::move(*compatible), config);
+  return create_vector_grouped_aggregate_tcp_execution(std::move(*compatible),
+                                                       std::move(coordinator_projection), config);
 }
 
 [[nodiscard]] common::Status validate_vector_grouped_aggregate_sql_binding(
@@ -431,7 +437,7 @@ create_replicated_distributed_vector_grouped_aggregate_query_v2(
   if (!authority.has_value())
     return common::make_unexpected(authority.error());
   return bind_and_create_vector_grouped_aggregate_tcp_execution(
-      plan, std::move(snapshot), std::move(result_schema), *authority, config);
+      plan, std::move(snapshot), std::move(result_schema), *authority, std::nullopt, config);
 }
 
 common::Result<cluster::DistributedVectorGroupedAggregateQueryTcpExecutionV2>
@@ -454,7 +460,8 @@ create_replicated_distributed_vector_grouped_aggregate_sql_query_v2(
   if (!plan.has_value())
     return common::make_unexpected(plan.error());
   return bind_and_create_vector_grouped_aggregate_tcp_execution(
-      *plan, std::move(snapshot), std::move(sql_plan.result_schema), *authority, config);
+      *plan, std::move(snapshot), std::move(sql_plan.result_schema), *authority,
+      std::move(sql_plan.coordinator_projection), config);
 }
 
 common::Result<cluster::DistributedVectorGroupedAggregateQueryTcpExecutionV2>
@@ -489,7 +496,8 @@ create_replicated_follower_distributed_vector_grouped_aggregate_query_v2(
       std::move(result_schema), config.binding_limits);
   if (!compatible.has_value())
     return common::make_unexpected(compatible.error());
-  return create_vector_grouped_aggregate_tcp_execution(std::move(*compatible), config);
+  return create_vector_grouped_aggregate_tcp_execution(std::move(*compatible), std::nullopt,
+                                                       config);
 }
 
 common::Result<cluster::DistributedGroupedQueryTcpExecution>

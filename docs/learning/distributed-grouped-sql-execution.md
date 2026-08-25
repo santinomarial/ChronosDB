@@ -18,11 +18,12 @@ result, synchronously borrows the immutable physical plan, owns the output schem
 same all-or-none Native batch product used by distributed row finalization.
 
 `lower_bound_sql_select_to_distributed_vector_grouped_aggregate()` is the distinct scalable-path
-entry point for direct grouped SQL. It owns the unique source projection, remapped direct group
-keys and aggregate inputs, exact event-time range, global selected-output ordering and limit, and
-the typed result schema consumed by the grouped sufficient-state scheduler. It deliberately
-returns `NOT_SUPPORTED` for computed or reordered shapes so the caller can select the row-backed
-plan explicitly.
+entry point for direct pre-group SQL. It owns the unique source projection, remapped direct group
+keys and aggregate inputs, exact event-time range, and the raw key/aggregate schema consumed by the
+grouped sufficient-state scheduler. For non-identity SELECT lists it also owns checked final
+expressions, the client schema, and projected global ordering and limit. It deliberately returns
+`NOT_SUPPORTED` for computed group keys, computed aggregate inputs, non-event-time predicates, and
+hidden order expressions so the caller can select the row-backed plan explicitly.
 
 ## Execution sequence
 
@@ -111,10 +112,11 @@ worker, authenticated transport, all-tablet scheduler, and atomic Native finaliz
 The direct SQL lowerer now produces their exact projection/key/aggregate/result contract without a
 second binding oracle. The replicated SQL constructor derives every committed table fragment from
 one catalog, Manifest epoch, and single acquired authority vector; it rejects missing/extra
-Manifest tablets and transfers the complete owned contract into the scheduler. Computed pre-group
-and final expressions still need an owned physical-plan split, and partitioned shuffle routing plus
-broader fault/measurement evidence remain open. The row-backed path remains the differential
-oracle for that work.
+Manifest tablets and transfers the complete owned contract into the scheduler. Computed final
+expressions now run over the globally merged raw key/aggregate vector through the shared checked
+projection, sort, and limit stages. Computed pre-group expressions still need an owned worker-plan
+split, and partitioned shuffle routing plus broader fault/measurement evidence remain open. The
+row-backed path remains the differential oracle for that work.
 
 ### Portable sufficient-state execution boundary
 

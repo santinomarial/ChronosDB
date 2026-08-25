@@ -87,3 +87,9 @@ generic grouped constructor, direct SQL lowerer, row-backed fallback, or any dur
 - [Distributed grouped SQL execution](../learning/distributed-grouped-sql-execution.md)
 - [Manifest v2](../formats/manifest-v2.md)
 - [Distributed Vector Grouped Aggregate Query Transport v2](../formats/distributed-vector-grouped-aggregate-query-transport-v2.md)
+
+## Retrospective note (2026-08-25)
+
+[ADR 0489](0489-owned-grouped-sufficient-state-final-projection.md) adds an optional checked final
+projection to the SQL product transferred by this constructor. The same coherent
+catalog/Manifest/authority owner now retains that projection through atomic Native publication.

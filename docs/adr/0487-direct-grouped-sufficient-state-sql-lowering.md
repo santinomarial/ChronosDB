@@ -88,3 +88,10 @@ row-backed grouped SQL path unchanged.
 - [Distributed grouped SQL execution](../learning/distributed-grouped-sql-execution.md)
 - [Distributed Vector Fragment v2](../formats/distributed-vector-fragment-v2.md)
 - [Distributed Vector Grouped Aggregate Query Transport v2](../formats/distributed-vector-grouped-aggregate-query-transport-v2.md)
+
+## Retrospective note (2026-08-25)
+
+[ADR 0489](0489-owned-grouped-sufficient-state-final-projection.md) extends this direct-input
+contract with a checked coordinator-owned final projection. Direct group keys and aggregate inputs
+remain required, while computed, reordered, and omitted final SELECT outputs no longer require the
+row-backed path.

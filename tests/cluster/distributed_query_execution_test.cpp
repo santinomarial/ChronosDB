@@ -19,6 +19,7 @@
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/storage.hpp"
 #include "chronos/manifest/temporal_codec.hpp"
+#include "chronos/query/distributed_sql_lowering.hpp"
 #include "chronos/raft/rebalancing.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
@@ -120,7 +121,8 @@ struct ExecutionInput {
 [[nodiscard]] common::Result<ExecutionInput>
 make_input(const TemporaryDirectory& directory, const std::uint8_t query_seed = 7U,
            const std::array<raft::NodeId, 2U> serving_nodes = {11U, 12U},
-           const std::array<std::uint64_t, 2U> placement_epochs = {12U, 13U}) {
+           const std::array<std::uint64_t, 2U> placement_epochs = {12U, 13U},
+           const bool grouped_raw_order_and_limit = true) {
   const schema::TableSchema schema = schema_value();
   const schema::SchemaLineage lineage = schema::SchemaLineage::create(schema).value();
   const std::array tablets{id<schema::TabletId>(3U), id<schema::TabletId>(9U)};
@@ -253,17 +255,21 @@ make_input(const TemporaryDirectory& directory, const std::uint8_t query_seed = 
       {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U});
   if (!vector_aggregate.has_value())
     return common::make_unexpected(vector_aggregate.error());
+  query::DistributedVectorPlanIntent grouped_intent{
+      .mode = query::DistributedVectorPlanMode::kGroupedAggregate,
+      .group_key_input_indices = {1U},
+      .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}}};
+  if (grouped_raw_order_and_limit) {
+    grouped_intent.order_keys = {{.output_index = 0U,
+                                  .direction = query::PhysicalSortDirection::kDescending,
+                                  .null_placement = query::ScalarNullPlacement::kLast}};
+    grouped_intent.limit = 1U;
+  }
   const query::DistributedVectorQueryPlan vector_grouped_aggregate_plan{
       .query_id = plan.query_id,
       .read_policy = plan.read_policy,
       .fragments = plan.fragments,
-      .intent = {.mode = query::DistributedVectorPlanMode::kGroupedAggregate,
-                 .group_key_input_indices = {1U},
-                 .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}},
-                 .order_keys = {{.output_index = 0U,
-                                 .direction = query::PhysicalSortDirection::kDescending,
-                                 .null_placement = query::ScalarNullPlacement::kLast}},
-                 .limit = 1U}};
+      .intent = std::move(grouped_intent)};
   auto vector_grouped_aggregate = query::bind_compatible_distributed_vector_snapshot_v2(
       vector_grouped_aggregate_plan, *snapshot, vector_bindings,
       query::DistributedVectorResultSchema{
@@ -1172,10 +1178,90 @@ TEST(DistributedVectorGroupedAggregateFinalizationV2Test,
             common::StatusCode::kInvalidArgument);
 }
 
+TEST(DistributedVectorGroupedAggregateFinalizationV2Test,
+     AppliesCheckedFinalProjectionBeforeProjectedOrderAndLimit) {
+  TemporaryDirectory directory;
+  auto input = make_input(directory, 7U, {11U, 12U}, {12U, 13U}, false);
+  ASSERT_TRUE(input.has_value()) << input.error().to_string();
+  const auto dispatches = input->vector_grouped_aggregate_snapshot.dispatches();
+  ASSERT_EQ(dispatches.size(), 2U);
+  const std::array tablets{dispatches[0].tablet_id, dispatches[1].tablet_id};
+  auto first =
+      vector_grouped_aggregate_frames(input->vector_grouped_aggregate_snapshot, 0U, true, 1.5);
+  auto second =
+      vector_grouped_aggregate_frames(input->vector_grouped_aggregate_snapshot, 1U, true, 2.5);
+  auto execution = DistributedVectorGroupedAggregateQueryExecutionV2::create(
+      std::move(input->vector_grouped_aggregate_snapshot));
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+  ASSERT_TRUE(execution->accept_worker_frames(tablets[0], first).is_ok());
+  ASSERT_TRUE(execution->accept_worker_frames(tablets[1], second).is_ok());
+  ASSERT_TRUE(execution->finish().is_ok());
+
+  const auto float64 = schema::LogicalType::create(schema::LogicalTypeKind::kFloat64).value();
+  const auto int64 = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  auto doubled_count = query::VectorExpression::create(
+      {query::VectorInputExpression{.input_column_ordinal = 1U, .type = int64, .nullable = false},
+       query::VectorConstantExpression{query::ScalarValue::signed_value(int64, 2).value()},
+       query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kMultiply,
+                                     .left_instruction = 0U,
+                                     .right_instruction = 1U}});
+  auto key = query::VectorExpression::create({query::VectorInputExpression{
+      .input_column_ordinal = 0U, .type = float64, .nullable = true}});
+  ASSERT_TRUE(doubled_count.has_value()) << doubled_count.error().to_string();
+  ASSERT_TRUE(key.has_value()) << key.error().to_string();
+  auto invalid_source = query::VectorExpression::create(
+      {query::VectorInputExpression{.input_column_ordinal = 2U, .type = int64, .nullable = false}});
+  ASSERT_TRUE(invalid_source.has_value()) << invalid_source.error().to_string();
+  EXPECT_EQ(finalize_distributed_vector_grouped_aggregate_with_projection_v2(
+                *execution, {.outputs = {std::move(*invalid_source)},
+                             .result_schema = {.columns = {{"invalid", int64, false}}}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  query::DistributedVectorGroupedAggregateCoordinatorProjection projection{
+      .outputs = {std::move(*doubled_count), std::move(*key)},
+      .result_schema = {.columns = {{"doubled_count", int64, false},
+                                    {"group_value", float64, true}}},
+      .order_keys = {{.output_index = 0U,
+                      .direction = query::PhysicalSortDirection::kDescending,
+                      .null_placement = query::ScalarNullPlacement::kLast}},
+      .limit = 1U};
+  auto finalized = finalize_distributed_vector_grouped_aggregate_with_projection_v2(
+      *execution, projection,
+      {.maximum_output_rows = 1U,
+       .maximum_output_batches = 1U,
+       .maximum_output_encoded_bytes = std::size_t{1024U} * 1024U,
+       .sort = {.maximum_rows = 2U,
+                .maximum_keys = 1U,
+                .maximum_state_bytes = std::size_t{1024U} * 1024U}});
+  ASSERT_TRUE(finalized.has_value()) << finalized.error().to_string();
+  EXPECT_EQ(finalized->result_schema, projection.result_schema);
+  EXPECT_EQ(finalized->row_count, 1U);
+  ASSERT_EQ(finalized->encoded_batches.size(), 1U);
+  auto decoded = network::decode_query_result_batch(finalized->encoded_batches.front());
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  ASSERT_EQ(decoded->row_count(), 1U);
+  ASSERT_EQ(decoded->columns().size(), 2U);
+  EXPECT_EQ(decoded->columns()[0].name, "doubled_count");
+  EXPECT_EQ(decoded->columns()[1].name, "group_value");
+  const network::QueryResultCell* count = decoded->cell(0U, 0U);
+  const network::QueryResultCell* group = decoded->cell(0U, 1U);
+  ASSERT_NE(count, nullptr);
+  ASSERT_NE(group, nullptr);
+  common::ByteReader count_reader{count->value};
+  common::ByteReader group_reader{group->value};
+  const auto count_value = count_reader.read_i64_le();
+  const auto group_value = group_reader.read_float64_le();
+  ASSERT_TRUE(count_value.has_value());
+  ASSERT_TRUE(group_value.has_value());
+  EXPECT_EQ(*count_value, 4);
+  EXPECT_EQ(*group_value, 2.5);
+}
+
 TEST(DistributedVectorGroupedAggregateQueryTcpExecutionV2Test,
      SchedulesGroupedTabletsAndPublishesOnlyCompleteMergedRows) {
   TemporaryDirectory directory;
-  auto input = make_input(directory);
+  auto input = make_input(directory, 7U, {11U, 12U}, {12U, 13U}, false);
   ASSERT_TRUE(input.has_value()) << input.error().to_string();
   auto execution = DistributedVectorGroupedAggregateQueryExecutionV2::create(
       std::move(input->vector_grouped_aggregate_snapshot),
@@ -1220,28 +1306,50 @@ TEST(DistributedVectorGroupedAggregateQueryTcpExecutionV2Test,
   auto tls_context = network::TlsClientContext::create(execution_tls_client_config());
   ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
   ExecutionAuthenticator server_authenticator{92U};
-  auto scheduled = DistributedVectorGroupedAggregateQueryTcpExecutionV2::create(
-      std::move(*execution),
-      {.source_node_id = 1U,
-       .authenticator = &server_authenticator,
-       .node_authorizer = &authorizer,
-       .routes = {{.node_id = 11U,
-                   .endpoints = {refused_endpoint, first_server->bound_endpoint()},
-                   .tls_context = std::addressof(*tls_context)},
-                  {.node_id = 12U,
-                   .endpoints = {second_server->bound_endpoint()},
-                   .tls_context = std::addressof(*tls_context)}},
-       .sender_limits = {.retry = {.maximum_attempts = 2U,
-                                   .initial_backoff = std::chrono::milliseconds{1},
-                                   .maximum_backoff = std::chrono::milliseconds{1}},
-                         .maximum_response_frames = 1U,
-                         .maximum_response_bytes = std::size_t{1024U} * 1024U},
-       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
-                          .exchange_timeout = std::chrono::milliseconds{1000},
-                          .maximum_response_frames = 1U,
-                          .maximum_response_bytes = std::size_t{1024U} * 1024U},
-       .connect_timeout = std::chrono::milliseconds{1000},
-       .execution_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5}});
+  const auto float64 = schema::LogicalType::create(schema::LogicalTypeKind::kFloat64).value();
+  const auto int64 = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  auto doubled_count = query::VectorExpression::create(
+      {query::VectorInputExpression{.input_column_ordinal = 1U, .type = int64, .nullable = false},
+       query::VectorConstantExpression{query::ScalarValue::signed_value(int64, 2).value()},
+       query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kMultiply,
+                                     .left_instruction = 0U,
+                                     .right_instruction = 1U}});
+  auto key = query::VectorExpression::create({query::VectorInputExpression{
+      .input_column_ordinal = 0U, .type = float64, .nullable = true}});
+  ASSERT_TRUE(doubled_count.has_value()) << doubled_count.error().to_string();
+  ASSERT_TRUE(key.has_value()) << key.error().to_string();
+  auto scheduled =
+      DistributedVectorGroupedAggregateQueryTcpExecutionV2::create(
+          std::move(*execution),
+          {.source_node_id = 1U,
+           .authenticator = &server_authenticator,
+           .node_authorizer = &authorizer,
+           .routes = {{.node_id = 11U,
+                       .endpoints = {refused_endpoint, first_server->bound_endpoint()},
+                       .tls_context = std::addressof(*tls_context)},
+                      {.node_id = 12U,
+                       .endpoints = {second_server->bound_endpoint()},
+                       .tls_context = std::addressof(*tls_context)}},
+           .sender_limits = {.retry = {.maximum_attempts = 2U,
+                                       .initial_backoff = std::chrono::milliseconds{1},
+                                       .maximum_backoff = std::chrono::milliseconds{1}},
+                             .maximum_response_frames = 1U,
+                             .maximum_response_bytes = std::size_t{1024U} * 1024U},
+           .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                              .exchange_timeout = std::chrono::milliseconds{1000},
+                              .maximum_response_frames = 1U,
+                              .maximum_response_bytes = std::size_t{1024U} * 1024U},
+           .coordinator_projection =
+               query::DistributedVectorGroupedAggregateCoordinatorProjection{
+                   .outputs = {std::move(*doubled_count), std::move(*key)},
+                   .result_schema = {.columns = {{"doubled_count", int64, false},
+                                                 {"group_value", float64, true}}},
+                   .order_keys = {{.output_index = 0U,
+                                   .direction = query::PhysicalSortDirection::kDescending,
+                                   .null_placement = query::ScalarNullPlacement::kLast}},
+                   .limit = 1U},
+           .connect_timeout = std::chrono::milliseconds{1000},
+           .execution_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5}});
   ASSERT_TRUE(scheduled.has_value()) << scheduled.error().to_string();
   EXPECT_FALSE(scheduled->result().has_value());
   for (std::size_t iteration = 0U;
@@ -1265,14 +1373,17 @@ TEST(DistributedVectorGroupedAggregateQueryTcpExecutionV2Test,
   auto decoded = network::decode_query_result_batch(scheduled->result()->encoded_batches.front());
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   ASSERT_EQ(decoded->row_count(), 1U);
-  const network::QueryResultCell* key = decoded->cell(0U, 0U);
-  const network::QueryResultCell* count = decoded->cell(0U, 1U);
-  ASSERT_NE(key, nullptr);
+  ASSERT_EQ(decoded->columns().size(), 2U);
+  EXPECT_EQ(decoded->columns()[0].name, "doubled_count");
+  EXPECT_EQ(decoded->columns()[1].name, "group_value");
+  const network::QueryResultCell* count = decoded->cell(0U, 0U);
+  const network::QueryResultCell* group = decoded->cell(0U, 1U);
   ASSERT_NE(count, nullptr);
-  common::ByteReader key_reader{key->value};
+  ASSERT_NE(group, nullptr);
   common::ByteReader count_reader{count->value};
-  EXPECT_EQ(*key_reader.read_float64_le(), 1.5);
-  EXPECT_EQ(*count_reader.read_i64_le(), 3);
+  common::ByteReader group_reader{group->value};
+  EXPECT_EQ(*count_reader.read_i64_le(), 6);
+  EXPECT_EQ(*group_reader.read_float64_le(), 1.5);
   EXPECT_TRUE(scheduled->poll_once(std::chrono::milliseconds{0}).is_ok());
   EXPECT_EQ(first_worker.bind_calls, 1U);
   EXPECT_EQ(first_worker.execute_calls, 1U);
@@ -1331,6 +1442,30 @@ TEST(DistributedVectorGroupedAggregateQueryTcpExecutionV2Test,
                  .node_authorizer = &authorizer,
                  .routes = {first_route, second_route},
                  .finalization_limits = {.maximum_output_batches = 0U}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  TemporaryDirectory projection_directory;
+  auto projection_input = make_input(projection_directory);
+  ASSERT_TRUE(projection_input.has_value()) << projection_input.error().to_string();
+  auto projection_execution = DistributedVectorGroupedAggregateQueryExecutionV2::create(
+      std::move(projection_input->vector_grouped_aggregate_snapshot));
+  ASSERT_TRUE(projection_execution.has_value());
+  const auto float64 = schema::LogicalType::create(schema::LogicalTypeKind::kFloat64).value();
+  auto raw_key = query::VectorExpression::create({query::VectorInputExpression{
+      .input_column_ordinal = 0U, .type = float64, .nullable = true}});
+  ASSERT_TRUE(raw_key.has_value()) << raw_key.error().to_string();
+  EXPECT_EQ(DistributedVectorGroupedAggregateQueryTcpExecutionV2::create(
+                std::move(*projection_execution),
+                {.source_node_id = 1U,
+                 .authenticator = &authenticator,
+                 .node_authorizer = &authorizer,
+                 .routes = {first_route, second_route},
+                 .coordinator_projection =
+                     query::DistributedVectorGroupedAggregateCoordinatorProjection{
+                         .outputs = {std::move(*raw_key)},
+                         .result_schema = {.columns = {{"group_value", float64, true}}}}})
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);

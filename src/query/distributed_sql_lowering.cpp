@@ -1188,7 +1188,11 @@ lower_bound_sql_select_to_distributed_vector_grouped_aggregate(
         limits.maximum_order_keys > distributed_vector_plan_format::kMaximumOrderKeys ||
         limits.maximum_result_name_bytes == 0U ||
         limits.maximum_result_name_bytes >
-            distributed_vector_result_schema_format::kMaximumNameLength) {
+            distributed_vector_result_schema_format::kMaximumNameLength ||
+        limits.expression_limits.maximum_instructions == 0U ||
+        limits.expression_limits.maximum_instructions > kMaximumVectorExpressionInstructions ||
+        limits.expression_limits.maximum_retained_configuration_bytes == 0U ||
+        limits.maximum_expression_configuration_bytes == 0U) {
       return std::unexpected(
           diagnostic(SqlDiagnosticCode::kResourceLimit, select.syntax().span(),
                      common::StatusCode::kInvalidArgument,
@@ -1211,8 +1215,16 @@ lower_bound_sql_select_to_distributed_vector_grouped_aggregate(
                      common::StatusCode::kInternal,
                      "Distributed grouped aggregate bound output count is inconsistent"));
     }
-    if (group_by.size() > limits.maximum_group_keys || outputs.size() < group_by.size() ||
-        outputs.size() - group_by.size() > limits.maximum_aggregates) {
+    std::vector<const SqlExpression*> aggregate_expressions;
+    for (const SqlSelectItem& item : select.syntax().items()) {
+      if (const SqlExpression* expression = item.expression(); expression != nullptr)
+        collect_distributed_aggregates(*expression, aggregate_expressions);
+    }
+    if (group_by.size() > limits.maximum_group_keys ||
+        aggregate_expressions.size() > limits.maximum_aggregates || outputs.empty() ||
+        outputs.size() > distributed_vector_plan_format::kMaximumOutputColumns ||
+        group_by.size() + aggregate_expressions.size() >
+            distributed_vector_plan_format::kMaximumOutputColumns) {
       return std::unexpected(
           diagnostic(SqlDiagnosticCode::kResourceLimit, select.syntax().span(),
                      common::StatusCode::kResourceExhausted,
@@ -1235,14 +1247,15 @@ lower_bound_sql_select_to_distributed_vector_grouped_aggregate(
                    .group_key_input_indices = {},
                    .aggregates = {},
                    .order_keys = {},
-                   .limit = select.syntax().limit()},
+                   .limit = std::nullopt},
         .result_schema = {},
+        .coordinator_projection = std::nullopt,
     };
     result.destination_column_ordinals.reserve(
         std::min<std::size_t>(source.columns().size(), limits.maximum_projection_columns));
     result.intent.group_key_input_indices.reserve(group_by.size());
-    result.intent.aggregates.reserve(outputs.size() - group_by.size());
-    result.result_schema.columns.reserve(outputs.size());
+    result.intent.aggregates.reserve(aggregate_expressions.size());
+    result.result_schema.columns.reserve(group_by.size() + aggregate_expressions.size());
     std::vector<std::int64_t> projected_index(source.columns().size(), -1);
 
     const auto project = [&](const std::size_t source_ordinal,
@@ -1265,55 +1278,38 @@ lower_bound_sql_select_to_distributed_vector_grouped_aggregate(
       return static_cast<std::uint32_t>(projected_index[source_ordinal]);
     };
 
+    std::vector<std::int64_t> raw_group_index(source.columns().size(), -1);
+    std::vector<VectorAggregateExpressionBinding> final_bindings;
+    final_bindings.reserve(group_by.size() + aggregate_expressions.size() + outputs.size());
     for (std::size_t index = 0U; index < group_by.size(); ++index) {
       const SqlExpression& group = group_by[index];
       const BoundColumnReference* const group_reference =
           select.find_column_reference(group.span());
-      const SqlExpression* const output_expression = select.syntax().items()[index].expression();
-      const BoundColumnReference* const output_reference =
-          output_expression == nullptr ? nullptr
-                                       : select.find_column_reference(output_expression->span());
       if (group.kind() != SqlExpressionKind::kColumn || group_reference == nullptr ||
-          group_reference->source_ordinal != 0U || output_expression == nullptr ||
-          output_expression->kind() != SqlExpressionKind::kColumn || output_reference == nullptr ||
-          output_reference->source_ordinal != 0U ||
-          output_reference->column_ordinal != group_reference->column_ordinal) {
-        unsupported(group.span(),
-                    "Distributed grouped aggregate keys must be direct source columns emitted "
-                    "first in GROUP BY order");
+          group_reference->source_ordinal != 0U ||
+          group_reference->column_ordinal >= source.columns().size()) {
+        unsupported(group.span(), "Distributed grouped aggregate keys must be direct columns");
       }
       const std::uint32_t input_index = project(group_reference->column_ordinal, group.span());
-      if (std::ranges::find(result.intent.group_key_input_indices, input_index) !=
-          result.intent.group_key_input_indices.end()) {
+      if (raw_group_index[group_reference->column_ordinal] >= 0) {
         unsupported(group.span(), "Distributed grouped aggregate keys must be unique");
       }
       const schema::ColumnDefinition& column = source.columns()[group_reference->column_ordinal];
-      const BoundOutputColumn& output = outputs[index];
-      if (output.name.empty() || output.name.size() > limits.maximum_result_name_bytes) {
-        throw LoweringFailure{
-            diagnostic(SqlDiagnosticCode::kResourceLimit,
-                       output.expression_span.value_or(select.syntax().span()),
-                       common::StatusCode::kResourceExhausted,
-                       "Distributed grouped aggregate result name exceeds the limit")};
-      }
-      if (output.type != column.type() || output.nullable != column.nullable()) {
-        throw LoweringFailure{diagnostic(
-            SqlDiagnosticCode::kExecutionFailure, group.span(), common::StatusCode::kInternal,
-            "Bound grouped key output shape disagrees with its source column")};
-      }
+      raw_group_index[group_reference->column_ordinal] = static_cast<std::int64_t>(index);
       result.intent.group_key_input_indices.push_back(input_index);
       result.result_schema.columns.push_back(
-          {.name = output.name, .type = output.type, .nullable = output.nullable});
+          {.name = "_", .type = column.type(), .nullable = column.nullable()});
+      final_bindings.push_back({.expression_span = group.span(),
+                                .input_column_ordinal = static_cast<std::uint32_t>(index),
+                                .type = column.type(),
+                                .nullable = column.nullable()});
     }
 
-    for (std::size_t output_index = group_by.size(); output_index < outputs.size();
-         ++output_index) {
-      const SqlExpression* const expression = select.syntax().items()[output_index].expression();
-      if (expression == nullptr || expression->kind() != SqlExpressionKind::kFunction ||
-          expression->children().size() != 1U) {
-        unsupported(outputs[output_index].expression_span.value_or(select.syntax().span()),
-                    "Distributed grouped aggregate outputs must be direct aggregate calls");
-      }
+    for (std::size_t aggregate_index = 0U; aggregate_index < aggregate_expressions.size();
+         ++aggregate_index) {
+      const SqlExpression* const expression = aggregate_expressions[aggregate_index];
+      if (expression->children().size() != 1U)
+        unsupported(expression->span(), "Distributed grouped aggregate arity is unsupported");
       const std::optional<VectorAggregateOperation> operation =
           distributed_aggregate_operation(expression->text());
       if (!operation.has_value())
@@ -1352,7 +1348,53 @@ lower_bound_sql_select_to_distributed_vector_grouped_aggregate(
                 : SqlDiagnosticCode::kUnsupportedSyntax;
         throw LoweringFailure{SqlDiagnostic{code, expression->span(), shape.error()}};
       }
+      const BoundExpressionInfo* const bound_aggregate = select.find_expression(expression->span());
+      if (bound_aggregate == nullptr || !bound_aggregate->type.has_value() ||
+          *bound_aggregate->type != shape->type || bound_aggregate->nullable != shape->nullable) {
+        throw LoweringFailure{diagnostic(
+            SqlDiagnosticCode::kExecutionFailure, expression->span(), common::StatusCode::kInternal,
+            "Bound grouped aggregate shape disagrees with its kernel")};
+      }
+      result.intent.aggregates.push_back(aggregate);
+      result.result_schema.columns.push_back(
+          {.name = "_", .type = shape->type, .nullable = shape->nullable});
+      final_bindings.push_back(
+          {.expression_span = expression->span(),
+           .input_column_ordinal = static_cast<std::uint32_t>(group_by.size() + aggregate_index),
+           .type = shape->type,
+           .nullable = shape->nullable});
+    }
+
+    const auto bind_group_occurrences = [&](auto&& self, const SqlExpression& expression) -> void {
+      if (expression.kind() == SqlExpressionKind::kFunction &&
+          distributed_aggregate_operation(expression.text()).has_value()) {
+        return;
+      }
+      if (expression.kind() == SqlExpressionKind::kColumn) {
+        const BoundColumnReference* const reference =
+            select.find_column_reference(expression.span());
+        if (reference != nullptr && reference->source_ordinal == 0U &&
+            reference->column_ordinal < raw_group_index.size() &&
+            raw_group_index[reference->column_ordinal] >= 0) {
+          const schema::ColumnDefinition& column = source.columns()[reference->column_ordinal];
+          final_bindings.push_back({.expression_span = expression.span(),
+                                    .input_column_ordinal = static_cast<std::uint32_t>(
+                                        raw_group_index[reference->column_ordinal]),
+                                    .type = column.type(),
+                                    .nullable = column.nullable()});
+          return;
+        }
+      }
+      for (const SqlExpression& child : expression.children())
+        self(self, child);
+    };
+    for (std::size_t output_index = 0U; output_index < outputs.size(); ++output_index) {
       const BoundOutputColumn& output = outputs[output_index];
+      const SqlExpression* const expression = select.syntax().items()[output_index].expression();
+      if (expression == nullptr) {
+        unsupported(output.expression_span.value_or(select.syntax().span()),
+                    "Distributed grouped aggregate output expression is unavailable");
+      }
       if (output.name.empty() || output.name.size() > limits.maximum_result_name_bytes) {
         throw LoweringFailure{
             diagnostic(SqlDiagnosticCode::kResourceLimit,
@@ -1360,14 +1402,68 @@ lower_bound_sql_select_to_distributed_vector_grouped_aggregate(
                        common::StatusCode::kResourceExhausted,
                        "Distributed grouped aggregate result name exceeds the limit")};
       }
-      if (output.type != shape->type || output.nullable != shape->nullable) {
-        throw LoweringFailure{diagnostic(
-            SqlDiagnosticCode::kExecutionFailure, expression->span(), common::StatusCode::kInternal,
-            "Bound grouped aggregate output shape disagrees with its kernel")};
+      bind_group_occurrences(bind_group_occurrences, *expression);
+    }
+
+    bool identity_outputs = outputs.size() == result.result_schema.columns.size();
+    for (std::size_t index = 0U; identity_outputs && index < group_by.size(); ++index) {
+      const SqlExpression* const expression = select.syntax().items()[index].expression();
+      const BoundColumnReference* const reference =
+          expression == nullptr ? nullptr : select.find_column_reference(expression->span());
+      const BoundColumnReference* const group_reference =
+          select.find_column_reference(group_by[index].span());
+      identity_outputs = expression != nullptr &&
+                         expression->kind() == SqlExpressionKind::kColumn && reference != nullptr &&
+                         group_reference != nullptr &&
+                         reference->source_ordinal == group_reference->source_ordinal &&
+                         reference->column_ordinal == group_reference->column_ordinal;
+    }
+    for (std::size_t aggregate_index = 0U;
+         identity_outputs && aggregate_index < aggregate_expressions.size(); ++aggregate_index) {
+      const SqlExpression* const output =
+          select.syntax().items()[group_by.size() + aggregate_index].expression();
+      identity_outputs =
+          output != nullptr && output->span() == aggregate_expressions[aggregate_index]->span();
+    }
+
+    std::size_t expression_bytes{};
+    if (identity_outputs) {
+      for (std::size_t index = 0U; index < outputs.size(); ++index)
+        result.result_schema.columns[index].name = outputs[index].name;
+      result.intent.limit = select.syntax().limit();
+    } else {
+      DistributedVectorGroupedAggregateCoordinatorProjection projection;
+      projection.outputs.reserve(outputs.size());
+      projection.result_schema.columns.reserve(outputs.size());
+      projection.limit = select.syntax().limit();
+      for (std::size_t output_index = 0U; output_index < outputs.size(); ++output_index) {
+        const BoundOutputColumn& output = outputs[output_index];
+        const SqlExpression& expression = *select.syntax().items()[output_index].expression();
+        auto lowered = lower_bound_sql_aggregate_scalar_expression(
+            select, expression, final_bindings, limits.expression_limits);
+        if (!lowered.has_value())
+          throw LoweringFailure{std::move(lowered.error())};
+        if (lowered->result_shape().type != output.type ||
+            lowered->result_shape().nullable != output.nullable) {
+          throw LoweringFailure{
+              diagnostic(SqlDiagnosticCode::kExecutionFailure, expression.span(),
+                         common::StatusCode::kInternal,
+                         "Distributed grouped final expression shape is inconsistent")};
+        }
+        const auto next =
+            common::checked_add(expression_bytes, lowered->retained_configuration_bytes());
+        if (!next.has_value() || *next > limits.maximum_expression_configuration_bytes) {
+          throw LoweringFailure{
+              diagnostic(SqlDiagnosticCode::kResourceLimit, expression.span(),
+                         common::StatusCode::kResourceExhausted,
+                         "Distributed grouped expression configuration bytes exceed the limit")};
+        }
+        expression_bytes = *next;
+        projection.outputs.push_back(std::move(*lowered));
+        projection.result_schema.columns.push_back(
+            {.name = output.name, .type = output.type, .nullable = output.nullable});
       }
-      result.intent.aggregates.push_back(aggregate);
-      result.result_schema.columns.push_back(
-          {.name = output.name, .type = output.type, .nullable = output.nullable});
+      result.coordinator_projection.emplace(std::move(projection));
     }
 
     if (where != nullptr) {
@@ -1382,6 +1478,8 @@ lower_bound_sql_select_to_distributed_vector_grouped_aggregate(
     }
 
     std::vector<bool> ordered_outputs(outputs.size(), false);
+    std::vector<DistributedVectorOrderKey> final_order_keys;
+    final_order_keys.reserve(select.syntax().order_by().size());
     for (const SqlOrderItem& item : select.syntax().order_by()) {
       const std::optional<std::size_t> output = order_output_ordinal(select, item);
       if (!output.has_value()) {
@@ -1396,24 +1494,27 @@ lower_bound_sql_select_to_distributed_vector_grouped_aggregate(
       }
       if (ordered_outputs[*output])
         continue;
-      if (result.intent.order_keys.size() >= limits.maximum_order_keys) {
+      if (final_order_keys.size() >= limits.maximum_order_keys) {
         throw LoweringFailure{
             diagnostic(SqlDiagnosticCode::kResourceLimit, item.expression.span(),
                        common::StatusCode::kResourceExhausted,
                        "Distributed grouped aggregate ORDER BY key count exceeds the limit")};
       }
       ordered_outputs[*output] = true;
-      result.intent.order_keys.push_back(
-          {.output_index = static_cast<std::uint32_t>(*output),
-           .direction = item.direction == SqlOrderDirection::kAscending
-                            ? PhysicalSortDirection::kAscending
-                            : PhysicalSortDirection::kDescending,
-           .null_placement = null_placement(item)});
+      final_order_keys.push_back({.output_index = static_cast<std::uint32_t>(*output),
+                                  .direction = item.direction == SqlOrderDirection::kAscending
+                                                   ? PhysicalSortDirection::kAscending
+                                                   : PhysicalSortDirection::kDescending,
+                                  .null_placement = null_placement(item)});
     }
+    if (result.coordinator_projection.has_value())
+      result.coordinator_projection->order_keys = std::move(final_order_keys);
+    else
+      result.intent.order_keys = std::move(final_order_keys);
 
     const common::Status plan_status = validate_distributed_vector_plan_intent(
         result.intent, static_cast<std::uint32_t>(result.destination_column_ordinals.size()),
-        static_cast<std::uint32_t>(outputs.size()));
+        static_cast<std::uint32_t>(result.result_schema.columns.size()));
     if (!plan_status.is_ok()) {
       const SqlDiagnosticCode code = plan_status.code() == common::StatusCode::kResourceExhausted
                                          ? SqlDiagnosticCode::kResourceLimit
@@ -1433,6 +1534,14 @@ lower_bound_sql_select_to_distributed_vector_grouped_aggregate(
                                          ? SqlDiagnosticCode::kResourceLimit
                                          : SqlDiagnosticCode::kExecutionFailure;
       return std::unexpected(SqlDiagnostic{code, select.syntax().span(), schema_status});
+    }
+    if (result.coordinator_projection.has_value()) {
+      const common::Status projection_schema = validate_distributed_vector_result_schema_value(
+          result.coordinator_projection->result_schema);
+      if (!projection_schema.is_ok()) {
+        return std::unexpected(SqlDiagnostic{SqlDiagnosticCode::kExecutionFailure,
+                                             select.syntax().span(), projection_schema});
+      }
     }
     return result;
   } catch (LoweringFailure& failure) {

@@ -89,14 +89,26 @@ valid_carrier_limits(const DistributedVectorGroupedAggregateQueryTlsLimitsV2& li
 
 [[nodiscard]] bool valid_finalization_authority(
     const DistributedVectorGroupedAggregateQueryExecutionV2& execution,
-    const DistributedVectorGroupedAggregateFinalizationLimitsV2& limits) noexcept {
-  const auto& schema = execution.snapshot().result_schema();
+    const DistributedVectorGroupedAggregateFinalizationLimitsV2& limits,
+    const query::DistributedVectorGroupedAggregateCoordinatorProjection* const
+        projection) noexcept {
+  const auto& raw_schema = execution.snapshot().result_schema();
   const auto dispatches = execution.snapshot().dispatches();
-  if (dispatches.empty() || schema.columns.size() > limits.output_batch.maximum_columns)
+  if (dispatches.empty())
     return false;
   const auto& plan = dispatches.front().plan;
-  if (plan.order_keys.size() > limits.sort.maximum_keys ||
-      (!plan.order_keys.empty() &&
+  const query::DistributedVectorResultSchema& schema =
+      projection == nullptr ? raw_schema : projection->result_schema;
+  const std::span<const query::DistributedVectorOrderKey> order_keys =
+      projection == nullptr
+          ? std::span<const query::DistributedVectorOrderKey>{plan.order_keys}
+          : std::span<const query::DistributedVectorOrderKey>{projection->order_keys};
+  if (schema.columns.size() > limits.output_batch.maximum_columns ||
+      order_keys.size() > limits.sort.maximum_keys ||
+      (projection != nullptr &&
+       (!plan.order_keys.empty() || plan.limit.has_value() || projection->outputs.empty() ||
+        projection->outputs.size() != schema.columns.size())) ||
+      ((!order_keys.empty() || projection != nullptr) &&
        (schema.columns.size() > limits.sort.output_limits.maximum_columns ||
         limits.sort.output_limits.maximum_rows > limits.output_batch.maximum_rows))) {
     return false;
@@ -286,7 +298,11 @@ public:
     if (!finished.is_ok())
       return fail(finished);
     auto finalized =
-        finalize_distributed_vector_grouped_aggregate_v2(execution, config.finalization_limits);
+        config.coordinator_projection.has_value()
+            ? finalize_distributed_vector_grouped_aggregate_with_projection_v2(
+                  execution, *config.coordinator_projection, config.finalization_limits)
+            : finalize_distributed_vector_grouped_aggregate_v2(execution,
+                                                               config.finalization_limits);
     if (!finalized.has_value())
       return fail(finalized.error());
     execution_result.emplace(std::move(*finalized));
@@ -334,7 +350,10 @@ DistributedVectorGroupedAggregateQueryTcpExecutionV2::create(
       !validate_distributed_vector_grouped_aggregate_finalization_limits_v2(
            config.finalization_limits)
            .is_ok() ||
-      !valid_finalization_authority(execution, config.finalization_limits) ||
+      !valid_finalization_authority(execution, config.finalization_limits,
+                                    config.coordinator_projection.has_value()
+                                        ? std::addressof(*config.coordinator_projection)
+                                        : nullptr) ||
       execution.key_definitions().size() > config.carrier_limits.payload.maximum_group_keys ||
       execution.aggregate_definitions().size() > config.carrier_limits.payload.maximum_aggregates) {
     return common::make_unexpected(

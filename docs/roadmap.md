@@ -1437,12 +1437,14 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   transfer the complete bounded lifecycle into that scheduler. Mutable Native sufficient-state
   worker integration remains deferred. Schema-bound grouped SQL now has a separate direct-input
   lowerer that emits the exact unique projection, key/aggregate intent, event-time predicate,
-  selected-output global order/limit, and typed result schema consumed by this scheduler. It fails
-  closed to the row-backed path for computed/reordered/hidden semantics. A replicated SQL
+  selected-output global order/limit, and typed result schema consumed by this scheduler. Checked
+  final expressions, reordered or omitted keys, and their order/limit now run over the globally
+  merged raw key/aggregate vector; computed pre-group and hidden-order semantics still fail closed
+  to the row-backed path. A replicated SQL
   constructor now acquires authority once, derives every committed table fragment through the same
   catalog and Manifest publication, rejects catalog/Manifest set drift, and transfers the moved SQL
-  schema into the atomic scheduler. Computed pre-group/final projection splitting and shuffle
-  routing remain deferred.
+  schema and optional final projection into the atomic scheduler. Computed pre-group splitting and
+  shuffle routing remain deferred.
   The
   distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
@@ -1510,8 +1512,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   sufficient-state merge, canonical all-tablet closure/order arbitration, and final row
   materialization now exist in memory, and the direct-input Fragment-v2 real-CSEG worker produces
   bounded canonical streams under one compatible snapshot-owned all-tablet key/state authority.
-  Computed pre-group plan splitting, scheduler request ownership, authenticated transport/read
-  authority, final SQL projection/order/limit integration, and partition routing are still missing.
+  Computed pre-group plan splitting and partition routing are still missing; scheduler request
+  ownership, authenticated transport/read authority, and final SQL projection/order/limit are now
+  integrated.
   The full phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.

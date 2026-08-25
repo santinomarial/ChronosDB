@@ -39,8 +39,8 @@ struct VectorAggregateExpressionBinding {
   bool nullable{};
 };
 
-// Lowers one post-aggregate expression against exact finalized aggregate columns. Only aggregate
-// expressions named by bindings may become inputs; base-table columns fail closed.
+// Lowers one post-aggregate expression against exact finalized key/aggregate columns. Only
+// expressions named by bindings may become inputs; unbound base-table columns fail closed.
 [[nodiscard]] SqlResult<VectorExpression> lower_bound_sql_aggregate_scalar_expression(
     const BoundSqlSelect& select, const SqlExpression& expression,
     std::span<const VectorAggregateExpressionBinding> bindings, VectorExpressionLimits limits = {});

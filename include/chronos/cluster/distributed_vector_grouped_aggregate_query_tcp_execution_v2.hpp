@@ -7,6 +7,7 @@
 #include "chronos/cluster/distributed_vector_grouped_aggregate_query_tcp_client_v2.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/network/security.hpp"
+#include "chronos/query/distributed_sql_lowering.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -25,6 +26,8 @@ struct DistributedVectorGroupedAggregateQueryTcpExecutionConfigV2 {
   DistributedVectorGroupedAggregateQuerySenderLimitsV2 sender_limits;
   DistributedVectorGroupedAggregateQueryTlsLimitsV2 carrier_limits;
   DistributedVectorGroupedAggregateFinalizationLimitsV2 finalization_limits;
+  std::optional<query::DistributedVectorGroupedAggregateCoordinatorProjection>
+      coordinator_projection;
   std::chrono::milliseconds connect_timeout{5000};
   std::optional<std::chrono::steady_clock::time_point> execution_deadline;
 };

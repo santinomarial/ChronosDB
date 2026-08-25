@@ -371,17 +371,21 @@ make_count_plan(const schema::TabletId& tablet_id, const raft::LogIndex applied_
 
 [[nodiscard]] query::DistributedVectorGroupedAggregateSqlPlan
 make_grouped_sql_plan(const schema::TableSchema& schema_value) {
+  const auto int64 = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
   return {.table_id = schema_value.table_id(),
           .destination_schema_id = schema_value.schema_id(),
           .destination_column_ordinals = {1U},
           .intent = {.mode = query::DistributedVectorPlanMode::kGroupedAggregate,
                      .group_key_input_indices = {0U},
                      .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}}},
-          .result_schema = {
-              .columns = {{"value", schema_value.columns()[1].type(), true},
-                          {"row_count",
-                           schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
-                           false}}}};
+          .result_schema = {.columns = {{"_", schema_value.columns()[1].type(), true},
+                                        {"_", int64, false}}},
+          .coordinator_projection = query::DistributedVectorGroupedAggregateCoordinatorProjection{
+              .outputs = {query::VectorExpression::create(
+                              {query::VectorInputExpression{
+                                  .input_column_ordinal = 1U, .type = int64, .nullable = false}})
+                              .value()},
+              .result_schema = {.columns = {{"row_count", int64, false}}}}};
 }
 
 TEST(ReplicatedDistributedMutableVectorQueryAllocationFailureTest,
