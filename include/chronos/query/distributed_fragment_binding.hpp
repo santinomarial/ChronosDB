@@ -195,11 +195,11 @@ bind_compatible_distributed_vector_snapshot(
 
 // Pins one compatible v1 authority set and owns one result schema that has been proved against
 // every plan-ordered dispatch. The schema is retained once rather than once per tablet. Ungrouped
-// plans additionally retain one exact cross-tablet-equal aggregate-definition vector; row and
-// grouped plans expose an empty vector. Pairing any exposed dispatch with result_schema() forms its
-// authorized Fragment-v2 value. Returned views remain valid until the move-only owner is moved or
-// destroyed; the owner provides no internal synchronization, so callers serialize movement and
-// lifetime changes.
+// plans additionally retain one exact cross-tablet-equal aggregate-definition vector. Grouped
+// plans retain distinct exact key and aggregate definition vectors; row plans expose all three as
+// empty. Pairing any exposed dispatch with result_schema() forms its authorized Fragment-v2 value.
+// Returned views remain valid until the move-only owner is moved or destroyed; the owner provides
+// no internal synchronization, so callers serialize movement and lifetime changes.
 class CompatibleDistributedVectorSnapshotV2 {
 public:
   CompatibleDistributedVectorSnapshotV2() = delete;
@@ -214,15 +214,22 @@ public:
   [[nodiscard]] std::span<const DistributedVectorFragmentDispatch> dispatches() const noexcept;
   [[nodiscard]] const DistributedVectorResultSchema& result_schema() const noexcept;
   [[nodiscard]] std::span<const VectorAggregateDefinition> aggregate_definitions() const noexcept;
+  [[nodiscard]] std::span<const VectorGroupKeyDefinition> grouped_key_definitions() const noexcept;
+  [[nodiscard]] std::span<const VectorAggregateDefinition>
+  grouped_aggregate_definitions() const noexcept;
 
 private:
   CompatibleDistributedVectorSnapshotV2(
       CompatibleDistributedVectorSnapshot snapshot, DistributedVectorResultSchema&& result_schema,
-      std::vector<VectorAggregateDefinition>&& aggregate_definitions) noexcept;
+      std::vector<VectorAggregateDefinition>&& aggregate_definitions,
+      std::vector<VectorGroupKeyDefinition>&& grouped_key_definitions,
+      std::vector<VectorAggregateDefinition>&& grouped_aggregate_definitions) noexcept;
 
   CompatibleDistributedVectorSnapshot snapshot_;
   DistributedVectorResultSchema result_schema_;
   std::vector<VectorAggregateDefinition> aggregate_definitions_;
+  std::vector<VectorGroupKeyDefinition> grouped_key_definitions_;
+  std::vector<VectorAggregateDefinition> grouped_aggregate_definitions_;
 
   friend common::Result<CompatibleDistributedVectorSnapshotV2>
   bind_compatible_distributed_vector_snapshot_v2(

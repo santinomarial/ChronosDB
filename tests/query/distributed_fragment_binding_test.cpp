@@ -504,6 +504,21 @@ TEST(DistributedFragmentBindingTest, PinsOneCompatibleEpochAcrossEveryPlannedTab
   ASSERT_EQ(compatible_vector_v2->result_schema().columns.size(), 2U);
   EXPECT_EQ(compatible_vector_v2->result_schema().columns[1].name, "total");
   EXPECT_TRUE(compatible_vector_v2->aggregate_definitions().empty());
+  ASSERT_EQ(compatible_vector_v2->grouped_key_definitions().size(), 1U);
+  EXPECT_EQ(compatible_vector_v2->grouped_key_definitions()[0].column_ordinal, 0U);
+  EXPECT_EQ(compatible_vector_v2->grouped_key_definitions()[0].type,
+            schema_value.columns()[0].type());
+  EXPECT_FALSE(compatible_vector_v2->grouped_key_definitions()[0].nullable);
+  ASSERT_EQ(compatible_vector_v2->grouped_aggregate_definitions().size(), 1U);
+  EXPECT_EQ(compatible_vector_v2->grouped_aggregate_definitions()[0].operation,
+            VectorAggregateOperation::kSum);
+  ASSERT_TRUE(compatible_vector_v2->grouped_aggregate_definitions()[0].input.has_value());
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  const VectorAggregateInput& grouped_input =
+      compatible_vector_v2->grouped_aggregate_definitions()[0].input.value();
+  EXPECT_EQ(grouped_input.column_ordinal, 1U);
+  EXPECT_EQ(grouped_input.type, schema_value.columns()[1].type());
+  EXPECT_TRUE(grouped_input.nullable);
   for (const DistributedVectorFragmentDispatch& nested : compatible_vector_v2->dispatches()) {
     const DistributedVectorFragmentDispatchV2 fragment_v2{
         .dispatch = nested, .result_schema = compatible_vector_v2->result_schema()};
@@ -522,6 +537,8 @@ TEST(DistributedFragmentBindingTest, PinsOneCompatibleEpochAcrossEveryPlannedTab
       {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U});
   ASSERT_TRUE(compatible_aggregate_v2.has_value()) << compatible_aggregate_v2.error().to_string();
   ASSERT_EQ(compatible_aggregate_v2->aggregate_definitions().size(), 1U);
+  EXPECT_TRUE(compatible_aggregate_v2->grouped_key_definitions().empty());
+  EXPECT_TRUE(compatible_aggregate_v2->grouped_aggregate_definitions().empty());
   const VectorAggregateDefinition& aggregate_definition =
       compatible_aggregate_v2->aggregate_definitions()[0];
   EXPECT_EQ(aggregate_definition.operation, VectorAggregateOperation::kAverage);
@@ -542,6 +559,23 @@ TEST(DistributedFragmentBindingTest, PinsOneCompatibleEpochAcrossEveryPlannedTab
   EXPECT_EQ(bind_compatible_distributed_vector_snapshot_v2(
                 ungrouped_vector_plan, *snapshot, mixed_vector_bindings,
                 std::move(mixed_aggregate_result_schema),
+                {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  DistributedVectorQueryPlan hidden_grouped_input_plan = vector_plan;
+  hidden_grouped_input_plan.intent = {
+      .mode = DistributedVectorPlanMode::kGroupedAggregate,
+      .group_key_input_indices = {0U},
+      .aggregates = {{.operation = VectorAggregateOperation::kCount, .input_index = 1U}}};
+  DistributedVectorResultSchema hidden_grouped_result_schema{
+      .columns = {{"event_time", schema_value.columns()[0].type(), false},
+                  {"present", schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
+                   false}}};
+  EXPECT_EQ(bind_compatible_distributed_vector_snapshot_v2(
+                hidden_grouped_input_plan, *snapshot, mixed_vector_bindings,
+                std::move(hidden_grouped_result_schema),
                 {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U})
                 .error()
                 .code(),
@@ -708,6 +742,22 @@ TEST(DistributedFragmentBindingTest, ResolvesCommittedMetadataAndCurrentReplicaP
   ASSERT_EQ(group_vector->dispatches().size(), 2U);
   EXPECT_EQ(group_vector->dispatches()[0].raft_group_id, specs[0].group_id);
   EXPECT_EQ(group_vector->dispatches()[1].raft_group_id, specs[1].group_id);
+  auto grouped_vector_v2 = bind_group_backed_distributed_vector_snapshot_v2(
+      vector_plan, *snapshot,
+      {.catalog = std::cref(catalog),
+       .table_id = schema_value.table_id(),
+       .group_authorities = group_authorities,
+       .destination_column_ordinals = projection},
+      DistributedVectorResultSchema{
+          .columns = {{"event_time", schema_value.columns()[0].type(), false},
+                      {"total", schema_value.columns()[1].type(), true}}});
+  ASSERT_TRUE(grouped_vector_v2.has_value()) << grouped_vector_v2.error().to_string();
+  EXPECT_TRUE(grouped_vector_v2->aggregate_definitions().empty());
+  ASSERT_EQ(grouped_vector_v2->grouped_key_definitions().size(), 1U);
+  ASSERT_EQ(grouped_vector_v2->grouped_aggregate_definitions().size(), 1U);
+  EXPECT_EQ(grouped_vector_v2->grouped_key_definitions()[0].type, schema_value.columns()[0].type());
+  EXPECT_EQ(grouped_vector_v2->grouped_aggregate_definitions()[0].operation,
+            VectorAggregateOperation::kSum);
   DistributedVectorQueryPlan aggregate_v2_plan = vector_plan;
   aggregate_v2_plan.intent = {
       .mode = DistributedVectorPlanMode::kUngroupedAggregate,

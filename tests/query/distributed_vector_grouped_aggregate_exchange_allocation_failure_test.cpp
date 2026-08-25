@@ -37,6 +37,29 @@ TEST(DistributedVectorGroupedAggregateExchangeAllocationFailureTest,
       {.column_ordinal = 0U, .type = string, .nullable = false}};
   const std::vector<VectorAggregateDefinition> aggregates{
       {.operation = VectorAggregateOperation::kCountStar, .input = std::nullopt}};
+  const std::vector<PhysicalColumnShape> projected_inputs{{.type = string, .nullable = false}};
+  const DistributedVectorPlanIntent grouped_intent{
+      .mode = DistributedVectorPlanMode::kGroupedAggregate,
+      .group_key_input_indices = {0U},
+      .aggregates = {
+          {.operation = VectorAggregateOperation::kCountStar, .input_index = std::nullopt}}};
+  const DistributedVectorResultSchema grouped_result_schema{
+      .columns = {
+          {"key", string, false},
+          {"count", schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(), false}}};
+  bool authority_success{};
+  for (std::size_t fail_after = 0U; fail_after < 32U; ++fail_after) {
+    auto result = run_failure(fail_after, [&] {
+      return bind_distributed_vector_grouped_aggregate_authority(grouped_intent, projected_inputs,
+                                                                 grouped_result_schema);
+    });
+    if (result.has_value()) {
+      authority_success = true;
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(authority_success);
   std::vector<ScalarValue> values;
   values.push_back(
       ScalarValue::text(string, "a variable grouped key larger than short string storage").value());

@@ -922,6 +922,12 @@ Focused executions passed:
   Grouped Exchange v1 frames or the distinct empty terminal. Retained configuration and aggregate
   encoded bytes have independent hard bounds. Computed pre-group expressions, compatible
   all-tablet dispatch ownership, transport, and final SQL integration remain.
+- Cross-tablet grouped authority continuation: the move-only compatible Fragment-v2 snapshot now
+  owns exact grouped key and aggregate definition vectors proved independently under every
+  plan-ordered tablet's destination schema. Hidden aggregate input type/nullability drift fails
+  before publication even when final descriptors still match. Metadata-, leader-group-, and
+  follower-group-backed v2 construction inherit the same authority join. Scheduler request
+  ownership, transport, and final SQL integration remain.
 - Cross-tablet aggregate-definition ownership continuation: the compatible Fragment-v2 snapshot
   derives ungrouped definitions independently under every tablet's projected destination schema,
   rejects any exact mismatch, and retains the shared vector once with the Manifest pin and result

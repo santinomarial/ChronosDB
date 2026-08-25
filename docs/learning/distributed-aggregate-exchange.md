@@ -435,9 +435,10 @@ with the physical-row hash/equality rules, and finalizes in caller-defined first
 in-memory all-tablet owner now retains exact retry bytes, rejects gaps/conflicts, proves every
 terminal, and imposes plan-tablet/group-ordinal merge order before exposing query-accounted rows.
 The proof-revalidated real-CSEG worker now derives direct-input key/state authority, accumulates the
-same table, and returns bounded owned canonical frames. Compatible all-tablet ownership and
-authenticated transport are not connected yet, so production sufficient-state grouped queries
-continue to fail closed.
+same table, and returns bounded owned canonical frames. The compatible Fragment-v2 snapshot now
+retains one exact cross-tablet-equal grouped key/state authority vector beside its Manifest pin and
+result schema. Scheduler request ownership and authenticated transport are not connected yet, so
+production sufficient-state grouped queries continue to fail closed.
 The compatible Fragment-v2 snapshot now retains that definition vector once after deriving it under
 each tablet's exact destination schema and rejecting any cross-tablet difference. This matters when
 COUNT, AVG, or variance result descriptors hide the input type; later owners no longer need to

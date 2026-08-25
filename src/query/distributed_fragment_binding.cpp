@@ -2,6 +2,7 @@
 
 #include "chronos/manifest/temporal_codec.hpp"
 #include "chronos/query/distributed_vector_aggregate_exchange.hpp"
+#include "chronos/query/distributed_vector_grouped_aggregate_exchange.hpp"
 
 #include <algorithm>
 #include <bitset>
@@ -33,6 +34,16 @@ template <typename Range, typename Projection>
 [[nodiscard]] bool canonical_unique_range(const Range& values, Projection projection) {
   return std::ranges::is_sorted(values, {}, projection) &&
          std::ranges::adjacent_find(values, {}, projection) == values.end();
+}
+
+[[nodiscard]] bool
+equal_group_key_definitions(const std::span<const VectorGroupKeyDefinition> left,
+                            const std::span<const VectorGroupKeyDefinition> right) noexcept {
+  return std::ranges::equal(
+      left, right, [](const VectorGroupKeyDefinition& lhs, const VectorGroupKeyDefinition& rhs) {
+        return lhs.column_ordinal == rhs.column_ordinal && lhs.type == rhs.type &&
+               lhs.nullable == rhs.nullable;
+      });
 }
 
 [[nodiscard]] common::Status
@@ -817,9 +828,13 @@ common::Result<CompatibleDistributedVectorSnapshot> bind_compatible_distributed_
 
 CompatibleDistributedVectorSnapshotV2::CompatibleDistributedVectorSnapshotV2(
     CompatibleDistributedVectorSnapshot snapshot, DistributedVectorResultSchema&& result_schema,
-    std::vector<VectorAggregateDefinition>&& aggregate_definitions) noexcept
+    std::vector<VectorAggregateDefinition>&& aggregate_definitions,
+    std::vector<VectorGroupKeyDefinition>&& grouped_key_definitions,
+    std::vector<VectorAggregateDefinition>&& grouped_aggregate_definitions) noexcept
     : snapshot_(std::move(snapshot)), result_schema_(std::move(result_schema)),
-      aggregate_definitions_(std::move(aggregate_definitions)) {}
+      aggregate_definitions_(std::move(aggregate_definitions)),
+      grouped_key_definitions_(std::move(grouped_key_definitions)),
+      grouped_aggregate_definitions_(std::move(grouped_aggregate_definitions)) {}
 
 const manifest::TemporalDatabaseStorageSnapshot&
 CompatibleDistributedVectorSnapshotV2::snapshot() const noexcept {
@@ -841,6 +856,16 @@ CompatibleDistributedVectorSnapshotV2::aggregate_definitions() const noexcept {
   return aggregate_definitions_;
 }
 
+std::span<const VectorGroupKeyDefinition>
+CompatibleDistributedVectorSnapshotV2::grouped_key_definitions() const noexcept {
+  return grouped_key_definitions_;
+}
+
+std::span<const VectorAggregateDefinition>
+CompatibleDistributedVectorSnapshotV2::grouped_aggregate_definitions() const noexcept {
+  return grouped_aggregate_definitions_;
+}
+
 common::Result<CompatibleDistributedVectorSnapshotV2>
 bind_compatible_distributed_vector_snapshot_v2(
     const DistributedVectorQueryPlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
@@ -858,6 +883,8 @@ bind_compatible_distributed_vector_snapshot_v2(
   try {
     std::vector<PhysicalColumnShape> projected;
     std::vector<VectorAggregateDefinition> aggregate_definitions;
+    std::vector<VectorGroupKeyDefinition> grouped_key_definitions;
+    std::vector<VectorAggregateDefinition> grouped_aggregate_definitions;
     for (std::size_t index = 0U; index < compatible->dispatches().size(); ++index) {
       const DistributedVectorFragmentDispatch& dispatch = compatible->dispatches()[index];
       const schema::TableSchema& destination = bindings[index].destination_schema.get();
@@ -885,10 +912,24 @@ bind_compatible_distributed_vector_snapshot_v2(
         else if (aggregate_definitions != *definitions)
           return common::make_unexpected(
               invalid("compatible distributed vector aggregate definitions differ by tablet"));
+      } else if (dispatch.plan.mode == DistributedVectorPlanMode::kGroupedAggregate) {
+        auto grouped = bind_distributed_vector_grouped_aggregate_authority(dispatch.plan, projected,
+                                                                           result_schema);
+        if (!grouped.has_value())
+          return common::make_unexpected(grouped.error());
+        if (grouped_key_definitions.empty()) {
+          grouped_key_definitions = std::move(grouped->keys);
+          grouped_aggregate_definitions = std::move(grouped->aggregates);
+        } else if (!equal_group_key_definitions(grouped_key_definitions, grouped->keys) ||
+                   grouped_aggregate_definitions != grouped->aggregates) {
+          return common::make_unexpected(
+              invalid("compatible distributed vector grouped authority differs by tablet"));
+        }
       }
     }
-    return CompatibleDistributedVectorSnapshotV2{std::move(*compatible), std::move(result_schema),
-                                                 std::move(aggregate_definitions)};
+    return CompatibleDistributedVectorSnapshotV2{
+        std::move(*compatible), std::move(result_schema), std::move(aggregate_definitions),
+        std::move(grouped_key_definitions), std::move(grouped_aggregate_definitions)};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(
         common::Status{common::StatusCode::kResourceExhausted,

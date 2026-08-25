@@ -107,8 +107,10 @@ requires terminal closure for every planned tablet, merges in plan order rather 
 and seals input before output. A proof-revalidated real-CSEG worker now executes direct projected
 keys and aggregate inputs through the same table and constructs bounded canonical streams.
 Computed pre-group expressions still need a physical-plan split; the service path still needs
-compatible all-tablet authority, partition/shuffle policy, authenticated transport, and fault
-evidence. The row-backed path remains the differential oracle for that work.
+owned scheduler request composition, partition/shuffle policy, authenticated transport, and fault
+evidence. The compatible Fragment-v2 snapshot now retains exact cross-tablet-equal grouped key and
+aggregate definitions rather than asking those later owners to reconstruct them. The row-backed
+path remains the differential oracle for that work.
 
 ## Process qualification boundary
 
