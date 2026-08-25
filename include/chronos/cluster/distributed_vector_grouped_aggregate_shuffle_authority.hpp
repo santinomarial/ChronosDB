@@ -4,6 +4,7 @@
 #include "chronos/common/result.hpp"
 #include "chronos/common/uuid.hpp"
 #include "chronos/query/aggregate.hpp"
+#include "chronos/query/distributed_mutable_vector_fragment.hpp"
 #include "chronos/query/distributed_vector_grouped_aggregate_partitioner.hpp"
 #include "chronos/raft/types.hpp"
 #include "chronos/schema/identity.hpp"
@@ -75,6 +76,16 @@ public:
          std::vector<query::VectorGroupKeyDefinition> keys,
          std::vector<query::VectorAggregateDefinition> aggregates,
          DistributedVectorGroupedAggregateShuffleAuthorityLimits limits = {});
+
+  // Derives plan-order sources and a canonical one-partition-per-distinct-serving-node destination
+  // set from one proof-bound mutable fragment vector. The fragments and grouped definitions are
+  // copied; no catalog or caller storage is borrowed.
+  [[nodiscard]] static common::Result<DistributedVectorGroupedAggregateShuffleAuthority>
+  create_from_mutable_fragments(
+      std::span<const query::DistributedMutableVectorFragment> fragments,
+      std::span<const query::VectorGroupKeyDefinition> keys,
+      std::span<const query::VectorAggregateDefinition> aggregates,
+      DistributedVectorGroupedAggregateShuffleAuthorityLimits limits = {});
 
   [[nodiscard]] common::Result<raft::NodeId> source_node(const schema::TabletId& tablet_id) const;
   [[nodiscard]] common::Result<raft::NodeId> destination_node(std::uint32_t partition_id) const;

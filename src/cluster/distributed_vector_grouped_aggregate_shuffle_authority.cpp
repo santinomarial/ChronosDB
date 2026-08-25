@@ -3,6 +3,7 @@
 #include "chronos/common/checked_math.hpp"
 #include "chronos/query/distributed_vector_grouped_aggregate_exchange.hpp"
 
+#include <algorithm>
 #include <new>
 #include <optional>
 #include <stdexcept>
@@ -127,6 +128,66 @@ DistributedVectorGroupedAggregateShuffleAuthority::create(
     return common::make_unexpected(exhausted("grouped shuffle authority allocation failed"));
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("grouped shuffle authority exceeds container limits"));
+  }
+}
+
+common::Result<DistributedVectorGroupedAggregateShuffleAuthority>
+DistributedVectorGroupedAggregateShuffleAuthority::create_from_mutable_fragments(
+    const std::span<const query::DistributedMutableVectorFragment> fragments,
+    const std::span<const query::VectorGroupKeyDefinition> keys,
+    const std::span<const query::VectorAggregateDefinition> aggregates,
+    const DistributedVectorGroupedAggregateShuffleAuthorityLimits limits) {
+  if (fragments.empty() || limits.maximum_sources == 0U ||
+      limits.maximum_sources > kMaximumDistributedVectorGroupedAggregateShuffleSources ||
+      limits.maximum_partitions == 0U ||
+      limits.maximum_partitions > query::kMaximumDistributedVectorGroupedAggregatePartitions ||
+      limits.maximum_retained_configuration_bytes == 0U ||
+      limits.maximum_retained_configuration_bytes >
+          kMaximumDistributedVectorGroupedAggregateShuffleAuthorityBytes) {
+    return common::make_unexpected(
+        invalid("grouped shuffle fragment authority or limits are invalid"));
+  }
+  if (fragments.size() > limits.maximum_sources) {
+    return common::make_unexpected(exhausted("grouped shuffle authority source limit exceeded"));
+  }
+  const common::Uuid query_id = fragments.front().query_id;
+  if (query_id.is_nil())
+    return common::make_unexpected(invalid("grouped shuffle fragment query identity is invalid"));
+  try {
+    std::vector<DistributedVectorGroupedAggregateShuffleSource> sources;
+    sources.reserve(fragments.size());
+    std::vector<raft::NodeId> nodes;
+    nodes.reserve(fragments.size());
+    for (const auto& fragment : fragments) {
+      if (fragment.query_id != query_id || fragment.tablet_id.uuid().is_nil() ||
+          fragment.serving_node == 0U) {
+        return common::make_unexpected(
+            invalid("grouped shuffle source fragments do not share valid authority"));
+      }
+      sources.push_back({.tablet_id = fragment.tablet_id, .node_id = fragment.serving_node});
+      nodes.push_back(fragment.serving_node);
+    }
+    std::ranges::sort(nodes);
+    const auto unique_end = std::ranges::unique(nodes).begin();
+    nodes.erase(unique_end, nodes.end());
+    if (nodes.size() > limits.maximum_partitions) {
+      return common::make_unexpected(
+          exhausted("grouped shuffle destination partition limit exceeded"));
+    }
+    std::vector<DistributedVectorGroupedAggregateShuffleDestination> destinations;
+    destinations.reserve(nodes.size());
+    for (std::size_t partition = 0U; partition < nodes.size(); ++partition) {
+      destinations.push_back(
+          {.partition_id = static_cast<std::uint32_t>(partition), .node_id = nodes[partition]});
+    }
+    return create(query_id, std::move(sources), std::move(destinations), {keys.begin(), keys.end()},
+                  {aggregates.begin(), aggregates.end()}, limits);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("grouped shuffle fragment authority allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("grouped shuffle fragment authority exceeds container limits"));
   }
 }
 

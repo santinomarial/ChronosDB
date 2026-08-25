@@ -1303,7 +1303,12 @@ were deliberately not run.
   conflicting reuse. Reverse source arrival still merges equal keys in authority order and no
   output escapes before every source terminal. Focused and allocation-injection tests pass under
   the warning-as-error ASan/UBSan build; complete suite counts are recorded in ADR 0510. Packaged
-  multi-partition scheduling, placement selection, cancellation, and crash recovery remain open.
+  multi-partition scheduling, cancellation, and crash recovery remain open.
+- Proof-bound grouped shuffle destination selection: one additive authority constructor preserves
+  fragment plan order as source merge order and assigns contiguous partitions to the sorted unique
+  set of exact serving nodes. Query drift, invalid identities, duplicates, lower bounds, and every
+  observed allocation are fail-closed. Packaged all-edge ownership, result gathering, cancellation,
+  fault qualification, and measurement remain open.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

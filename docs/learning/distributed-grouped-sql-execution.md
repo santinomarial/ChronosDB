@@ -174,6 +174,12 @@ terminal arrives and then merges in authority source order. The reducer is inten
 it does not claim process-crash recovery or durable deduplication. The current packaged path still
 sends complete tablet streams to one coordinator rather than scheduling every partition edge.
 
+Packaged authority selection no longer needs a caller-authored destination vector. The complete
+proof-bound mutable fragment vector supplies source tablets and their exact serving nodes. Source
+order remains plan order for deterministic merge, while the sorted unique serving-node set assigns
+one contiguous partition per participating node. This mapping is deterministic and placement-aware
+but deliberately not load-aware; it does not consult route order, DNS, or live utilization.
+
 ### Portable sufficient-state execution boundary
 
 `DistributedVectorGroupedAggregateQueryExecutionV2` now joins the compatible snapshot to the

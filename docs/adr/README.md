@@ -545,3 +545,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0508](0508-deadline-bound-grouped-shuffle-tcp-client.md) | Deadline-bound grouped shuffle TCP client | accepted |
 | [0509](0509-bounded-grouped-shuffle-tcp-server.md) | Bounded grouped shuffle TCP server | accepted |
 | [0510](0510-idempotent-all-source-grouped-shuffle-partition-reducer.md) | Idempotent all-source grouped shuffle partition reducer | accepted |
+| [0511](0511-proof-bound-grouped-shuffle-destination-selection.md) | Proof-bound grouped shuffle destination selection | accepted |

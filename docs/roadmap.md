@@ -1565,8 +1565,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   through an allocation-free FIFO. One authority-bound local partition reducer now revalidates
   complete stream shape and hash routing, suppresses byte-exact retries, rejects conflicting reuse,
   survives retryable allocation failure through exact prefix admission, and withholds deterministic
-  source-order merge output until every authority source closes. Computed pre-group plan splitting,
-  catalog-derived destination selection, and packaged all-edge scheduling are still missing;
+  source-order merge output until every authority source closes. The proof-bound mutable fragment
+  product now deterministically preserves plan-order sources and selects one partition per sorted
+  unique serving node, so destination authority cannot drift from the query's correlated placement.
+  Computed pre-group plan splitting and packaged all-edge scheduling are still missing;
   scheduler request ownership, authenticated transport/read authority, and final SQL
   projection/order/limit are now
   integrated. The one committed private query-control endpoint now dispatches exact decoded mutable

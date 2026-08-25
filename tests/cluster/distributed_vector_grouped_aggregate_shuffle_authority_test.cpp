@@ -45,6 +45,26 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
           {.partition_id = 3U, .node_id = 40U}};
 }
 
+[[nodiscard]] query::DistributedMutableVectorFragment fragment(const std::uint8_t tablet_seed,
+                                                               const raft::NodeId node_id) {
+  const auto int64 = type(schema::LogicalTypeKind::kInt64);
+  return {.query_id = uuid(9U),
+          .database_id = id<manifest::DatabaseId>(50U),
+          .table_id = id<schema::TableId>(51U),
+          .tablet_id = id<schema::TabletId>(tablet_seed),
+          .destination_schema_id = id<schema::SchemaId>(52U),
+          .raft_group_id = uuid(53U),
+          .serving_node = node_id,
+          .applied_position = 10U,
+          .observed_leader_commit_position = 10U,
+          .placement_epoch = 8U,
+          .read_policy = {.consistency = query::DistributedReadConsistency::kLeaderLinearizable},
+          .linearizable_barrier = raft::ReadBarrier{2U, 3U, 10U},
+          .destination_column_ordinals = {0U},
+          .plan = {.mode = query::DistributedVectorPlanMode::kRows, .row_output_indices = {0U}},
+          .result_schema = {.columns = {{"value", int64, false}}}};
+}
+
 TEST(DistributedVectorGroupedAggregateShuffleAuthorityTest,
      OwnsCompleteSourceOrderAndCanonicalPartitionDestinations) {
   const auto expected_sources = sources();
@@ -137,6 +157,51 @@ TEST(DistributedVectorGroupedAggregateShuffleAuthorityTest,
             common::StatusCode::kInvalidArgument);
   EXPECT_EQ(authority.validate_edge({id<schema::TabletId>(8U), 0U, 10U, 30U, 1U}).code(),
             common::StatusCode::kNotFound);
+}
+
+TEST(DistributedVectorGroupedAggregateShuffleAuthorityTest,
+     DerivesPlanOrderSourcesAndSortedUniqueServingNodePartitions) {
+  std::vector fragments{fragment(1U, 40U), fragment(2U, 20U), fragment(3U, 40U)};
+  auto authority = DistributedVectorGroupedAggregateShuffleAuthority::create_from_mutable_fragments(
+      fragments, keys(), aggregates());
+  ASSERT_TRUE(authority.has_value()) << authority.error().to_string();
+  ASSERT_EQ(authority->sources().size(), 3U);
+  EXPECT_EQ(authority->sources()[0].tablet_id, id<schema::TabletId>(1U));
+  EXPECT_EQ(authority->sources()[0].node_id, 40U);
+  EXPECT_EQ(authority->sources()[1].tablet_id, id<schema::TabletId>(2U));
+  ASSERT_EQ(authority->destinations().size(), 2U);
+  EXPECT_EQ(authority->destinations()[0],
+            (DistributedVectorGroupedAggregateShuffleDestination{0U, 20U}));
+  EXPECT_EQ(authority->destinations()[1],
+            (DistributedVectorGroupedAggregateShuffleDestination{1U, 40U}));
+
+  fragments[1].query_id = uuid(8U);
+  EXPECT_EQ(DistributedVectorGroupedAggregateShuffleAuthority::create_from_mutable_fragments(
+                fragments, keys(), aggregates())
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  fragments[1].query_id = uuid(9U);
+  fragments[1].serving_node = 0U;
+  EXPECT_EQ(DistributedVectorGroupedAggregateShuffleAuthority::create_from_mutable_fragments(
+                fragments, keys(), aggregates())
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  EXPECT_EQ(DistributedVectorGroupedAggregateShuffleAuthority::create_from_mutable_fragments(
+                {}, keys(), aggregates())
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  fragments[1].serving_node = 20U;
+  DistributedVectorGroupedAggregateShuffleAuthorityLimits limits;
+  limits.maximum_partitions = 1U;
+  EXPECT_EQ(DistributedVectorGroupedAggregateShuffleAuthority::create_from_mutable_fragments(
+                fragments, keys(), aggregates(), limits)
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
 }
 
 } // namespace
