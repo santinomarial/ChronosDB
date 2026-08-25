@@ -1,9 +1,11 @@
+#include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_client.hpp"
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tls.hpp"
 #include "support/failing_allocator.hpp"
 
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <gtest/gtest.h>
 #include <optional>
 #include <span>
@@ -13,6 +15,17 @@
 
 namespace chronos::cluster {
 namespace {
+
+[[nodiscard]] std::filesystem::path fixture(const char* name) {
+  return std::filesystem::path{CHRONOS_NETWORK_FIXTURE_DIR} / "tls" / name;
+}
+
+[[nodiscard]] network::TlsClientConfig client_tls() {
+  return {.certificate_chain_file = fixture("client.pem").string(),
+          .private_key_file = fixture("client-key.pem").string(),
+          .trust_store_file = fixture("ca.pem").string(),
+          .expected_server_identity = "127.0.0.1"};
+}
 
 template <typename Operation>
 [[nodiscard]] auto run_failure(const std::size_t fail_after, Operation&& operation) {
@@ -249,6 +262,54 @@ TEST(DistributedMutableVectorGroupedAggregateQueryTlsAllocationFailureTest,
     EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
   }
   EXPECT_TRUE(server_success);
+}
+
+TEST(DistributedMutableVectorGroupedAggregateQueryTcpClientAllocationFailureTest,
+     ClassifiesValidationAndOwnerAllocations) {
+  auto listener = network::TcpListener::bind();
+  auto tls_context = network::TlsClientContext::create(client_tls());
+  ASSERT_TRUE(listener.has_value()) << listener.error().to_string();
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  Authorizer authorizer;
+  Authenticator authenticator;
+  bool saw_failure{};
+  bool saw_success{};
+  for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
+    SCOPED_TRACE(testing::Message{} << "fail_after=" << fail_after);
+    auto resources = query::QueryResourceContext::create(4U << 20U).value();
+    auto sender = DistributedMutableVectorGroupedAggregateQuerySender::create(
+        1U, fragment(), keys(), aggregates(), resources);
+    ASSERT_TRUE(sender.has_value());
+    auto attempt = sender->begin_attempt({});
+    ASSERT_TRUE(attempt.has_value());
+    auto owned_keys = keys();
+    auto owned_aggregates = aggregates();
+    auto result = run_failure(fail_after, [&] {
+      return DistributedMutableVectorGroupedAggregateQueryTcpClient::begin(
+          std::move(*attempt), std::move(owned_keys), std::move(owned_aggregates), resources,
+          {.remote_endpoint = listener->bound_endpoint(),
+           .tls_context = &*tls_context,
+           .carrier = {.authenticator = &authenticator,
+                       .node_authorizer = &authorizer,
+                       .peer_ipv4_address = {127U, 0U, 0U, 1U},
+                       .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                                  .exchange_timeout = std::chrono::milliseconds{1000},
+                                  .maximum_response_frames = 2U,
+                                  .maximum_response_bytes = 1U << 20U}},
+           .connect_timeout = std::chrono::milliseconds{1000}},
+          DistributedMutableVectorGroupedAggregateQueryTcpClient::TimePoint::clock::now());
+    });
+    if (!result.has_value()) {
+      saw_failure = true;
+      EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted)
+          << result.error().to_string();
+      continue;
+    }
+    saw_success = true;
+    break;
+  }
+  EXPECT_TRUE(saw_failure);
+  EXPECT_TRUE(saw_success);
 }
 
 } // namespace

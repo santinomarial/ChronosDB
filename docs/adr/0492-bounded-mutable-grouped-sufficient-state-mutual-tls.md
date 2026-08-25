@@ -42,6 +42,10 @@ TLS contexts, descriptors, authenticators, authorizers, receiver, worker, and th
 remain embedding-owned and outlive the carrier. TCP connection/listener ownership, route rotation,
 retry scheduling, cancellation, and process lifecycle remain separate.
 
+**Retrospective (2026-08-25):** [ADR 0493](0493-deadline-bound-mutable-grouped-sufficient-state-tcp-client.md)
+adds validation-before-connect, `SO_ERROR` completion, and reverse-safe outbound descriptor
+ownership. Inbound admission and scheduling remain separate.
+
 ## Consequences
 
 An applied-head grouped request now crosses a real mutually authenticated encrypted session without
@@ -91,7 +95,7 @@ owners while retaining the mutable grouped transport policy and in-process worke
 
 ## Unresolved questions
 
-- Deadline-bound outbound TCP connection ownership and bounded inbound admission.
+- Bounded inbound listener admission and accepted-session ownership.
 - All-tablet mutable grouped scheduling, cancellation, and Native finalization.
 - Partitioned shuffle/skew policy and computed pre-group programs.
 

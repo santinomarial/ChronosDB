@@ -192,9 +192,10 @@ and finite sender pair exact `CHDMREQ1` applied-head requests with authority-agn
 state responses, rebind fresh authority, and publish only a complete canonical stream. They cannot
 enter the Fragment-v2 endpoint because that request names a Manifest generation. A connected
 mutual-TLS owner now authenticates both peers before application bytes, authorizes the immutable
-target before request write, and retains no partial response. TCP connect/listen and all-tablet
-scheduler composition remain before Native can choose this path. Until then, row-backed grouped
-execution remains the packaged differential oracle.
+target before request write, and retains no partial response. A deadline-bound outbound TCP owner
+validates authority before connect, proves `SO_ERROR`, and transfers the exact attempt/resources
+into TLS. Inbound listening and all-tablet scheduler composition remain before Native can choose
+this path. Until then, row-backed grouped execution remains the packaged differential oracle.
 
 ## Process qualification boundary
 
