@@ -153,6 +153,15 @@ its nested frames under owned authority and query memory. Any partial, malformed
 vector leaves it waiting without a retained prefix. TLS/TCP attempt ownership, deadlines,
 cancellation, multi-address routing, and all-tablet scheduling remain the next boundary.
 
+One connected-session owner now carries that immutable attempt through mutual TLS. Both certificate
+fingerprints are authenticated before application bytes, and the client authorizes the exact target
+node before writing. Complete grouped authority and query resources stay with the client reader;
+data-dependent success closes only at the declared group count, while one distinct empty terminal
+closes without inventing a group. Any later TLS, integrity, sequence, byte, or deadline failure
+clears the private prefix. The server likewise validates the receiver's complete authority-bound
+vector before exposing its first response byte. TCP acquisition/listening and all-tablet scheduling
+remain outside this owner.
+
 ## Process qualification boundary
 
 The Linux packaged gate executes this row-backed grouped path in a three-daemon, two-Raft-group

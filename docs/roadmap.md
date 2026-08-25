@@ -1413,8 +1413,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   grouped authority before execution, and publishes only a complete bounded terminal response
   vector. Its finite sender owns immutable request bytes, canonically reconstructs the complete
   nested stream under query memory, and retries only whole attempts while treating leader hints as
-  advisory. Computed pre-group plan splitting, TLS/TCP ownership and all-tablet scheduling, final
-  grouped SQL integration, and shuffle routing remain deferred. The
+  advisory. A mutual-TLS carrier now authenticates both certificate fingerprints before application
+  I/O, authorizes the exact target before request write, retains complete authority and query memory,
+  supports the distinct empty terminal, and clears every incomplete response prefix on failure.
+  Computed pre-group plan splitting, TCP ownership and all-tablet scheduling, final grouped SQL
+  integration, and shuffle routing remain deferred. The
   distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;

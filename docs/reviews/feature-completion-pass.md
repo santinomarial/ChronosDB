@@ -891,6 +891,17 @@ Focused executions passed:
   of 233 and 31 of 31. LLVM 18 static analysis remains blocked by the installed macOS 26 libc++
   headers after its project-local findings were corrected. TLS/TCP ownership,
   deadline/cancellation, multi-address routing, and all-tablet scheduling remain.
+- Grouped sufficient-state mutual-TLS continuation: one move-only connected-session client retains
+  immutable Fragment-v2 request bytes, complete grouped authority, query resources, and an unpublished
+  response prefix while authenticating and exact-target-authorizing the server before request write.
+  Its server authenticates before request read and independently revalidates fresh receiver-bound
+  authority and the complete response vector before constructing write cursors. Five real socket-
+  pair cases cover two-group and distinct-empty success, both certificate fingerprints, exact
+  deadlines, invalid authority/bounds, unauthorized servers before application write, and prefix
+  clearing between valid frames. All 16 focused grouped cases pass under ASan/UBSan; the full cluster
+  and allocation-failure suites pass 238 of 238 and 31 of 31. LLVM 18 static analysis remains
+  blocked by the installed macOS 26 libc++ headers with no project-local finding emitted first.
+  TCP acquisition/listening, multi-address routing, cancellation, and all-tablet scheduling remain.
 - Bounded global vector-row finalization continuation: one consuming final pass independently
   validates row-mode plan/schema shape, tablet-stream closure, native descriptors, and exact
   row/message/input/working/output bounds before decoded-state allocation. It stably orders every
