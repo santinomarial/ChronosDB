@@ -150,8 +150,8 @@ only unavailable leadership may add an advisory hint.
 The matching sender owns one immutable request and a finite whole-attempt retry policy. A response
 vector must be completely route-correlated and terminal before the sender canonically reconstructs
 its nested frames under owned authority and query memory. Any partial, malformed, or over-limit
-vector leaves it waiting without a retained prefix. TLS/TCP attempt ownership, deadlines,
-cancellation, multi-address routing, and all-tablet scheduling remain the next boundary.
+vector leaves it waiting without a retained prefix. The enclosing scheduler now supplies TCP
+attempt ownership, deadlines, cancellation, multi-address routing, and all-tablet scheduling.
 
 One connected-session owner now carries that immutable attempt through mutual TLS. Both certificate
 fingerprints are authenticated before application bytes, and the client authorizes the exact target
@@ -160,7 +160,20 @@ data-dependent success closes only at the declared group count, while one distin
 closes without inventing a group. Any later TLS, integrity, sequence, byte, or deadline failure
 clears the private prefix. The server likewise validates the receiver's complete authority-bound
 vector before exposing its first response byte. TCP acquisition/listening and all-tablet scheduling
-remain outside this owner.
+remain outside this connected-session owner but are composed by the enclosing client, server, and
+scheduler owners.
+
+The completed outbound scheduler performs global merge, order, limit, and Native encoding before
+completion. Replicated service constructors place a proof-preserving preparation boundary in front
+of it: acquire metadata barrier coverage, bind one leader-linearizable or correlated bounded-stale
+Manifest authority, resolve routes from the same catalog, create the portable execution, and
+transfer all finite policies into the scheduler. The resulting owner retains the Manifest pin
+through terminal output.
+
+This is intentionally a Manifest/CSEG path. The packaged Native service currently binds mutable
+`TabletState` fragments. Its row-backed grouped execution remains the correctness oracle until a
+separate mutable sufficient-state worker can reacquire and revalidate the same authority model;
+substituting the immutable worker would mix snapshot types.
 
 ## Process qualification boundary
 

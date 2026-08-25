@@ -969,7 +969,18 @@ Focused executions passed:
   retry case proves no pre-completion result and exact decoded Native key/count output; invalid
   finalization bounds, deadline, and cancellation retain no prefix. Four focused cases pass normally
   and under ASan/UBSan; the complete cluster and allocation-failure suites pass 246 of 246 and 31 of
-  31. Replicated Native preparation/daemon routing, computed splitting, and shuffle remain.
+  31. Replicated service preparation is continued immediately below; mutable Native worker
+  routing, computed splitting, and shuffle remain.
+- Replicated grouped sufficient-state preparation continuation: additive leader-linearizable and
+  bounded-stale constructors now acquire metadata barrier coverage, bind every grouped Fragment-v2
+  dispatch and one owned result schema to the same Manifest generation and correlated group
+  authority, resolve only committed authenticated routes, and return the all-tablet scheduler that
+  atomically finalizes Native output. The focused service fixture proves both authority modes,
+  exact serving nodes, tablet group, Manifest generation, nullable FLOAT64 key authority, and
+  COUNT(*) authority. The complete build, all 107 service tests, all four service allocation tests,
+  and the focused ASan/UBSan case pass. Mutable Native `TabletState` worker integration, computed
+  splitting, and shuffle routing remain distinct work rather than being conflated with immutable
+  CSEG authority.
 - Bounded global vector-row finalization continuation: one consuming final pass independently
   validates row-mode plan/schema shape, tablet-stream closure, native descriptors, and exact
   row/message/input/working/output bounds before decoded-state allocation. It stably orders every

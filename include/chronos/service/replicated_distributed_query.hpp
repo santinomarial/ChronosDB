@@ -5,6 +5,7 @@
 #include "chronos/cluster/distributed_query_execution.hpp"
 #include "chronos/cluster/distributed_query_tcp_execution.hpp"
 #include "chronos/cluster/distributed_vector_aggregate_query_tcp_execution_v2.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_query_tcp_execution_v2.hpp"
 #include "chronos/cluster/raft_observation_tcp_batch_acquisition.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/manifest/temporal_publication.hpp"
@@ -99,6 +100,47 @@ create_replicated_follower_distributed_vector_aggregate_query_v2(
     query::DistributedVectorResultSchema&& result_schema,
     std::span<const query::DistributedAggregateFollowerReadAuthority> follower_authorities,
     const ReplicatedDistributedVectorAggregateQueryConfigV2& config);
+
+struct ReplicatedDistributedVectorGroupedAggregateQueryConfigV2 {
+  raft::NodeId source_node_id{};
+  ReplicatedReadBarrier* read_barrier{};
+  raft::GroupId metadata_group_id;
+  std::reference_wrapper<const raft::MetadataCatalogSnapshot> catalog;
+  schema::TableId table_id;
+  std::span<const std::uint32_t> destination_column_ordinals;
+  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts;
+  network::ConnectionAuthenticator* authenticator{};
+  const cluster::ClusterNodePrincipalAuthorizer* node_authorizer{};
+  query::DistributedVectorSnapshotBindingLimits binding_limits;
+  cluster::DistributedQueryRouteResolutionLimits route_limits;
+  cluster::DistributedVectorGroupedAggregateQueryExecutionLimitsV2 execution_limits;
+  cluster::DistributedVectorGroupedAggregateQuerySenderLimitsV2 sender_limits;
+  cluster::DistributedVectorGroupedAggregateQueryTlsLimitsV2 carrier_limits;
+  cluster::DistributedVectorGroupedAggregateFinalizationLimitsV2 finalization_limits;
+  std::chrono::milliseconds connect_timeout{5000};
+  std::optional<std::chrono::steady_clock::time_point> execution_deadline;
+};
+
+// Acquires exact leader-linearizable authority and transfers one grouped sufficient-state plan,
+// its result schema, and its Manifest pin through route resolution, all-tablet TCP execution, and
+// atomic Native finalization. Borrowed catalog, authentication, and TLS policy must outlive it.
+[[nodiscard]] common::Result<cluster::DistributedVectorGroupedAggregateQueryTcpExecutionV2>
+create_replicated_distributed_vector_grouped_aggregate_query_v2(
+    const query::DistributedVectorQueryPlan& plan,
+    manifest::TemporalDatabaseStorageSnapshot snapshot,
+    query::DistributedVectorResultSchema&& result_schema,
+    const ReplicatedDistributedVectorGroupedAggregateQueryConfigV2& config);
+
+// Applies the same grouped sufficient-state lifecycle to one canonical already-correlated
+// bounded-stale follower authority vector. Remote observation acquisition remains caller-owned.
+[[nodiscard]] common::Result<cluster::DistributedVectorGroupedAggregateQueryTcpExecutionV2>
+create_replicated_follower_distributed_vector_grouped_aggregate_query_v2(
+    const query::DistributedVectorQueryPlan& plan,
+    manifest::TemporalDatabaseStorageSnapshot snapshot,
+    query::DistributedVectorResultSchema&& result_schema,
+    std::span<const query::DistributedAggregateFollowerReadAuthority> follower_authorities,
+    const ReplicatedDistributedVectorGroupedAggregateQueryConfigV2& config);
 
 struct ReplicatedDistributedGroupedFloat64QueryConfig {
   raft::NodeId source_node_id{};

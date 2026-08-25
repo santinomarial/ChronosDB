@@ -150,6 +150,7 @@ make_publisher(const std::filesystem::path& root, const schema::SchemaLineage& l
   return std::filesystem::path{CHRONOS_NETWORK_FIXTURE_DIR} / "tls" / name;
 }
 
+// NOLINTBEGIN(readability-convert-member-functions-to-static)
 class QueryAuthenticator final : public network::ConnectionAuthenticator {
 public:
   common::Result<network::PeerAuthenticationResult>
@@ -157,12 +158,15 @@ public:
     return network::PeerAuthenticationResult{.authorized = true, .principal_id = 91U};
   }
 };
+// NOLINTEND(readability-convert-member-functions-to-static)
 
 class QueryNodeAuthorizer final : public cluster::ClusterNodePrincipalAuthorizer {
 public:
+  // NOLINTNEXTLINE(readability-convert-member-functions-to-static,bugprone-easily-swappable-parameters)
   common::Result<bool> authorize_node(const std::uint64_t principal_id,
                                       const raft::NodeId node_id) const override {
-    return principal_id == 91U && (node_id == 1U || node_id == 11U || node_id == 12U);
+    return common::Result<bool>{principal_id == 91U &&
+                                (node_id == 1U || node_id == 11U || node_id == 12U)};
   }
 };
 
@@ -258,6 +262,32 @@ make_follower_vector_count_plan(const schema::TabletId& tablet_id,
       make_follower_vector_aggregate_plan(tablet_id, applied_position);
   plan.query_id = uuid(27U);
   plan.intent.aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}};
+  return plan;
+}
+
+[[nodiscard]] query::DistributedVectorQueryPlan
+make_vector_grouped_aggregate_plan(const schema::TabletId& tablet_id,
+                                   const raft::LogIndex applied_position) {
+  const query::DistributedAggregatePlan aggregate = make_plan(tablet_id, applied_position);
+  return {.query_id = aggregate.query_id,
+          .read_policy = aggregate.read_policy,
+          .fragments = aggregate.fragments,
+          .intent = {.mode = query::DistributedVectorPlanMode::kGroupedAggregate,
+                     .group_key_input_indices = {1U},
+                     .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}},
+                     .order_keys = {{.output_index = 0U,
+                                     .direction = query::PhysicalSortDirection::kDescending,
+                                     .null_placement = query::ScalarNullPlacement::kLast}},
+                     .limit = 1U}};
+}
+
+[[nodiscard]] query::DistributedVectorQueryPlan
+make_follower_vector_grouped_aggregate_plan(const schema::TabletId& tablet_id,
+                                            const raft::LogIndex applied_position) {
+  query::DistributedVectorQueryPlan plan =
+      make_vector_grouped_aggregate_plan(tablet_id, applied_position);
+  plan.query_id = uuid(37U);
+  plan.read_policy = make_follower_plan(tablet_id, applied_position).read_policy;
   return plan;
 }
 
@@ -462,6 +492,41 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
   EXPECT_EQ(vector_execution->snapshot().aggregate_definitions().front().input->type,
             schema_value.columns()[1].type());
 
+  const ReplicatedDistributedVectorGroupedAggregateQueryConfigV2 vector_grouped_config{
+      .source_node_id = 1U,
+      .read_barrier = std::addressof(*barrier),
+      .metadata_group_id = metadata_group,
+      .catalog = std::cref(catalog),
+      .table_id = schema_value.table_id(),
+      .destination_column_ordinals = projection,
+      .tls_contexts = tls_contexts,
+      .authenticator = std::addressof(authenticator),
+      .node_authorizer = std::addressof(authorizer),
+      .binding_limits = {.maximum_fragments = 1U,
+                         .maximum_total_projection_ordinals = projection.size()}};
+  auto vector_grouped_snapshot = publisher->snapshot();
+  ASSERT_TRUE(vector_grouped_snapshot.has_value()) << vector_grouped_snapshot.error().to_string();
+  auto vector_grouped_execution = create_replicated_distributed_vector_grouped_aggregate_query_v2(
+      make_vector_grouped_aggregate_plan(tablet_id, applied_position),
+      std::move(*vector_grouped_snapshot),
+      query::DistributedVectorResultSchema{
+          .columns = {{"value", schema_value.columns()[1].type(), true},
+                      {"row_count",
+                       schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
+                       false}}},
+      vector_grouped_config);
+  ASSERT_TRUE(vector_grouped_execution.has_value()) << vector_grouped_execution.error().to_string();
+  EXPECT_EQ(vector_grouped_execution->state(),
+            cluster::DistributedVectorGroupedAggregateQueryTcpExecutionStateV2::kRunning);
+  ASSERT_EQ(vector_grouped_execution->snapshot().dispatches().size(), 1U);
+  EXPECT_EQ(vector_grouped_execution->snapshot().dispatches().front().raft_group_id, tablet_group);
+  ASSERT_EQ(vector_grouped_execution->snapshot().grouped_key_definitions().size(), 1U);
+  EXPECT_EQ(vector_grouped_execution->snapshot().grouped_key_definitions().front().type,
+            schema_value.columns()[1].type());
+  ASSERT_EQ(vector_grouped_execution->snapshot().grouped_aggregate_definitions().size(), 1U);
+  EXPECT_EQ(vector_grouped_execution->snapshot().grouped_aggregate_definitions().front().operation,
+            query::VectorAggregateOperation::kCountStar);
+
   auto row_snapshot = publisher->snapshot();
   ASSERT_TRUE(row_snapshot.has_value());
   auto row_plan = make_vector_aggregate_plan(tablet_id, applied_position);
@@ -593,6 +658,34 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
   ASSERT_EQ(follower_vector_execution->snapshot().aggregate_definitions().size(), 1U);
   EXPECT_EQ(follower_vector_execution->snapshot().aggregate_definitions().front().operation,
             query::VectorAggregateOperation::kAverage);
+
+  ReplicatedDistributedVectorGroupedAggregateQueryConfigV2 follower_vector_grouped_config =
+      vector_grouped_config;
+  follower_vector_grouped_config.read_barrier = std::addressof(*missing_tablet_barrier);
+  follower_vector_grouped_config.catalog = std::cref(follower_catalog);
+  follower_vector_grouped_config.tls_contexts = follower_tls_contexts;
+  auto follower_vector_grouped_snapshot = publisher->snapshot();
+  ASSERT_TRUE(follower_vector_grouped_snapshot.has_value());
+  auto follower_vector_grouped_execution =
+      create_replicated_follower_distributed_vector_grouped_aggregate_query_v2(
+          make_follower_vector_grouped_aggregate_plan(tablet_id, applied_position),
+          std::move(*follower_vector_grouped_snapshot),
+          query::DistributedVectorResultSchema{
+              .columns = {{"value", schema_value.columns()[1].type(), true},
+                          {"row_count",
+                           schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
+                           false}}},
+          follower_authorities, follower_vector_grouped_config);
+  ASSERT_TRUE(follower_vector_grouped_execution.has_value())
+      << follower_vector_grouped_execution.error().to_string();
+  EXPECT_EQ(follower_vector_grouped_execution->state(),
+            cluster::DistributedVectorGroupedAggregateQueryTcpExecutionStateV2::kRunning);
+  EXPECT_EQ(follower_vector_grouped_execution->snapshot().dispatches().front().serving_node, 12U);
+  EXPECT_EQ(follower_vector_grouped_execution->snapshot().dispatches().front().raft_group_id,
+            tablet_group);
+  ASSERT_EQ(follower_vector_grouped_execution->snapshot().grouped_key_definitions().size(), 1U);
+  ASSERT_EQ(follower_vector_grouped_execution->snapshot().grouped_aggregate_definitions().size(),
+            1U);
 
   ReplicatedDistributedGroupedFloat64QueryConfig follower_grouped_config = grouped_config;
   follower_grouped_config.read_barrier = std::addressof(*missing_tablet_barrier);

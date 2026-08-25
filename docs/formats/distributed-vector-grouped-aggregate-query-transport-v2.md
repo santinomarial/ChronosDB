@@ -2,9 +2,10 @@
 
 > **Status:** accepted and implemented exact response codec, partial-I/O contract, authenticated
 > receiver, finite sender/retry owner, mutual-TLS session carrier, outbound nonblocking TCP owner,
-> bounded inbound TCP server, production real-CSEG inbound composition, and all-tablet outbound
-> scheduling and atomic Native result finalization. Requests reuse the exact Fragment-v2
-> `CHDVREQ2` carrier. Replicated Native request routing remains a separate follow-on boundary.
+> bounded inbound TCP server, production real-CSEG inbound composition, all-tablet outbound
+> scheduling, atomic Native result finalization, and replicated Manifest-backed preparation.
+> Requests reuse the exact Fragment-v2 `CHDVREQ2` carrier. Mutable Native request routing remains a
+> separate worker/storage boundary.
 
 All integers are unsigned little-endian. Reserved bytes are zero. CRC32C detects accidental damage
 and is not authentication. The nested grouped payload retains its own independent checksums.
@@ -131,5 +132,7 @@ The scheduler validates Native result bounds before acquisition and enters compl
 portable merge, pinned global order/limit, and complete Native batch encoding succeed. Terminal
 failure, deadline, or cancellation retains no physical or Native prefix.
 
-The transport and scheduler still own no process lifecycle, replicated Native request preparation,
-computed pre-group plan splitting/final projection, or shuffle routing.
+The transport and scheduler still own no process lifecycle, mutable Native worker integration,
+computed pre-group plan splitting/final projection, or shuffle routing. The replicated service
+prepares leader-linearizable or correlated bounded-stale Manifest-backed executions before this
+boundary.

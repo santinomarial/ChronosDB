@@ -1431,8 +1431,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   key/aggregate result schema, runs pinned global order and limit through the shared physical
   operators under the coordinator's same query-memory authority, and emits bounded Native batches
   only after full success. The TCP scheduler now validates those output bounds before acquisition
-  and becomes complete only after retaining the all-or-nothing Native result. Replicated-service
-  composition, computed pre-group/final projection splitting, and shuffle routing remain deferred.
+  and becomes complete only after retaining the all-or-nothing Native result. Replicated
+  leader-linearizable and bounded-stale constructors now acquire metadata coverage, bind one
+  compatible Manifest authority and result schema, resolve authenticated committed routes, and
+  transfer the complete bounded lifecycle into that scheduler. Mutable Native sufficient-state
+  worker integration, computed pre-group/final projection splitting, and shuffle routing remain
+  deferred.
   The
   distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
