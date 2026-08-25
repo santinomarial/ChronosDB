@@ -1262,6 +1262,16 @@ were deliberately not run.
   cluster tests, 43 cluster allocation-failure tests, and focused ASan/UBSan cases pass. LLVM 18
   reaches only the known macOS 26 libc++ incompatibility after no remaining source diagnostic.
   Mutual-TLS session and retry composition remain open.
+- Connected grouped shuffle mutual TLS: move-only client/server owners now authenticate both
+  certificate fingerprints before application I/O, authorize the immutable destination before the
+  first source byte and the claimed source during receive, carry one all-or-none stream, and gate
+  client completion on its exact reverse receipt. Fixed scratch storage, one-operation readiness,
+  exact handshake/exchange deadlines, sticky failure, receipt-write-before-server-publication, and
+  lost-prefix cleanup are explicit. Real nonblocking certificate-backed tests cover success,
+  destination-principal rejection, and deadline expiry; allocation injection and focused ASan/
+  UBSan pass. The warning-as-error build, 278 cluster tests, and 44 cluster allocation-failure tests
+  pass. LLVM 18 reaches only the known macOS 26 libc++ incompatibility without a source diagnostic.
+  TCP connection/listener ownership, finite retries, reducers, and packaged selection remain open.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

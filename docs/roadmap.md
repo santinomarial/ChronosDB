@@ -1481,8 +1481,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   buffering, and rechecks canonical partition routing after decode. An all-or-none stream owner now
   authorizes an already authenticated source principal, locks one exact remote edge, validates
   canonical closure, and withholds every decoded group until terminal. A fixed reverse-route
-  success receipt binds the exact edge and accepted frame/byte extent. Correlated catalog
-  derivation, mutual-TLS/retry transport, reducer ownership, and packaged selection remain deferred.
+  success receipt binds the exact edge and accepted frame/byte extent. A connected nonblocking
+  mutual-TLS owner authenticates and node-authorizes both directions before application I/O and
+  completes only after that exact receipt. Correlated catalog derivation, TCP/retry transport,
+  reducer ownership, and packaged selection remain deferred.
   The
   distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
@@ -1555,7 +1557,7 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   preserves complete per-destination stream closure (including empty terminals), and enforces hard
   skew/byte failure. One complete bounded shuffle authority now binds source order, destination
   nodes, partition count, hash version, and grouped shape. Computed pre-group plan splitting,
-  catalog-derived destination selection, mutual-TLS/retry transport, and partition
+  catalog-derived destination selection, TCP/retry transport, and partition
   reducer ownership are still missing; scheduler request
   ownership, authenticated transport/read authority, and final SQL projection/order/limit are now
   integrated. The one committed private query-control endpoint now dispatches exact decoded mutable

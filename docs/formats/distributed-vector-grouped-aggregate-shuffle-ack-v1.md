@@ -1,8 +1,8 @@
 # Distributed Vector Grouped Aggregate Shuffle Acknowledgment v1
 
 > **Status: accepted and implemented for exact codec and bounded partial-I/O ownership.** The
-> acknowledgment is a success receipt for one complete authorized shuffle edge; finite retry and
-> mutual-TLS session owners remain enclosing responsibilities.
+> acknowledgment is a success receipt for one complete authorized shuffle edge and is carried by a
+> bounded mutual-TLS connected session; TCP and finite retry owners remain enclosing responsibilities.
 
 `CHDVGAK1` is a fixed 132-byte success acknowledgment emitted only after the destination has
 validated and privately retained one complete `CHDVGSF1` source-partition stream. Integers are

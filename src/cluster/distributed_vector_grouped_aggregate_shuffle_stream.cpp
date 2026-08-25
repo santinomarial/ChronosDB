@@ -53,8 +53,10 @@ namespace {
              query::distributed_vector_aggregate_state_format::kMaximumExtremumBytes;
 }
 
-[[nodiscard]] bool
-valid_limits(const DistributedVectorGroupedAggregateShuffleStreamLimits& limits) noexcept {
+} // namespace
+
+bool validate_distributed_vector_grouped_aggregate_shuffle_stream_limits(
+    const DistributedVectorGroupedAggregateShuffleStreamLimits& limits) noexcept {
   constexpr std::size_t kMinimumBytes =
       kDistributedVectorGroupedAggregateShuffleFrameV1HeaderSize +
       query::distributed_vector_grouped_aggregate_exchange_format::kMinimumFrameLength +
@@ -68,6 +70,8 @@ valid_limits(const DistributedVectorGroupedAggregateShuffleStreamLimits& limits)
              kMaximumDistributedVectorGroupedAggregateShuffleStreamBytes &&
          valid_payload_limits(limits.payload);
 }
+
+namespace {
 
 [[nodiscard]] bool same_edge(const DistributedVectorGroupedAggregateShuffleEdge& left,
                              const DistributedVectorGroupedAggregateShuffleEdge& right) noexcept {
@@ -109,7 +113,8 @@ DistributedVectorGroupedAggregateShuffleStreamReceiver::create(
     const network::PeerAuthenticationResult authenticated_peer,
     query::QueryResourceContext resources,
     const DistributedVectorGroupedAggregateShuffleStreamLimits limits) {
-  if (local_node_id == 0U || !valid_limits(limits)) {
+  if (local_node_id == 0U ||
+      !validate_distributed_vector_grouped_aggregate_shuffle_stream_limits(limits)) {
     return common::make_unexpected(
         invalid("grouped shuffle stream receiver configuration is invalid"));
   }
@@ -271,7 +276,8 @@ DistributedVectorGroupedAggregateShuffleStreamSender::create(
     const std::span<const query::EncodedDistributedVectorGroupedAggregateExchangeMessage> messages,
     const query::QueryResourceContext& resources,
     const DistributedVectorGroupedAggregateShuffleStreamLimits limits) {
-  if (!valid_limits(limits) || messages.empty() || messages.size() > limits.maximum_frames ||
+  if (!validate_distributed_vector_grouped_aggregate_shuffle_stream_limits(limits) ||
+      messages.empty() || messages.size() > limits.maximum_frames ||
       edge.source_node_id == edge.target_node_id) {
     return common::make_unexpected(invalid("grouped shuffle stream sender input is invalid"));
   }

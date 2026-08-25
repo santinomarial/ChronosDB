@@ -119,10 +119,11 @@ split. Canonical bounded source-side partition splitting, complete node-bound de
 and an exact checksummed per-message remote carrier now exist. An atomic complete-stream owner also
 authorizes the already authenticated source principal, locks one remote edge, proves terminal
 closure, and withholds every decoded group until full success. A fixed checksummed reverse-route
-receipt now binds successful extraction to the exact edge and accepted frame/byte extent. Mutual-
-TLS session and retry ownership, partition reduction, packaged selection, and broader fault/
-measurement evidence remain open. The row-backed path remains the differential oracle for that
-work.
+receipt binds successful extraction to the exact edge and accepted frame/byte extent. A connected
+mutual-TLS owner now authenticates both certificate fingerprints before application I/O, authorizes
+the destination before the source writes, and completes only after that receipt. TCP, retry, and
+duplicate-admission ownership, partition reduction, packaged selection, and broader fault/
+measurement evidence remain open. The row-backed path remains the differential oracle for that work.
 
 ### Canonical source-side partition boundary
 
@@ -149,10 +150,11 @@ while a move-only cursor owns short writes. A complete-stream sender now exact-d
 constructs every same-edge frame before exposing bytes. Its receiver consumes a previously
 authenticated principal, authorizes the claimed source node once, locks all subsequent frames to
 that edge, and destroys any incomplete or invalid prefix. The distinct `CHDVGAK1` receipt reverses
-the route and binds exact successful extraction plus accepted count/bytes. CRC32C and those policy
-owners are not a TLS session: no mutual-TLS owner yet carries, acknowledges, and retries the
-complete source-partition stream, and the current packaged path therefore continues to send
-complete tablet streams to one coordinator.
+the route and binds exact successful extraction plus accepted count/bytes. A nonblocking connected
+mutual-TLS client/server pair authenticates before application bytes, applies exact source and
+destination node authorization, enforces handshake/exchange deadlines, and retains no failed
+prefix. It does not yet own TCP acquisition/listening or retry the complete source-partition stream,
+and the current packaged path therefore continues to send complete tablet streams to one coordinator.
 
 ### Portable sufficient-state execution boundary
 

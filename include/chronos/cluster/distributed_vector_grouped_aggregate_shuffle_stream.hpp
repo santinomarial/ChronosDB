@@ -31,6 +31,9 @@ struct DistributedVectorGroupedAggregateShuffleStreamLimits {
   query::DistributedVectorGroupedAggregateExchangeDecodeLimits payload;
 };
 
+[[nodiscard]] bool validate_distributed_vector_grouped_aggregate_shuffle_stream_limits(
+    const DistributedVectorGroupedAggregateShuffleStreamLimits& limits) noexcept;
+
 struct DistributedVectorGroupedAggregateShuffleCompleteStream {
   DistributedVectorGroupedAggregateShuffleEdge edge;
   std::vector<query::DistributedVectorGroupedAggregateExchangeMessage> messages;

@@ -2,8 +2,8 @@
 
 > **Status: accepted and implemented for exact encoding, decoding, bounded partial-I/O ownership,
 > immutable authority validation, atomic authorized complete-stream ownership, and a correlated
-> success acknowledgment.** Mutual-TLS session, retry, and destination reduction remain enclosing
-> responsibilities.
+> success acknowledgment and bounded mutual-TLS connected session.** TCP ownership, retry, and
+> destination reduction remain enclosing responsibilities.
 
 This frame carries one canonical
 [Distributed Vector Grouped Aggregate Exchange v1](distributed-vector-grouped-aggregate-exchange-v1.md)
