@@ -181,6 +181,19 @@ DistributedVectorGroupedAggregateShuffleTcpClient::interest() const noexcept {
   return implementation_->carrier_.value().interest();
 }
 
+DistributedVectorGroupedAggregateShuffleTcpClient::TimePoint
+DistributedVectorGroupedAggregateShuffleTcpClient::deadline() const noexcept {
+  if (!implementation_)
+    return TimePoint::min();
+  if (implementation_->state_ ==
+      DistributedVectorGroupedAggregateShuffleTcpClientState::kConnecting) {
+    return implementation_->connect_deadline_;
+  }
+  if (implementation_->carrier_.has_value())
+    return implementation_->carrier_->deadline();
+  return TimePoint::min();
+}
+
 int DistributedVectorGroupedAggregateShuffleTcpClient::descriptor() const noexcept {
   return implementation_ ? implementation_->socket_.descriptor() : -1;
 }

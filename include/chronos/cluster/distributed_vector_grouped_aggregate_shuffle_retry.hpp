@@ -66,6 +66,7 @@ public:
   [[nodiscard]] std::optional<TimePoint> next_attempt_not_before() const noexcept;
   [[nodiscard]] std::optional<common::StatusCode> last_status_code() const noexcept;
   [[nodiscard]] const DistributedVectorGroupedAggregateShuffleEdge& edge() const noexcept;
+  [[nodiscard]] const DistributedVectorGroupedAggregateShuffleAuthority& authority() const noexcept;
 
 private:
   DistributedVectorGroupedAggregateShuffleRetry(

@@ -1570,8 +1570,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   unique serving node, so destination authority cannot drift from the query's correlated placement.
   One atomic source fan-out now partitions a complete tablet stream and publishes either an
   in-process reducer delivery or a finite remote retry for every explicit edge, with bounded total
-  outer bytes and no partial plan on failure. Computed pre-group plan splitting and packaged
-  all-edge polling/result gathering are still missing;
+  outer bytes and no partial plan on failure. One bounded poll owner now drives all supplied remote
+  edges through finite address rotation, exact carrier deadlines, mutual TLS, and receipt-gated
+  all-edge completion. Computed pre-group plan splitting, listener-to-reducer draining, and
+  partition-result gathering are still missing;
   scheduler request ownership, authenticated transport/read authority, and final SQL
   projection/order/limit are now
   integrated. The one committed private query-control endpoint now dispatches exact decoded mutable

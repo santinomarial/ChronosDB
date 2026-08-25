@@ -54,6 +54,7 @@ public:
 
   [[nodiscard]] DistributedVectorGroupedAggregateShuffleTcpClientState state() const noexcept;
   [[nodiscard]] DistributedVectorGroupedAggregateShuffleTlsInterest interest() const noexcept;
+  [[nodiscard]] TimePoint deadline() const noexcept;
   [[nodiscard]] int descriptor() const noexcept;
   [[nodiscard]] std::size_t attempt_number() const noexcept;
   [[nodiscard]] raft::NodeId target_node_id() const noexcept;

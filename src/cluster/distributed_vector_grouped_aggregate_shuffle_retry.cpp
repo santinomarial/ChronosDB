@@ -161,4 +161,9 @@ DistributedVectorGroupedAggregateShuffleRetry::edge() const noexcept {
   return edge_;
 }
 
+const DistributedVectorGroupedAggregateShuffleAuthority&
+DistributedVectorGroupedAggregateShuffleRetry::authority() const noexcept {
+  return authority_.get();
+}
+
 } // namespace chronos::cluster

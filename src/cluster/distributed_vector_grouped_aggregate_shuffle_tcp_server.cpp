@@ -1,5 +1,6 @@
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_server.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <climits>
@@ -245,8 +246,20 @@ common::Status DistributedVectorGroupedAggregateShuffleTcpServer::poll_once(
                                           .events = events};
   }
   const nfds_t count = static_cast<nfds_t>(impl.connections_.size() + 1U);
+  const auto before_poll = std::chrono::steady_clock::now();
+  std::chrono::milliseconds bounded_wait = maximum_wait;
+  for (const auto& connection : impl.connections_) {
+    const auto deadline = connection->carrier_.deadline();
+    if (deadline <= before_poll) {
+      bounded_wait = std::chrono::milliseconds{0};
+      break;
+    }
+    bounded_wait =
+        std::min(bounded_wait,
+                 std::chrono::duration_cast<std::chrono::milliseconds>(deadline - before_poll));
+  }
   const int ready =
-      ::poll(impl.poll_descriptors_.data(), count, static_cast<int>(maximum_wait.count()));
+      ::poll(impl.poll_descriptors_.data(), count, static_cast<int>(bounded_wait.count()));
   if (ready < 0 && errno != EINTR)
     return poll_error();
   const auto now = std::chrono::steady_clock::now();

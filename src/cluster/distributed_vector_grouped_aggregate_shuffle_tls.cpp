@@ -412,6 +412,10 @@ DistributedVectorGroupedAggregateShuffleTlsClient::interest() const noexcept {
   return implementation_ ? implementation_->interest_
                          : DistributedVectorGroupedAggregateShuffleTlsInterest{};
 }
+DistributedVectorGroupedAggregateShuffleTlsClient::TimePoint
+DistributedVectorGroupedAggregateShuffleTlsClient::deadline() const noexcept {
+  return implementation_ ? implementation_->deadline_ : TimePoint::min();
+}
 const common::Status& DistributedVectorGroupedAggregateShuffleTlsClient::failure() const noexcept {
   static const common::Status empty{common::StatusCode::kInvalidArgument,
                                     "grouped shuffle TLS client is empty"};
@@ -478,6 +482,10 @@ DistributedVectorGroupedAggregateShuffleTlsInterest
 DistributedVectorGroupedAggregateShuffleTlsServer::interest() const noexcept {
   return implementation_ ? implementation_->interest_
                          : DistributedVectorGroupedAggregateShuffleTlsInterest{};
+}
+DistributedVectorGroupedAggregateShuffleTlsServer::TimePoint
+DistributedVectorGroupedAggregateShuffleTlsServer::deadline() const noexcept {
+  return implementation_ ? implementation_->deadline_ : TimePoint::min();
 }
 common::Result<DistributedVectorGroupedAggregateShuffleCompleteStream>
 DistributedVectorGroupedAggregateShuffleTlsServer::take_complete_stream() {

@@ -75,6 +75,7 @@ public:
   [[nodiscard]] common::Status on_ready(bool readable, bool writable, TimePoint now);
   [[nodiscard]] DistributedVectorGroupedAggregateShuffleTlsState state() const noexcept;
   [[nodiscard]] DistributedVectorGroupedAggregateShuffleTlsInterest interest() const noexcept;
+  [[nodiscard]] TimePoint deadline() const noexcept;
   [[nodiscard]] const common::Status& failure() const noexcept;
 
 private:
@@ -107,6 +108,7 @@ public:
   [[nodiscard]] common::Status on_ready(bool readable, bool writable, TimePoint now);
   [[nodiscard]] DistributedVectorGroupedAggregateShuffleTlsState state() const noexcept;
   [[nodiscard]] DistributedVectorGroupedAggregateShuffleTlsInterest interest() const noexcept;
+  [[nodiscard]] TimePoint deadline() const noexcept;
   [[nodiscard]] common::Result<DistributedVectorGroupedAggregateShuffleCompleteStream>
   take_complete_stream();
   [[nodiscard]] const common::Status& failure() const noexcept;

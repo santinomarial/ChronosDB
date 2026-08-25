@@ -188,6 +188,13 @@ whole source fails before publication if any edge or total outer-byte bound fail
 and remote vectors transfers ownership without allocating. This is fan-out preparation, not yet
 the event-loop scheduler that drives all remote edges and destination reducers.
 
+Remote fan-out now has one bounded poll owner. It exact-matches every retry to the same authority,
+preflights complete node/IPv4/TLS routes, rotates addresses by attempt number, and permits one
+active TCP/mTLS client per edge. Success is all-edge and receipt-gated. Caller wait is capped by the
+whole execution, retry, connect, handshake, and exchange deadlines; the listener now applies the
+same cap to server sessions. Cancellation and terminal failure tear down every client. Destination
+stream draining and partition-result gathering remain outside this owner.
+
 ### Portable sufficient-state execution boundary
 
 `DistributedVectorGroupedAggregateQueryExecutionV2` now joins the compatible snapshot to the

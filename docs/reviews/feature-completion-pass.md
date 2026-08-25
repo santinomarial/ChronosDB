@@ -1315,6 +1315,13 @@ were deliberately not run.
   local reduction and remote attempt creation, while allocation injection proves failed fan-out
   releases query reservations. Event-loop polling, destination integration, result gathering,
   cancellation, and process qualification remain open.
+- Bounded grouped shuffle remote-edge scheduling: one poll owner preflights exact-authority retries
+  and finite node/IPv4/TLS routes, rotates endpoints by attempt number, and completes only after
+  every authenticated receipt. A refused-first-address loopback case proves backoff, rotation,
+  mutual TLS, retained server extraction, and reducer admission. Allocation injection found and
+  removed a false nonthrowing PImpl constructor contract. Active client and listener waits now cap
+  at exact carrier deadlines. Destination draining, result gathering, and process faults remain
+  open.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
