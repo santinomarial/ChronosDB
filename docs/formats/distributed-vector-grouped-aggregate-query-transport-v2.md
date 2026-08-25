@@ -26,6 +26,11 @@ authority from the exact applied-head proof. It may emit this document's `CHDVGR
 the response carries no Manifest generation or mutable snapshot position. This combination is an
 endpoint policy, not a new wire version, and neither request can be decoded as the other.
 
+The mutable grouped mutual-TLS carrier uses the same response reader and writer under exact grouped
+authority while retaining the mutable request reader/cursor. Peer fingerprint authentication
+precedes application bytes, and a client authorizes the immutable target before sending
+`CHDMREQ1`. It publishes only one complete empty-or-contiguous response stream.
+
 ## Response
 
 | Offset | Size | Field | Rule |

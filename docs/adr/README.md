@@ -526,3 +526,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0489](0489-owned-grouped-sufficient-state-final-projection.md) | Owned grouped sufficient-state final projection | accepted |
 | [0490](0490-proof-revalidated-mutable-grouped-sufficient-state-worker.md) | Proof-revalidated mutable grouped sufficient-state worker | accepted |
 | [0491](0491-distinct-mutable-grouped-sufficient-state-transport.md) | Distinct mutable grouped sufficient-state transport | accepted |
+| [0492](0492-bounded-mutable-grouped-sufficient-state-mutual-tls.md) | Bounded mutable grouped sufficient-state mutual TLS | accepted |

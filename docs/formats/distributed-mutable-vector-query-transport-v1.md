@@ -44,6 +44,11 @@ from the mutable fragment and requires a complete empty-or-contiguous state stre
 any response. The pairing does not make `CHDMREQ1` acceptable to the Manifest/CSEG grouped endpoint
 and does not make `CHDVREQ2` acceptable to the mutable worker.
 
+The implemented mutable grouped mutual-TLS carrier preserves that pairing over one connected
+session. It authenticates both certificate fingerprints before application I/O, authorizes the
+client-side target before request write, and exposes no response prefix before complete terminal
+closure. TCP connect/listen ownership remains an enclosing boundary.
+
 Unknown request versions return `NOT_SUPPORTED`; damaged request bytes return `CORRUPTION`;
 invalid encoder input returns `INVALID_ARGUMENT`; bounded-reader exhaustion returns
 `RESOURCE_EXHAUSTED`.

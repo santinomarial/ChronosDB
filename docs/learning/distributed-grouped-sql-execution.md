@@ -190,9 +190,11 @@ canonical sufficient-state frames as the Manifest/CSEG worker. Its request-local
 adapter implements only the distinct mutable grouped service interface. The authenticated receiver
 and finite sender pair exact `CHDMREQ1` applied-head requests with authority-agnostic `CHDVGRP2`
 state responses, rebind fresh authority, and publish only a complete canonical stream. They cannot
-enter the Fragment-v2 endpoint because that request names a Manifest generation. Mutual-TLS/TCP and
-all-tablet scheduler composition remain before Native can choose this path. Until then, row-backed
-grouped execution remains the packaged differential oracle.
+enter the Fragment-v2 endpoint because that request names a Manifest generation. A connected
+mutual-TLS owner now authenticates both peers before application bytes, authorizes the immutable
+target before request write, and retains no partial response. TCP connect/listen and all-tablet
+scheduler composition remain before Native can choose this path. Until then, row-backed grouped
+execution remains the packaged differential oracle.
 
 ## Process qualification boundary
 

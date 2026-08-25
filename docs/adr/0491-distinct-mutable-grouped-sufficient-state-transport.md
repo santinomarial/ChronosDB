@@ -40,6 +40,10 @@ Both owners are synchronous and single-thread-affine. They add no shared-memory 
 memory-ordering rule. TLS, TCP, scheduler, cancellation, and Native finalization remain enclosing
 lifecycle work.
 
+**Retrospective (2026-08-25):** [ADR 0492](0492-bounded-mutable-grouped-sufficient-state-mutual-tls.md)
+adds the connected mutual-TLS lifecycle while preserving this endpoint's exact mutable request and
+grouped response types. TCP acquisition/listening and scheduler ownership remain outside it.
+
 ## Consequences
 
 Mutable applied-head grouped states can cross a process boundary without weakening their proof or
@@ -89,7 +93,7 @@ grouped endpoint policy and restores the worker as an in-process-only boundary; 
 
 ## Unresolved questions
 
-- Mutual-TLS and deadline-bound TCP lifecycle composition.
+- Deadline-bound outbound TCP and bounded inbound listener ownership.
 - All-tablet mutable grouped scheduling and atomic Native path selection.
 - Computed pre-group programs and partitioned shuffle/skew policy.
 

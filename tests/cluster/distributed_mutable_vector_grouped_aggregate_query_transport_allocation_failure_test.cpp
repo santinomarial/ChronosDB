@@ -1,6 +1,7 @@
-#include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_transport.hpp"
+#include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tls.hpp"
 #include "support/failing_allocator.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
@@ -110,6 +111,14 @@ public:
   }
 };
 
+class Authenticator final : public network::ConnectionAuthenticator {
+public:
+  common::Result<network::PeerAuthenticationResult>
+  authenticate(const network::PeerAuthenticationRequest&) override {
+    return network::PeerAuthenticationResult{.authorized = true, .principal_id = 91U};
+  }
+};
+
 class Worker final : public DistributedMutableVectorGroupedAggregateQueryWorkerService {
 public:
   common::Result<query::DistributedVectorGroupedAggregateAuthority>
@@ -186,6 +195,60 @@ TEST(DistributedMutableVectorGroupedAggregateQuerySenderAllocationFailureTest,
       break;
   }
   EXPECT_TRUE(success);
+}
+
+TEST(DistributedMutableVectorGroupedAggregateQueryTlsAllocationFailureTest,
+     ClassifiesClientAndServerOwnerConstructionAllocations) {
+  Authorizer authorizer;
+  Authenticator authenticator;
+  Worker worker;
+  auto receiver = DistributedMutableVectorGroupedAggregateQueryReceiver::create(
+      {.local_node_id = 2U, .authorizer = &authorizer, .worker = &worker});
+  ASSERT_TRUE(receiver.has_value());
+  const DistributedMutableVectorGroupedAggregateQueryTlsLimits limits{
+      .handshake_timeout = std::chrono::milliseconds{100},
+      .exchange_timeout = std::chrono::milliseconds{100},
+      .maximum_response_frames = 2U,
+      .maximum_response_bytes = 1U << 20U};
+
+  bool client_success{};
+  for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
+    auto resources = query::QueryResourceContext::create(4U << 20U).value();
+    auto sender = DistributedMutableVectorGroupedAggregateQuerySender::create(
+        1U, fragment(), keys(), aggregates(), resources);
+    ASSERT_TRUE(sender.has_value());
+    auto attempt = sender->begin_attempt({});
+    ASSERT_TRUE(attempt.has_value());
+    auto owned_keys = keys();
+    auto owned_aggregates = aggregates();
+    auto result = run_failure(fail_after, [&] {
+      return DistributedMutableVectorGroupedAggregateQueryTlsClient::create(
+          network::TlsSocket{}, std::move(*attempt), std::move(owned_keys),
+          std::move(owned_aggregates), resources,
+          {.authenticator = &authenticator, .node_authorizer = &authorizer, .limits = limits}, {});
+    });
+    if (result.has_value()) {
+      client_success = true;
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(client_success);
+
+  bool server_success{};
+  for (std::size_t fail_after = 0U; fail_after < 32U; ++fail_after) {
+    auto result = run_failure(fail_after, [&] {
+      return DistributedMutableVectorGroupedAggregateQueryTlsServer::create(
+          network::TlsSocket{},
+          {.authenticator = &authenticator, .receiver = &*receiver, .limits = limits}, {});
+    });
+    if (result.has_value()) {
+      server_success = true;
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(server_success);
 }
 
 } // namespace

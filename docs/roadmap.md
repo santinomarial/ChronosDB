@@ -1440,7 +1440,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   reinterpreting Manifest/CSEG Fragment-v2 transport. A distinct authenticated mutable grouped
   endpoint now pairs the exact checksummed `CHDMREQ1` applied-head request with `CHDVGRP2` states,
   binds fresh authority, atomically publishes only complete streams, and retries byte-identical
-  whole attempts under finite policy. Its mutual-TLS/TCP lifecycle and all-tablet Native scheduler
+  whole attempts under finite policy. A connected mutual-TLS owner authenticates both certificate
+  fingerprints before application I/O, authorizes the immutable target before request write, and
+  clears every incomplete state prefix. Its TCP lifecycle and all-tablet Native scheduler
   integration remain deferred. Schema-bound grouped SQL now has a separate direct-input
   lowerer that emits the exact unique projection, key/aggregate intent, event-time predicate,
   selected-output global order/limit, and typed result schema consumed by this scheduler. Checked
