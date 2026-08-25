@@ -541,3 +541,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0504](0504-atomic-authorized-grouped-shuffle-streams.md) | Atomic authorized grouped shuffle streams | accepted |
 | [0505](0505-correlated-grouped-shuffle-success-acknowledgment.md) | Correlated grouped shuffle success acknowledgment | accepted |
 | [0506](0506-bounded-grouped-shuffle-mutual-tls-session.md) | Bounded grouped shuffle mutual-TLS session | accepted |
+| [0507](0507-finite-immutable-route-grouped-shuffle-retry.md) | Finite immutable-route grouped shuffle retry | accepted |

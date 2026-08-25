@@ -1556,9 +1556,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   Canonical bounded source-side partition routing now reuses the grouped table's normalized hash,
   preserves complete per-destination stream closure (including empty terminals), and enforces hard
   skew/byte failure. One complete bounded shuffle authority now binds source order, destination
-  nodes, partition count, hash version, and grouped shape. Computed pre-group plan splitting,
-  catalog-derived destination selection, TCP/retry transport, and partition
-  reducer ownership are still missing; scheduler request
+  nodes, partition count, hash version, and grouped shape. A finite whole-stream retry owner now
+  reconstructs byte-identical attempts for one immutable edge, applies capped exponential backoff,
+  and recognizes success only after the authenticated receipt. Computed pre-group plan splitting,
+  catalog-derived destination selection, TCP connection/listener transport, duplicate admission,
+  and partition reducer ownership are still missing; scheduler request
   ownership, authenticated transport/read authority, and final SQL projection/order/limit are now
   integrated. The one committed private query-control endpoint now dispatches exact decoded mutable
   plans to row or grouped receivers and retains distinct bounded response codecs, so remote grouped

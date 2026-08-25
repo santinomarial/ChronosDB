@@ -121,8 +121,10 @@ authorizes the already authenticated source principal, locks one remote edge, pr
 closure, and withholds every decoded group until full success. A fixed checksummed reverse-route
 receipt binds successful extraction to the exact edge and accepted frame/byte extent. A connected
 mutual-TLS owner now authenticates both certificate fingerprints before application I/O, authorizes
-the destination before the source writes, and completes only after that receipt. TCP, retry, and
-duplicate-admission ownership, partition reduction, packaged selection, and broader fault/
+the destination before the source writes, and completes only after that receipt. A finite policy
+owner reconstructs byte-identical attempts for the unchanged edge under capped exponential backoff
+and recognizes success only after that receipt. TCP and duplicate-admission ownership, partition
+reduction, packaged selection, and broader fault/
 measurement evidence remain open. The row-backed path remains the differential oracle for that work.
 
 ### Canonical source-side partition boundary
@@ -153,8 +155,11 @@ that edge, and destroys any incomplete or invalid prefix. The distinct `CHDVGAK1
 the route and binds exact successful extraction plus accepted count/bytes. A nonblocking connected
 mutual-TLS client/server pair authenticates before application bytes, applies exact source and
 destination node authorization, enforces handshake/exchange deadlines, and retains no failed
-prefix. It does not yet own TCP acquisition/listening or retry the complete source-partition stream,
-and the current packaged path therefore continues to send complete tablet streams to one coordinator.
+prefix. A separate finite policy owner retains the immutable edge and canonical nested bytes,
+reconstructs byte-identical whole-stream attempts, applies capped exponential backoff, and records
+success only after that TLS session validates the exact receipt. It does not yet own TCP
+acquisition/listening or idempotent duplicate admission, and the current packaged path therefore
+continues to send complete tablet streams to one coordinator.
 
 ### Portable sufficient-state execution boundary
 

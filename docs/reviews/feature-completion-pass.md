@@ -1272,6 +1272,15 @@ were deliberately not run.
   UBSan pass. The warning-as-error build, 278 cluster tests, and 44 cluster allocation-failure tests
   pass. LLVM 18 reaches only the known macOS 26 libc++ incompatibility without a source diagnostic.
   TCP connection/listener ownership, finite retries, reducers, and packaged selection remain open.
+- Finite grouped shuffle retry: one move-only policy owner retains the canonical nested stream and
+  immutable authority edge, reconstructs byte-identical all-or-none stream senders, permits only one
+  active attempt, and applies exact capped exponential backoff without consuming an attempt on
+  construction failure. Only a TLS-validated reverse receipt reports success; authentication and
+  other permanent failures are terminal. Focused state, byte-identity, limit, and allocation tests
+  pass under the warning-as-error ASan/UBSan build. All 280 cluster tests and 45 cluster
+  allocation-failure tests pass. LLVM 18 reaches only the known macOS 26 libc++ incompatibility
+  without a source diagnostic. TCP connection/listener ownership, duplicate admission, reducers,
+  and packaged selection remain open.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
