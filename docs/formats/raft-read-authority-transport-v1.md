@@ -86,5 +86,6 @@ exact. Implemented readers validate each fixed header before retaining the exact
 consume at most one frame per call, and expose any coalesced suffix through exact prefix accounting.
 The move-only cursor owns short-write progress. Maintained mutual-TLS client/server sessions
 authenticate both node claims before request dispatch and impose exact handshake/exchange deadlines.
-TCP connect/listen ownership, finite route retries, daemon integration, and all-group query fan-out
-remain subsequent protocol consumers.
+Maintained TCP endpoints now own exact nonblocking connect completion, a separate connect deadline,
+bounded listener admission, finite accepts per poll, metrics, and TLS-before-descriptor shutdown.
+Finite route retries, daemon integration, and all-group query fan-out remain subsequent consumers.

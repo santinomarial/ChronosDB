@@ -1441,11 +1441,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   Native result framing, and advisory placement hints are exercised by that composition. A distinct
   canonical remote read-authority protocol and authenticated receiver now return one exact
   quorum-confirmed barrier with its correlated stable-leader observation. Bounded stream ownership
-  and authenticated mutual-TLS client/server sessions now carry one exact request, while TCP
-  connect/listen ownership, daemon integration, and all-group attempt fan-out remain before
-  arbitrary split-leader process coordination is implemented. Partitions, multi-process real-CSEG
-  scans, and sufficient-state multi-key shuffle also remain open; the full phase exit gate is not
-  claimed.
+  and authenticated mutual-TLS client/server sessions now carry one exact request. Deadline-bound
+  TCP connect and bounded listener/poll ownership make that exchange process-capable, while finite
+  route acquisition, daemon integration, and all-group attempt fan-out remain before arbitrary
+  split-leader process coordination is implemented. Partitions, multi-process real-CSEG scans, and
+  sufficient-state multi-key shuffle also remain open; the full phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
 - **Explicit non-scope:** general cross-tablet write transactions, silent consistency downgrade, unlimited shuffle, and topology changes that invalidate tokens without an explicit error/mapping protocol.

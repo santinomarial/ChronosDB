@@ -497,3 +497,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0460](0460-three-daemon-mutable-sql-failover-qualification.md) | Three-daemon mutable SQL failover qualification | accepted |
 | [0461](0461-authenticated-remote-raft-read-authority.md) | Authenticated remote Raft read authority | accepted |
 | [0462](0462-bounded-raft-read-authority-partial-io-and-mtls.md) | Bounded Raft read-authority partial I/O and mutual TLS | accepted |
+| [0463](0463-deadline-bound-raft-read-authority-tcp.md) | Deadline-bound Raft read-authority TCP endpoints | accepted |
