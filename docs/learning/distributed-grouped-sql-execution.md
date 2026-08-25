@@ -115,9 +115,10 @@ one catalog, Manifest epoch, and single acquired authority vector; it rejects mi
 Manifest tablets and transfers the complete owned contract into the scheduler. Computed final
 expressions now run over the globally merged raw key/aggregate vector through the shared checked
 projection, sort, and limit stages. Computed pre-group expressions still need an owned worker-plan
-split. Canonical bounded source-side partition splitting now exists, while destination authority,
-partition transport/reduction, and broader fault/measurement evidence remain open. The row-backed
-path remains the differential oracle for that work.
+split. Canonical bounded source-side partition splitting, complete node-bound destination authority,
+and an exact checksummed per-message remote carrier now exist. Authenticated session/whole-stream
+transport, partition reduction, packaged selection, and broader fault/measurement evidence remain
+open. The row-backed path remains the differential oracle for that work.
 
 ### Canonical source-side partition boundary
 
@@ -134,12 +135,15 @@ input, destination-group, per-stream-byte, and total-output-byte bounds classify
 amplification before a partial vector can escape. Allocation failure is likewise atomic and the
 immutable owner can retry the same caller-owned input.
 
-This is not yet a network shuffle. The partition ID is owned beside the unchanged grouped frame;
-the complete shuffle authority now binds hash version, partition count, every ordered source
-tablet/node, every partition/destination node, and exact key/state shape. It permits local edges but
-requires them to bypass a self-network route. No carrier yet authenticates that authority or moves
-partition bytes, and the current packaged path therefore continues to send complete tablet streams
-to one coordinator.
+The partition ID is owned beside the unchanged grouped frame; the complete shuffle authority binds
+hash version, partition count, every ordered source tablet/node, every partition/destination node,
+and exact key/state shape. It permits local edges but requires them to bypass a self-network route.
+The distinct `CHDVGSF1` outer carrier now binds one nested message to an exact remote edge, verifies
+header, payload, and complete-frame integrity, and recomputes hash routing after canonical decode.
+Its header-first reader rejects route and allocation-length drift before retaining the full frame,
+while a move-only cursor owns short writes. CRC32C is not peer authentication: no mutual-TLS owner
+yet carries and retries complete source-partition streams, and the current packaged path therefore
+continues to send complete tablet streams to one coordinator.
 
 ### Portable sufficient-state execution boundary
 

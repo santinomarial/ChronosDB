@@ -1,9 +1,10 @@
 # Distributed Vector Grouped Aggregate Exchange v1
 
 > **Status: accepted and implemented for exact encoding, decoding, bounded partial-I/O ownership,
-> direct-input Fragment-v2 worker production, in-memory cross-tablet merge, and canonical bounded
-> source-side partition splitting.** Computed pre-group plans and destination-routed partition
-> transport/reduction remain separate owners.
+> direct-input Fragment-v2 worker production, in-memory cross-tablet merge, canonical bounded
+> source-side partition splitting, and an authority-bound outer remote partition frame.** Computed
+> pre-group plans, authenticated session/stream ownership, and destination reduction remain
+> separate owners.
 
 This distinct frame binds one multi-column group key tuple and zero or more
 [Mergeable Vector Aggregate State v1](mergeable-vector-aggregate-state-v1.md) values to one query,
@@ -58,8 +59,10 @@ not imply equality; reducers must still compare exact typed keys.
 Each partition stream retains query/tablet identity and local first-seen order but receives fresh
 contiguous ordinal, count, sequence, and terminal fields. An empty partition is one standard
 `TERMINAL|EMPTY` frame. The frame itself does not carry a partition ID: partition ID belongs to the
-in-memory stream owner, and a future network carrier must authenticate it together with the hash
-version and partition count rather than infer it from these bytes.
+in-memory stream owner. The distinct
+[shuffle frame](distributed-vector-grouped-aggregate-shuffle-frame-v1.md) binds it together with
+the hash version, partition count, and exact source/destination authority for remote delivery;
+mutual-TLS stream ownership remains outside both codecs.
 
 ## Key entries
 
@@ -125,5 +128,7 @@ handles gap-free sequence, exact duplicate identity, all-tablet closure, and can
 The proof-revalidated Fragment-v2 worker produces canonical direct-input grouped streams, including
 the distinct empty terminal, under a total encoded-byte bound. The source-side splitter validates a
 complete stream before emitting all bounded partitions and treats per-destination group overflow as
-resource exhaustion. Computed pre-group expressions, destination routing, partition retry/reduction,
-final projection, ORDER BY, and LIMIT remain enclosing responsibilities.
+resource exhaustion. The outer shuffle carrier exact-binds each nested message to immutable remote
+edge authority and rechecks canonical partition routing. Computed pre-group expressions,
+authenticated whole-stream retry, partition reduction, final projection, ORDER BY, and LIMIT remain
+enclosing responsibilities.

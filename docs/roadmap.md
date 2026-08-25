@@ -1476,8 +1476,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   complete tablet stream, routes equal normalized keys to the same fixed partition, emits explicit
   empty terminals for every destination, and fails atomically on skew or byte limits. Destination
   node-bound whole-query authority now freezes the ordered source tablet/node set, contiguous
-  partition/destination map, hash version, and key/state shape. Correlated catalog derivation,
-  network transport, reducer ownership, and packaged selection remain deferred.
+  partition/destination map, hash version, and key/state shape. A distinct checksummed outer frame
+  now binds one nested group state to an exact remote edge, rejects route/length drift before full
+  buffering, and rechecks canonical partition routing after decode. Correlated catalog derivation,
+  authenticated whole-stream transport, reducer ownership, and packaged selection remain deferred.
   The
   distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
@@ -1550,8 +1552,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   preserves complete per-destination stream closure (including empty terminals), and enforces hard
   skew/byte failure. One complete bounded shuffle authority now binds source order, destination
   nodes, partition count, hash version, and grouped shape. Computed pre-group plan splitting,
-  catalog-derived destination selection and transport, and partition reducer ownership are still
-  missing; scheduler request
+  catalog-derived destination selection, authenticated whole-stream transport, and partition
+  reducer ownership are still missing; scheduler request
   ownership, authenticated transport/read authority, and final SQL projection/order/limit are now
   integrated. The one committed private query-control endpoint now dispatches exact decoded mutable
   plans to row or grouped receivers and retains distinct bounded response codecs, so remote grouped

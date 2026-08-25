@@ -121,6 +121,11 @@ existence of a design document alone is not implementation evidence.
   v2](formats/distributed-vector-grouped-aggregate-query-transport-v2.md): shared Fragment-v2
   request and a distinct multi-key/all-type sufficient-state response with exact correlation,
   authority-bound query-accounted decode, and bounded partial-I/O ownership.
+- [Distributed Vector Grouped Aggregate Shuffle Frame
+  v1](formats/distributed-vector-grouped-aggregate-shuffle-frame-v1.md): distinct checksummed outer
+  carrier binding one canonical grouped-state message to exact immutable source node/tablet,
+  destination node/partition, query, partition-count, and hash-version authority, with header-first
+  bounded partial-I/O ownership and destination-side canonical route revalidation.
 - [Distributed Aggregate Fragment v1](formats/distributed-aggregate-fragment-v1.md): bounded,
   integrity-first worker request bytes binding an exact snapshot route, consistency evidence,
   projection, aggregate input, and event-time predicate.

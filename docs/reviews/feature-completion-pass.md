@@ -1234,6 +1234,16 @@ were deliberately not run.
   focused ASan/UBSan cases pass. Changed-file formatting and whitespace pass. Repository-wide
   formatting retains one pre-existing unchanged-file violation; LLVM 18 static analysis remains
   incompatible with the installed macOS 26 libc++ builtin set.
+- Destination-bound grouped shuffle carrier: the distinct `CHDVGSF1` 1.0 frame now wraps one
+  canonical `CHDVGEX1` group state with exact query, source tablet/node, destination partition/node,
+  partition-count, and hash-version authority. Header, payload, and complete-frame integrity pass
+  before canonical nested decode; nonempty keys are rehashed at the destination to reject valid but
+  misrouted state. Header-first fragmented reads and move-only short writes are bounded, allocation
+  failure is atomic, and local authority edges remain in-process only. The warning-as-error build,
+  270 cluster tests, 41 cluster allocation-failure tests, and focused ASan/UBSan cases pass.
+  Changed-file formatting and whitespace pass. LLVM 18 reaches only the known installed macOS 26
+  libc++ builtin incompatibility after no ChronosDB-source diagnostic. Mutual-TLS stream ownership,
+  retries, reducers, and packaged selection remain unimplemented.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
