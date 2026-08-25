@@ -434,6 +434,7 @@ add_library(
   src/query/distributed_vector_fragment.cpp
   src/query/distributed_vector_fragment_v2.cpp
   src/query/distributed_vector_plan.cpp
+  src/query/distributed_vector_pre_group_program.cpp
   src/query/distributed_vector_result_schema.cpp
   src/query/distributed_fragment.cpp
   src/query/distributed_fragment_binding.cpp
@@ -2183,6 +2184,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/distributed_vector_fragment_test.cpp
     tests/query/distributed_vector_plan_header_self_contained.cpp
     tests/query/distributed_vector_plan_test.cpp
+    tests/query/distributed_vector_pre_group_program_header_self_contained.cpp
+    tests/query/distributed_vector_pre_group_program_test.cpp
     tests/query/distributed_vector_result_schema_header_self_contained.cpp
     tests/query/distributed_vector_result_schema_test.cpp
     tests/query/distributed_fragment_header_self_contained.cpp
@@ -2300,6 +2303,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/distributed_vector_grouped_aggregate_partitioner_allocation_failure_test.cpp
     tests/query/distributed_vector_aggregate_state_allocation_failure_test.cpp
     tests/query/distributed_vector_fragment_v2_allocation_failure_test.cpp
+    tests/query/distributed_vector_pre_group_program_allocation_failure_test.cpp
     tests/query/head_scan_allocation_failure_test.cpp
     tests/query/latest_allocation_failure_test.cpp
     tests/query/manifest_temporal_recovery_allocation_failure_test.cpp

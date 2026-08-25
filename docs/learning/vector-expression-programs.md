@@ -123,13 +123,25 @@ Allocation-failure injection requires complete credit release. Lowering fuzzing 
 unsupported scalar forms. Sanitizers, self-contained headers, installation, and external-consumer
 compilation protect the boundary.
 
+Distributed grouped execution also has a standalone owned representation for these programs.
+Distributed Vector Pre-Group Program v1 freezes explicit instruction and operation codes, embeds
+canonical typed scalar constants, and independently checksums its header, payload, expressions,
+constants, and complete frame. Exact decoding reconstructs each program through
+`VectorExpression::create`, so corrupt operand order or type inference cannot bypass the in-memory
+validator. The format is bounded to 4 MiB, 4,096 outputs, 65,536 total instructions, 256
+instructions per expression, and 1 MiB per constant, with narrower caller limits available. It is
+currently a protocol building block; mutable fragments do not yet carry it and workers do not yet
+execute it.
+
 ## Tradeoffs and next steps
 
 The fixed memo array favors a simple allocation proof over cache efficiency, and per-row graph
 dispatch is not expected to be the final hot kernel. Column-wise specialization or fusion should be
 adopted only after profiles and must remain differential with this baseline. Single-source
 nonaggregate bound SQL now lowers the complete fixed-width scalar subset into these programs.
-Aggregate operators are next, followed by wider relational lowering.
+Aggregate operators are next, followed by wider relational lowering. For distributed grouped SQL,
+the next step is a new mutable-fragment version that nests the pre-group program and proves every
+source leaf against the worker's exact schema before materialization.
 
 ## Likely review questions
 
