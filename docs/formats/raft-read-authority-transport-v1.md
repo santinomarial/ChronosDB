@@ -98,3 +98,6 @@ remain subsequent consumers.
 The implemented shared query-control listener authenticates the client certificate before reading
 the eight-byte application magic and selects this protocol only for exact `CHRRAUQ1`; mutable
 `CHDMREQ1` requests retain their separate reader and all other magic is rejected without dispatch.
+The packaged multi-peer daemon now owns that shared listener on its committed private data endpoint
+and serves one requested local group through the replicated read-barrier adapter. Native outbound
+authority acquisition remains a subsequent consumer; this is not yet split-leader query support.

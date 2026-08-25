@@ -1450,8 +1450,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   replicated barrier owner while a separate Raft poll thread drives completion. Daemon listener
   composition can now reuse the one committed private endpoint: a bounded mutual-TLS owner
   authenticates before selecting mutable-query or read-authority framing by exact frozen magic.
-  Packaged listener replacement and Native query integration remain before arbitrary split-leader
-  process coordination is implemented. Partitions, multi-process real-CSEG scans, and
+  The packaged daemon now owns that shared listener on the committed local endpoint, composes both
+  production receivers in reverse-safe lifetime order, and polls them off the Raft thread. Native
+  outbound authority integration remains before arbitrary split-leader process coordination is
+  implemented. Partitions, multi-process real-CSEG scans, and
   sufficient-state multi-key shuffle also remain open; the full phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.

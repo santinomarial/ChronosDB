@@ -502,3 +502,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0465](0465-all-or-nothing-raft-read-authority-fanout.md) | All-or-nothing Raft read-authority fan-out | accepted |
 | [0466](0466-per-group-replicated-read-authority-service.md) | Per-group replicated read-authority service | accepted |
 | [0467](0467-authenticated-shared-query-control-endpoint.md) | Authenticated shared query-control endpoint | accepted |
+| [0468](0468-packaged-shared-query-control-service.md) | Packaged shared query-control service | accepted |

@@ -10,7 +10,7 @@
 #include "chronos/service/native_protocol_service.hpp"
 #include "chronos/service/native_server_principal_authority.hpp"
 #include "chronos/service/native_server_principal_config.hpp"
-#include "chronos/service/replicated_distributed_mutable_vector_query_tcp_server.hpp"
+#include "chronos/service/replicated_distributed_mutable_query_control_tcp_server.hpp"
 #include "chronos/service/replicated_group_config.hpp"
 #include "chronos/service/replicated_ingest_database.hpp"
 #include "chronos/service/replicated_ingest_service.hpp"
@@ -59,7 +59,7 @@ using chronos::network::Reactor;
 using chronos::network::ReactorBackend;
 using chronos::network::SpscNetworkTaskQueue;
 using chronos::service::NativeProtocolService;
-using chronos::service::ReplicatedDistributedMutableVectorQueryTcpServer;
+using chronos::service::ReplicatedDistributedMutableQueryControlTcpServer;
 using chronos::service::ReplicatedIngestDatabase;
 using chronos::service::ReplicatedIngestService;
 using chronos::service::ReplicatedRaftTransportRuntime;
@@ -703,14 +703,15 @@ struct DaemonDistributedMutableQuery {
   std::vector<chronos::network::TlsClientContext> client_contexts;
   std::vector<chronos::cluster::DistributedQueryNodeTlsContext> tls_contexts;
   std::optional<chronos::service::ReplicatedDistributedMutableVectorQueryWorker> local_worker;
-  std::optional<ReplicatedDistributedMutableVectorQueryTcpServer> server;
+  std::optional<ReplicatedDistributedMutableQueryControlTcpServer> server;
   chronos::service::NativeDistributedMutableVectorRowsQueryConfig native_config;
 };
 
 [[nodiscard]] chronos::common::Result<std::unique_ptr<DaemonDistributedMutableQuery>>
 configure_distributed_mutable_query(
     ReplicatedIngestDatabase& database, const std::vector<chronos::service::ReplicatedPeer>& peers,
-    const std::shared_ptr<const chronos::network::TlsPemCredentials>& credentials) {
+    const std::shared_ptr<const chronos::network::TlsPemCredentials>& credentials,
+    ReplicatedReadBarrier& read_barrier) {
   if (credentials == nullptr)
     return chronos::common::make_unexpected(
         invalid("distributed query TLS credentials are absent"));
@@ -770,8 +771,9 @@ configure_distributed_mutable_query(
       return chronos::common::make_unexpected(local_worker.error());
     chronos::service::ReplicatedDistributedMutableVectorQueryWorker& installed_worker =
         owner->local_worker.emplace(std::move(*local_worker));
-    auto server = ReplicatedDistributedMutableVectorQueryTcpServer::start(
+    auto server = ReplicatedDistributedMutableQueryControlTcpServer::start(
         {.worker = {.local_node_id = local_node_id, .context_provider = &database},
+         .read_barrier = &read_barrier,
          .listener = {.bind_endpoint = *local_query_endpoint},
          .tls = {.pem_credentials = credentials},
          .authenticator = &installed_authority,
@@ -1360,7 +1362,7 @@ private:
 class DistributedMutableQueryWorker {
 public:
   explicit DistributedMutableQueryWorker(
-      ReplicatedDistributedMutableVectorQueryTcpServer& server) noexcept
+      ReplicatedDistributedMutableQueryControlTcpServer& server) noexcept
       : server_(&server) {}
   DistributedMutableQueryWorker(const DistributedMutableQueryWorker&) = delete;
   DistributedMutableQueryWorker& operator=(const DistributedMutableQueryWorker&) = delete;
@@ -1398,7 +1400,7 @@ private:
     }
   }
 
-  ReplicatedDistributedMutableVectorQueryTcpServer* server_{};
+  ReplicatedDistributedMutableQueryControlTcpServer* server_{};
   std::atomic<bool> stopping_{false};
   std::atomic<bool> failed_{false};
   std::thread thread_;
@@ -1590,8 +1592,9 @@ int run_daemon(const int argc, const char* const argv[]) {
         replicated_read_barrier.emplace(std::move(*read_barrier));
       }
       if (replicated_peers.has_value()) {
-        auto configured = configure_distributed_mutable_query(
-            *replicated_database, *replicated_peers, raft_tls_credentials);
+        auto configured =
+            configure_distributed_mutable_query(*replicated_database, *replicated_peers,
+                                                raft_tls_credentials, *replicated_read_barrier);
         if (!configured.has_value()) {
           if (raft_transport.has_value())
             static_cast<void>(raft_transport->shutdown());

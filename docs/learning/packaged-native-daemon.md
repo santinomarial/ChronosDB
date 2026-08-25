@@ -59,6 +59,12 @@ TLS contexts, local worker, listener, and borrowed Native config address-stable.
 stop and failure flags have the same publication argument as the existing worker threads: stop is
 visible before loop exit, and failure is visible before the main thread reports termination.
 
+The packaged owner constructs the mutable worker and per-group replicated authority adapter before
+their two receivers, and constructs the shared listener last. Destruction therefore closes TLS and
+TCP ownership before any borrowed receiver dependency disappears. The daemon passes its existing
+replicated barrier into this owner; the Native coordinator does not yet use the remote authority
+client, so independently led groups still fail closed rather than being described as supported.
+
 The replicated queue adapter separately admits one joined Native query thread. This keeps its queue
 owner available for an exact later `CANCEL`: the matching connection/request publishes a sticky
 cooperative token, destroys live remote clients at the next scheduler poll, and suppresses the whole

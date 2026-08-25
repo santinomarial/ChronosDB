@@ -10,6 +10,7 @@
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
 #include "chronos/schema/schema_lineage.hpp"
+#include "chronos/service/replicated_distributed_mutable_query_control_tcp_server.hpp"
 #include "chronos/service/replicated_distributed_mutable_vector_query_tcp_server.hpp"
 #include "chronos/service/replicated_distributed_query.hpp"
 #include "support/failing_allocator.hpp"
@@ -404,6 +405,48 @@ TEST(ReplicatedDistributedMutableVectorQueryAllocationFailureTest,
   }
   EXPECT_TRUE(saw_failure);
   EXPECT_TRUE(saw_success);
+}
+
+TEST(ReplicatedDistributedMutableQueryControlAllocationFailureTest,
+     ClassifiesSharedPackagedInboundOwnerAllocations) {
+  RejectingMutableContextProvider provider;
+  QueryAuthenticator authenticator;
+  QueryNodeAuthorizer authorizer;
+  auto read_barrier = ReplicatedReadBarrier::create_transported({uuid(47U)});
+  ASSERT_TRUE(read_barrier.has_value()) << read_barrier.error().to_string();
+  bool saw_failure = false;
+  bool saw_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 192U; ++fail_after) {
+    SCOPED_TRACE(testing::Message{} << "fail_after=" << fail_after);
+    auto tls = observation_server_tls_config();
+    auto result = run_failure(fail_after, [&] {
+      return ReplicatedDistributedMutableQueryControlTcpServer::start(
+          {.worker = {.local_node_id = 11U, .context_provider = &provider},
+           .read_barrier = &*read_barrier,
+           .listener = {},
+           .tls = std::move(tls),
+           .authenticator = &authenticator,
+           .node_authorizer = &authorizer,
+           .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                              .exchange_timeout = std::chrono::milliseconds{1000},
+                              .maximum_mutable_response_frames = 2U,
+                              .maximum_mutable_response_bytes = 1024U},
+           .maximum_connections = 4U,
+           .maximum_accepts_per_poll = 4U});
+    });
+    if (!result.has_value()) {
+      saw_failure = true;
+      EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted)
+          << result.error().to_string();
+      continue;
+    }
+    saw_success = true;
+    EXPECT_TRUE(result->shutdown().is_ok());
+    break;
+  }
+  EXPECT_TRUE(saw_failure);
+  EXPECT_TRUE(saw_success);
+  EXPECT_TRUE(read_barrier->shutdown().is_ok());
 }
 
 TEST(ReplicatedDistributedQueryAllocationFailureTest,
