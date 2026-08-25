@@ -1289,6 +1289,14 @@ were deliberately not run.
   ASan/UBSan build. All 282 cluster tests and 46 cluster allocation-failure tests pass. LLVM 18
   reaches only the known macOS 26 libc++ incompatibility without a source diagnostic. Bounded
   listener admission, duplicate arbitration, reducers, and packaged scheduling remain open.
+- Bounded grouped shuffle TCP server: one POSIX poll owner preallocates poll storage, completion
+  slots, a free-slot stack, and a completion FIFO. Admission reserves a result slot before TLS, so
+  receipt-acknowledged streams publish without allocation; capacity pressure rejects the connection
+  first. Real client/server loopback mTLS proves exact stream extraction and lifecycle metrics, a
+  capacity-one test proves pre-accept backpressure, and allocation injection sweeps startup storage.
+  The warning-as-error ASan/UBSan build, all 284 cluster tests, and 47 cluster allocation-failure
+  tests pass. LLVM 18 reaches only the known macOS 26 libc++ incompatibility without a source
+  diagnostic. Duplicate arbitration, partition reducers, and packaged scheduling remain open.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

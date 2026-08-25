@@ -123,7 +123,8 @@ receipt binds successful extraction to the exact edge and accepted frame/byte ex
 mutual-TLS owner now authenticates both certificate fingerprints before application I/O, authorizes
 the destination before the source writes, and completes only after that receipt. A finite policy
 owner reconstructs byte-identical attempts for the unchanged edge under capped exponential backoff
-and recognizes success only after that receipt. TCP listener and duplicate-admission ownership,
+and recognizes success only after that receipt. TCP listener ownership now reserves result capacity
+before admission and retains acknowledged streams in a fixed FIFO. Duplicate-admission ownership,
 partition reduction, packaged selection, and broader fault/
 measurement evidence remain open. The row-backed path remains the differential oracle for that work.
 
@@ -160,8 +161,10 @@ reconstructs byte-identical whole-stream attempts, applies capped exponential ba
 success only after that TLS session validates the exact receipt. One outbound TCP owner validates
 the route before opening a descriptor, enforces a separate connect deadline, proves `SO_ERROR`, and
 transfers the attempt into TLS with carrier-before-descriptor teardown. It does not yet own bounded
-listener admission or idempotent duplicate admission, and the current packaged path therefore
-continues to send complete tablet streams to one coordinator.
+listener admission or idempotent duplicate admission. The complementary listener now reserves one
+preallocated result slot per admitted TLS session, rejects capacity pressure before application
+acceptance, and retains receipt-acknowledged complete streams in allocation-free FIFO order. The
+current packaged path still sends complete tablet streams to one coordinator.
 
 ### Portable sufficient-state execution boundary
 
