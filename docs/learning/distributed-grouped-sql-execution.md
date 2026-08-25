@@ -209,6 +209,11 @@ owners and drains their disjoint reducer outputs in partition-ID order. Because 
 cannot share a key, this boundary concatenates rather than re-aggregates. A separate bounded query
 resource context is retained for later global projection, sort, limit, and Native encoding.
 
+That global boundary is now proof-bound too. The original mutable fragments re-derive and
+exact-compare shuffle authority while supplying the immutable plan, result schema, and input width.
+Gathered chunks are canonical-copied from destination resource contexts into the global query
+context before the established checked projection, ORDER BY, LIMIT, and atomic Native encoder run.
+
 ### Portable sufficient-state execution boundary
 
 `DistributedVectorGroupedAggregateQueryExecutionV2` now joins the compatible snapshot to the

@@ -1576,8 +1576,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   all assigned reducers without a post-acknowledgment allocation-loss window, keeps ingress live
   for exact late retries, and seals only after source receipt proof. One exclusive gatherer then
   proves complete unconsumed destination coverage and emits disjoint outputs in partition-ID order.
-  Computed pre-group plan splitting, query-wide lifecycle composition, cross-process result
-  transport, and gathered finalization are still missing;
+  Original mutable fragments now proof-bind the gathered stream to final plan/schema authority;
+  canonical resource re-ownership feeds global projection, ORDER BY, LIMIT, and atomic Native
+  encoding. Computed pre-group plan splitting, query-wide lifecycle composition, and cross-process
+  result transport are still missing;
   scheduler request ownership, authenticated transport/read authority, and final SQL
   projection/order/limit are now
   integrated. The one committed private query-control endpoint now dispatches exact decoded mutable

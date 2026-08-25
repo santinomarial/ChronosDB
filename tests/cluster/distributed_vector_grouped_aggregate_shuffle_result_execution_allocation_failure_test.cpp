@@ -1,3 +1,4 @@
+#include "chronos/cluster/distributed_vector_grouped_aggregate_finalization_v2.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_result_execution.hpp"
 #include "support/failing_allocator.hpp"
 
@@ -43,6 +44,32 @@ template <typename Operation>
 
 [[nodiscard]] std::vector<query::VectorAggregateDefinition> aggregates() {
   return {{.operation = query::VectorAggregateOperation::kCountStar, .input = std::nullopt}};
+}
+
+template <typename Id> [[nodiscard]] Id id(const std::uint8_t seed) {
+  return Id::from_uuid(uuid(seed)).value();
+}
+
+[[nodiscard]] query::DistributedMutableVectorFragment fragment() {
+  const auto int64 = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  return {
+      .query_id = uuid(1U),
+      .database_id = id<manifest::DatabaseId>(8U),
+      .table_id = id<schema::TableId>(9U),
+      .tablet_id = tablet(),
+      .destination_schema_id = id<schema::SchemaId>(10U),
+      .raft_group_id = uuid(11U),
+      .serving_node = 2U,
+      .applied_position = 10U,
+      .observed_leader_commit_position = 10U,
+      .placement_epoch = 3U,
+      .read_policy = {.consistency = query::DistributedReadConsistency::kLeaderLinearizable},
+      .linearizable_barrier = raft::ReadBarrier{2U, 3U, 10U},
+      .destination_column_ordinals = {0U},
+      .plan = {.mode = query::DistributedVectorPlanMode::kGroupedAggregate,
+               .group_key_input_indices = {0U},
+               .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}}},
+      .result_schema = {.columns = {{"region", string_type(), false}, {"count", int64, false}}}};
 }
 
 [[nodiscard]] DistributedVectorGroupedAggregateShuffleCompleteStream
@@ -105,6 +132,47 @@ TEST(DistributedVectorGroupedAggregateShuffleResultExecutionAllocationFailureTes
         << result.error().to_string();
   }
   EXPECT_TRUE(succeeded);
+
+  bool output_failure{};
+  bool output_success{};
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    auto destination = DistributedVectorGroupedAggregateShuffleDestinationExecution::start(
+                           authority, {.local_node_id = 2U})
+                           .value();
+    ASSERT_TRUE(destination.accept_local_stream(complete).is_ok());
+    std::vector<DistributedVectorGroupedAggregateShuffleDestinationExecution> destinations;
+    destinations.push_back(std::move(destination));
+    auto result = DistributedVectorGroupedAggregateShuffleResultExecution::create(
+                      authority, std::move(destinations))
+                      .value();
+    auto step = run_failure(fail_after, [&] { return result.next(); });
+    if (step.has_value()) {
+      output_success = true;
+      break;
+    }
+    output_failure = true;
+    EXPECT_EQ(step.error().code(), common::StatusCode::kResourceExhausted)
+        << step.error().to_string();
+    EXPECT_EQ(result.next().error(), step.error());
+  }
+  EXPECT_TRUE(output_failure);
+  EXPECT_TRUE(output_success);
+
+  const std::vector fragments{fragment()};
+  bool authority_success{};
+  for (std::size_t fail_after = 0U; fail_after < 512U; ++fail_after) {
+    auto result = run_failure(fail_after, [&] {
+      return DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2::create(authority,
+                                                                                     fragments);
+    });
+    if (result.has_value()) {
+      authority_success = true;
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted)
+        << result.error().to_string();
+  }
+  EXPECT_TRUE(authority_success);
 }
 
 } // namespace

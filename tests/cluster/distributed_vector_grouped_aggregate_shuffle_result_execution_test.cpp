@@ -1,3 +1,4 @@
+#include "chronos/cluster/distributed_vector_grouped_aggregate_finalization_v2.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_result_execution.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_source_plan.hpp"
 
@@ -41,6 +42,33 @@ namespace {
              {{.partition_id = 0U, .node_id = 2U}, {.partition_id = 1U, .node_id = 2U}}, keys(),
              aggregates())
       .value();
+}
+
+template <typename Id> [[nodiscard]] Id id(const std::uint8_t seed) {
+  return Id::from_uuid(uuid(seed)).value();
+}
+
+[[nodiscard]] query::DistributedMutableVectorFragment fragment() {
+  const auto int64 = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  return {
+      .query_id = uuid(1U),
+      .database_id = id<manifest::DatabaseId>(8U),
+      .table_id = id<schema::TableId>(9U),
+      .tablet_id = tablet(),
+      .destination_schema_id = id<schema::SchemaId>(10U),
+      .raft_group_id = uuid(11U),
+      .serving_node = 2U,
+      .applied_position = 10U,
+      .observed_leader_commit_position = 10U,
+      .placement_epoch = 3U,
+      .read_policy = {.consistency = query::DistributedReadConsistency::kLeaderLinearizable},
+      .linearizable_barrier = raft::ReadBarrier{2U, 3U, 10U},
+      .destination_column_ordinals = {0U},
+      .plan = {.mode = query::DistributedVectorPlanMode::kGroupedAggregate,
+               .group_key_input_indices = {0U},
+               .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}},
+               .limit = 1U},
+      .result_schema = {.columns = {{"region", string_type(), false}, {"count", int64, false}}}};
 }
 
 [[nodiscard]] std::string label_for_partition(const std::uint32_t partition) {
@@ -134,6 +162,39 @@ TEST(DistributedVectorGroupedAggregateShuffleResultExecutionTest,
   EXPECT_EQ(result->metrics().total_partitions, 2U);
   EXPECT_EQ(result->metrics().completed_partitions, 2U);
   EXPECT_EQ(result->metrics().emitted_chunks, 2U);
+}
+
+TEST(DistributedVectorGroupedAggregateShuffleResultExecutionTest,
+     DerivesFragmentProofAndRunsGlobalNativeFinalization) {
+  std::vector fragments{fragment()};
+  auto expected = DistributedVectorGroupedAggregateShuffleAuthority::create_from_mutable_fragments(
+      fragments, keys(), aggregates());
+  ASSERT_TRUE(expected.has_value()) << expected.error().to_string();
+  auto finalization_authority =
+      DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2::create(*expected, fragments);
+  ASSERT_TRUE(finalization_authority.has_value()) << finalization_authority.error().to_string();
+  auto resources = query::QueryResourceContext::create(16U << 20U).value();
+  auto destination = complete_destination(*expected, resources);
+  ASSERT_TRUE(destination.has_value()) << destination.error().to_string();
+  std::vector<DistributedVectorGroupedAggregateShuffleDestinationExecution> destinations;
+  destinations.push_back(std::move(*destination));
+  auto result = DistributedVectorGroupedAggregateShuffleResultExecution::create(
+      *expected, std::move(destinations));
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+
+  auto finalized =
+      finalize_distributed_vector_grouped_aggregate_shuffle_v2(*result, *finalization_authority);
+  ASSERT_TRUE(finalized.has_value()) << finalized.error().to_string();
+  EXPECT_EQ(finalized->row_count, 1U);
+  EXPECT_EQ(finalized->result_schema, fragments.front().result_schema);
+  EXPECT_FALSE(finalized->encoded_batches.empty());
+
+  fragments.front().serving_node = 7U;
+  EXPECT_EQ(
+      DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2::create(*expected, fragments)
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
 }
 
 TEST(DistributedVectorGroupedAggregateShuffleResultExecutionTest,

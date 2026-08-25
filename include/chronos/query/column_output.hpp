@@ -35,6 +35,13 @@ struct ComputedColumnOutputPosition {
 using ColumnOutputPosition = std::variant<SourceColumnOutputPosition, ConstantColumnOutputPosition,
                                           ComputedColumnOutputPosition>;
 
+// Copies every selected input cell into canonical owned columns charged to the supplied query.
+// This is the explicit ownership bridge for a validated chunk produced under another resource
+// context; input storage is synchronously borrowed.
+[[nodiscard]] common::Result<AccountedVectorChunk>
+materialize_vector_chunk(const QueryResourceContext& resources, const VectorChunk& input,
+                         VectorChunkLimits limits = {});
+
 // Materializes caller-ordered source columns into new canonical output positions. Reordering and
 // duplication are supported; selected nonempty rows are compacted into an identity selection.
 class SourceColumnOutputOperator final : public PhysicalOperator {

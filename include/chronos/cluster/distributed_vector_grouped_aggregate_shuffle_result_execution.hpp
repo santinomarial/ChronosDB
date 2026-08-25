@@ -54,6 +54,7 @@ public:
   [[nodiscard]] std::optional<query::QueryResourceContext> output_resources() const noexcept;
   [[nodiscard]] DistributedVectorGroupedAggregateShuffleResultExecutionMetrics
   metrics() const noexcept;
+  [[nodiscard]] const DistributedVectorGroupedAggregateShuffleAuthority* authority() const noexcept;
   [[nodiscard]] const common::Status& failure() const noexcept;
 
 private:

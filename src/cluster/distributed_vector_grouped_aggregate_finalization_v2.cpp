@@ -4,6 +4,7 @@
 #include "chronos/query/distributed_sql_lowering.hpp"
 #include "chronos/query/physical_plan.hpp"
 
+#include <algorithm>
 #include <bitset>
 #include <cstddef>
 #include <cstdint>
@@ -11,6 +12,7 @@
 #include <memory>
 #include <new>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <stdexcept>
 #include <utility>
@@ -84,6 +86,45 @@ grouped_finalization_authority(const DistributedVectorGroupedAggregateQueryExecu
                                           identity.destination_column_ordinals.size())};
 }
 
+class ShuffleFinalizationInput {
+public:
+  ShuffleFinalizationInput(
+      DistributedVectorGroupedAggregateShuffleResultExecution& input,
+      const DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2& authority) noexcept
+      : input_(input), authority_(authority) {}
+
+  [[nodiscard]] common::Result<query::PhysicalOperatorStep> next() {
+    return input_.get().next();
+  }
+  [[nodiscard]] std::span<const query::VectorGroupKeyDefinition> key_definitions() const noexcept {
+    return input_.get().key_definitions();
+  }
+  [[nodiscard]] std::span<const query::VectorAggregateDefinition>
+  aggregate_definitions() const noexcept {
+    return input_.get().aggregate_definitions();
+  }
+  [[nodiscard]] std::optional<query::QueryResourceContext> output_resources() const noexcept {
+    return input_.get().output_resources();
+  }
+  [[nodiscard]] const DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2&
+  authority() const noexcept {
+    return authority_.get();
+  }
+
+private:
+  std::reference_wrapper<DistributedVectorGroupedAggregateShuffleResultExecution> input_;
+  std::reference_wrapper<const DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2>
+      authority_;
+};
+
+[[nodiscard]] common::Result<GroupedFinalizationAuthority>
+grouped_finalization_authority(const ShuffleFinalizationInput& input) {
+  return GroupedFinalizationAuthority{.plan = std::addressof(input.authority().plan()),
+                                      .result_schema =
+                                          std::addressof(input.authority().result_schema()),
+                                      .input_column_count = input.authority().input_column_count()};
+}
+
 template <typename Execution> class GroupedExecutionSource final : public query::PhysicalOperator {
 public:
   explicit GroupedExecutionSource(Execution& execution) noexcept
@@ -145,6 +186,61 @@ encode_chunk(const query::VectorChunk& chunk,
 }
 
 } // namespace
+
+DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2::
+    DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2(
+        const DistributedVectorGroupedAggregateShuffleAuthority& authority,
+        DistributedMutableVectorQueryLogicalIdentity identity,
+        const std::uint32_t input_column_count) noexcept
+    : authority_(authority), identity_(std::move(identity)),
+      input_column_count_(input_column_count) {}
+
+common::Result<DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2>
+DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2::create(
+    const DistributedVectorGroupedAggregateShuffleAuthority& authority,
+    const std::span<const query::DistributedMutableVectorFragment> fragments) {
+  auto identity = distributed_mutable_vector_query_logical_identity(fragments);
+  if (!identity.has_value())
+    return common::make_unexpected(identity.error());
+  if (identity->destination_column_ordinals.size() > std::numeric_limits<std::uint32_t>::max()) {
+    return common::make_unexpected(exhausted("shuffle finalization input width exceeds protocol"));
+  }
+  auto derived = DistributedVectorGroupedAggregateShuffleAuthority::create_from_mutable_fragments(
+      fragments, authority.key_definitions(), authority.aggregate_definitions());
+  if (!derived.has_value())
+    return common::make_unexpected(derived.error());
+  if (derived->query_id() != authority.query_id() ||
+      derived->hash_version() != authority.hash_version() ||
+      !std::ranges::equal(derived->sources(), authority.sources()) ||
+      !std::ranges::equal(derived->destinations(), authority.destinations())) {
+    return common::make_unexpected(
+        invalid("shuffle finalization fragments do not derive the exact authority"));
+  }
+  return DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2{
+      authority, std::move(*identity),
+      static_cast<std::uint32_t>(fragments.front().destination_column_ordinals.size())};
+}
+
+const DistributedVectorGroupedAggregateShuffleAuthority&
+DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2::shuffle_authority()
+    const noexcept {
+  return authority_.get();
+}
+
+const query::DistributedVectorPlanIntent&
+DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2::plan() const noexcept {
+  return identity_.plan;
+}
+
+const query::DistributedVectorResultSchema&
+DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2::result_schema() const noexcept {
+  return identity_.result_schema;
+}
+
+std::uint32_t DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2::input_column_count()
+    const noexcept {
+  return input_column_count_;
+}
 
 common::Status validate_distributed_vector_grouped_aggregate_finalization_limits_v2(
     const DistributedVectorGroupedAggregateFinalizationLimitsV2& limits) noexcept {
@@ -368,6 +464,33 @@ finalize_distributed_mutable_vector_grouped_aggregate_with_projection_v2(
     const query::DistributedVectorGroupedAggregateCoordinatorProjection& projection,
     const DistributedVectorGroupedAggregateFinalizationLimitsV2 limits) {
   return finalize_distributed_vector_grouped_aggregate_impl_v2(input, &projection, limits);
+}
+
+common::Result<DistributedVectorRowsFinalizedResultV2>
+finalize_distributed_vector_grouped_aggregate_shuffle_v2(
+    DistributedVectorGroupedAggregateShuffleResultExecution& input,
+    const DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2& authority,
+    const DistributedVectorGroupedAggregateFinalizationLimitsV2 limits) {
+  if (input.authority() != std::addressof(authority.shuffle_authority())) {
+    return common::make_unexpected(
+        invalid("grouped shuffle finalization authority object differs"));
+  }
+  ShuffleFinalizationInput adapted{input, authority};
+  return finalize_distributed_vector_grouped_aggregate_impl_v2(adapted, nullptr, limits);
+}
+
+common::Result<DistributedVectorRowsFinalizedResultV2>
+finalize_distributed_vector_grouped_aggregate_shuffle_with_projection_v2(
+    DistributedVectorGroupedAggregateShuffleResultExecution& input,
+    const DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2& authority,
+    const query::DistributedVectorGroupedAggregateCoordinatorProjection& projection,
+    const DistributedVectorGroupedAggregateFinalizationLimitsV2 limits) {
+  if (input.authority() != std::addressof(authority.shuffle_authority())) {
+    return common::make_unexpected(
+        invalid("grouped shuffle finalization authority object differs"));
+  }
+  ShuffleFinalizationInput adapted{input, authority};
+  return finalize_distributed_vector_grouped_aggregate_impl_v2(adapted, &projection, limits);
 }
 
 } // namespace chronos::cluster

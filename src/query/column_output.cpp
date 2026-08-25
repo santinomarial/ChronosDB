@@ -1038,6 +1038,22 @@ validate_position_configuration(const std::vector<ColumnOutputPosition>& positio
 
 } // namespace
 
+common::Result<AccountedVectorChunk> materialize_vector_chunk(const QueryResourceContext& resources,
+                                                              const VectorChunk& input,
+                                                              const VectorChunkLimits limits) {
+  try {
+    std::vector<std::size_t> ordinals;
+    ordinals.reserve(input.column_count());
+    for (std::size_t ordinal = 0U; ordinal < input.column_count(); ++ordinal)
+      ordinals.push_back(ordinal);
+    return materialize_output(resources, input, ordinals, limits);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("vector chunk materialization allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("vector chunk materialization exceeds limits"));
+  }
+}
+
 SourceColumnOutputOperator::SourceColumnOutputOperator(
     std::unique_ptr<PhysicalOperator> input, std::vector<std::size_t> input_column_ordinals,
     const VectorChunkLimits output_limits) noexcept

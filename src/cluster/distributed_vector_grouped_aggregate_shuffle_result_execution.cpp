@@ -1,5 +1,7 @@
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_result_execution.hpp"
 
+#include "chronos/query/column_output.hpp"
+
 #include <cstddef>
 #include <functional>
 #include <map>
@@ -135,8 +137,14 @@ DistributedVectorGroupedAggregateShuffleResultExecution::next() {
     if (!step.has_value())
       return impl.fail(step.error());
     if (step->kind() == query::PhysicalOperatorStepKind::kChunk) {
+      auto child = std::move(*step).take_chunk();
+      if (!child.has_value())
+        return impl.fail(child.error());
+      auto rehomed = query::materialize_vector_chunk(impl.resources_, child->chunk());
+      if (!rehomed.has_value())
+        return impl.fail(rehomed.error());
       ++impl.metrics_.emitted_chunks;
-      return step;
+      return query::PhysicalOperatorStep::chunk(std::move(*rehomed));
     }
     ++impl.partition_ordinal_;
     ++impl.metrics_.completed_partitions;
@@ -167,6 +175,11 @@ DistributedVectorGroupedAggregateShuffleResultExecutionMetrics
 DistributedVectorGroupedAggregateShuffleResultExecution::metrics() const noexcept {
   return implementation_ ? implementation_->metrics_
                          : DistributedVectorGroupedAggregateShuffleResultExecutionMetrics{};
+}
+
+const DistributedVectorGroupedAggregateShuffleAuthority*
+DistributedVectorGroupedAggregateShuffleResultExecution::authority() const noexcept {
+  return implementation_ ? std::addressof(implementation_->authority_.get()) : nullptr;
 }
 
 const common::Status&

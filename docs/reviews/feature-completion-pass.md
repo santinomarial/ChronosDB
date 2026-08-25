@@ -1333,6 +1333,11 @@ were deliberately not run.
   Missing, extra, duplicated, or previously pulled destinations fail before transfer; allocation
   injection covers the complete ownership/index boundary. Cross-process result transport and final
   SQL pipeline integration remain open.
+- Proof-bound global shuffle finalization: validated mutable fragments now re-derive exact shuffle
+  authority and authorize plan/schema metadata. Gathered chunks cross an explicit canonical copy
+  into one global query resource context before the existing checked projection, ORDER BY, LIMIT,
+  and atomic Native encoding pipeline. Cross-process partition-result transport and joint lifecycle
+  ownership remain open.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
