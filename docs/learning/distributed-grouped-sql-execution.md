@@ -195,6 +195,14 @@ whole execution, retry, connect, handshake, and exchange deadlines; the listener
 same cap to server sessions. Cancellation and terminal failure tear down every client. Destination
 stream draining and partition-result gathering remain outside this owner.
 
+Each destination node now has one execution owner for every authority partition assigned to it.
+Self-routes enter the matching reducer directly; acknowledged listener results first move into a
+single pending slot and remain there across retryable reducer allocation failure. Reducers finish
+only after all authority sources close. Remote ingress stays live after reducer readiness so an
+exact retransmission caused by receipt loss is still acknowledged, even after output was consumed;
+the query coordinator may seal transport only after all senders prove receipt. Query-wide result
+gathering and joint source/destination lifecycle remain outside this owner.
+
 ### Portable sufficient-state execution boundary
 
 `DistributedVectorGroupedAggregateQueryExecutionV2` now joins the compatible snapshot to the

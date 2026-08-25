@@ -1572,8 +1572,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   in-process reducer delivery or a finite remote retry for every explicit edge, with bounded total
   outer bytes and no partial plan on failure. One bounded poll owner now drives all supplied remote
   edges through finite address rotation, exact carrier deadlines, mutual TLS, and receipt-gated
-  all-edge completion. Computed pre-group plan splitting, listener-to-reducer draining, and
-  partition-result gathering are still missing;
+  all-edge completion. Every destination node now drains local and acknowledged remote streams into
+  all assigned reducers without a post-acknowledgment allocation-loss window, keeps ingress live
+  for exact late retries, and seals only after source receipt proof. Computed pre-group plan
+  splitting, query-wide lifecycle composition, and partition-result gathering are still missing;
   scheduler request ownership, authenticated transport/read authority, and final SQL
   projection/order/limit are now
   integrated. The one committed private query-control endpoint now dispatches exact decoded mutable

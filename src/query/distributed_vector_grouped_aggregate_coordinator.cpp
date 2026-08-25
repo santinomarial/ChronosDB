@@ -198,10 +198,6 @@ DistributedVectorGroupedAggregateCoordinator::create(
 common::Status DistributedVectorGroupedAggregateCoordinator::accept(
     const DistributedVectorGroupedAggregateExchangeMessage& message) {
   Impl& impl = *impl_;
-  if (impl.ready || impl.output_complete)
-    return invalid("grouped aggregate coordinator input is already sealed");
-  if (impl.failure.has_value())
-    return *impl.failure;
   const auto fragment = impl.fragments.find(message.position().tablet_id);
   if (message.position().query_id != impl.query_id || fragment == impl.fragments.end())
     return invalid("grouped aggregate message does not belong to the coordinator");
@@ -219,6 +215,10 @@ common::Status DistributedVectorGroupedAggregateCoordinator::accept(
                : common::Status{common::StatusCode::kAlreadyExists,
                                 "grouped aggregate sequence conflicts with retained state"};
   }
+  if (impl.ready || impl.output_complete)
+    return invalid("grouped aggregate coordinator input is already sealed");
+  if (impl.failure.has_value())
+    return *impl.failure;
   if (progress.terminal)
     return invalid("grouped aggregate fragment emitted after its terminal message");
   if (sequence != progress.messages.size() + 1U)

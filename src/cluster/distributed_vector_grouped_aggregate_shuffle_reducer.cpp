@@ -162,8 +162,6 @@ DistributedVectorGroupedAggregateShuffleReducer::create(
 
 common::Status DistributedVectorGroupedAggregateShuffleReducer::accept_stream(
     const DistributedVectorGroupedAggregateShuffleCompleteStream& stream) {
-  if (ready_)
-    return invalid("grouped shuffle reducer input is sealed");
   common::Status edge_status = authority_.get().validate_edge(stream.edge);
   if (!edge_status.is_ok())
     return edge_status;

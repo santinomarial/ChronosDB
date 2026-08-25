@@ -1322,6 +1322,12 @@ were deliberately not run.
   removed a false nonthrowing PImpl constructor contract. Active client and listener waits now cap
   at exact carrier deadlines. Destination draining, result gathering, and process faults remain
   open.
+- Lossless grouped shuffle destination execution: one node owner constructs every assigned
+  partition reducer, admits self-routes, and drains acknowledged listener results through a retained
+  pending slot. Allocation injection proves post-acknowledgment reducer exhaustion cannot lose the
+  stream. Reducers finalize only after every source, while ingress stays live for exact receipt-loss
+  retries even after output completion and seals only after source receipt proof. Query-wide result
+  gathering and joint source/destination cancellation remain open.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

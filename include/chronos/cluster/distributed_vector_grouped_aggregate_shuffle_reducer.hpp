@@ -34,9 +34,9 @@ struct DistributedVectorGroupedAggregateShuffleReducerMetrics {
 };
 
 // Admits exactly one complete stream from every ordered authority source for one local partition.
-// Exact whole-stream retries are idempotent, conflicts fail closed, and finish delegates merging in
-// authority source order to the shared grouped coordinator. The authority is borrowed and outlives
-// this single-thread-affine owner.
+// Exact whole-stream retries remain idempotent after finish, conflicts fail closed, and finish
+// delegates merging in authority source order to the shared grouped coordinator. The authority is
+// borrowed and outlives this single-thread-affine owner.
 class DistributedVectorGroupedAggregateShuffleReducer {
 public:
   DistributedVectorGroupedAggregateShuffleReducer() = delete;

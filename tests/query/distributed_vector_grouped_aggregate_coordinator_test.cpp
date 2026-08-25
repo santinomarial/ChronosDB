@@ -157,7 +157,7 @@ TEST(DistributedVectorGroupedAggregateCoordinatorTest,
   EXPECT_EQ(coordinator->accept(conflicting).code(), common::StatusCode::kAlreadyExists);
   EXPECT_TRUE(coordinator->finish().is_ok());
   EXPECT_EQ(coordinator->group_count(), 3U);
-  EXPECT_EQ(coordinator->accept(first_a).code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(coordinator->accept(first_a).is_ok());
 
   const std::array<std::string_view, 3> expected_group_keys{"A", "B", "C"};
   const std::array<std::int64_t, 3> expected_counts{4, 1, 1};
@@ -173,6 +173,8 @@ TEST(DistributedVectorGroupedAggregateCoordinatorTest,
   }
   EXPECT_EQ(coordinator->next()->kind(), PhysicalOperatorStepKind::kEnd);
   EXPECT_EQ(coordinator->next()->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_TRUE(coordinator->accept(first_a).is_ok());
+  EXPECT_EQ(coordinator->accept(conflicting).code(), common::StatusCode::kAlreadyExists);
 }
 
 TEST(DistributedVectorGroupedAggregateCoordinatorTest,

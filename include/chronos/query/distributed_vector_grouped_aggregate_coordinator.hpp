@@ -38,7 +38,8 @@ struct DistributedVectorGroupedAggregateCoordinatorLimits {
 // Single-threaded owner for one grouped sufficient-state query. Accept retains canonical bytes as
 // exact retry identity. finish() requires terminal closure for every planned tablet, then decodes
 // and merges in caller-supplied tablet order and tablet-local group ordinal order. next() exposes
-// final query-accounted rows only after that all-tablet gate.
+// final query-accounted rows only after that all-tablet gate. Exact retained messages remain
+// idempotent after sealing so transport receipt loss cannot turn a retry into a false conflict.
 class DistributedVectorGroupedAggregateCoordinator {
 public:
   DistributedVectorGroupedAggregateCoordinator() = delete;

@@ -113,7 +113,8 @@ TEST(DistributedVectorGroupedAggregateShuffleReducerTest,
   EXPECT_EQ(std::get<std::string>(cell(chunk, 0U).storage()), "shared-key");
   EXPECT_EQ(std::get<std::int64_t>(cell(chunk, 1U).storage()), 3);
   EXPECT_EQ(reducer->next()->kind(), query::PhysicalOperatorStepKind::kEnd);
-  EXPECT_EQ(reducer->accept_stream(first).code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(reducer->accept_stream(first).is_ok());
+  EXPECT_EQ(reducer->metrics().duplicate_streams, 2U);
 }
 
 TEST(DistributedVectorGroupedAggregateShuffleReducerTest,
