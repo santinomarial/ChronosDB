@@ -908,6 +908,14 @@ Focused executions passed:
   frozen type plus signed-zero/NaN differential coverage, COUNT/SUM/AVG cross-tablet results, and
   variable key/extremum allocation injection pass. Canonical all-tablet stream arbitration, worker
   plan splitting, transport, and partition routing remain.
+- All-tablet grouped coordinator continuation: one move-only owner now retains canonical grouped
+  frames as exact retry identity, enforces gap-free per-tablet group streams and explicit empty
+  terminals, requires every planned tablet to close, and merges in plan-tablet/group-ordinal order
+  before any query-accounted row is visible. Identical retries are idempotent, conflicts and shape
+  drift fail closed, first incomplete-worker failure is sticky, and finish-time allocation is
+  retryable from retained bytes. Full allocation injection includes variable keys/extrema and
+  output publication. Worker plan splitting, authenticated transport/read authority, final grouped
+  projection/order/limit, and partition routing remain.
 - Cross-tablet aggregate-definition ownership continuation: the compatible Fragment-v2 snapshot
   derives ungrouped definitions independently under every tablet's projected destination schema,
   rejects any exact mismatch, and retains the shared vector once with the Manifest pin and result

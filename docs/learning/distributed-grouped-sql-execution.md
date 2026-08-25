@@ -102,10 +102,12 @@ batch. The second linear pass is an explicit recoverability and memory-bound tra
 frame now exists, and the local grouped hash/equality/state table now exposes stable borrowed groups
 to its synchronous encoder without a second grouping oracle. That same query-accounted table now
 coalesces decoded equal-key states and finalizes rows; every logical type, signed zero, and NaN share
-the physical-row identity rules. Workers still need pre-group physical plan execution and stream
-construction. Coordinators still need canonical all-tablet attempt/order/closure arbitration,
-partition authority, bounded shuffle/skew policy, authenticated transport, and fault evidence. The
-row-backed path remains the differential oracle for that work.
+the physical-row identity rules. A bounded in-memory coordinator now retains exact retry identity,
+requires terminal closure for every planned tablet, merges in plan order rather than arrival order,
+and seals input before output. Workers still need pre-group physical plan execution and stream
+construction; the service path still needs partition authority, bounded shuffle/skew policy,
+authenticated transport, and fault evidence. The row-backed path remains the differential oracle
+for that work.
 
 ## Process qualification boundary
 

@@ -91,7 +91,9 @@ Checksum-valid unknown versions are unsupported; damaged/noncanonical bytes are 
 deployment bounds are resource exhaustion. After decode, the shared query-accounted grouped table
 can synchronously copy the key, merge the sufficient states, and release the message. The enclosing
 coordinator must supply one canonical accepted-tablet/group order because floating sufficient-state
-merge order is observable.
+merge order is observable. The in-memory coordinator implements that rule as caller-supplied plan
+tablet order followed by tablet-local group ordinal and requires every planned terminal before row
+publication.
 
 Decoded key containers and payloads retain one conservative query-memory reservation. Nested
 variable extrema retain their independent existing reservations. Failure exposes no partial group
@@ -101,6 +103,7 @@ only its unwritten suffix, rejects over-advance without progress, and makes its 
 complete.
 
 CRC32C provides accidental-damage detection, not authentication. An enclosing mutually
-authenticated transport must bind the exact fragment and peer identities. Stream retry,
-all-tablet closure, duplicate arbitration, canonical merge ordering, skew bounds, final projection,
-ORDER BY, and LIMIT remain enclosing responsibilities.
+authenticated transport must bind the exact fragment and peer identities. The in-memory owner
+handles gap-free sequence, exact duplicate identity, all-tablet closure, and canonical merge order.
+Transport retry scheduling, skew bounds, final projection, ORDER BY, and LIMIT remain enclosing
+responsibilities.

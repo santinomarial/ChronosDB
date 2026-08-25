@@ -432,8 +432,10 @@ remain. The local grouped table now exposes the exact first-seen keys and unfina
 stable borrowed spans, and the encoder consumes those spans synchronously without copying or moving
 query-accounted state. The same table now accepts decoded scalar-key states, coalesces equal groups
 with the physical-row hash/equality rules, and finalizes in caller-defined first-seen order. An
-all-tablet stream owner must still impose the canonical caller order, suppress retry duplicates,
-and prove closure, so production sufficient-state grouped fragments continue to fail closed.
+in-memory all-tablet owner now retains exact retry bytes, rejects gaps/conflicts, proves every
+terminal, and imposes plan-tablet/group-ordinal merge order before exposing query-accounted rows.
+Worker execution and authenticated transport are not connected to that owner yet, so production
+sufficient-state grouped fragments continue to fail closed.
 The compatible Fragment-v2 snapshot now retains that definition vector once after deriving it under
 each tablet's exact destination schema and rejecting any cross-tablet difference. This matters when
 COUNT, AVG, or variance result descriptors hide the input type; later owners no longer need to

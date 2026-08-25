@@ -1399,9 +1399,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   checksummed group-state frame now carries multi-key canonical tuples and all-type sufficient
   states with exact empty-tablet and partial-I/O ownership. The local grouped hash/equality/state
   table now exposes stable borrowed groups to that encoder and merges decoded scalar-key states with
-  the same all-type identity rules while remaining the local SQL oracle. Worker pre-group execution,
-  canonical all-tablet stream arbitration, authenticated coordination, and shuffle routing remain
-  deferred. The distinct
+  the same all-type identity rules while remaining the local SQL oracle. A bounded in-memory owner
+  now retains exact retries, requires every tablet terminal, and merges in plan order before output.
+  Worker pre-group execution, authenticated coordination, final grouped SQL integration, and
+  shuffle routing remain deferred. The distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;
   a separate canonical checksummed cluster protocol now requests one group-correlated ordered
@@ -1464,9 +1465,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   scans, and sufficient-state multi-key shuffle also remain open. The shuffle now has a distinct
   bounded checksummed multi-key/all-type group-state frame with exact fragmented-read and short-write
   ownership plus a shared query-accounted local/worker/coordinator group-state owner. Equal-key
-  sufficient-state merge and final row materialization now exist, but worker plan splitting,
-  canonical attempt/order/closure arbitration, authenticated transport, and partition routing are
-  still missing. The full phase exit gate is not claimed.
+  sufficient-state merge, canonical all-tablet closure/order arbitration, and final row
+  materialization now exist in memory, but worker plan splitting, authenticated transport/read
+  authority, final SQL projection/order/limit integration, and partition routing are still missing.
+  The full phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
 - **Explicit non-scope:** general cross-tablet write transactions, silent consistency downgrade, unlimited shuffle, and topology changes that invalidate tokens without an explicit error/mapping protocol.

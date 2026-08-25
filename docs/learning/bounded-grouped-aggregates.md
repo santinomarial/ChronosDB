@@ -32,6 +32,11 @@ The same table can synchronously merge borrowed scalar-key sufficient states. It
 allocation binds it to one query context; a merge failure destroys all groups, and first-seen
 materialization seals the table against further mutation.
 
+The distributed grouped coordinator retains exact frame bytes under separate count/byte limits,
+requires every planned tablet terminal, and only then feeds this table in plan-tablet/group-ordinal
+order. Its emitted chunks retain the same query resource context independently of coordinator
+lifetime.
+
 ## Group semantics and state
 
 Each group owns an ordered `ScalarValue` key and one existing fixed aggregate state per definition.
