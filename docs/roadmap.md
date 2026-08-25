@@ -1454,7 +1454,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   now belongs to a bounded all-tablet owner that prevalidates complete routes and carrier limits,
   rotates only within immutable target authority, owns retry/deadline/cancellation policy, preserves
   cumulative metrics across finite proof-equivalent rebinding, and exposes merged physical rows
-  only after every terminal stream closes. Atomic Native scheduler publication remains deferred.
+  only after every terminal stream closes. The shared grouped finalizer now accepts the distinct
+  mutable logical authority view, revalidates its plan/schema/input width, applies checked final
+  projection and global order/limit under the coordinator's query memory, and publishes one bounded
+  Native result only after complete encoding. Replicated/package lifecycle selection remains
+  deferred.
   Schema-bound grouped SQL now has a separate direct-input
   lowerer that emits the exact unique projection, key/aggregate intent, event-time predicate,
   selected-output global order/limit, and typed result schema consumed by this scheduler. Checked

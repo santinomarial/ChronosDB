@@ -4,8 +4,10 @@
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_execution.hpp"
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_client.hpp"
 #include "chronos/cluster/distributed_query_tcp_execution.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_finalization_v2.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/network/security.hpp"
+#include "chronos/query/distributed_sql_lowering.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -22,6 +24,9 @@ struct DistributedMutableVectorGroupedAggregateQueryTcpExecutionConfig {
   const ClusterNodePrincipalAuthorizer* node_authorizer{};
   std::vector<DistributedQueryNodeRoute> routes;
   DistributedMutableVectorGroupedAggregateQueryTlsLimits carrier_limits;
+  DistributedVectorGroupedAggregateFinalizationLimitsV2 finalization_limits;
+  std::optional<query::DistributedVectorGroupedAggregateCoordinatorProjection>
+      coordinator_projection;
   std::chrono::milliseconds connect_timeout{5000};
   std::optional<std::chrono::steady_clock::time_point> execution_deadline;
   std::size_t maximum_rebindings{3U};
@@ -46,7 +51,8 @@ enum class DistributedMutableVectorGroupedAggregateQueryTcpExecutionState : std:
 // Single-threaded poll owner for one immutable all-tablet mutable grouped execution. It owns at
 // most one grouped authority-bound TCP/mTLS client per tablet. Complete grouped output remains
 // unavailable until every tablet stream closes and the coordinator seals globally. Borrowed route
-// TLS contexts and authentication policy outlive it.
+// TLS contexts and authentication policy outlive it. Native output remains unavailable until all
+// tablets close and grouped merge, final projection/order/limit, and encoding all succeed.
 class DistributedMutableVectorGroupedAggregateQueryTcpExecution {
 public:
   DistributedMutableVectorGroupedAggregateQueryTcpExecution() noexcept;
@@ -73,7 +79,9 @@ public:
   state() const noexcept;
   [[nodiscard]] DistributedMutableVectorGroupedAggregateQueryTcpExecutionMetrics
   metrics() const noexcept;
-  [[nodiscard]] common::Result<query::PhysicalOperatorStep> next();
+  [[nodiscard]] const std::optional<DistributedVectorRowsFinalizedResultV2>&
+  result() const noexcept;
+  [[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2> take_result();
   [[nodiscard]] std::span<const query::VectorGroupKeyDefinition> key_definitions() const noexcept;
   [[nodiscard]] std::span<const query::VectorAggregateDefinition>
   aggregate_definitions() const noexcept;

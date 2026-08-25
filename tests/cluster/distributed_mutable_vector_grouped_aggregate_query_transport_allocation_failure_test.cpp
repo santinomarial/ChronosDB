@@ -222,6 +222,38 @@ TEST(DistributedMutableVectorGroupedAggregateQueryExecutionAllocationFailureTest
   EXPECT_TRUE(saw_success);
 }
 
+TEST(DistributedMutableVectorGroupedAggregateFinalizationAllocationFailureTest,
+     ClassifiesAtomicNativePublicationAllocations) {
+  bool saw_failure{};
+  bool saw_success{};
+  for (std::size_t fail_after = 0U; fail_after < 512U; ++fail_after) {
+    SCOPED_TRACE(testing::Message{} << "fail_after=" << fail_after);
+    auto portable = DistributedMutableVectorGroupedAggregateQueryExecution::create(
+        1U, {fragment()}, keys(), aggregates());
+    ASSERT_TRUE(portable.has_value()) << portable.error().to_string();
+    ASSERT_TRUE(portable->begin_attempt(fragment().tablet_id, {}).has_value());
+    const auto response_value = response();
+    ASSERT_TRUE(portable->accept_responses(fragment().tablet_id, std::span{&response_value, 1U}, {})
+                    .is_ok());
+    ASSERT_TRUE(portable->finish().is_ok());
+    auto result = run_failure(fail_after, [&] {
+      return finalize_distributed_mutable_vector_grouped_aggregate_v2(*portable);
+    });
+    if (!result.has_value()) {
+      saw_failure = true;
+      EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted)
+          << result.error().to_string();
+      continue;
+    }
+    saw_success = true;
+    ASSERT_EQ(result->row_count, 1U);
+    ASSERT_EQ(result->encoded_batches.size(), 1U);
+    break;
+  }
+  EXPECT_TRUE(saw_failure);
+  EXPECT_TRUE(saw_success);
+}
+
 TEST(DistributedMutableVectorGroupedAggregateQuerySenderAllocationFailureTest,
      ClassifiesCanonicalReconstructionAndReleasesDecodedKeyCredit) {
   const auto response_value = response();

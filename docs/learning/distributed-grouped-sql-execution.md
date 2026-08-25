@@ -204,8 +204,10 @@ and the all-tablet coordinator without fabricating a Manifest generation. A boun
 now prevalidates complete immutable routes and nested wire limits, rotates only within each target's
 finite address list, arbitrates retry and query deadlines, cancels all active clients on failure,
 and enables merged physical output only after every mutable tablet closes. Native finalization and
-scheduler publication remain before Native can choose this path. Until then, row-backed grouped
-execution remains the packaged differential oracle.
+scheduler publication now reuse the same authority-revalidating, query-accounted projection,
+sort/limit, and all-or-nothing encoder as the Manifest-pinned path. Replicated/package query
+preparation still does not select this mutable lifecycle, so row-backed grouped execution remains
+the packaged differential oracle.
 
 ## Process qualification boundary
 

@@ -48,9 +48,13 @@ whitespace checks pass. LLVM 18 static analysis remains blocked by the installed
 
 ## Unresolved questions
 
-- Compose finalization directly into the grouped TCP scheduler and replicated Native service.
 - Computed pre-group and final projection splitting.
 - Partitioned shuffle routing and multi-process qualification.
+
+**Retrospective (2026-08-25):** [ADR 0485](0485-atomic-grouped-native-tcp-publication.md)
+composed finalization into the Manifest-pinned scheduler, and
+[ADR 0498](0498-atomic-mutable-grouped-native-publication.md) reused the same finalizer policy for
+the distinct mutable authority view. Replicated/package lifecycle selection remains separate.
 
 ## References
 

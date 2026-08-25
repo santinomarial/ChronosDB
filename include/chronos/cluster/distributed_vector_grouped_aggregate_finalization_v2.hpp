@@ -1,6 +1,7 @@
 #ifndef CHRONOS_CLUSTER_DISTRIBUTED_VECTOR_GROUPED_AGGREGATE_FINALIZATION_V2_HPP_
 #define CHRONOS_CLUSTER_DISTRIBUTED_VECTOR_GROUPED_AGGREGATE_FINALIZATION_V2_HPP_
 
+#include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_execution.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_query_execution_v2.hpp"
 #include "chronos/cluster/distributed_vector_row_finalization_v2.hpp"
 #include "chronos/common/result.hpp"
@@ -41,6 +42,20 @@ finalize_distributed_vector_grouped_aggregate_v2(
 [[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2>
 finalize_distributed_vector_grouped_aggregate_with_projection_v2(
     DistributedVectorGroupedAggregateQueryExecutionV2& input,
+    const query::DistributedVectorGroupedAggregateCoordinatorProjection& projection,
+    DistributedVectorGroupedAggregateFinalizationLimitsV2 limits = {});
+
+// Mutable grouped executions use exact TabletState publication authority rather than a Manifest
+// snapshot, but drain through the same raw key/state shape, physical order/projection/limit stages,
+// query-memory authority, and atomic Native encoding boundary.
+[[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2>
+finalize_distributed_mutable_vector_grouped_aggregate_v2(
+    DistributedMutableVectorGroupedAggregateQueryExecution& input,
+    DistributedVectorGroupedAggregateFinalizationLimitsV2 limits = {});
+
+[[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2>
+finalize_distributed_mutable_vector_grouped_aggregate_with_projection_v2(
+    DistributedMutableVectorGroupedAggregateQueryExecution& input,
     const query::DistributedVectorGroupedAggregateCoordinatorProjection& projection,
     DistributedVectorGroupedAggregateFinalizationLimitsV2 limits = {});
 

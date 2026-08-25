@@ -50,10 +50,43 @@ valid_limits(const DistributedVectorGroupedAggregateFinalizationLimitsV2& limits
          limits.output_batch.maximum_column_name_bytes <= 65'536U;
 }
 
-class GroupedExecutionSource final : public query::PhysicalOperator {
+struct GroupedFinalizationAuthority {
+  const query::DistributedVectorPlanIntent* plan{};
+  const query::DistributedVectorResultSchema* result_schema{};
+  std::uint32_t input_column_count{};
+};
+
+[[nodiscard]] common::Result<GroupedFinalizationAuthority>
+grouped_finalization_authority(const DistributedVectorGroupedAggregateQueryExecutionV2& input) {
+  const auto dispatches = input.snapshot().dispatches();
+  if (dispatches.empty())
+    return common::make_unexpected(invalid("grouped finalization snapshot is empty"));
+  if (dispatches.front().destination_column_ordinals.size() >
+      std::numeric_limits<std::uint32_t>::max()) {
+    return common::make_unexpected(exhausted("grouped finalization input width exceeds protocol"));
+  }
+  return GroupedFinalizationAuthority{
+      .plan = std::addressof(dispatches.front().plan),
+      .result_schema = std::addressof(input.snapshot().result_schema()),
+      .input_column_count =
+          static_cast<std::uint32_t>(dispatches.front().destination_column_ordinals.size())};
+}
+
+[[nodiscard]] common::Result<GroupedFinalizationAuthority> grouped_finalization_authority(
+    const DistributedMutableVectorGroupedAggregateQueryExecution& input) {
+  const auto& identity = input.logical_identity();
+  if (identity.destination_column_ordinals.size() > std::numeric_limits<std::uint32_t>::max()) {
+    return common::make_unexpected(exhausted("grouped finalization input width exceeds protocol"));
+  }
+  return GroupedFinalizationAuthority{.plan = std::addressof(input.plan()),
+                                      .result_schema = std::addressof(input.result_schema()),
+                                      .input_column_count = static_cast<std::uint32_t>(
+                                          identity.destination_column_ordinals.size())};
+}
+
+template <typename Execution> class GroupedExecutionSource final : public query::PhysicalOperator {
 public:
-  explicit GroupedExecutionSource(
-      DistributedVectorGroupedAggregateQueryExecutionV2& execution) noexcept
+  explicit GroupedExecutionSource(Execution& execution) noexcept
       : execution_(std::addressof(execution)) {}
 
   [[nodiscard]] common::Result<query::PhysicalOperatorStep>
@@ -62,7 +95,7 @@ public:
   }
 
 private:
-  DistributedVectorGroupedAggregateQueryExecutionV2* execution_;
+  Execution* execution_;
 };
 
 [[nodiscard]] common::Result<std::vector<std::byte>>
@@ -86,7 +119,7 @@ encode_chunk(const query::VectorChunk& chunk,
         if (!cell.has_value())
           return common::make_unexpected(cell.error());
         if (cell->is_null()) {
-          cells.push_back({.is_null = true});
+          cells.push_back({.is_null = true, .value = {}});
         } else if (cell->kind() == columnar::ColumnCellView::Kind::kBoolean) {
           auto value = cell->boolean();
           if (!value.has_value())
@@ -119,9 +152,10 @@ common::Status validate_distributed_vector_grouped_aggregate_finalization_limits
                               : invalid("grouped finalization limits are invalid");
 }
 
+template <typename Execution>
 static common::Result<DistributedVectorRowsFinalizedResultV2>
 finalize_distributed_vector_grouped_aggregate_impl_v2(
-    DistributedVectorGroupedAggregateQueryExecutionV2& input,
+    Execution& input,
     const query::DistributedVectorGroupedAggregateCoordinatorProjection* const projection,
     const DistributedVectorGroupedAggregateFinalizationLimitsV2 limits) {
   try {
@@ -129,13 +163,13 @@ finalize_distributed_vector_grouped_aggregate_impl_v2(
         validate_distributed_vector_grouped_aggregate_finalization_limits_v2(limits);
     if (!limits_status.is_ok())
       return common::make_unexpected(limits_status);
-    const auto dispatches = input.snapshot().dispatches();
-    if (dispatches.empty())
-      return common::make_unexpected(invalid("grouped finalization snapshot is empty"));
-    const query::DistributedVectorPlanIntent& plan = dispatches.front().plan;
+    auto authority = grouped_finalization_authority(input);
+    if (!authority.has_value())
+      return common::make_unexpected(authority.error());
+    const query::DistributedVectorPlanIntent& plan = *authority->plan;
     const auto keys = input.key_definitions();
     const auto aggregates = input.aggregate_definitions();
-    query::DistributedVectorResultSchema result_schema = input.snapshot().result_schema();
+    query::DistributedVectorResultSchema result_schema = *authority->result_schema;
     const std::optional<query::QueryResourceContext> output_resources = input.output_resources();
     if (plan.mode != query::DistributedVectorPlanMode::kGroupedAggregate || keys.empty() ||
         plan.group_key_input_indices.size() != keys.size() ||
@@ -145,7 +179,7 @@ finalize_distributed_vector_grouped_aggregate_impl_v2(
       return common::make_unexpected(invalid("grouped finalization authority widths differ"));
     }
     const common::Status plan_status = query::validate_distributed_vector_plan_intent(
-        plan, static_cast<std::uint32_t>(dispatches.front().destination_column_ordinals.size()),
+        plan, authority->input_column_count,
         static_cast<std::uint32_t>(result_schema.columns.size()));
     const common::Status schema_status =
         query::validate_distributed_vector_result_schema_value(result_schema);
@@ -251,7 +285,7 @@ finalize_distributed_vector_grouped_aggregate_impl_v2(
     auto pipeline_plan = query::PhysicalPipelinePlan::create(shapes, std::move(stages));
     if (!pipeline_plan.has_value())
       return common::make_unexpected(pipeline_plan.error());
-    std::unique_ptr<query::PhysicalOperator> source{new GroupedExecutionSource{input}};
+    std::unique_ptr<query::PhysicalOperator> source{new GroupedExecutionSource<Execution>{input}};
     auto pipeline = pipeline_plan->instantiate(std::move(source));
     if (!pipeline.has_value())
       return common::make_unexpected(pipeline.error());
@@ -262,7 +296,10 @@ finalize_distributed_vector_grouped_aggregate_impl_v2(
         return common::make_unexpected(exhausted("grouped final result name limit is exhausted"));
       columns.push_back({column.name, column.type, column.nullable});
     }
-    DistributedVectorRowsFinalizedResultV2 result{.result_schema = std::move(output_schema)};
+    DistributedVectorRowsFinalizedResultV2 result{.result_schema = std::move(output_schema),
+                                                  .encoded_batches = {},
+                                                  .row_count = 0U,
+                                                  .encoded_bytes = 0U};
     result.encoded_batches.reserve(std::min<std::size_t>(limits.maximum_output_batches, 16U));
     for (;;) {
       auto step = (*pipeline)->next(*output_resources);
@@ -313,6 +350,21 @@ finalize_distributed_vector_grouped_aggregate_v2(
 common::Result<DistributedVectorRowsFinalizedResultV2>
 finalize_distributed_vector_grouped_aggregate_with_projection_v2(
     DistributedVectorGroupedAggregateQueryExecutionV2& input,
+    const query::DistributedVectorGroupedAggregateCoordinatorProjection& projection,
+    const DistributedVectorGroupedAggregateFinalizationLimitsV2 limits) {
+  return finalize_distributed_vector_grouped_aggregate_impl_v2(input, &projection, limits);
+}
+
+common::Result<DistributedVectorRowsFinalizedResultV2>
+finalize_distributed_mutable_vector_grouped_aggregate_v2(
+    DistributedMutableVectorGroupedAggregateQueryExecution& input,
+    const DistributedVectorGroupedAggregateFinalizationLimitsV2 limits) {
+  return finalize_distributed_vector_grouped_aggregate_impl_v2(input, nullptr, limits);
+}
+
+common::Result<DistributedVectorRowsFinalizedResultV2>
+finalize_distributed_mutable_vector_grouped_aggregate_with_projection_v2(
+    DistributedMutableVectorGroupedAggregateQueryExecution& input,
     const query::DistributedVectorGroupedAggregateCoordinatorProjection& projection,
     const DistributedVectorGroupedAggregateFinalizationLimitsV2 limits) {
   return finalize_distributed_vector_grouped_aggregate_impl_v2(input, &projection, limits);

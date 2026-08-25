@@ -73,6 +73,56 @@ equal_key_definitions(const std::span<const query::VectorGroupKeyDefinition> lef
                                const query::VectorAggregateDefinition& rhs) { return lhs == rhs; });
 }
 
+[[nodiscard]] bool equal_finalization_limits(
+    const DistributedVectorGroupedAggregateFinalizationLimitsV2& lhs,
+    const DistributedVectorGroupedAggregateFinalizationLimitsV2& rhs) noexcept {
+  return lhs.maximum_output_rows == rhs.maximum_output_rows &&
+         lhs.maximum_output_batches == rhs.maximum_output_batches &&
+         lhs.maximum_output_encoded_bytes == rhs.maximum_output_encoded_bytes &&
+         lhs.sort.maximum_rows == rhs.sort.maximum_rows &&
+         lhs.sort.maximum_keys == rhs.sort.maximum_keys &&
+         lhs.sort.maximum_state_bytes == rhs.sort.maximum_state_bytes &&
+         lhs.sort.output_limits.maximum_rows == rhs.sort.output_limits.maximum_rows &&
+         lhs.sort.output_limits.maximum_columns == rhs.sort.output_limits.maximum_columns &&
+         lhs.sort.output_limits.maximum_buffer_bytes ==
+             rhs.sort.output_limits.maximum_buffer_bytes &&
+         lhs.sort.output_limits.maximum_retained_buffer_bytes ==
+             rhs.sort.output_limits.maximum_retained_buffer_bytes &&
+         lhs.output_batch.protocol.maximum_payload_size ==
+             rhs.output_batch.protocol.maximum_payload_size &&
+         lhs.output_batch.maximum_rows == rhs.output_batch.maximum_rows &&
+         lhs.output_batch.maximum_columns == rhs.output_batch.maximum_columns &&
+         lhs.output_batch.maximum_column_name_bytes == rhs.output_batch.maximum_column_name_bytes;
+}
+
+[[nodiscard]] bool valid_finalization_authority(
+    const DistributedMutableVectorGroupedAggregateQueryExecution& execution,
+    const DistributedVectorGroupedAggregateFinalizationLimitsV2& limits,
+    const query::DistributedVectorGroupedAggregateCoordinatorProjection* const
+        projection) noexcept {
+  const auto& plan = execution.plan();
+  const auto& raw_schema = execution.result_schema();
+  const query::DistributedVectorResultSchema& schema =
+      projection == nullptr ? raw_schema : projection->result_schema;
+  const std::span<const query::DistributedVectorOrderKey> order_keys =
+      projection == nullptr
+          ? std::span<const query::DistributedVectorOrderKey>{plan.order_keys}
+          : std::span<const query::DistributedVectorOrderKey>{projection->order_keys};
+  if (schema.columns.size() > limits.output_batch.maximum_columns ||
+      order_keys.size() > limits.sort.maximum_keys ||
+      (projection != nullptr &&
+       (!plan.order_keys.empty() || plan.limit.has_value() || projection->outputs.empty() ||
+        projection->outputs.size() != schema.columns.size())) ||
+      ((!order_keys.empty() || projection != nullptr) &&
+       (schema.columns.size() > limits.sort.output_limits.maximum_columns ||
+        limits.sort.output_limits.maximum_rows > limits.output_batch.maximum_rows))) {
+    return false;
+  }
+  return std::ranges::all_of(schema.columns, [&](const auto& column) {
+    return column.name.size() <= limits.output_batch.maximum_column_name_bytes;
+  });
+}
+
 [[nodiscard]] bool
 valid_limits(const DistributedMutableVectorGroupedAggregateQueryTlsLimits& limits) noexcept {
   constexpr std::size_t kMinimumResponseBytes =
@@ -269,6 +319,15 @@ public:
     common::Status finished = execution.finish();
     if (!finished.is_ok())
       return fail(std::move(finished));
+    auto finalized =
+        config.coordinator_projection.has_value()
+            ? finalize_distributed_mutable_vector_grouped_aggregate_with_projection_v2(
+                  execution, *config.coordinator_projection, config.finalization_limits)
+            : finalize_distributed_mutable_vector_grouped_aggregate_v2(execution,
+                                                                       config.finalization_limits);
+    if (!finalized.has_value())
+      return fail(finalized.error());
+    execution_result.emplace(std::move(*finalized));
     execution_state = DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kComplete;
     return common::Status::ok();
   }
@@ -279,6 +338,7 @@ public:
   std::vector<pollfd> poll_descriptors;
   std::vector<std::size_t> poll_slot_indexes;
   DistributedMutableVectorGroupedAggregateQueryTcpExecutionMetrics execution_metrics;
+  std::optional<DistributedVectorRowsFinalizedResultV2> execution_result;
   DistributedMutableVectorGroupedAggregateQueryTcpExecutionState execution_state{
       DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kRunning};
   common::Status execution_failure{common::StatusCode::kInternal,
@@ -308,6 +368,13 @@ DistributedMutableVectorGroupedAggregateQueryTcpExecution::create(
       config.routes.empty() || config.routes.size() > 65'536U ||
       config.maximum_rebindings > 1024U || !valid_timeout(config.connect_timeout) ||
       !valid_limits(config.carrier_limits) ||
+      !validate_distributed_vector_grouped_aggregate_finalization_limits_v2(
+           config.finalization_limits)
+           .is_ok() ||
+      !valid_finalization_authority(execution, config.finalization_limits,
+                                    config.coordinator_projection.has_value()
+                                        ? std::addressof(*config.coordinator_projection)
+                                        : nullptr) ||
       execution.key_definitions().size() > config.carrier_limits.payload.maximum_group_keys ||
       execution.aggregate_definitions().size() > config.carrier_limits.payload.maximum_aggregates) {
     return common::make_unexpected(
@@ -484,6 +551,8 @@ common::Status DistributedMutableVectorGroupedAggregateQueryTcpExecution::rebind
     return exhausted("mutable grouped TCP execution rebinding budget is exhausted");
   if (config.execution_deadline != previous.config.execution_deadline ||
       config.maximum_rebindings != previous.config.maximum_rebindings ||
+      !equal_finalization_limits(config.finalization_limits, previous.config.finalization_limits) ||
+      config.coordinator_projection != previous.config.coordinator_projection ||
       previous.execution.logical_identity() != execution.logical_identity() ||
       !equal_key_definitions(previous.execution.key_definitions(), execution.key_definitions()) ||
       !equal_aggregate_definitions(previous.execution.aggregate_definitions(),
@@ -516,14 +585,28 @@ DistributedMutableVectorGroupedAggregateQueryTcpExecution::metrics() const noexc
                          : DistributedMutableVectorGroupedAggregateQueryTcpExecutionMetrics{};
 }
 
-common::Result<query::PhysicalOperatorStep>
-DistributedMutableVectorGroupedAggregateQueryTcpExecution::next() {
-  if (!implementation_ ||
-      implementation_->execution_state !=
-          DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kComplete) {
-    return common::make_unexpected(invalid("mutable grouped TCP execution output is unavailable"));
+const std::optional<DistributedVectorRowsFinalizedResultV2>&
+DistributedMutableVectorGroupedAggregateQueryTcpExecution::result() const noexcept {
+  static const std::optional<DistributedVectorRowsFinalizedResultV2> empty;
+  return implementation_ ? implementation_->execution_result : empty;
+}
+
+common::Result<DistributedVectorRowsFinalizedResultV2>
+DistributedMutableVectorGroupedAggregateQueryTcpExecution::take_result() {
+  try {
+    if (!implementation_ ||
+        implementation_->execution_state !=
+            DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kComplete ||
+        !implementation_->execution_result.has_value()) {
+      return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
+                                                    "mutable grouped TCP result is unavailable"});
+    }
+    DistributedVectorRowsFinalizedResultV2 result = std::move(*implementation_->execution_result);
+    implementation_->execution_result.reset();
+    return result;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("mutable grouped TCP result transfer failed"));
   }
-  return implementation_->execution.next();
 }
 
 std::span<const query::VectorGroupKeyDefinition>

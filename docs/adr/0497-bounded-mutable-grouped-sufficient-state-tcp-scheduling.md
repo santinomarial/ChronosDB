@@ -93,9 +93,13 @@ Callers must not substitute the Manifest-pinned grouped scheduler or publish a r
 
 ## Unresolved questions
 
-- Atomic mutable grouped Native finalization and scheduler publication.
 - Computed pre-group physical-plan splitting.
 - Partitioned shuffle routing, skew policy, and broader process/fault/measurement evidence.
+
+**Retrospective (2026-08-25):** [ADR 0498](0498-atomic-mutable-grouped-native-publication.md)
+generalizes the shared grouped finalizer across Manifest-pinned and mutable authority views, moves
+finalization policy into scheduler preflight, and replaces physical-row exposure with one atomic
+Native result.
 
 ## References
 

@@ -1,5 +1,6 @@
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_execution.hpp"
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_server.hpp"
+#include "chronos/common/byte_reader.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -212,6 +213,14 @@ TEST(DistributedMutableVectorGroupedAggregateQueryTcpExecutionTest,
   Authenticator server_authenticator{92U};
   auto portable = execution();
   ASSERT_TRUE(portable.has_value()) << portable.error().to_string();
+  const auto int64 = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  auto doubled_count = query::VectorExpression::create(
+      {query::VectorInputExpression{.input_column_ordinal = 1U, .type = int64, .nullable = false},
+       query::VectorConstantExpression{query::ScalarValue::signed_value(int64, 2).value()},
+       query::VectorBinaryExpression{.operation = query::VectorBinaryOperation::kMultiply,
+                                     .left_instruction = 0U,
+                                     .right_instruction = 1U}});
+  ASSERT_TRUE(doubled_count.has_value()) << doubled_count.error().to_string();
   auto scheduled = DistributedMutableVectorGroupedAggregateQueryTcpExecution::create(
       std::move(*portable),
       {.authenticator = &server_authenticator,
@@ -223,10 +232,14 @@ TEST(DistributedMutableVectorGroupedAggregateQueryTcpExecutionTest,
                    .endpoints = {second_server->bound_endpoint()},
                    .tls_context = std::addressof(*context)}},
        .carrier_limits = carrier_limits(),
+       .coordinator_projection =
+           query::DistributedVectorGroupedAggregateCoordinatorProjection{
+               .outputs = {std::move(*doubled_count)},
+               .result_schema = {.columns = {{"doubled_count", int64, false}}}},
        .connect_timeout = std::chrono::milliseconds{1000},
        .execution_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5}});
   ASSERT_TRUE(scheduled.has_value()) << scheduled.error().to_string();
-  EXPECT_EQ(scheduled->next().error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_FALSE(scheduled->result().has_value());
   for (std::size_t iteration = 0U;
        iteration < 4096U &&
        scheduled->state() ==
@@ -240,13 +253,20 @@ TEST(DistributedMutableVectorGroupedAggregateQueryTcpExecutionTest,
   ASSERT_EQ(scheduled->state(),
             DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kComplete)
       << scheduled->failure().to_string();
-  auto output = scheduled->next();
-  ASSERT_TRUE(output.has_value()) << output.error().to_string();
-  ASSERT_EQ(output->kind(), query::PhysicalOperatorStepKind::kChunk);
-  EXPECT_EQ(output->chunk()->chunk().selected_row_count(), 1U);
-  auto end = scheduled->next();
-  ASSERT_TRUE(end.has_value()) << end.error().to_string();
-  EXPECT_EQ(end->kind(), query::PhysicalOperatorStepKind::kEnd);
+  ASSERT_TRUE(scheduled->result().has_value());
+  ASSERT_EQ(scheduled->result()->row_count, 1U);
+  ASSERT_EQ(scheduled->result()->encoded_batches.size(), 1U);
+  auto decoded = network::decode_query_result_batch(scheduled->result()->encoded_batches.front());
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  ASSERT_EQ(decoded->row_count(), 1U);
+  ASSERT_EQ(decoded->columns().size(), 1U);
+  EXPECT_EQ(decoded->columns().front().name, "doubled_count");
+  const network::QueryResultCell* count = decoded->cell(0U, 0U);
+  ASSERT_NE(count, nullptr);
+  common::ByteReader count_reader{count->value};
+  const auto count_value = count_reader.read_i64_le();
+  ASSERT_TRUE(count_value.has_value());
+  EXPECT_EQ(*count_value, 6);
   EXPECT_TRUE(scheduled->poll_once(std::chrono::milliseconds{0}).is_ok());
   EXPECT_EQ(first_worker.bind_calls, 1U);
   EXPECT_EQ(first_worker.execute_calls, 1U);
@@ -260,6 +280,11 @@ TEST(DistributedMutableVectorGroupedAggregateQueryTcpExecutionTest,
   EXPECT_EQ(metrics.transport_completed_attempts, 2U);
   EXPECT_EQ(metrics.transport_failed_attempts, 1U);
   EXPECT_EQ(metrics.active_attempts, 0U);
+  auto taken = scheduled->take_result();
+  ASSERT_TRUE(taken.has_value()) << taken.error().to_string();
+  EXPECT_EQ(taken->row_count, 1U);
+  EXPECT_FALSE(scheduled->result().has_value());
+  EXPECT_EQ(scheduled->take_result().error().code(), common::StatusCode::kUnavailable);
   EXPECT_TRUE(first_server->shutdown().is_ok());
   EXPECT_TRUE(second_server->shutdown().is_ok());
 }
@@ -302,6 +327,18 @@ TEST(DistributedMutableVectorGroupedAggregateQueryTcpExecutionTest,
                 .code(),
             common::StatusCode::kInvalidArgument);
 
+  auto invalid_finalization = execution();
+  ASSERT_TRUE(invalid_finalization.has_value());
+  EXPECT_EQ(
+      DistributedMutableVectorGroupedAggregateQueryTcpExecution::create(
+          std::move(*invalid_finalization), {.authenticator = &authenticator,
+                                             .node_authorizer = &authorizer,
+                                             .routes = {first_route, second_route},
+                                             .finalization_limits = {.maximum_output_batches = 0U}})
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
+
   auto expired_portable = execution();
   ASSERT_TRUE(expired_portable.has_value());
   auto expired = DistributedMutableVectorGroupedAggregateQueryTcpExecution::create(
@@ -316,6 +353,7 @@ TEST(DistributedMutableVectorGroupedAggregateQueryTcpExecutionTest,
   EXPECT_EQ(expired->state(),
             DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kCancelled);
   EXPECT_EQ(expired->metrics().attempts_started, 0U);
+  EXPECT_FALSE(expired->result().has_value());
 
   auto cancelled_portable = execution();
   ASSERT_TRUE(cancelled_portable.has_value());
@@ -332,6 +370,7 @@ TEST(DistributedMutableVectorGroupedAggregateQueryTcpExecutionTest,
   EXPECT_EQ(cancelled->state(),
             DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kCancelled);
   EXPECT_EQ(cancelled->metrics().active_attempts, 0U);
+  EXPECT_FALSE(cancelled->result().has_value());
   EXPECT_TRUE(listener->close().is_ok());
 }
 
