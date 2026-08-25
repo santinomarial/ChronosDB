@@ -70,9 +70,14 @@ admission/publication positions fails closed.
 This is additive and is not yet emitted by a production carrier. Rollback removes the new request
 and worker boundary without changing existing durable or network bytes.
 
+## Retrospective note (2026-08-25)
+
+[ADR 0490](0490-proof-revalidated-mutable-grouped-sufficient-state-worker.md) extends this exact
+mutable authority into grouped sufficient-state binding and execution. It does not change the v1
+fragment bytes or make them acceptable to the Manifest/CSEG grouped transport.
+
 ## References
 
 - [Distributed Mutable Vector Fragment v1](../formats/distributed-mutable-vector-fragment-v1.md)
 - [Correlated replicated read authority](0299-correlated-replicated-read-authority.md)
 - [Authoritative co-located native query redirect](0428-authoritative-co-located-native-query-redirect.md)
-

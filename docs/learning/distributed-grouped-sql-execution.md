@@ -183,10 +183,14 @@ set, joins each tablet to its immutable group, exact Manifest recovery schema/so
 the same acquired leader authority, then requires equal catalog/Manifest table cardinality. Only
 that complete derived vector can enter compatible binding and route resolution.
 
-This is intentionally a Manifest/CSEG path. The packaged Native service currently binds mutable
-`TabletState` fragments. Its row-backed grouped execution remains the correctness oracle until a
-separate mutable sufficient-state worker can reacquire and revalidate the same authority model;
-substituting the immutable worker would mix snapshot types.
+The packaged Native service currently binds mutable `TabletState` fragments. A distinct mutable
+grouped worker now reacquires one coherent snapshot/schema/placement/group/barrier context,
+revalidates the exact fragment publication, runs the shared grouping pipeline, and emits the same
+canonical sufficient-state frames as the Manifest/CSEG worker. Its request-local production
+adapter deliberately does not implement the Fragment-v2 grouped transport interface: that carrier
+names a Manifest generation, while the mutable fragment names an exact applied head publication.
+A distinct mutable grouped carrier and scheduler composition remain before Native can choose this
+path. Until then, row-backed grouped execution remains the packaged differential oracle.
 
 ## Process qualification boundary
 

@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 #include <memory>
 #include <poll.h>
+#include <string>
 #include <utility>
 
 namespace chronos::service {
@@ -172,6 +173,42 @@ struct MutableFixture {
     EXPECT_TRUE(bound.has_value()) << bound.error().to_string();
     return std::move(*bound);
   }
+
+  [[nodiscard]] query::DistributedMutableVectorFragment
+  grouped_fragment(const ingest::TabletSnapshot& snapshot) const {
+    const query::DistributedVectorQueryPlan plan{
+        .query_id = uuid(83U),
+        .read_policy = {.consistency = query::DistributedReadConsistency::kLeaderLinearizable},
+        .fragments = {{.tablet_id = tablet_id,
+                       .leader_node = 11U,
+                       .local_applied_position = 5U,
+                       .known_leader_commit_position = 5U}},
+        .intent = {.mode = query::DistributedVectorPlanMode::kGroupedAggregate,
+                   .group_key_input_indices = {0U},
+                   .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}}}};
+    const query::DistributedReadAdmission admission{.tablet_id = tablet_id,
+                                                    .serving_node = 11U,
+                                                    .applied_position = 5U,
+                                                    .observed_leader_commit_position = 5U,
+                                                    .linearizable_barrier = barrier};
+    const std::array<std::uint32_t, 1U> projection{1U};
+    const auto int64 = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+    const query::DistributedVectorResultSchema result_schema{
+        .columns = {{"tag", schema_value->columns()[1].type(), true}, {"rows", int64, false}}};
+    auto bound = query::bind_distributed_mutable_vector_fragment(
+        {.plan = std::cref(plan),
+         .admission = std::cref(admission),
+         .database_id = database_id,
+         .snapshot = std::cref(snapshot),
+         .lineage = std::cref(*lineage),
+         .raft_group_id = group_id,
+         .placement = std::cref(placement),
+         .destination_column_ordinals = projection,
+         .event_time_predicate = std::nullopt,
+         .result_schema = std::cref(result_schema)});
+    EXPECT_TRUE(bound.has_value()) << bound.error().to_string();
+    return std::move(*bound);
+  }
 };
 
 [[nodiscard]] cluster::DistributedMutableVectorQueryTlsLimits carrier_limits() {
@@ -179,6 +216,57 @@ struct MutableFixture {
           .exchange_timeout = std::chrono::milliseconds{1000},
           .maximum_response_frames = 4U,
           .maximum_response_bytes = std::size_t{1024U} * 1024U};
+}
+
+TEST(ReplicatedDistributedMutableVectorGroupedAggregateQueryWorkerTest,
+     ReacquiresAndExecutesExactCurrentTabletPublication) {
+  EXPECT_EQ(
+      ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker::create({}).error().code(),
+      common::StatusCode::kInvalidArgument);
+  MutableFixture data;
+  const ingest::TabletSnapshot snapshot = data.append();
+  ContextProvider provider{snapshot, data.lineage, data.placement, data.group_id, data.barrier};
+  const auto fragment = data.grouped_fragment(snapshot);
+  auto worker = ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker::create(
+      {.local_node_id = 11U, .context_provider = &provider});
+  ASSERT_TRUE(worker.has_value()) << worker.error().to_string();
+
+  auto authority = worker->bind_authority(fragment);
+  ASSERT_TRUE(authority.has_value()) << authority.error().to_string();
+  ASSERT_EQ(authority->keys.size(), 1U);
+  ASSERT_EQ(authority->aggregates.size(), 1U);
+  EXPECT_TRUE(authority->keys[0].nullable);
+  EXPECT_EQ(authority->aggregates[0].operation, query::VectorAggregateOperation::kCountStar);
+
+  auto result = worker->execute(fragment);
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  EXPECT_EQ(result->input_rows, 2U);
+  EXPECT_EQ(result->group_count, 2U);
+  ASSERT_EQ(result->messages.size(), 2U);
+  auto resources = query::QueryResourceContext::create(1U << 20U);
+  ASSERT_TRUE(resources.has_value()) << resources.error().to_string();
+  for (std::size_t ordinal = 0U; ordinal < result->messages.size(); ++ordinal) {
+    auto decoded = query::decode_distributed_vector_grouped_aggregate_exchange_message_exact(
+        result->messages[ordinal].bytes(), result->authority.keys, result->authority.aggregates,
+        *resources);
+    ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+    EXPECT_EQ(decoded->position().group_ordinal, ordinal);
+    EXPECT_EQ(decoded->position().group_count, 2U);
+    EXPECT_EQ(decoded->position().terminal, ordinal == 1U);
+    ASSERT_EQ(decoded->keys().size(), 1U);
+    if (ordinal == 0U) {
+      EXPECT_FALSE(decoded->keys()[0].is_null());
+      EXPECT_EQ(std::get<std::string>(decoded->keys()[0].storage()), "x");
+    } else {
+      EXPECT_TRUE(decoded->keys()[0].is_null());
+    }
+    auto states = std::move(*decoded).take_states();
+    ASSERT_EQ(states.size(), 1U);
+    auto count = std::move(states[0]).take_result();
+    ASSERT_TRUE(count.has_value()) << count.error().to_string();
+    EXPECT_EQ(std::get<std::int64_t>(count->storage()), 1);
+  }
+  EXPECT_EQ(provider.calls, 2U);
 }
 
 TEST(ReplicatedDistributedMutableVectorQueryTcpServerTest,

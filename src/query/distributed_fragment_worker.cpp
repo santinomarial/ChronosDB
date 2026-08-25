@@ -858,51 +858,27 @@ validate_vector_grouped_aggregate_worker_binding(
 }
 
 [[nodiscard]] common::Result<DistributedVectorGroupedAggregateWorkerResultV2>
-execute_vector_grouped_aggregate_snapshot(
-    const DistributedVectorGroupedAggregateWorkerRequestV2& request,
-    const ValidatedWorkerAuthority& authority,
-    std::shared_ptr<const ScalarTableSnapshot> scalar_snapshot,
+execute_vector_grouped_aggregate_pipeline(
+    const common::Uuid query_id, const schema::TabletId tablet_id,
+    std::unique_ptr<PhysicalOperator> pipeline, const QueryResourceContext& resources,
     const std::span<const PhysicalColumnShape> projected_inputs,
-    DistributedVectorGroupedAggregateAuthority grouped) {
-  auto resources = QueryResourceContext::create(request.limits.maximum_query_memory_bytes);
-  if (!resources.has_value())
-    return common::make_unexpected(resources.error());
-  auto pipeline =
-      ScalarSnapshotScanOperator::create(std::move(scalar_snapshot), request.limits.scan);
-  if (!pipeline.has_value())
-    return common::make_unexpected(pipeline.error());
-  const DistributedVectorFragmentDispatch& fragment = request.dispatch.get().dispatch;
-  if (fragment.event_time_predicate.has_value()) {
-    pipeline =
-        TimestampRangeFilterOperator::create(std::move(*pipeline), authority.event_ordinal,
-                                             timestamp_predicate(*fragment.event_time_predicate));
-    if (!pipeline.has_value())
-      return common::make_unexpected(pipeline.error());
-  }
-
+    DistributedVectorGroupedAggregateAuthority grouped,
+    const DistributedVectorGroupedAggregateWorkerLimitsV2& limits) {
   try {
-    std::vector<std::size_t> output_ordinals;
-    output_ordinals.reserve(fragment.destination_column_ordinals.size());
-    for (const std::uint32_t ordinal : fragment.destination_column_ordinals)
-      output_ordinals.push_back(ordinal);
-    pipeline = SourceColumnOutputOperator::create(std::move(*pipeline), std::move(output_ordinals),
-                                                  request.limits.projection);
-    if (!pipeline.has_value())
-      return common::make_unexpected(pipeline.error());
     auto table = MergeableVectorGroupedAggregateTable::create(grouped.keys, grouped.aggregates,
-                                                              request.limits.table);
+                                                              limits.table);
     if (!table.has_value())
       return common::make_unexpected(table.error());
 
     std::uint64_t input_rows{};
     for (;;) {
-      auto step = (*pipeline)->next(*resources);
+      auto step = pipeline->next(resources);
       if (!step.has_value())
         return common::make_unexpected(step.error());
       if (step->kind() == PhysicalOperatorStepKind::kEnd)
         break;
       const AccountedVectorChunk* chunk = step->chunk();
-      if (chunk == nullptr || !chunk->belongs_to(*resources)) {
+      if (chunk == nullptr || !chunk->belongs_to(resources)) {
         return common::make_unexpected(
             corruption("distributed vector grouped aggregate chunk ownership is invalid"));
       }
@@ -923,7 +899,7 @@ execute_vector_grouped_aggregate_snapshot(
         return common::make_unexpected(
             exhausted("distributed vector grouped aggregate rows overflow"));
       }
-      auto accumulated = table->accumulate(*chunk, *resources);
+      auto accumulated = table->accumulate(*chunk, resources);
       if (!accumulated.has_value())
         return common::make_unexpected(accumulated.error());
       input_rows += static_cast<std::uint64_t>(selected_rows);
@@ -935,7 +911,7 @@ execute_vector_grouped_aggregate_snapshot(
     std::size_t encoded_bytes{};
     const auto retain_encoded = [&](EncodedDistributedVectorGroupedAggregateExchangeMessage encoded)
         -> common::Result<void> {
-      if (encoded.bytes().size() > request.limits.maximum_total_encoded_bytes - encoded_bytes) {
+      if (encoded.bytes().size() > limits.maximum_total_encoded_bytes - encoded_bytes) {
         return common::make_unexpected(exhausted(
             "distributed vector grouped aggregate encoded result exceeds its byte limit"));
       }
@@ -945,8 +921,8 @@ execute_vector_grouped_aggregate_snapshot(
     };
     if (group_count == 0U) {
       auto encoded = encode_distributed_vector_grouped_aggregate_exchange_message(
-          {.query_id = fragment.query_id,
-           .tablet_id = fragment.tablet_id,
+          {.query_id = query_id,
+           .tablet_id = tablet_id,
            .sequence = 1U,
            .group_ordinal = 0U,
            .group_count = 0U,
@@ -968,8 +944,8 @@ execute_vector_grouped_aggregate_snapshot(
         if (!states.has_value())
           return common::make_unexpected(states.error());
         auto encoded = encode_distributed_vector_grouped_aggregate_exchange_message(
-            {.query_id = fragment.query_id,
-             .tablet_id = fragment.tablet_id,
+            {.query_id = query_id,
+             .tablet_id = tablet_id,
              .sequence = static_cast<std::uint64_t>(ordinal) + 1U,
              .group_ordinal = static_cast<std::uint32_t>(ordinal),
              .group_count = static_cast<std::uint32_t>(group_count),
@@ -988,6 +964,49 @@ execute_vector_grouped_aggregate_snapshot(
                                                            .input_rows = input_rows,
                                                            .group_count = group_count,
                                                            .encoded_bytes = encoded_bytes};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("distributed vector grouped aggregate worker allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("distributed vector grouped aggregate worker exceeds container limits"));
+  }
+}
+
+[[nodiscard]] common::Result<DistributedVectorGroupedAggregateWorkerResultV2>
+execute_vector_grouped_aggregate_snapshot(
+    const DistributedVectorGroupedAggregateWorkerRequestV2& request,
+    const ValidatedWorkerAuthority& authority,
+    std::shared_ptr<const ScalarTableSnapshot> scalar_snapshot,
+    const std::span<const PhysicalColumnShape> projected_inputs,
+    DistributedVectorGroupedAggregateAuthority grouped) {
+  auto resources = QueryResourceContext::create(request.limits.maximum_query_memory_bytes);
+  if (!resources.has_value())
+    return common::make_unexpected(resources.error());
+  auto pipeline =
+      ScalarSnapshotScanOperator::create(std::move(scalar_snapshot), request.limits.scan);
+  if (!pipeline.has_value())
+    return common::make_unexpected(pipeline.error());
+  const DistributedVectorFragmentDispatch& fragment = request.dispatch.get().dispatch;
+  if (fragment.event_time_predicate.has_value()) {
+    pipeline =
+        TimestampRangeFilterOperator::create(std::move(*pipeline), authority.event_ordinal,
+                                             timestamp_predicate(*fragment.event_time_predicate));
+    if (!pipeline.has_value())
+      return common::make_unexpected(pipeline.error());
+  }
+  try {
+    std::vector<std::size_t> output_ordinals;
+    output_ordinals.reserve(fragment.destination_column_ordinals.size());
+    for (const std::uint32_t ordinal : fragment.destination_column_ordinals)
+      output_ordinals.push_back(ordinal);
+    pipeline = SourceColumnOutputOperator::create(std::move(*pipeline), std::move(output_ordinals),
+                                                  request.limits.projection);
+    if (!pipeline.has_value())
+      return common::make_unexpected(pipeline.error());
+    return execute_vector_grouped_aggregate_pipeline(
+        fragment.query_id, fragment.tablet_id, std::move(*pipeline), *resources, projected_inputs,
+        std::move(grouped), request.limits);
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(
         exhausted("distributed vector grouped aggregate worker allocation failed"));
@@ -1048,6 +1067,123 @@ private:
   bool called_{};
   bool repeated_{};
 };
+
+struct ValidatedMutableVectorGroupedAggregateWorkerBinding {
+  std::shared_ptr<const schema::TableSchema> schema_value;
+  std::size_t event_ordinal{};
+  std::vector<PhysicalColumnShape> projected_inputs;
+  DistributedVectorGroupedAggregateAuthority grouped;
+};
+
+[[nodiscard]] common::Result<ValidatedMutableVectorGroupedAggregateWorkerBinding>
+validate_mutable_vector_grouped_aggregate_worker_binding(
+    const DistributedMutableVectorGroupedAggregateWorkerRequest& request) {
+  const DistributedMutableVectorFragment& fragment = request.fragment.get();
+  const ingest::TabletSnapshot& snapshot = request.snapshot.get();
+  const schema::SchemaLineage& lineage = request.lineage.get();
+  const raft::TabletPlacementMetadata& placement = request.placement.get();
+  const common::Status structural = validate_distributed_mutable_vector_fragment(fragment);
+  if (!structural.is_ok())
+    return common::make_unexpected(structural);
+  if (!valid_vector_grouped_aggregate_limits(request.limits)) {
+    return common::make_unexpected(
+        invalid("mutable vector grouped aggregate worker limits are invalid"));
+  }
+  if (fragment.plan.mode != DistributedVectorPlanMode::kGroupedAggregate) {
+    return common::make_unexpected(
+        invalid("mutable vector grouped aggregate worker requires a grouped plan"));
+  }
+  if (request.local_node == 0U || request.raft_group_id.is_nil() ||
+      fragment.raft_group_id != request.raft_group_id ||
+      fragment.serving_node != request.local_node) {
+    return common::make_unexpected(unavailable("mutable vector grouped worker route differs"));
+  }
+  const common::Status placement_status =
+      validate_local_placement(placement, fragment, request.local_node);
+  if (!placement_status.is_ok())
+    return common::make_unexpected(placement_status);
+  if (fragment.read_policy.consistency == DistributedReadConsistency::kLeaderLinearizable) {
+    if (!request.local_linearizable_barrier.has_value() ||
+        request.local_linearizable_barrier != fragment.linearizable_barrier) {
+      return common::make_unexpected(
+          unavailable("mutable vector grouped worker local Raft read barrier differs"));
+    }
+  } else if (request.local_linearizable_barrier.has_value()) {
+    return common::make_unexpected(
+        invalid("mutable vector grouped non-linearizable request supplied a leader barrier"));
+  }
+  std::shared_ptr<const schema::TableSchema> schema_value = lineage.current();
+  const std::optional<head::HeadCommitPosition>& position = snapshot.applied_position();
+  if (schema_value == nullptr || lineage.table_id() != fragment.table_id ||
+      schema_value->schema_id() != fragment.destination_schema_id ||
+      snapshot.table_id() != fragment.table_id || snapshot.tablet_id() != fragment.tablet_id ||
+      snapshot.schema_ptr()->schema_id() != fragment.destination_schema_id ||
+      !position.has_value() || position->source != head::CommitSource::kRaft ||
+      position->raft_group_id != request.raft_group_id ||
+      position->record_sequence != fragment.applied_position) {
+    return common::make_unexpected(
+        unavailable("mutable vector grouped worker publication authority differs"));
+  }
+  const std::optional<std::size_t> event_ordinal =
+      schema_value->column_ordinal(schema_value->event_time_column());
+  if (!event_ordinal.has_value()) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotSupported,
+                       "mutable vector grouped worker requires an event-time column"});
+  }
+
+  try {
+    std::vector<PhysicalColumnShape> projected_inputs;
+    projected_inputs.reserve(fragment.destination_column_ordinals.size());
+    for (const std::uint32_t ordinal : fragment.destination_column_ordinals) {
+      if (ordinal >= schema_value->columns().size()) {
+        return common::make_unexpected(
+            invalid("mutable vector grouped aggregate projection is out of bounds"));
+      }
+      const schema::ColumnDefinition& column = schema_value->columns()[ordinal];
+      projected_inputs.push_back({column.type(), column.nullable()});
+    }
+    auto grouped = bind_distributed_vector_grouped_aggregate_authority(
+        fragment.plan, projected_inputs, fragment.result_schema);
+    if (!grouped.has_value())
+      return common::make_unexpected(grouped.error());
+    if (projected_inputs.size() > request.limits.projection.maximum_columns) {
+      return common::make_unexpected(
+          exhausted("mutable vector grouped aggregate projection exceeds its width limit"));
+    }
+    const auto projected_bytes =
+        common::checked_multiply(projected_inputs.capacity(), sizeof(PhysicalColumnShape));
+    const auto key_bytes =
+        common::checked_multiply(grouped->keys.capacity(), sizeof(VectorGroupKeyDefinition) * 2U);
+    const auto aggregate_bytes = common::checked_multiply(grouped->aggregates.capacity(),
+                                                          sizeof(VectorAggregateDefinition) * 2U);
+    const auto first = projected_bytes.has_value() && key_bytes.has_value()
+                           ? common::checked_add(*projected_bytes, *key_bytes)
+                           : std::nullopt;
+    const auto retained = first.has_value() && aggregate_bytes.has_value()
+                              ? common::checked_add(*first, *aggregate_bytes)
+                              : std::nullopt;
+    if (!retained.has_value() || *retained > request.limits.maximum_retained_configuration_bytes) {
+      return common::make_unexpected(
+          exhausted("mutable vector grouped aggregate retained configuration exceeds its limit"));
+    }
+    auto table = MergeableVectorGroupedAggregateTable::create(grouped->keys, grouped->aggregates,
+                                                              request.limits.table);
+    if (!table.has_value())
+      return common::make_unexpected(table.error());
+    return ValidatedMutableVectorGroupedAggregateWorkerBinding{
+        .schema_value = std::move(schema_value),
+        .event_ordinal = *event_ordinal,
+        .projected_inputs = std::move(projected_inputs),
+        .grouped = std::move(*grouped)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("mutable vector grouped aggregate worker binding allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("mutable vector grouped aggregate worker binding exceeds limits"));
+  }
+}
 
 } // namespace
 
@@ -1658,6 +1794,64 @@ execute_distributed_vector_grouped_aggregate_fragment_v2(
   } catch (const std::length_error&) {
     return common::make_unexpected(
         exhausted("distributed vector grouped aggregate worker exceeds container limits"));
+  }
+}
+
+common::Result<DistributedVectorGroupedAggregateAuthority>
+bind_distributed_mutable_vector_grouped_aggregate_worker_authority(
+    const DistributedMutableVectorGroupedAggregateWorkerRequest& request) {
+  auto binding = validate_mutable_vector_grouped_aggregate_worker_binding(request);
+  if (!binding.has_value())
+    return common::make_unexpected(binding.error());
+  return std::move(binding->grouped);
+}
+
+common::Result<DistributedVectorGroupedAggregateWorkerResultV2>
+execute_distributed_mutable_vector_grouped_aggregate_fragment(
+    const DistributedMutableVectorGroupedAggregateWorkerRequest& request) {
+  auto binding = validate_mutable_vector_grouped_aggregate_worker_binding(request);
+  if (!binding.has_value())
+    return common::make_unexpected(binding.error());
+  const DistributedMutableVectorFragment& fragment = request.fragment.get();
+  const ingest::TabletSnapshot& snapshot = request.snapshot.get();
+  const schema::SchemaLineage& lineage = request.lineage.get();
+  try {
+    auto resources = QueryResourceContext::create(request.limits.maximum_query_memory_bytes);
+    if (!resources.has_value())
+      return common::make_unexpected(resources.error());
+    std::vector<PhysicalColumnShape> source_shape;
+    source_shape.reserve(binding->schema_value->columns().size());
+    for (const schema::ColumnDefinition& column : binding->schema_value->columns())
+      source_shape.push_back({column.type(), column.nullable()});
+    auto pipeline = create_tablet_states_source(*resources, std::span{&snapshot, 1U}, lineage,
+                                                fragment.destination_schema_id, source_shape,
+                                                {.scan = {.chunk = request.limits.scan.chunk}});
+    if (!pipeline.has_value())
+      return common::make_unexpected(pipeline.error());
+    if (fragment.event_time_predicate.has_value()) {
+      pipeline =
+          TimestampRangeFilterOperator::create(std::move(*pipeline), binding->event_ordinal,
+                                               timestamp_predicate(*fragment.event_time_predicate));
+      if (!pipeline.has_value())
+        return common::make_unexpected(pipeline.error());
+    }
+    std::vector<std::size_t> output_ordinals;
+    output_ordinals.reserve(fragment.destination_column_ordinals.size());
+    for (const std::uint32_t ordinal : fragment.destination_column_ordinals)
+      output_ordinals.push_back(ordinal);
+    pipeline = SourceColumnOutputOperator::create(std::move(*pipeline), std::move(output_ordinals),
+                                                  request.limits.projection);
+    if (!pipeline.has_value())
+      return common::make_unexpected(pipeline.error());
+    return execute_vector_grouped_aggregate_pipeline(
+        fragment.query_id, fragment.tablet_id, std::move(*pipeline), *resources,
+        binding->projected_inputs, std::move(binding->grouped), request.limits);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("mutable vector grouped aggregate worker allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("mutable vector grouped aggregate worker exceeds container limits"));
   }
 }
 

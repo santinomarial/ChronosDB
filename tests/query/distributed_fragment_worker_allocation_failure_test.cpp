@@ -3,6 +3,8 @@
 #include "chronos/manifest/temporal_validation.hpp"
 #include "chronos/query/distributed_fragment_worker.hpp"
 #include "chronos/schema/column_definition.hpp"
+#include "columnar/columnar_test_support.hpp"
+#include "ingest/ingest_test_support.hpp"
 #include "support/failing_allocator.hpp"
 
 #include <array>
@@ -43,6 +45,12 @@ template <typename Operation>
 
 template <typename Id> [[nodiscard]] Id id(const std::uint8_t seed) {
   return Id::from_uuid(uuid(seed)).value();
+}
+
+[[nodiscard]] ingest::Sha256Digest digest(const std::uint8_t seed) {
+  ingest::Sha256Digest::Bytes bytes{};
+  bytes.front() = static_cast<std::byte>(seed);
+  return ingest::Sha256Digest{bytes};
 }
 
 class TemporaryDirectory {
@@ -105,7 +113,7 @@ void write_file(const std::filesystem::path& path, const common::ByteView bytes)
 }
 
 TEST(DistributedVectorAggregateWorkerAllocationFailureTest,
-     ClassifiesEveryEmptyTabletAllocationBeforePublishingStates) {
+     ClassifiesAggregateWorkerAllocationsBeforePublishingStates) {
   TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   ASSERT_TRUE(std::filesystem::create_directory(directory.path() / manifest::kPartsDirectoryName));
@@ -254,6 +262,99 @@ TEST(DistributedVectorAggregateWorkerAllocationFailureTest,
     EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
   }
   EXPECT_TRUE(grouped_succeeded);
+
+  const auto mutable_schema = columnar::test::batch_schema();
+  const schema::TabletId mutable_tablet_id = columnar::test::id<schema::TabletId>(52U);
+  const common::Uuid mutable_group_id = uuid(80U);
+  const manifest::DatabaseId mutable_database_id =
+      manifest::DatabaseId::from_uuid(uuid(81U)).value();
+  ingest::TabletState mutable_tablet =
+      ingest::TabletState::create(
+          mutable_schema, mutable_tablet_id,
+          {.head_capacity = {.row_capacity = 4U, .variable_value_bytes = {0U, 2U, 0U}},
+           .maximum_schema_versions = 1U,
+           .maximum_sealed_generations = 1U,
+           .maximum_retry_entries = 2U,
+           .flush_queue = nullptr})
+          .value();
+  auto mutable_batch = std::make_shared<const columnar::OwnedColumnarBatch>(
+      columnar::OwnedColumnarBatch::create(mutable_schema, columnar::test::batch_columns())
+          .value());
+  const ingest::RetryIdentity retry{.client_id = ingest::test::request_id<ingest::ClientId>(1U),
+                                    .client_batch_id =
+                                        ingest::test::request_id<ingest::ClientBatchId>(33U)};
+  const ingest::ColumnarAppendMutationIdentity mutation{.table_id = mutable_schema->table_id(),
+                                                        .tablet_id = mutable_tablet_id,
+                                                        .request_digest = digest(1U)};
+  auto prepared = mutable_tablet.prepare_append(retry, mutation, std::move(mutable_batch));
+  ASSERT_TRUE(prepared.has_value());
+  ASSERT_TRUE(prepared->mark_wal_started().is_ok());
+  auto published = prepared->publish(head::HeadCommitPosition::raft(mutable_group_id, 5U));
+  ASSERT_TRUE(published.has_value());
+  const ingest::TabletSnapshot mutable_snapshot = std::move(published->snapshot);
+  const schema::SchemaLineage mutable_lineage =
+      schema::SchemaLineage::create(*mutable_schema).value();
+  const raft::ReadBarrier mutable_barrier{3U, 4U, 5U};
+  const raft::TabletPlacementMetadata mutable_placement{.table_id = mutable_schema->table_id(),
+                                                        .tablet_id = mutable_tablet_id,
+                                                        .placement_epoch = 7U,
+                                                        .replicas = {11U, 12U},
+                                                        .leader_hint = 11U};
+  const DistributedVectorQueryPlan mutable_plan{
+      .query_id = uuid(82U),
+      .read_policy = {.consistency = DistributedReadConsistency::kLeaderLinearizable},
+      .fragments = {{.tablet_id = mutable_tablet_id,
+                     .leader_node = 11U,
+                     .local_applied_position = 5U,
+                     .known_leader_commit_position = 5U}},
+      .intent = {.mode = DistributedVectorPlanMode::kGroupedAggregate,
+                 .group_key_input_indices = {0U},
+                 .aggregates = {{.operation = VectorAggregateOperation::kCountStar}}}};
+  const DistributedReadAdmission mutable_admission{.tablet_id = mutable_tablet_id,
+                                                   .serving_node = 11U,
+                                                   .applied_position = 5U,
+                                                   .observed_leader_commit_position = 5U,
+                                                   .linearizable_barrier = mutable_barrier};
+  const std::array<std::uint32_t, 1U> mutable_projection{1U};
+  const DistributedVectorResultSchema mutable_result_schema{
+      .columns = {
+          {"tag", mutable_schema->columns()[1].type(), true},
+          {"rows", schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(), false}}};
+  auto mutable_fragment =
+      bind_distributed_mutable_vector_fragment({.plan = std::cref(mutable_plan),
+                                                .admission = std::cref(mutable_admission),
+                                                .database_id = mutable_database_id,
+                                                .snapshot = std::cref(mutable_snapshot),
+                                                .lineage = std::cref(mutable_lineage),
+                                                .raft_group_id = mutable_group_id,
+                                                .placement = std::cref(mutable_placement),
+                                                .destination_column_ordinals = mutable_projection,
+                                                .event_time_predicate = std::nullopt,
+                                                .result_schema = std::cref(mutable_result_schema)});
+  ASSERT_TRUE(mutable_fragment.has_value());
+  const DistributedMutableVectorGroupedAggregateWorkerRequest mutable_request{
+      .fragment = std::cref(*mutable_fragment),
+      .snapshot = std::cref(mutable_snapshot),
+      .lineage = std::cref(mutable_lineage),
+      .placement = std::cref(mutable_placement),
+      .raft_group_id = mutable_group_id,
+      .local_node = 11U,
+      .local_linearizable_barrier = mutable_barrier};
+  bool mutable_grouped_succeeded{};
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    auto result = run_failure(fail_after, [&] {
+      return execute_distributed_mutable_vector_grouped_aggregate_fragment(mutable_request);
+    });
+    if (result.has_value()) {
+      EXPECT_EQ(result->input_rows, 2U);
+      EXPECT_EQ(result->group_count, 2U);
+      ASSERT_EQ(result->messages.size(), 2U);
+      mutable_grouped_succeeded = true;
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(mutable_grouped_succeeded);
 }
 
 } // namespace

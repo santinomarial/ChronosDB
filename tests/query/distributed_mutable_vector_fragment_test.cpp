@@ -214,6 +214,112 @@ TEST(DistributedMutableVectorFragmentTest,
   EXPECT_EQ(rejected_consumer.rows, 0U);
 }
 
+TEST(DistributedMutableVectorFragmentTest,
+     ProducesCanonicalGroupedSufficientStateFromExactMutablePublication) {
+  Fixture fixture;
+  const ingest::TabletSnapshot snapshot = fixture.append();
+  const raft::ReadBarrier barrier{.term = 3U, .context = 4U, .read_index = 5U};
+  const DistributedVectorQueryPlan plan{
+      .query_id = uuid(84U),
+      .read_policy = {.consistency = DistributedReadConsistency::kLeaderLinearizable},
+      .fragments = {{.tablet_id = fixture.tablet_id,
+                     .leader_node = 11U,
+                     .local_applied_position = 5U,
+                     .known_leader_commit_position = 5U}},
+      .intent = {.mode = DistributedVectorPlanMode::kGroupedAggregate,
+                 .group_key_input_indices = {0U},
+                 .aggregates = {{.operation = VectorAggregateOperation::kCountStar}},
+                 .order_keys = {{.output_index = 1U,
+                                 .direction = PhysicalSortDirection::kDescending,
+                                 .null_placement = ScalarNullPlacement::kLast}},
+                 .limit = 1U}};
+  const DistributedReadAdmission admission{.tablet_id = fixture.tablet_id,
+                                           .serving_node = 11U,
+                                           .applied_position = 5U,
+                                           .observed_leader_commit_position = 5U,
+                                           .linearizable_barrier = barrier};
+  const raft::TabletPlacementMetadata placement{.table_id = fixture.schema_value->table_id(),
+                                                .tablet_id = fixture.tablet_id,
+                                                .placement_epoch = 7U,
+                                                .replicas = {11U, 12U},
+                                                .leader_hint = 12U};
+  const std::array<std::uint32_t, 1U> projection{1U};
+  const auto int64 = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  const DistributedVectorResultSchema result_schema{
+      .columns = {{"tag", fixture.schema_value->columns()[1].type(), true},
+                  {"rows", int64, false}}};
+  auto fragment =
+      bind_distributed_mutable_vector_fragment({.plan = std::cref(plan),
+                                                .admission = std::cref(admission),
+                                                .database_id = fixture.database_id,
+                                                .snapshot = std::cref(snapshot),
+                                                .lineage = std::cref(fixture.lineage),
+                                                .raft_group_id = fixture.group_id,
+                                                .placement = std::cref(placement),
+                                                .destination_column_ordinals = projection,
+                                                .event_time_predicate = std::nullopt,
+                                                .result_schema = std::cref(result_schema)});
+  ASSERT_TRUE(fragment.has_value()) << fragment.error().to_string();
+  const auto request = [&] {
+    return DistributedMutableVectorGroupedAggregateWorkerRequest{
+        .fragment = std::cref(*fragment),
+        .snapshot = std::cref(snapshot),
+        .lineage = std::cref(fixture.lineage),
+        .placement = std::cref(placement),
+        .raft_group_id = fixture.group_id,
+        .local_node = 11U,
+        .local_linearizable_barrier = barrier,
+        .limits = {}};
+  };
+  auto authority = bind_distributed_mutable_vector_grouped_aggregate_worker_authority(request());
+  ASSERT_TRUE(authority.has_value()) << authority.error().to_string();
+  ASSERT_EQ(authority->keys.size(), 1U);
+  EXPECT_EQ(authority->keys[0].column_ordinal, 0U);
+  EXPECT_TRUE(authority->keys[0].nullable);
+  ASSERT_EQ(authority->aggregates.size(), 1U);
+  EXPECT_EQ(authority->aggregates[0].operation, VectorAggregateOperation::kCountStar);
+
+  auto executed = execute_distributed_mutable_vector_grouped_aggregate_fragment(request());
+  ASSERT_TRUE(executed.has_value()) << executed.error().to_string();
+  EXPECT_EQ(executed->input_rows, 2U);
+  EXPECT_EQ(executed->group_count, 2U);
+  EXPECT_GT(executed->encoded_bytes, 0U);
+  ASSERT_EQ(executed->messages.size(), 2U);
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  for (std::size_t ordinal = 0U; ordinal < executed->messages.size(); ++ordinal) {
+    auto decoded = decode_distributed_vector_grouped_aggregate_exchange_message_exact(
+        executed->messages[ordinal].bytes(), executed->authority.keys,
+        executed->authority.aggregates, resources);
+    ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+    EXPECT_EQ(decoded->position().query_id, plan.query_id);
+    EXPECT_EQ(decoded->position().tablet_id, fixture.tablet_id);
+    EXPECT_EQ(decoded->position().group_ordinal, ordinal);
+    EXPECT_EQ(decoded->position().group_count, 2U);
+    EXPECT_EQ(decoded->position().terminal, ordinal == 1U);
+    ASSERT_EQ(decoded->keys().size(), 1U);
+    if (ordinal == 0U) {
+      EXPECT_FALSE(decoded->keys()[0].is_null());
+      EXPECT_EQ(std::get<std::string>(decoded->keys()[0].storage()), "x");
+    } else {
+      EXPECT_TRUE(decoded->keys()[0].is_null());
+    }
+    auto states = std::move(*decoded).take_states();
+    ASSERT_EQ(states.size(), 1U);
+    auto count = std::move(states[0]).take_result();
+    ASSERT_TRUE(count.has_value()) << count.error().to_string();
+    EXPECT_EQ(std::get<std::int64_t>(count->storage()), 1);
+  }
+
+  auto stale = request();
+  stale.local_linearizable_barrier = raft::ReadBarrier{3U, 5U, 5U};
+  EXPECT_EQ(execute_distributed_mutable_vector_grouped_aggregate_fragment(stale).error().code(),
+            common::StatusCode::kUnavailable);
+  auto bounded = request();
+  bounded.limits.table.maximum_groups = 1U;
+  EXPECT_EQ(execute_distributed_mutable_vector_grouped_aggregate_fragment(bounded).error().code(),
+            common::StatusCode::kResourceExhausted);
+}
+
 TEST(DistributedMutableVectorFragmentTest, RejectsMixedAdmissionAndPublicationAuthority) {
   Fixture fixture;
   const ingest::TabletSnapshot snapshot = fixture.append();

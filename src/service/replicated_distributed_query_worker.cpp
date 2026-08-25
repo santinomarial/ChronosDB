@@ -391,6 +391,80 @@ ReplicatedDistributedMutableVectorQueryWorker::execute(
   }
 }
 
+ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker::
+    ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker(
+        ReplicatedDistributedMutableVectorGroupedAggregateQueryWorkerConfig config) noexcept
+    : config_(config) {}
+
+common::Result<ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker>
+ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker::create(
+    ReplicatedDistributedMutableVectorGroupedAggregateQueryWorkerConfig config) {
+  if (config.local_node_id == 0U || config.context_provider == nullptr ||
+      !valid_vector_grouped_aggregate_worker_limits(config.limits)) {
+    return common::make_unexpected(invalid(
+        "replicated distributed mutable vector grouped aggregate worker configuration is invalid"));
+  }
+  return ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker{config};
+}
+
+common::Result<query::DistributedVectorGroupedAggregateAuthority>
+ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker::bind_authority(
+    const query::DistributedMutableVectorFragment& fragment) {
+  try {
+    auto context = config_.context_provider->acquire(fragment);
+    if (!context.has_value())
+      return common::make_unexpected(context.error());
+    if (!context->lineage) {
+      return common::make_unexpected(invalid(
+          "replicated mutable vector grouped aggregate worker context has no schema lineage"));
+    }
+    return query::bind_distributed_mutable_vector_grouped_aggregate_worker_authority(
+        {.fragment = std::cref(fragment),
+         .snapshot = std::cref(context->snapshot),
+         .lineage = std::cref(*context->lineage),
+         .placement = std::cref(context->placement),
+         .raft_group_id = context->raft_group_id,
+         .local_node = config_.local_node_id,
+         .local_linearizable_barrier = context->local_linearizable_barrier,
+         .limits = config_.limits});
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted(
+        "replicated mutable vector grouped aggregate authority binding allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted(
+        "replicated mutable vector grouped aggregate authority binding exceeds container limits"));
+  }
+}
+
+common::Result<query::DistributedVectorGroupedAggregateWorkerResultV2>
+ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker::execute(
+    const query::DistributedMutableVectorFragment& fragment) {
+  try {
+    auto context = config_.context_provider->acquire(fragment);
+    if (!context.has_value())
+      return common::make_unexpected(context.error());
+    if (!context->lineage) {
+      return common::make_unexpected(invalid(
+          "replicated mutable vector grouped aggregate worker context has no schema lineage"));
+    }
+    return query::execute_distributed_mutable_vector_grouped_aggregate_fragment(
+        {.fragment = std::cref(fragment),
+         .snapshot = std::cref(context->snapshot),
+         .lineage = std::cref(*context->lineage),
+         .placement = std::cref(context->placement),
+         .raft_group_id = context->raft_group_id,
+         .local_node = config_.local_node_id,
+         .local_linearizable_barrier = context->local_linearizable_barrier,
+         .limits = config_.limits});
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("replicated mutable vector grouped aggregate worker allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("replicated mutable vector grouped aggregate worker exceeds container limits"));
+  }
+}
+
 ReplicatedDistributedVectorAggregateQueryWorkerV2::
     ReplicatedDistributedVectorAggregateQueryWorkerV2(
         ReplicatedDistributedVectorAggregateQueryWorkerConfigV2 config) noexcept

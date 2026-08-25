@@ -1434,8 +1434,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   and becomes complete only after retaining the all-or-nothing Native result. Replicated
   leader-linearizable and bounded-stale constructors now acquire metadata coverage, bind one
   compatible Manifest authority and result schema, resolve authenticated committed routes, and
-  transfer the complete bounded lifecycle into that scheduler. Mutable Native sufficient-state
-  worker integration remains deferred. Schema-bound grouped SQL now has a separate direct-input
+  transfer the complete bounded lifecycle into that scheduler. A distinct proof-revalidated mutable
+  `TabletState` grouped worker now reacquires exact publication authority and emits the same
+  canonical sufficient-state frames through a request-local production adapter without
+  reinterpreting Manifest/CSEG Fragment-v2 transport. Its distinct carrier and all-tablet Native
+  scheduler integration remain deferred. Schema-bound grouped SQL now has a separate direct-input
   lowerer that emits the exact unique projection, key/aggregate intent, event-time predicate,
   selected-output global order/limit, and typed result schema consumed by this scheduler. Checked
   final expressions, reordered or omitted keys, and their order/limit now run over the globally

@@ -262,6 +262,17 @@ struct DistributedVectorGroupedAggregateWorkerRequestV2 {
   DistributedVectorGroupedAggregateWorkerLimitsV2 limits;
 };
 
+struct DistributedMutableVectorGroupedAggregateWorkerRequest {
+  std::reference_wrapper<const DistributedMutableVectorFragment> fragment;
+  std::reference_wrapper<const ingest::TabletSnapshot> snapshot;
+  std::reference_wrapper<const schema::SchemaLineage> lineage;
+  std::reference_wrapper<const raft::TabletPlacementMetadata> placement;
+  common::Uuid raft_group_id;
+  std::uint64_t local_node{};
+  std::optional<raft::ReadBarrier> local_linearizable_barrier;
+  DistributedVectorGroupedAggregateWorkerLimitsV2 limits;
+};
+
 struct DistributedVectorGroupedAggregateWorkerResultV2 {
   DistributedVectorGroupedAggregateAuthority authority;
   std::vector<EncodedDistributedVectorGroupedAggregateExchangeMessage> messages;
@@ -287,6 +298,17 @@ execute_distributed_vector_grouped_aggregate_fragment_v2(
 execute_distributed_vector_grouped_aggregate_fragment_v2(
     const DistributedVectorGroupedAggregateWorkerRequestV2& request,
     const DistributedTemporalPartBatchLoader& loader);
+
+// Mutable-TabletState counterpart of the Fragment-v2 sufficient-state worker. It exact-matches one
+// immutable applied TabletSnapshot, derives the same key/aggregate authority from the distinct
+// mutable fragment, and emits the same canonical grouped-state frames. It performs no Manifest I/O.
+[[nodiscard]] common::Result<DistributedVectorGroupedAggregateAuthority>
+bind_distributed_mutable_vector_grouped_aggregate_worker_authority(
+    const DistributedMutableVectorGroupedAggregateWorkerRequest& request);
+
+[[nodiscard]] common::Result<DistributedVectorGroupedAggregateWorkerResultV2>
+execute_distributed_mutable_vector_grouped_aggregate_fragment(
+    const DistributedMutableVectorGroupedAggregateWorkerRequest& request);
 
 } // namespace chronos::query
 

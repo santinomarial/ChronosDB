@@ -19,6 +19,13 @@ static_assert(
 static_assert(
     std::is_move_constructible_v<chronos::service::ReplicatedDistributedVectorQueryWorkerV2>);
 static_assert(
+    std::is_aggregate_v<
+        chronos::service::ReplicatedDistributedMutableVectorGroupedAggregateQueryWorkerConfig>);
+static_assert(!std::is_copy_constructible_v<
+              chronos::service::ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker>);
+static_assert(std::is_move_constructible_v<
+              chronos::service::ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker>);
+static_assert(
     std::is_aggregate_v<chronos::service::ReplicatedDistributedGroupedQueryReceiverConfig>);
 static_assert(
     !std::is_copy_constructible_v<chronos::service::ReplicatedDistributedGroupedQueryReceiver>);

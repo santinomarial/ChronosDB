@@ -213,6 +213,41 @@ private:
   ReplicatedDistributedMutableVectorQueryWorkerConfig config_;
 };
 
+struct ReplicatedDistributedMutableVectorGroupedAggregateQueryWorkerConfig {
+  raft::NodeId local_node_id{};
+  ReplicatedDistributedMutableVectorQueryWorkerContextProvider* context_provider{};
+  query::DistributedVectorGroupedAggregateWorkerLimitsV2 limits;
+};
+
+// Request-local grouped sufficient-state adapter for one proof-bound mutable TabletState
+// publication. This remains a distinct in-process authority boundary: the current Manifest/CSEG
+// grouped transport accepts Fragment-v2 and must not reinterpret this mutable fragment format.
+class ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker final {
+public:
+  ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker() = delete;
+  ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker(
+      const ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker&) = delete;
+  ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker&
+  operator=(const ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker&) = delete;
+  ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker(
+      ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker&&) noexcept = default;
+  ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker&
+  operator=(ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker&&) noexcept = default;
+  ~ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker() = default;
+
+  [[nodiscard]] static common::Result<ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker>
+  create(ReplicatedDistributedMutableVectorGroupedAggregateQueryWorkerConfig config);
+  [[nodiscard]] common::Result<query::DistributedVectorGroupedAggregateAuthority>
+  bind_authority(const query::DistributedMutableVectorFragment& fragment);
+  [[nodiscard]] common::Result<query::DistributedVectorGroupedAggregateWorkerResultV2>
+  execute(const query::DistributedMutableVectorFragment& fragment);
+
+private:
+  explicit ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker(
+      ReplicatedDistributedMutableVectorGroupedAggregateQueryWorkerConfig config) noexcept;
+  ReplicatedDistributedMutableVectorGroupedAggregateQueryWorkerConfig config_;
+};
+
 // Request-local production adapter for schema-bound row fragments. It retains one coherent
 // Manifest/schema/placement/group context through real-CSEG execution and returns one complete,
 // value-owned terminal stream. Aggregate modes belong to the distinct aggregate service below.

@@ -87,6 +87,13 @@ self-containment test; the changed files themselves pass the exact formatter che
 These are additive pre-alpha in-memory APIs. Rollback removes the two constructors and their
 configuration without changing formats or the row-backed Native grouped path.
 
+## Retrospective note (2026-08-25)
+
+[ADR 0490](0490-proof-revalidated-mutable-grouped-sufficient-state-worker.md) implements the
+separate `TabletState` grouped worker and request-local service adapter anticipated here. A distinct
+mutable grouped carrier and scheduler composition are still required before the packaged Native
+query plane can select that worker.
+
 ## References
 
 - [Distributed grouped SQL execution](../learning/distributed-grouped-sql-execution.md)

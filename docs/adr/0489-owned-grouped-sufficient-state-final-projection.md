@@ -101,6 +101,13 @@ This is an additive pre-alpha in-memory API. Existing identity plans retain thei
 order, and limit contract. Rollback removes optional projection ownership and restores explicit
 row-backed routing for non-identity final outputs; no stored or transmitted data needs conversion.
 
+## Retrospective note (2026-08-25)
+
+[ADR 0490](0490-proof-revalidated-mutable-grouped-sufficient-state-worker.md) supplies the distinct
+mutable `TabletState` worker named above. It intentionally stops before transport and scheduler
+wiring, so the coordinator projection continues to be exercised by the existing Manifest/CSEG
+sufficient-state lifecycle.
+
 ## Unresolved questions
 
 Partition ownership and skew policy for a future shuffle remain unresolved. Computed pre-group
