@@ -1254,6 +1254,14 @@ were deliberately not run.
   and focused ASan/UBSan cases pass. LLVM 18 reaches only the known macOS 26 libc++ incompatibility
   after its two source findings were fixed. Mutual TLS, acknowledgment/retry, reducers, and packaged
   selection remain open.
+- Correlated grouped shuffle acknowledgment: fixed `CHDVGAK1` 1.0 bytes now reverse the exact
+  source/destination route and bind query, tablet, partition, partition count, hash version, and
+  accepted frame/byte extent after complete stream extraction. Header and full-frame CRC32C,
+  authority-exact decode, every fragmented-read split, short writes, moved-from completion,
+  corruption/version negatives, and allocation injection pass. The warning-as-error build, 276
+  cluster tests, 43 cluster allocation-failure tests, and focused ASan/UBSan cases pass. LLVM 18
+  reaches only the known macOS 26 libc++ incompatibility after no remaining source diagnostic.
+  Mutual-TLS session and retry composition remain open.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

@@ -118,9 +118,11 @@ projection, sort, and limit stages. Computed pre-group expressions still need an
 split. Canonical bounded source-side partition splitting, complete node-bound destination authority,
 and an exact checksummed per-message remote carrier now exist. An atomic complete-stream owner also
 authorizes the already authenticated source principal, locks one remote edge, proves terminal
-closure, and withholds every decoded group until full success. Mutual-TLS session/acknowledgment and
-retry ownership, partition reduction, packaged selection, and broader fault/measurement evidence
-remain open. The row-backed path remains the differential oracle for that work.
+closure, and withholds every decoded group until full success. A fixed checksummed reverse-route
+receipt now binds successful extraction to the exact edge and accepted frame/byte extent. Mutual-
+TLS session and retry ownership, partition reduction, packaged selection, and broader fault/
+measurement evidence remain open. The row-backed path remains the differential oracle for that
+work.
 
 ### Canonical source-side partition boundary
 
@@ -146,10 +148,11 @@ Its header-first reader rejects route and allocation-length drift before retaini
 while a move-only cursor owns short writes. A complete-stream sender now exact-decodes and privately
 constructs every same-edge frame before exposing bytes. Its receiver consumes a previously
 authenticated principal, authorizes the claimed source node once, locks all subsequent frames to
-that edge, and destroys any incomplete or invalid prefix. CRC32C and that policy are not a TLS
-session or terminal acknowledgment: no mutual-TLS owner yet carries and retries the complete
-source-partition stream, and the current packaged path therefore continues to send complete tablet
-streams to one coordinator.
+that edge, and destroys any incomplete or invalid prefix. The distinct `CHDVGAK1` receipt reverses
+the route and binds exact successful extraction plus accepted count/bytes. CRC32C and those policy
+owners are not a TLS session: no mutual-TLS owner yet carries, acknowledges, and retries the
+complete source-partition stream, and the current packaged path therefore continues to send
+complete tablet streams to one coordinator.
 
 ### Portable sufficient-state execution boundary
 

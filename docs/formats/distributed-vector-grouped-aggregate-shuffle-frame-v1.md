@@ -1,8 +1,8 @@
 # Distributed Vector Grouped Aggregate Shuffle Frame v1
 
 > **Status: accepted and implemented for exact encoding, decoding, bounded partial-I/O ownership,
-> immutable authority validation, and atomic authorized complete-stream ownership.** Mutual-TLS
-> session ownership, terminal acknowledgment/retry, and destination reduction remain enclosing
+> immutable authority validation, atomic authorized complete-stream ownership, and a correlated
+> success acknowledgment.** Mutual-TLS session, retry, and destination reduction remain enclosing
 > responsibilities.
 
 This frame carries one canonical
@@ -87,7 +87,9 @@ exposing the first byte. The receiver requires an already authenticated principa
 principal for the first frame's source node, requires the configured local destination, locks every
 later frame to the same edge, and withholds all query-accounted messages until terminal. Missing or
 duplicate position, edge drift, count/byte overflow, terminal suffix, decode failure, and allocation
-failure discard the whole prefix. This owner does not itself perform TLS or acknowledge receipt.
+failure discard the whole prefix. This owner does not itself perform TLS. The separate
+[shuffle acknowledgment](distributed-vector-grouped-aggregate-shuffle-ack-v1.md) records exact
+successful terminal extraction and accepted extent for the reverse route.
 
 CRC32C detects accidental damage; it does not authenticate either peer. An enclosing mutually
 authenticated connection must bind certificate principals to the exact source and destination

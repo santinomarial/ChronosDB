@@ -539,3 +539,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0502](0502-complete-node-bound-grouped-shuffle-authority.md) | Complete node-bound grouped shuffle authority | accepted |
 | [0503](0503-authority-bound-grouped-shuffle-frame.md) | Authority-bound grouped shuffle frame | accepted |
 | [0504](0504-atomic-authorized-grouped-shuffle-streams.md) | Atomic authorized grouped shuffle streams | accepted |
+| [0505](0505-correlated-grouped-shuffle-success-acknowledgment.md) | Correlated grouped shuffle success acknowledgment | accepted |
