@@ -80,6 +80,13 @@ struct VectorGroupKeyDefinition {
   bool nullable;
 };
 
+// Stable FNV-1a v1 hash over the exact typed canonical key tuple. NULL, signed zero, and NaN use
+// the same equivalence classes as MergeableVectorGroupedAggregateTable. Distributed partitioning
+// must use this function rather than a process- or library-dependent hash.
+[[nodiscard]] common::Result<std::uint64_t>
+canonical_vector_group_key_hash_v1(std::span<const VectorGroupKeyDefinition> definitions,
+                                   std::span<const ScalarValue> keys);
+
 struct GroupedAggregateLimits {
   std::size_t maximum_groups{kMaximumGroupedAggregateGroups};
   std::size_t maximum_group_keys{kMaximumGroupedAggregateKeys};

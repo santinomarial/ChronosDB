@@ -115,8 +115,28 @@ one catalog, Manifest epoch, and single acquired authority vector; it rejects mi
 Manifest tablets and transfers the complete owned contract into the scheduler. Computed final
 expressions now run over the globally merged raw key/aggregate vector through the shared checked
 projection, sort, and limit stages. Computed pre-group expressions still need an owned worker-plan
-split, and partitioned shuffle routing plus broader fault/measurement evidence remain open. The
-row-backed path remains the differential oracle for that work.
+split. Canonical bounded source-side partition splitting now exists, while destination authority,
+partition transport/reduction, and broader fault/measurement evidence remain open. The row-backed
+path remains the differential oracle for that work.
+
+### Canonical source-side partition boundary
+
+`DistributedVectorGroupedAggregatePartitioner` exact-decodes one complete tablet-local grouped
+stream before exposing output. It applies the same versioned canonical hash used by the local
+grouped table, so nullable typed keys, signed zero, and NaN cannot acquire a second routing
+identity. `hash-v1 % fixed_partition_count` selects a destination; collisions remain harmless
+because the eventual reducer must still use exact key equality.
+
+Each source produces one complete stream for every partition, including an explicit empty terminal.
+This makes reducer closure a finite all-source terminal condition instead of a timeout. Group order
+within a partition remains source-local first-seen order and is re-ordinalized canonically. Hard
+input, destination-group, per-stream-byte, and total-output-byte bounds classify skew or empty-edge
+amplification before a partial vector can escape. Allocation failure is likewise atomic and the
+immutable owner can retry the same caller-owned input.
+
+This is not yet a network shuffle. The partition ID is owned beside the unchanged grouped frame;
+no transport currently binds hash version, partition count, destination node, or source set. The
+current packaged path therefore continues to send complete tablet streams to one coordinator.
 
 ### Portable sufficient-state execution boundary
 
@@ -226,5 +246,6 @@ timeouts make both groups choose the same leader for this deterministic qualific
 That evidence does not prove arbitrary split-leader process coordination because it deliberately
 elects one common leader. The Native coordinator now combines local and authenticated remote
 per-group authority in focused in-process coverage, but Linux multi-daemon split-leader
-qualification remains separate. Multi-process real-CSEG scans and a multi-key/all-type
-sufficient-state shuffle also remain separate gates.
+qualification remains separate. Multi-process real-CSEG scans and a destination-routed multi-key/
+all-type sufficient-state shuffle also remain separate gates; only its canonical source-side
+partition split is implemented.

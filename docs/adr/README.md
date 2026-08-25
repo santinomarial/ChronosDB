@@ -535,3 +535,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0498](0498-atomic-mutable-grouped-native-publication.md) | Atomic mutable grouped Native publication | accepted |
 | [0499](0499-shared-mutable-grouped-query-control-endpoint.md) | Shared mutable grouped query-control endpoint | accepted |
 | [0500](0500-packaged-mutable-grouped-native-execution.md) | Packaged mutable grouped Native execution | accepted |
+| [0501](0501-canonical-bounded-grouped-partition-splitting.md) | Canonical bounded grouped partition splitting | accepted |

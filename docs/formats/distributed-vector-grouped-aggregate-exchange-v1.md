@@ -1,8 +1,9 @@
 # Distributed Vector Grouped Aggregate Exchange v1
 
 > **Status: accepted and implemented for exact encoding, decoding, bounded partial-I/O ownership,
-> direct-input Fragment-v2 worker production, and in-memory cross-tablet merge.** Computed
-> pre-group plans, authenticated query transport, and partitioned shuffle remain separate owners.
+> direct-input Fragment-v2 worker production, in-memory cross-tablet merge, and canonical bounded
+> source-side partition splitting.** Computed pre-group plans and destination-routed partition
+> transport/reduction remain separate owners.
 
 This distinct frame binds one multi-column group key tuple and zero or more
 [Mergeable Vector Aggregate State v1](mergeable-vector-aggregate-state-v1.md) values to one query,
@@ -43,6 +44,22 @@ A nonempty tablet emits groups in its deterministic local first-seen order. Sequ
 are canonical, and `TERMINAL` is set exactly on the last group. SQL does not infer result ordering
 from this position. A tablet with no groups emits one distinct `TERMINAL|EMPTY` frame with sequence
 one, zero group/count/section fields, and no fabricated NULL key or aggregate state.
+
+## Canonical partition split
+
+The in-memory partitioner accepts one already complete tablet stream and a fixed partition count
+`P` in `1..4,096`. For every nonempty group it computes
+`canonical_vector_group_key_hash_v1(keys) % P`. Hash v1 is 64-bit FNV-1a over each key's
+little-endian logical type code and parameters, presence byte, and canonical scalar bytes;
+variable-width payloads include a little-endian 64-bit length. Every NaN and both signed zeros use
+the grouped table's normalized equivalence representation. NULL has no payload. Hash collisions do
+not imply equality; reducers must still compare exact typed keys.
+
+Each partition stream retains query/tablet identity and local first-seen order but receives fresh
+contiguous ordinal, count, sequence, and terminal fields. An empty partition is one standard
+`TERMINAL|EMPTY` frame. The frame itself does not carry a partition ID: partition ID belongs to the
+in-memory stream owner, and a future network carrier must authenticate it together with the hash
+version and partition count rather than infer it from these bytes.
 
 ## Key entries
 
@@ -106,6 +123,7 @@ CRC32C provides accidental-damage detection, not authentication. An enclosing mu
 authenticated transport must bind the exact fragment and peer identities. The in-memory owner
 handles gap-free sequence, exact duplicate identity, all-tablet closure, and canonical merge order.
 The proof-revalidated Fragment-v2 worker produces canonical direct-input grouped streams, including
-the distinct empty terminal, under a total encoded-byte bound. Computed pre-group expressions,
-transport retry scheduling, skew bounds, final projection, ORDER BY, and LIMIT remain enclosing
-responsibilities.
+the distinct empty terminal, under a total encoded-byte bound. The source-side splitter validates a
+complete stream before emitting all bounded partitions and treats per-destination group overflow as
+resource exhaustion. Computed pre-group expressions, destination routing, partition retry/reduction,
+final projection, ORDER BY, and LIMIT remain enclosing responsibilities.

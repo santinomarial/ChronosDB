@@ -1472,7 +1472,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   catalog and Manifest publication, rejects catalog/Manifest set drift, and transfers the moved SQL
   schema and optional final projection into the atomic scheduler. Mutable TabletState preparation
   derives the same complete fragment set from the pinned replicated publication. Computed pre-group
-  splitting and shuffle routing remain deferred.
+  splitting remains deferred. Canonical bounded source-side hash partitioning now validates one
+  complete tablet stream, routes equal normalized keys to the same fixed partition, emits explicit
+  empty terminals for every destination, and fails atomically on skew or byte limits. Destination
+  authority, network transport, reducer ownership, and packaged selection remain deferred.
   The
   distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
@@ -1534,13 +1537,17 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   all-or-nothing remote batch, and re-observes the whole attempt under the Native deadline. A
   focused two-group gate completes SQL with local metadata leadership and remote tablet leadership.
   Linux multi-daemon split-leader process qualification remains. Partitions, multi-process real-CSEG
-  scans, and sufficient-state multi-key shuffle also remain open. The shuffle now has a distinct
-  bounded checksummed multi-key/all-type group-state frame with exact fragmented-read and short-write
-  ownership plus a shared query-accounted local/worker/coordinator group-state owner. Equal-key
+  scans, and destination-routed sufficient-state multi-key shuffle also remain open. The shuffle
+  now has a distinct bounded checksummed multi-key/all-type group-state frame with exact
+  fragmented-read and short-write ownership plus a shared query-accounted
+  local/worker/coordinator group-state owner. Equal-key
   sufficient-state merge, canonical all-tablet closure/order arbitration, and final row
   materialization now exist in memory, and the direct-input Fragment-v2 real-CSEG worker produces
   bounded canonical streams under one compatible snapshot-owned all-tablet key/state authority.
-  Computed pre-group plan splitting and partition routing are still missing; scheduler request
+  Canonical bounded source-side partition routing now reuses the grouped table's normalized hash,
+  preserves complete per-destination stream closure (including empty terminals), and enforces hard
+  skew/byte failure. Computed pre-group plan splitting, destination authority and transport, and
+  partition reducer ownership are still missing; scheduler request
   ownership, authenticated transport/read authority, and final SQL projection/order/limit are now
   integrated. The one committed private query-control endpoint now dispatches exact decoded mutable
   plans to row or grouped receivers and retains distinct bounded response codecs, so remote grouped

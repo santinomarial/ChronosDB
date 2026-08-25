@@ -992,6 +992,27 @@ hash_group_scalar(std::uint64_t& hash, const schema::LogicalType type, const Sca
   return {};
 }
 
+} // namespace
+
+common::Result<std::uint64_t>
+canonical_vector_group_key_hash_v1(const std::span<const VectorGroupKeyDefinition> definitions,
+                                   const std::span<const ScalarValue> keys) {
+  if (definitions.empty() || definitions.size() != keys.size())
+    return common::make_unexpected(invalid("group key hash authority is invalid"));
+  std::uint64_t hash = kGroupHashOffset;
+  for (std::size_t index = 0U; index < keys.size(); ++index) {
+    if (!definitions[index].nullable && keys[index].is_null())
+      return common::make_unexpected(invalid("non-nullable group key hash value is NULL"));
+    const common::Result<void> hashed =
+        hash_group_scalar(hash, definitions[index].type, keys[index]);
+    if (!hashed.has_value())
+      return common::make_unexpected(hashed.error());
+  }
+  return hash;
+}
+
+namespace {
+
 [[nodiscard]] common::Result<std::size_t> group_bucket_count(const std::size_t maximum_groups) {
   const std::optional<std::size_t> required =
       common::checked_multiply(maximum_groups, std::size_t{2U});
@@ -1300,13 +1321,10 @@ private:
   find_group(const std::span<const ScalarValue> keys) const {
     if (buckets_.empty())
       return common::make_unexpected(invalid("grouped aggregate hash storage is unavailable"));
-    std::uint64_t hash = kGroupHashOffset;
-    for (std::size_t index = 0U; index < keys.size(); ++index) {
-      const common::Result<void> hashed = hash_group_scalar(hash, keys_[index].type, keys[index]);
-      if (!hashed.has_value())
-        return common::make_unexpected(hashed.error());
-    }
-    return find_group_by_hash(hash, [&keys, this](const std::size_t candidate) {
+    auto hash = canonical_vector_group_key_hash_v1(keys_, keys);
+    if (!hash.has_value())
+      return common::make_unexpected(hash.error());
+    return find_group_by_hash(*hash, [&keys, this](const std::size_t candidate) {
       for (std::size_t key = 0U; key < keys_.size(); ++key) {
         const common::Result<int> order = compare_scalar_values(
             keys[key], groups_[candidate].key[key], ScalarNullPlacement::kLast);
