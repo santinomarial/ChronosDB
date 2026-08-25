@@ -1,4 +1,5 @@
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_client.hpp"
+#include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_server.hpp"
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tls.hpp"
 #include "support/failing_allocator.hpp"
 
@@ -25,6 +26,12 @@ namespace {
           .private_key_file = fixture("client-key.pem").string(),
           .trust_store_file = fixture("ca.pem").string(),
           .expected_server_identity = "127.0.0.1"};
+}
+
+[[nodiscard]] network::TlsServerConfig server_tls() {
+  return {.certificate_chain_file = fixture("server.pem").string(),
+          .private_key_file = fixture("server-key.pem").string(),
+          .trust_store_file = fixture("ca.pem").string()};
 }
 
 template <typename Operation>
@@ -306,6 +313,46 @@ TEST(DistributedMutableVectorGroupedAggregateQueryTcpClientAllocationFailureTest
       continue;
     }
     saw_success = true;
+    break;
+  }
+  EXPECT_TRUE(saw_failure);
+  EXPECT_TRUE(saw_success);
+}
+
+TEST(DistributedMutableVectorGroupedAggregateQueryTcpServerAllocationFailureTest,
+     ClassifiesTlsListenerAndBoundedOwnerAllocations) {
+  Authorizer authorizer;
+  Authenticator authenticator;
+  Worker worker;
+  auto receiver = DistributedMutableVectorGroupedAggregateQueryReceiver::create(
+      {.local_node_id = 2U, .authorizer = &authorizer, .worker = &worker});
+  ASSERT_TRUE(receiver.has_value());
+  bool saw_failure{};
+  bool saw_success{};
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    SCOPED_TRACE(testing::Message{} << "fail_after=" << fail_after);
+    DistributedMutableVectorGroupedAggregateQueryTcpServerConfig config{
+        .listener = {},
+        .tls = server_tls(),
+        .authenticator = &authenticator,
+        .receiver = &*receiver,
+        .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{100},
+                           .exchange_timeout = std::chrono::milliseconds{100},
+                           .maximum_response_frames = 2U,
+                           .maximum_response_bytes = 1U << 20U},
+        .maximum_connections = 8U,
+        .maximum_accepts_per_poll = 2U};
+    auto result = run_failure(fail_after, [&] {
+      return DistributedMutableVectorGroupedAggregateQueryTcpServer::start(std::move(config));
+    });
+    if (!result.has_value()) {
+      saw_failure = true;
+      EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted)
+          << result.error().to_string();
+      continue;
+    }
+    saw_success = true;
+    EXPECT_TRUE(result->shutdown().is_ok());
     break;
   }
   EXPECT_TRUE(saw_failure);

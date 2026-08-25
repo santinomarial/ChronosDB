@@ -528,3 +528,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0491](0491-distinct-mutable-grouped-sufficient-state-transport.md) | Distinct mutable grouped sufficient-state transport | accepted |
 | [0492](0492-bounded-mutable-grouped-sufficient-state-mutual-tls.md) | Bounded mutable grouped sufficient-state mutual TLS | accepted |
 | [0493](0493-deadline-bound-mutable-grouped-sufficient-state-tcp-client.md) | Deadline-bound mutable grouped sufficient-state TCP client | accepted |
+| [0494](0494-bounded-mutable-grouped-sufficient-state-tcp-server.md) | Bounded mutable grouped sufficient-state TCP server | accepted |

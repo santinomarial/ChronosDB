@@ -30,6 +30,10 @@ The TLS context, authenticator, and node authorizer are borrowed and outlive the
 address rotation, listener admission, multi-tablet scheduling, cancellation, and process lifecycle
 remain outside this one-attempt owner.
 
+**Retrospective (2026-08-25):** [ADR 0494](0494-bounded-mutable-grouped-sufficient-state-tcp-server.md)
+adds the complementary finite listener, stable accepted-session lifetime, metrics, and ordered
+shutdown. Production stack ownership and all-tablet scheduling remain separate.
+
 ## Consequences
 
 No connection can start from invalid mutable/grouped authority, and no successful writable socket
@@ -76,7 +80,7 @@ retaining the connected-session carrier and transport policy.
 
 ## Unresolved questions
 
-- Bounded inbound listener/session ownership.
+- Production ownership of the mutable grouped worker, receiver, and server.
 - Multi-address retry, cancellation, and all-tablet mutable grouped scheduling.
 - Partitioned shuffle/skew policy and computed pre-group programs.
 

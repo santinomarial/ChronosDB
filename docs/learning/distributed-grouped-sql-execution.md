@@ -194,8 +194,11 @@ enter the Fragment-v2 endpoint because that request names a Manifest generation.
 mutual-TLS owner now authenticates both peers before application bytes, authorizes the immutable
 target before request write, and retains no partial response. A deadline-bound outbound TCP owner
 validates authority before connect, proves `SO_ERROR`, and transfers the exact attempt/resources
-into TLS. Inbound listening and all-tablet scheduler composition remain before Native can choose
-this path. Until then, row-backed grouped execution remains the packaged differential oracle.
+into TLS. The complementary server bounds listener admission and per-poll accepts, pins every
+descriptor/carrier pair, progresses finite deadlines, exposes saturated lifecycle metrics, and
+shuts sessions down before its listener. Production stack ownership and all-tablet scheduler
+composition remain before Native can choose this path. Until then, row-backed grouped execution
+remains the packaged differential oracle.
 
 ## Process qualification boundary
 

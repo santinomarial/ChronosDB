@@ -1444,7 +1444,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   fingerprints before application I/O, authorizes the immutable target before request write, and
   clears every incomplete state prefix. A deadline-bound outbound TCP owner validates before
   connect, proves `SO_ERROR`, transfers exact authority/resources into TLS, and destroys TLS before
-  its descriptor. Its inbound listener and all-tablet Native scheduler integration remain deferred.
+  its descriptor. A bounded inbound owner now caps listener admission and per-poll accept work,
+  pins stable descriptor/carrier pairs, exposes saturated lifecycle metrics, and shuts sessions
+  down before its listener. Production stack ownership and all-tablet Native scheduler integration
+  remain deferred.
   Schema-bound grouped SQL now has a separate direct-input
   lowerer that emits the exact unique projection, key/aggregate intent, event-time predicate,
   selected-output global order/limit, and typed result schema consumed by this scheduler. Checked
