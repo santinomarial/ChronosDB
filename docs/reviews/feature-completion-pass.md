@@ -914,7 +914,21 @@ Focused executions passed:
   ASan/UBSan; the full cluster and allocation-failure suites pass 240 of 240 and 31 of 31. Header
   self-containment, formatting, and whitespace checks pass. LLVM 18 static analysis remains blocked
   by the installed macOS 26 libc++ headers with no project-local finding emitted first. Listener
-  admission, multi-address routing, cancellation, and all-tablet scheduling remain.
+  admission is continued immediately below; multi-address routing, cancellation, and all-tablet
+  scheduling remain.
+- Bounded grouped sufficient-state TCP-server continuation: a move-only POSIX poll owner validates
+  TLS credentials, all grouped nested bounds, deadlines, connection capacity, and accept work before
+  binding. It owns fixed poll storage and heap-stable descriptor/carrier records, caps accepts per
+  poll, rejects excess peers immediately, saturates lifetime metrics, progresses deadlines without
+  readiness, and clears carriers before descriptors and the listener during idempotent shutdown. A
+  real client/server loopback proves both fingerprints, fresh authority binding, two-group terminal
+  publication, and exact completed metrics; a one-slot case proves one admission, one rejection,
+  bounded active state, invalid poll rejection, and ordered shutdown. Both focused cases pass
+  normally and under ASan/UBSan; the full cluster and allocation-failure suites pass 242 of 242 and
+  31 of 31. Header self-containment, formatting, and whitespace checks pass. LLVM 18 static analysis
+  remains blocked by the installed macOS 26 libc++ headers with no project-local finding emitted
+  first. Production inbound composition, multi-address routing, cancellation, and all-tablet
+  scheduling remain.
 - Bounded global vector-row finalization continuation: one consuming final pass independently
   validates row-mode plan/schema shape, tablet-stream closure, native descriptors, and exact
   row/message/input/working/output bounds before decoded-state allocation. It stably orders every

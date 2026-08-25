@@ -1418,9 +1418,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   supports the distinct empty terminal, and clears every incomplete response prefix on failure. A
   one-attempt TCP client now retains the immutable request, complete grouped authority, and query
   resources through deadline-bound nonblocking connect, proves `SO_ERROR`, transfers ownership only
-  into an authenticated TLS carrier, and closes that carrier before its descriptor on failure.
-  Computed pre-group plan splitting, listener ownership and all-tablet scheduling, final grouped SQL
-  integration, and shuffle routing remain deferred. The
+  into an authenticated TLS carrier, and closes that carrier before its descriptor on failure. A
+  bounded inbound TCP owner now adds finite listener admission, stable descriptor/carrier records,
+  per-poll work limits, connection metrics, and ordered shutdown while preserving the authenticated
+  grouped receiver boundary. Computed pre-group plan splitting, production service composition,
+  all-tablet scheduling, final grouped SQL integration, and shuffle routing remain deferred. The
   distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;

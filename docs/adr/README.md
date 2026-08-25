@@ -515,3 +515,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0478](0478-authenticated-complete-grouped-state-attempts.md) | Authenticated complete grouped-state attempts | accepted |
 | [0479](0479-bounded-grouped-sufficient-state-mutual-tls.md) | Bounded grouped sufficient-state mutual TLS | accepted |
 | [0480](0480-deadline-bound-grouped-sufficient-state-tcp-client.md) | Deadline-bound grouped sufficient-state TCP client | accepted |
+| [0481](0481-bounded-grouped-sufficient-state-tcp-server.md) | Bounded grouped sufficient-state TCP server | accepted |

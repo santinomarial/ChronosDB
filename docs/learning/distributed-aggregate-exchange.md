@@ -439,8 +439,10 @@ same table, and returns bounded owned canonical frames. The compatible Fragment-
 retains one exact cross-tablet-equal grouped key/state authority vector beside its Manifest pin and
 result schema. The grouped receiver, finite sender, connected mutual-TLS carrier, and one-attempt
 nonblocking TCP client now preserve that exact authority through a complete remote attempt.
-Listener ownership and all-tablet TCP scheduling remain separate, so production sufficient-state
-grouped queries continue to fail closed.
+A bounded grouped TCP server now adds finite listener admission, stable accepted descriptor/carrier
+records, per-poll work bounds, saturating metrics, and TLS-before-descriptor shutdown. Production
+receiver/worker/server composition and all-tablet TCP scheduling remain separate, so production
+sufficient-state grouped queries continue to fail closed.
 The compatible Fragment-v2 snapshot now retains that definition vector once after deriving it under
 each tablet's exact destination schema and rejecting any cross-tablet difference. This matters when
 COUNT, AVG, or variance result descriptors hide the input type; later owners no longer need to
