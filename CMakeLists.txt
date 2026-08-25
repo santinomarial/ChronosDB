@@ -793,6 +793,7 @@ add_library(
   src/service/replicated_distributed_grouped_query_receiver.cpp
   src/service/replicated_distributed_grouped_query_tcp_server.cpp
   src/service/replicated_distributed_mutable_query_control_tcp_server.cpp
+  src/service/replicated_distributed_mutable_vector_grouped_aggregate_query_tcp_server.cpp
   src/service/replicated_distributed_mutable_vector_query_tcp_server.cpp
   src/service/native_protocol_service.cpp
   src/service/replicated_distributed_query.cpp
@@ -1049,6 +1050,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/service/replicated_distributed_grouped_query_tcp_server_header_self_contained.cpp
     tests/service/replicated_distributed_mutable_query_control_tcp_server_header_self_contained.cpp
     tests/service/replicated_distributed_mutable_query_control_tcp_server_test.cpp
+    tests/service/replicated_distributed_mutable_vector_grouped_aggregate_query_tcp_server_header_self_contained.cpp
     tests/service/replicated_distributed_mutable_vector_query_tcp_server_header_self_contained.cpp
     tests/service/replicated_distributed_mutable_vector_query_tcp_server_test.cpp
     tests/service/replicated_distributed_query_header_self_contained.cpp

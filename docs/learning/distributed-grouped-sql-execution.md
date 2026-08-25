@@ -196,9 +196,11 @@ target before request write, and retains no partial response. A deadline-bound o
 validates authority before connect, proves `SO_ERROR`, and transfers the exact attempt/resources
 into TLS. The complementary server bounds listener admission and per-poll accepts, pins every
 descriptor/carrier pair, progresses finite deadlines, exposes saturated lifecycle metrics, and
-shuts sessions down before its listener. Production stack ownership and all-tablet scheduler
-composition remain before Native can choose this path. Until then, row-backed grouped execution
-remains the packaged differential oracle.
+shuts sessions down before its listener. A heap-stable production owner now composes the request-
+local TabletState worker, receiver, and server in reverse-safe dependency order; binding and
+execution still acquire independent current authority. All-tablet scheduler composition remains
+before Native can choose this path. Until then, row-backed grouped execution remains the packaged
+differential oracle.
 
 ## Process qualification boundary
 

@@ -31,6 +31,10 @@ counters saturate. The authenticator and mutable grouped receiver are borrowed a
 server. Worker construction, route retry, all-tablet scheduling, cancellation, and process
 lifecycle remain separate.
 
+**Retrospective (2026-08-25):** [ADR 0495](0495-owned-mutable-grouped-sufficient-state-tcp-service.md)
+adds a heap-stable production owner for the mutable grouped worker, receiver, and this server.
+All-tablet scheduling and Native publication remain separate.
+
 ## Consequences
 
 Retained server memory is `O(maximum_connections)` plus each independently bounded session. Poll
@@ -76,7 +80,7 @@ admission, stable lifetime, deadline, peer-address, metrics, and teardown guaran
 
 ## Unresolved questions
 
-- Production ownership of the mutable grouped worker, receiver, and server.
+- Atomic Native selection and publication for the mutable grouped state path.
 - Multi-address retry, cancellation, and all-tablet mutable grouped scheduling.
 - Partitioned shuffle/skew policy and computed pre-group programs.
 

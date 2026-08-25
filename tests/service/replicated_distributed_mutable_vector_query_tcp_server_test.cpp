@@ -1,3 +1,5 @@
+#include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_client.hpp"
+#include "chronos/service/replicated_distributed_mutable_vector_grouped_aggregate_query_tcp_server.hpp"
 #include "chronos/service/replicated_distributed_mutable_vector_query_tcp_server.hpp"
 #include "columnar/columnar_test_support.hpp"
 #include "ingest/ingest_test_support.hpp"
@@ -9,9 +11,11 @@
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <memory>
+#include <optional>
 #include <poll.h>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace chronos::service {
 namespace {
@@ -218,6 +222,14 @@ struct MutableFixture {
           .maximum_response_bytes = std::size_t{1024U} * 1024U};
 }
 
+[[nodiscard]] cluster::DistributedMutableVectorGroupedAggregateQueryTlsLimits
+grouped_carrier_limits() {
+  return {.handshake_timeout = std::chrono::milliseconds{1000},
+          .exchange_timeout = std::chrono::milliseconds{1000},
+          .maximum_response_frames = 4U,
+          .maximum_response_bytes = std::size_t{1024U} * 1024U};
+}
+
 TEST(ReplicatedDistributedMutableVectorGroupedAggregateQueryWorkerTest,
      ReacquiresAndExecutesExactCurrentTabletPublication) {
   EXPECT_EQ(
@@ -343,6 +355,107 @@ TEST(ReplicatedDistributedMutableVectorQueryTcpServerTest,
   EXPECT_EQ(batch->row_count(), 2U);
   EXPECT_EQ(batch->columns().size(), 1U);
   EXPECT_EQ(provider.calls, 1U);
+  EXPECT_TRUE(client_authenticator.saw_fingerprint);
+  EXPECT_TRUE(server_authenticator.saw_fingerprint);
+  EXPECT_EQ(moved_server.metrics().completed_connections, 1U);
+  EXPECT_TRUE(moved_server.shutdown().is_ok());
+  EXPECT_TRUE(moved_server.shutdown().is_ok());
+}
+
+TEST(ReplicatedDistributedMutableVectorGroupedAggregateQueryTcpServerTest,
+     OwnsWorkerReceiverAndServesExactCurrentTabletPublication) {
+  EXPECT_EQ(
+      ReplicatedDistributedMutableVectorGroupedAggregateQueryTcpServer::start({}).error().code(),
+      common::StatusCode::kInvalidArgument);
+
+  MutableFixture data;
+  const ingest::TabletSnapshot snapshot = data.append();
+  ContextProvider provider{snapshot, data.lineage, data.placement, data.group_id, data.barrier};
+  NodeAuthorizer authorizer;
+  Authenticator client_authenticator{91U};
+  auto server = ReplicatedDistributedMutableVectorGroupedAggregateQueryTcpServer::start(
+      {.worker = {.local_node_id = 11U, .context_provider = &provider},
+       .listener = {},
+       .tls = server_tls(),
+       .authenticator = &client_authenticator,
+       .node_authorizer = &authorizer,
+       .carrier_limits = grouped_carrier_limits(),
+       .maximum_connections = 4U,
+       .maximum_accepts_per_poll = 4U});
+  ASSERT_TRUE(server.has_value()) << server.error().to_string();
+  auto moved_server = std::move(*server);
+  EXPECT_FALSE(server->is_running());
+  EXPECT_EQ(server->poll_once(std::chrono::milliseconds{0}).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(server->shutdown().code(), common::StatusCode::kInvalidArgument);
+
+  auto context = network::TlsClientContext::create(client_tls());
+  auto resources = query::QueryResourceContext::create(1U << 20U);
+  const auto fragment = data.grouped_fragment(snapshot);
+  std::vector<query::VectorGroupKeyDefinition> keys{
+      {.column_ordinal = 0U, .type = data.schema_value->columns()[1].type(), .nullable = true}};
+  std::vector<query::VectorAggregateDefinition> aggregates{
+      {.operation = query::VectorAggregateOperation::kCountStar, .input = std::nullopt}};
+  auto sender_keys = keys;
+  auto sender_aggregates = aggregates;
+  ASSERT_TRUE(context.has_value()) << context.error().to_string();
+  ASSERT_TRUE(resources.has_value()) << resources.error().to_string();
+  auto sender = cluster::DistributedMutableVectorGroupedAggregateQuerySender::create(
+      1U, fragment, std::move(sender_keys), std::move(sender_aggregates), *resources);
+  ASSERT_TRUE(sender.has_value()) << sender.error().to_string();
+  auto attempt = sender->begin_attempt({});
+  ASSERT_TRUE(attempt.has_value()) << attempt.error().to_string();
+  Authenticator server_authenticator{92U};
+  auto client = cluster::DistributedMutableVectorGroupedAggregateQueryTcpClient::begin(
+      std::move(*attempt), std::move(keys), std::move(aggregates), std::move(*resources),
+      {.remote_endpoint = moved_server.bound_endpoint(),
+       .tls_context = std::addressof(*context),
+       .carrier = {.authenticator = &server_authenticator,
+                   .node_authorizer = &authorizer,
+                   .peer_ipv4_address = {127U, 0U, 0U, 1U},
+                   .limits = grouped_carrier_limits()},
+       .connect_timeout = std::chrono::milliseconds{1000}},
+      cluster::DistributedMutableVectorGroupedAggregateQueryTcpClient::TimePoint::clock::now());
+  ASSERT_TRUE(client.has_value()) << client.error().to_string();
+
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       client->state() !=
+           cluster::DistributedMutableVectorGroupedAggregateQueryTcpClientState::kComplete;
+       ++iteration) {
+    const auto interest = client->interest();
+    pollfd descriptor{.fd = client->descriptor(),
+                      .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
+                                                   (interest.want_write ? POLLOUT : 0))};
+    ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
+    ASSERT_TRUE(client
+                    ->on_ready((descriptor.revents & POLLIN) != 0,
+                               (descriptor.revents & POLLOUT) != 0,
+                               cluster::DistributedMutableVectorGroupedAggregateQueryTcpClient::
+                                   TimePoint::clock::now())
+                    .is_ok())
+        << client->failure().to_string();
+    ASSERT_TRUE(moved_server.poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+
+  ASSERT_EQ(client->state(),
+            cluster::DistributedMutableVectorGroupedAggregateQueryTcpClientState::kComplete)
+      << client->failure().to_string();
+  const auto responses = client->responses();
+  ASSERT_TRUE(responses.has_value()) << responses.error().to_string();
+  ASSERT_EQ(responses->size(), 2U);
+  for (std::size_t ordinal = 0U; ordinal < responses->size(); ++ordinal) {
+    ASSERT_TRUE((*responses)[ordinal].payload.has_value());
+    const auto& payload = *(*responses)[ordinal].payload;
+    EXPECT_EQ(payload.position().group_ordinal, ordinal);
+    EXPECT_EQ(payload.position().group_count, 2U);
+    EXPECT_EQ(payload.position().terminal, ordinal == 1U);
+    ASSERT_EQ(payload.keys().size(), 1U);
+    ASSERT_EQ(payload.states().size(), 1U);
+    EXPECT_EQ(payload.states().front().definition().operation,
+              query::VectorAggregateOperation::kCountStar);
+  }
+  EXPECT_EQ(provider.calls, 2U);
   EXPECT_TRUE(client_authenticator.saw_fingerprint);
   EXPECT_TRUE(server_authenticator.saw_fingerprint);
   EXPECT_EQ(moved_server.metrics().completed_connections, 1U);
