@@ -39,10 +39,11 @@ public:
   Impl(const DistributedVectorGroupedAggregateShuffleAuthority& authority,
        DistributedVectorGroupedAggregateShuffleDestinationExecutionConfig config,
        std::vector<DistributedVectorGroupedAggregateShuffleReducer> reducers,
-       std::map<std::uint32_t, std::size_t> reducer_indexes,
+       std::map<std::uint32_t, std::size_t> reducer_indexes, std::vector<bool> output_complete,
        std::optional<DistributedVectorGroupedAggregateShuffleTcpServer> server)
       : authority_(authority), config_(std::move(config)), reducers_(std::move(reducers)),
-        reducer_indexes_(std::move(reducer_indexes)), server_(std::move(server)) {
+        reducer_indexes_(std::move(reducer_indexes)), output_complete_(std::move(output_complete)),
+        server_(std::move(server)) {
     metrics_.local_partitions = reducers_.size();
   }
 
@@ -102,6 +103,7 @@ public:
   DistributedVectorGroupedAggregateShuffleDestinationExecutionConfig config_;
   std::vector<DistributedVectorGroupedAggregateShuffleReducer> reducers_;
   std::map<std::uint32_t, std::size_t> reducer_indexes_;
+  std::vector<bool> output_complete_;
   std::optional<DistributedVectorGroupedAggregateShuffleTcpServer> server_;
   std::optional<DistributedVectorGroupedAggregateShuffleCompleteStream> pending_remote_stream_;
   DistributedVectorGroupedAggregateShuffleDestinationExecutionMetrics metrics_;
@@ -178,9 +180,10 @@ DistributedVectorGroupedAggregateShuffleDestinationExecution::start(
         return common::make_unexpected(started.error());
       server.emplace(std::move(*started));
     }
-    return DistributedVectorGroupedAggregateShuffleDestinationExecution{
-        std::make_unique<Impl>(authority, std::move(config), std::move(reducers),
-                               std::move(reducer_indexes), std::move(server))};
+    std::vector<bool> output_complete(reducers.size(), false);
+    return DistributedVectorGroupedAggregateShuffleDestinationExecution{std::make_unique<Impl>(
+        authority, std::move(config), std::move(reducers), std::move(reducer_indexes),
+        std::move(output_complete), std::move(server))};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(
         exhausted("grouped shuffle destination execution allocation failed"));
@@ -326,7 +329,18 @@ DistributedVectorGroupedAggregateShuffleDestinationExecution::next(
   if (reducer == impl.reducer_indexes_.end())
     return common::make_unexpected(
         invalid("grouped shuffle partition is not owned by this destination"));
-  return impl.reducers_[reducer->second].next();
+  if (impl.output_complete_[reducer->second])
+    return query::PhysicalOperatorStep::end();
+  auto step = impl.reducers_[reducer->second].next();
+  if (!step.has_value())
+    return step;
+  if (step->kind() == query::PhysicalOperatorStepKind::kEnd) {
+    impl.output_complete_[reducer->second] = true;
+    ++impl.metrics_.completed_output_partitions;
+  } else {
+    increment_saturated(impl.metrics_.output_chunks);
+  }
+  return step;
 }
 
 DistributedVectorGroupedAggregateShuffleDestinationExecutionState
@@ -367,6 +381,16 @@ DistributedVectorGroupedAggregateShuffleDestinationExecution::bound_endpoint() c
   return implementation_ && implementation_->server_.has_value()
              ? implementation_->server_->bound_endpoint()
              : network::Ipv4Endpoint{};
+}
+
+const DistributedVectorGroupedAggregateShuffleAuthority*
+DistributedVectorGroupedAggregateShuffleDestinationExecution::authority() const noexcept {
+  return implementation_ ? std::addressof(implementation_->authority_.get()) : nullptr;
+}
+
+raft::NodeId
+DistributedVectorGroupedAggregateShuffleDestinationExecution::local_node_id() const noexcept {
+  return implementation_ ? implementation_->config_.local_node_id : 0U;
 }
 
 const common::Status&

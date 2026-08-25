@@ -677,6 +677,7 @@ add_library(
   src/cluster/distributed_vector_grouped_aggregate_shuffle_authority.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_destination_execution.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_reducer.cpp
+  src/cluster/distributed_vector_grouped_aggregate_shuffle_result_execution.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_retry.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_source_plan.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_stream.cpp
@@ -1440,6 +1441,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_destination_execution_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_reducer_header_self_contained.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_reducer_test.cpp
+    tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_execution_header_self_contained.cpp
+    tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_execution_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_retry_header_self_contained.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_retry_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_source_plan_header_self_contained.cpp
@@ -1614,6 +1617,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_authority_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_destination_execution_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_reducer_allocation_failure_test.cpp
+    tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_execution_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_retry_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_source_plan_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_stream_allocation_failure_test.cpp

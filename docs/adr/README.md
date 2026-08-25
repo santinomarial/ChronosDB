@@ -549,3 +549,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0512](0512-atomic-grouped-shuffle-source-fanout.md) | Atomic grouped shuffle source fan-out | accepted |
 | [0513](0513-bounded-grouped-shuffle-remote-edge-scheduling.md) | Bounded grouped shuffle remote-edge scheduling | accepted |
 | [0514](0514-lossless-grouped-shuffle-destination-execution.md) | Lossless grouped shuffle destination execution | accepted |
+| [0515](0515-exclusive-authority-ordered-grouped-shuffle-result-gathering.md) | Exclusive authority-ordered grouped shuffle result gathering | accepted |

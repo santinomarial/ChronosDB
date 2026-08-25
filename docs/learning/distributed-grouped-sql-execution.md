@@ -203,6 +203,12 @@ exact retransmission caused by receipt loss is still acknowledged, even after ou
 the query coordinator may seal transport only after all senders prove receipt. Query-wide result
 gathering and joint source/destination lifecycle remain outside this owner.
 
+Once every sender receipt is proven and destination transport is sealed, one exclusive gatherer
+takes all destination owners. It rejects missing, extra, duplicate, unsealed, or already consumed
+owners and drains their disjoint reducer outputs in partition-ID order. Because hash partitions
+cannot share a key, this boundary concatenates rather than re-aggregates. A separate bounded query
+resource context is retained for later global projection, sort, limit, and Native encoding.
+
 ### Portable sufficient-state execution boundary
 
 `DistributedVectorGroupedAggregateQueryExecutionV2` now joins the compatible snapshot to the

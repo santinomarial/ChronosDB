@@ -1574,8 +1574,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   edges through finite address rotation, exact carrier deadlines, mutual TLS, and receipt-gated
   all-edge completion. Every destination node now drains local and acknowledged remote streams into
   all assigned reducers without a post-acknowledgment allocation-loss window, keeps ingress live
-  for exact late retries, and seals only after source receipt proof. Computed pre-group plan
-  splitting, query-wide lifecycle composition, and partition-result gathering are still missing;
+  for exact late retries, and seals only after source receipt proof. One exclusive gatherer then
+  proves complete unconsumed destination coverage and emits disjoint outputs in partition-ID order.
+  Computed pre-group plan splitting, query-wide lifecycle composition, cross-process result
+  transport, and gathered finalization are still missing;
   scheduler request ownership, authenticated transport/read authority, and final SQL
   projection/order/limit are now
   integrated. The one committed private query-control endpoint now dispatches exact decoded mutable

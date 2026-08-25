@@ -33,6 +33,8 @@ struct DistributedVectorGroupedAggregateShuffleDestinationExecutionMetrics {
   std::size_t local_partitions{};
   std::size_t ready_partitions{};
   std::size_t pending_remote_streams{};
+  std::uint64_t output_chunks{};
+  std::size_t completed_output_partitions{};
 };
 
 enum class DistributedVectorGroupedAggregateShuffleDestinationExecutionState : std::uint8_t {
@@ -82,6 +84,8 @@ public:
   [[nodiscard]] common::Result<DistributedVectorGroupedAggregateShuffleReducerMetrics>
   reducer_metrics(std::uint32_t partition_id) const;
   [[nodiscard]] network::Ipv4Endpoint bound_endpoint() const noexcept;
+  [[nodiscard]] const DistributedVectorGroupedAggregateShuffleAuthority* authority() const noexcept;
+  [[nodiscard]] raft::NodeId local_node_id() const noexcept;
   [[nodiscard]] const common::Status& failure() const noexcept;
 
 private:

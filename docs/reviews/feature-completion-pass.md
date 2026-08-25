@@ -1328,6 +1328,11 @@ were deliberately not run.
   stream. Reducers finalize only after every source, while ingress stays live for exact receipt-loss
   retries even after output completion and seals only after source receipt proof. Query-wide result
   gathering and joint source/destination cancellation remain open.
+- Exclusive grouped shuffle result gathering: a move-only owner now requires one sealed,
+  unconsumed destination per authority node and drains every disjoint reducer in partition-ID order.
+  Missing, extra, duplicated, or previously pulled destinations fail before transfer; allocation
+  injection covers the complete ownership/index boundary. Cross-process result transport and final
+  SQL pipeline integration remain open.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
