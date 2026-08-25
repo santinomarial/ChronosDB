@@ -1403,8 +1403,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   now retains exact retries, requires every tablet terminal, and merges in plan order before output.
   A proof-revalidated real-CSEG worker now produces bounded canonical sufficient-state streams for
   direct projected keys and aggregate inputs, and the compatible Fragment-v2 snapshot retains one
-  exact cross-tablet grouped authority vector. Computed pre-group plan splitting, authenticated
-  coordination/scheduling, final grouped SQL integration, and shuffle routing remain deferred. The
+  exact cross-tablet grouped authority vector. A portable move-only execution owner now pins that
+  compatible snapshot, exact-decodes complete canonical worker batches under a separate query
+  memory bound, makes every partial-batch failure sticky, delegates plan-ordered all-tablet merge,
+  and exposes rows only after global terminal closure. Computed pre-group plan splitting,
+  authenticated coordination/scheduling, final grouped SQL integration, and shuffle routing remain
+  deferred. The
   distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;

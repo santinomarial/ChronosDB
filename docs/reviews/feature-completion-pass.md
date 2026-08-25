@@ -857,6 +857,17 @@ Focused executions passed:
   endpoint and publishes only the all-tablet result; focused cases prove incomplete-route rejection
   before I/O, expired-deadline suppression, and cancellation of active clients. Aggregate
   semantics, authority rebinding, and process integration remain.
+- Portable grouped sufficient-state execution continuation: one move-only owner now retains the
+  compatible Manifest-v2 snapshot and its cross-tablet grouped authority, exact-decodes complete
+  canonical worker batches under a separate query-memory ceiling, makes any mid-batch or missing-
+  terminal failure sticky, and exposes coordinator rows only after every planned tablet closes.
+  Focused two-tablet coverage proves exact retries, equal-key global COUNT merge, foreign-tablet
+  rejection, sealed input, sticky failure, row-mode rejection, and finite decode limits. The normal
+  cluster build and all 224 cluster tests pass; both focused cases pass under ASan/UBSan. Header
+  self-containment, formatting, and whitespace checks pass. LLVM 18 static analysis is blocked by
+  incompatibility with the installed macOS 26 libc++ headers after its local findings were fixed.
+  Authenticated grouped transport, scheduling, cancellation, computed pre-group splitting, and
+  final Native grouped SQL wiring remain.
 - Bounded global vector-row finalization continuation: one consuming final pass independently
   validates row-mode plan/schema shape, tablet-stream closure, native descriptors, and exact
   row/message/input/working/output bounds before decoded-state allocation. It stably orders every

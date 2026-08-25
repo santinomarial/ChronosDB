@@ -112,6 +112,27 @@ evidence. The compatible Fragment-v2 snapshot now retains exact cross-tablet-equ
 aggregate definitions rather than asking those later owners to reconstruct them. The row-backed
 path remains the differential oracle for that work.
 
+### Portable sufficient-state execution boundary
+
+`DistributedVectorGroupedAggregateQueryExecutionV2` now joins the compatible snapshot to the
+all-tablet grouped-state coordinator without choosing a carrier. It pins the Manifest epoch and
+exact grouped key/aggregate authority, owns a separately bounded decode resource context, and
+accepts only complete canonical frame batches identified by one planned tablet. Every frame is
+exact-decoded against the pinned authority before coordinator admission.
+
+The complete-batch rule is important: if decode or coordinator admission fails after an earlier
+frame was retained, the owner records a sticky worker failure. A missing terminal does the same.
+That local failure remains authoritative even if a malformed retry arrives after a prior terminal,
+so no retained prefix can be promoted accidentally. Exact byte-identical complete retries remain
+idempotent. `finish()` withholds output until all tablet streams close and preserves the
+coordinator's retryable resource-exhaustion behavior; only a successful finish enables pull-based
+group rows.
+
+This boundary is intentionally transport-free. A scheduler must still construct worker requests,
+authenticate responses, own deadlines/retries/cancellation, and feed only complete response
+vectors. Keeping that policy outside the owner makes the all-or-none merge and Manifest-pin
+lifetime directly testable before a socket implementation exists.
+
 ## Process qualification boundary
 
 The Linux packaged gate executes this row-backed grouped path in a three-daemon, two-Raft-group
