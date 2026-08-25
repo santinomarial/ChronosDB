@@ -703,6 +703,69 @@ ReplicatedQuerySnapshot::prepare_linearizable_mutable_vector_rows_query(
   }
 }
 
+common::Result<ReplicatedRoutedMutableVectorGroupedAggregateQuery>
+ReplicatedQuerySnapshot::prepare_linearizable_mutable_vector_grouped_aggregate_query(
+    const ReplicatedMutableVectorGroupedAggregateSqlBinding& binding,
+    const std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts,
+    const cluster::DistributedQueryRouteResolutionLimits limits) const {
+  if (impl_ == nullptr)
+    return common::make_unexpected(invalid("replicated query snapshot was moved from"));
+  const query::DistributedVectorGroupedAggregateSqlPlan& sql_plan = binding.sql_plan.get();
+  const auto table = std::ranges::find_if(impl_->tables, [&](const Impl::Table& candidate) {
+    return candidate.lineage.table_id() == sql_plan.table_id;
+  });
+  if (table == impl_->tables.end())
+    return common::make_unexpected(common::Status{common::StatusCode::kNotFound,
+                                                  "mutable grouped SQL table is not catalogued"});
+  const std::shared_ptr<const schema::TableSchema> current = table->lineage.current();
+  if (current == nullptr || current->schema_id() != sql_plan.destination_schema_id)
+    return common::make_unexpected(unavailable("mutable grouped SQL schema publication differs"));
+
+  try {
+    std::vector<query::PhysicalColumnShape> projected;
+    projected.reserve(sql_plan.destination_column_ordinals.size());
+    for (const std::uint32_t ordinal : sql_plan.destination_column_ordinals) {
+      if (ordinal >= current->columns().size()) {
+        return common::make_unexpected(
+            invalid("mutable grouped SQL projection ordinal is out of range"));
+      }
+      const schema::ColumnDefinition& column = current->columns()[ordinal];
+      projected.push_back({column.type(), column.nullable()});
+    }
+    auto authority = query::bind_distributed_vector_grouped_aggregate_authority(
+        sql_plan.intent, projected, sql_plan.result_schema);
+    if (!authority.has_value())
+      return common::make_unexpected(authority.error());
+
+    const query::DistributedVectorRowsSqlPlan fragment_plan{
+        .table_id = sql_plan.table_id,
+        .destination_schema_id = sql_plan.destination_schema_id,
+        .destination_column_ordinals = sql_plan.destination_column_ordinals,
+        .event_time_predicate = sql_plan.event_time_predicate,
+        .intent = sql_plan.intent,
+        .result_schema = sql_plan.result_schema,
+        .coordinator_projection = std::nullopt};
+    auto routed = prepare_linearizable_mutable_vector_rows_query(
+        {.query_id = binding.query_id,
+         .sql_plan = std::cref(fragment_plan),
+         .group_authorities = binding.group_authorities},
+        tls_contexts, limits);
+    if (!routed.has_value())
+      return common::make_unexpected(routed.error());
+    return ReplicatedRoutedMutableVectorGroupedAggregateQuery{
+        .fragments = std::move(routed->fragments),
+        .routes = std::move(routed->routes),
+        .keys = std::move(authority->keys),
+        .aggregates = std::move(authority->aggregates)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("mutable grouped SQL query preparation allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("mutable grouped SQL query preparation exceeds limits"));
+  }
+}
+
 class ReplicatedIngestDatabase::Impl {
 public:
   Impl(runtime::DatabaseBootstrap configured_bootstrap, ReplicatedIngestRuntime configured_runtime,

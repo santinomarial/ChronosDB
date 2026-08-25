@@ -168,7 +168,7 @@ public:
 
   struct Slot {
     schema::TabletId tablet_id;
-    std::size_t route_index{};
+    std::optional<std::size_t> route_index;
     std::optional<DistributedMutableVectorGroupedAggregateQueryTcpClient> client;
 
     [[nodiscard]] DistributedMutableVectorGroupedAggregateQueryTcpClient* active_client() noexcept {
@@ -250,11 +250,31 @@ public:
           if (!due->has_value() || now < **due)
             continue;
         }
+        if (!slot.route_index.has_value()) {
+          if (config.local_worker == nullptr)
+            return invalid("mutable grouped local worker is unavailable");
+          const bool retry = *sender_state == DistributedQuerySenderState::kBackoff;
+          common::Status executed =
+              execution.execute_local(slot.tablet_id, *config.local_worker, now);
+          ++execution_metrics.attempts_started;
+          if (retry)
+            ++execution_metrics.retries_started;
+          auto local_state = execution.sender_state(slot.tablet_id);
+          if (!local_state.has_value())
+            return local_state.error();
+          if (*local_state == DistributedQuerySenderState::kSucceeded)
+            ++execution_metrics.local_completed_attempts;
+          else
+            ++execution_metrics.local_failed_attempts;
+          if (!executed.is_ok())
+            return executed;
+          continue;
+        }
         auto attempt = execution.begin_attempt(slot.tablet_id, now);
         if (!attempt.has_value())
           return attempt.error();
         const bool retry = attempt->attempt_number > 1U;
-        const DistributedQueryNodeRoute& route = config.routes[slot.route_index];
+        const DistributedQueryNodeRoute& route = config.routes[*slot.route_index];
         if (attempt->target_node_id != route.node_id)
           return invalid("mutable grouped attempt escaped its immutable target route");
         const network::Ipv4Endpoint& endpoint =
@@ -365,9 +385,8 @@ DistributedMutableVectorGroupedAggregateQueryTcpExecution::create(
     DistributedMutableVectorGroupedAggregateQueryExecution execution,
     DistributedMutableVectorGroupedAggregateQueryTcpExecutionConfig config) {
   if (config.authenticator == nullptr || config.node_authorizer == nullptr ||
-      config.routes.empty() || config.routes.size() > 65'536U ||
-      config.maximum_rebindings > 1024U || !valid_timeout(config.connect_timeout) ||
-      !valid_limits(config.carrier_limits) ||
+      config.routes.size() > 65'536U || config.maximum_rebindings > 1024U ||
+      !valid_timeout(config.connect_timeout) || !valid_limits(config.carrier_limits) ||
       !validate_distributed_vector_grouped_aggregate_finalization_limits_v2(
            config.finalization_limits)
            .is_ok() ||
@@ -379,6 +398,10 @@ DistributedMutableVectorGroupedAggregateQueryTcpExecution::create(
       execution.aggregate_definitions().size() > config.carrier_limits.payload.maximum_aggregates) {
     return common::make_unexpected(
         invalid("mutable grouped TCP execution configuration is invalid"));
+  }
+  if ((config.local_node_id == 0U) != (config.local_worker == nullptr)) {
+    return common::make_unexpected(
+        invalid("mutable grouped TCP local execution configuration is incomplete"));
   }
   try {
     std::map<raft::NodeId, std::size_t> route_indexes;
@@ -403,6 +426,10 @@ DistributedMutableVectorGroupedAggregateQueryTcpExecution::create(
     std::vector<Impl::Slot> slots;
     slots.reserve(execution.targets().size());
     for (const auto& target : execution.targets()) {
+      if (target.serving_node == config.local_node_id) {
+        slots.push_back({target.tablet_id, std::nullopt, std::nullopt});
+        continue;
+      }
       const auto route = route_indexes.find(target.serving_node);
       if (route == route_indexes.end())
         return common::make_unexpected(
@@ -551,6 +578,8 @@ common::Status DistributedMutableVectorGroupedAggregateQueryTcpExecution::rebind
     return exhausted("mutable grouped TCP execution rebinding budget is exhausted");
   if (config.execution_deadline != previous.config.execution_deadline ||
       config.maximum_rebindings != previous.config.maximum_rebindings ||
+      config.local_node_id != previous.config.local_node_id ||
+      config.local_worker != previous.config.local_worker ||
       !equal_finalization_limits(config.finalization_limits, previous.config.finalization_limits) ||
       config.coordinator_projection != previous.config.coordinator_projection ||
       previous.execution.logical_identity() != execution.logical_identity() ||
@@ -568,6 +597,8 @@ common::Status DistributedMutableVectorGroupedAggregateQueryTcpExecution::rebind
   metrics.retries_started += prior.retries_started;
   metrics.transport_completed_attempts += prior.transport_completed_attempts;
   metrics.transport_failed_attempts += prior.transport_failed_attempts;
+  metrics.local_completed_attempts += prior.local_completed_attempts;
+  metrics.local_failed_attempts += prior.local_failed_attempts;
   metrics.rebindings_started = prior.rebindings_started + 1U;
   implementation_ = std::move(replacement->implementation_);
   return common::Status::ok();

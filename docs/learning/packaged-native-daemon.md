@@ -55,16 +55,21 @@ It authenticates a peer before selecting authority framing by frozen magic; the 
 magic is exact-decoded before plan mode selects row or grouped sufficient-state response framing.
 Authority service calls may wait on this thread only because the distinct Raft transport thread
 continues driving their durable and quorum completion; query-control work must not delay Raft
-transport polling. The heap-owned query bundle keeps the peer authority, TLS contexts, local worker,
-listener, and borrowed Native config address-stable. Its release/acquire stop and failure flags have
+transport polling. The heap-owned query bundle keeps the peer authority, TLS contexts, local row and
+grouped workers, listener, and borrowed Native config address-stable. Its release/acquire stop and failure flags have
 the same publication argument as the existing worker threads: stop is visible before loop exit, and
 failure is visible before the main thread reports termination.
 
-The packaged owner constructs the mutable worker and per-group replicated authority adapter before
-their two receivers, and constructs the shared listener last. Destruction therefore closes TLS and
-TCP ownership before any borrowed receiver dependency disappears. The daemon passes its existing
+The packaged owner constructs both mutable workers and the per-group replicated authority adapter
+before their receivers, and constructs the shared listener last. Destruction therefore closes TLS
+and TCP ownership before any borrowed receiver dependency disappears. The daemon passes its existing
 replicated barrier into this owner. The Native coordinator uses the remote authority client against
 peer instances of that inbound owner.
+
+Eligible direct grouped SQL uses the grouped worker for self-led tablets and the same committed
+private endpoint for remote tablets. The Native query owner merges every sufficient-state stream,
+then applies the checked final projection, global order/limit, and all-or-nothing encoding. Queries
+with computed pre-group semantics continue through complete row exchange.
 
 For distributed Native SELECT, the query thread now observes every resident group before each whole
 attempt. Locally led groups use the local barrier; follower observations select the current remote

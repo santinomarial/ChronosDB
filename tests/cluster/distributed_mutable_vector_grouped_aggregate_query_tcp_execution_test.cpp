@@ -187,6 +187,20 @@ start_server(Authenticator& authenticator,
        .maximum_decode_memory_bytes = std::size_t{1024U} * 1024U});
 }
 
+[[nodiscard]] common::Result<DistributedMutableVectorGroupedAggregateQueryExecution>
+mixed_execution() {
+  std::vector fragments{fragment(4U, 1U), fragment(6U, 12U)};
+  return DistributedMutableVectorGroupedAggregateQueryExecution::create(
+      1U, std::move(fragments), keys(), aggregates(),
+      {.sender = {.retry = {.maximum_attempts = 1U},
+                  .maximum_response_frames = 1U,
+                  .maximum_response_bytes = std::size_t{1024U} * 1024U},
+       .coordinator = {.messages = {.maximum_messages_per_fragment = 1U,
+                                    .maximum_total_messages = 2U},
+                       .maximum_total_encoded_bytes = std::size_t{1024U} * 1024U},
+       .maximum_decode_memory_bytes = std::size_t{1024U} * 1024U});
+}
+
 TEST(DistributedMutableVectorGroupedAggregateQueryTcpExecutionTest,
      SchedulesSplitMutableLeadersAndPublishesOnlyCompleteMergedGroups) {
   auto refused_listener = network::TcpListener::bind();
@@ -372,6 +386,81 @@ TEST(DistributedMutableVectorGroupedAggregateQueryTcpExecutionTest,
   EXPECT_EQ(cancelled->metrics().active_attempts, 0U);
   EXPECT_FALSE(cancelled->result().has_value());
   EXPECT_TRUE(listener->close().is_ok());
+}
+
+TEST(DistributedMutableVectorGroupedAggregateQueryTcpExecutionTest,
+     MergesLocalAndRemoteMutableGroupedWorkersBeforeNativePublication) {
+  Authorizer authorizer;
+  Worker local_worker{1U};
+  Worker remote_worker{2U};
+  auto remote_receiver = DistributedMutableVectorGroupedAggregateQueryReceiver::create(
+      {.local_node_id = 12U, .authorizer = &authorizer, .worker = &remote_worker});
+  ASSERT_TRUE(remote_receiver.has_value()) << remote_receiver.error().to_string();
+  Authenticator client_authenticator{91U};
+  auto remote_server = start_server(client_authenticator, *remote_receiver);
+  ASSERT_TRUE(remote_server.has_value()) << remote_server.error().to_string();
+  auto context = network::TlsClientContext::create(client_tls());
+  ASSERT_TRUE(context.has_value()) << context.error().to_string();
+  Authenticator server_authenticator{92U};
+
+  auto missing_local = mixed_execution();
+  ASSERT_TRUE(missing_local.has_value()) << missing_local.error().to_string();
+  EXPECT_EQ(
+      DistributedMutableVectorGroupedAggregateQueryTcpExecution::create(
+          std::move(*missing_local), {.authenticator = &server_authenticator,
+                                      .node_authorizer = &authorizer,
+                                      .routes = {{.node_id = 12U,
+                                                  .endpoints = {remote_server->bound_endpoint()},
+                                                  .tls_context = std::addressof(*context)}}})
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
+
+  auto portable = mixed_execution();
+  ASSERT_TRUE(portable.has_value()) << portable.error().to_string();
+  auto scheduled = DistributedMutableVectorGroupedAggregateQueryTcpExecution::create(
+      std::move(*portable),
+      {.authenticator = &server_authenticator,
+       .node_authorizer = &authorizer,
+       .local_node_id = 1U,
+       .local_worker = &local_worker,
+       .routes = {{.node_id = 12U,
+                   .endpoints = {remote_server->bound_endpoint()},
+                   .tls_context = std::addressof(*context)}},
+       .carrier_limits = carrier_limits(),
+       .connect_timeout = std::chrono::milliseconds{1000},
+       .execution_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5}});
+  ASSERT_TRUE(scheduled.has_value()) << scheduled.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       scheduled->state() ==
+           DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kRunning;
+       ++iteration) {
+    ASSERT_TRUE(scheduled->poll_once(std::chrono::milliseconds{1}).is_ok())
+        << scheduled->failure().to_string();
+    ASSERT_TRUE(remote_server->poll_once(std::chrono::milliseconds{0}).is_ok());
+  }
+  ASSERT_EQ(scheduled->state(),
+            DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kComplete)
+      << scheduled->failure().to_string();
+  ASSERT_TRUE(scheduled->result().has_value());
+  auto decoded = network::decode_query_result_batch(scheduled->result()->encoded_batches.front());
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  const network::QueryResultCell* count = decoded->cell(0U, 1U);
+  ASSERT_NE(count, nullptr);
+  common::ByteReader count_reader{count->value};
+  EXPECT_EQ(count_reader.read_i64_le().value(), 3);
+  EXPECT_EQ(local_worker.bind_calls, 1U);
+  EXPECT_EQ(local_worker.execute_calls, 1U);
+  EXPECT_EQ(remote_worker.bind_calls, 1U);
+  EXPECT_EQ(remote_worker.execute_calls, 1U);
+  const auto metrics = scheduled->metrics();
+  EXPECT_EQ(metrics.attempts_started, 2U);
+  EXPECT_EQ(metrics.local_completed_attempts, 1U);
+  EXPECT_EQ(metrics.local_failed_attempts, 0U);
+  EXPECT_EQ(metrics.transport_completed_attempts, 1U);
+  EXPECT_EQ(metrics.transport_failed_attempts, 0U);
+  EXPECT_TRUE(remote_server->shutdown().is_ok());
 }
 
 } // namespace

@@ -107,8 +107,18 @@ public:
          std::vector<query::VectorAggregateDefinition>&& aggregates,
          query::QueryResourceContext resources,
          DistributedMutableVectorGroupedAggregateQuerySenderLimits limits = {});
+  // Creates the same finite sender authority without a CHDMREQ1 self-route. Only execute_local()
+  // may advance this sender, through the explicitly supplied in-process worker.
+  [[nodiscard]] static common::Result<DistributedMutableVectorGroupedAggregateQuerySender>
+  create_local(raft::NodeId local_node_id, query::DistributedMutableVectorFragment fragment,
+               std::vector<query::VectorGroupKeyDefinition>&& keys,
+               std::vector<query::VectorAggregateDefinition>&& aggregates,
+               query::QueryResourceContext resources,
+               DistributedMutableVectorGroupedAggregateQuerySenderLimits limits = {});
   [[nodiscard]] common::Result<DistributedMutableVectorGroupedAggregateQueryAttempt>
   begin_attempt(TimePoint now);
+  [[nodiscard]] common::Status
+  execute_local(DistributedMutableVectorGroupedAggregateQueryWorkerService& worker, TimePoint now);
   [[nodiscard]] common::Status
   accept_responses(std::span<const DistributedVectorGroupedAggregateQueryResponseV2> responses,
                    TimePoint now);
@@ -131,7 +141,7 @@ private:
       std::vector<query::VectorGroupKeyDefinition>&& keys,
       std::vector<query::VectorAggregateDefinition>&& aggregates,
       query::QueryResourceContext resources, std::vector<std::byte>&& request_bytes,
-      DistributedMutableVectorGroupedAggregateQuerySenderLimits limits) noexcept;
+      DistributedMutableVectorGroupedAggregateQuerySenderLimits limits, bool local) noexcept;
   [[nodiscard]] common::Status schedule(common::StatusCode code, TimePoint now);
 
   raft::NodeId source_node_id_{};
@@ -149,6 +159,7 @@ private:
   std::optional<DistributedQueryLeaderHint> suggested_leader_;
   std::optional<std::vector<query::EncodedDistributedVectorGroupedAggregateExchangeMessage>>
       result_;
+  bool local_{};
 };
 
 } // namespace chronos::cluster

@@ -703,6 +703,8 @@ struct DaemonDistributedMutableQuery {
   std::vector<chronos::network::TlsClientContext> client_contexts;
   std::vector<chronos::cluster::DistributedQueryNodeTlsContext> tls_contexts;
   std::optional<chronos::service::ReplicatedDistributedMutableVectorQueryWorker> local_worker;
+  std::optional<chronos::service::ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker>
+      local_grouped_worker;
   std::optional<ReplicatedDistributedMutableQueryControlTcpServer> server;
   chronos::service::NativeDistributedMutableVectorRowsQueryConfig native_config;
 };
@@ -771,6 +773,14 @@ configure_distributed_mutable_query(
       return chronos::common::make_unexpected(local_worker.error());
     chronos::service::ReplicatedDistributedMutableVectorQueryWorker& installed_worker =
         owner->local_worker.emplace(std::move(*local_worker));
+    auto local_grouped_worker =
+        chronos::service::ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker::create(
+            {.local_node_id = local_node_id, .context_provider = &database});
+    if (!local_grouped_worker.has_value())
+      return chronos::common::make_unexpected(local_grouped_worker.error());
+    chronos::service::ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker&
+        installed_grouped_worker =
+            owner->local_grouped_worker.emplace(std::move(*local_grouped_worker));
     auto server = ReplicatedDistributedMutableQueryControlTcpServer::start(
         {.worker = {.local_node_id = local_node_id, .context_provider = &database},
          .read_barrier = &read_barrier,
@@ -785,6 +795,7 @@ configure_distributed_mutable_query(
                             .authenticator = &installed_authority,
                             .node_authorizer = &installed_authority,
                             .local_worker = &installed_worker,
+                            .local_grouped_worker = &installed_grouped_worker,
                             .tls_contexts = owner->tls_contexts};
     return owner;
   } catch (const std::bad_alloc&) {

@@ -534,3 +534,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0497](0497-bounded-mutable-grouped-sufficient-state-tcp-scheduling.md) | Bounded mutable grouped sufficient-state TCP scheduling | accepted |
 | [0498](0498-atomic-mutable-grouped-native-publication.md) | Atomic mutable grouped Native publication | accepted |
 | [0499](0499-shared-mutable-grouped-query-control-endpoint.md) | Shared mutable grouped query-control endpoint | accepted |
+| [0500](0500-packaged-mutable-grouped-native-execution.md) | Packaged mutable grouped Native execution | accepted |

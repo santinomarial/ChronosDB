@@ -65,6 +65,9 @@ public:
   [[nodiscard]] common::Result<DistributedMutableVectorGroupedAggregateQueryAttempt>
   begin_attempt(const schema::TabletId& tablet_id, TimePoint now);
   [[nodiscard]] common::Status
+  execute_local(const schema::TabletId& tablet_id,
+                DistributedMutableVectorGroupedAggregateQueryWorkerService& worker, TimePoint now);
+  [[nodiscard]] common::Status
   accept_responses(const schema::TabletId& tablet_id,
                    std::span<const DistributedVectorGroupedAggregateQueryResponseV2> responses,
                    TimePoint now);

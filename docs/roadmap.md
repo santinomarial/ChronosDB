@@ -1457,8 +1457,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   only after every terminal stream closes. The shared grouped finalizer now accepts the distinct
   mutable logical authority view, revalidates its plan/schema/input width, applies checked final
   projection and global order/limit under the coordinator's query memory, and publishes one bounded
-  Native result only after complete encoding. Replicated/package lifecycle selection remains
-  deferred.
+  Native result only after complete encoding. The replicated Native service now selects this
+  lifecycle for direct-key/direct-input grouped SQL, uses the proof-revalidated local worker for
+  self-led fragments, routes other fragments through the shared authenticated endpoint, and
+  installs only logically identical fresh all-group authority after retryable failure. Explicit
+  `NOT_SUPPORTED` lowering retains the row-backed grouped correctness path.
   Schema-bound grouped SQL now has a separate direct-input
   lowerer that emits the exact unique projection, key/aggregate intent, event-time predicate,
   selected-output global order/limit, and typed result schema consumed by this scheduler. Checked
@@ -1467,8 +1470,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   to the row-backed path. A replicated SQL
   constructor now acquires authority once, derives every committed table fragment through the same
   catalog and Manifest publication, rejects catalog/Manifest set drift, and transfers the moved SQL
-  schema and optional final projection into the atomic scheduler. Computed pre-group splitting and
-  shuffle routing remain deferred.
+  schema and optional final projection into the atomic scheduler. Mutable TabletState preparation
+  derives the same complete fragment set from the pinned replicated publication. Computed pre-group
+  splitting and shuffle routing remain deferred.
   The
   distinct
   bounded-stale constructor carries correlated leader/follower observations through the same

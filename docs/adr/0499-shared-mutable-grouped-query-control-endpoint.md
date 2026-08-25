@@ -94,3 +94,7 @@ available for focused testing.
 - [Packaged shared query-control service](0468-packaged-shared-query-control-service.md)
 - [Owned mutable grouped sufficient-state TCP service](0495-owned-mutable-grouped-sufficient-state-tcp-service.md)
 - [Distributed grouped SQL execution](../learning/distributed-grouped-sql-execution.md)
+
+**Retrospective (2026-08-25):**
+[ADR 0500](0500-packaged-mutable-grouped-native-execution.md) selects this endpoint from replicated
+Native direct grouped SQL and adds the matching in-process worker path for self-led fragments.

@@ -70,6 +70,21 @@ struct ReplicatedMutableVectorRowsSqlBinding {
   std::span<const query::DistributedVectorGroupReadAuthority> group_authorities;
 };
 
+struct ReplicatedMutableVectorGroupedAggregateSqlBinding {
+  common::Uuid query_id;
+  std::reference_wrapper<const query::DistributedVectorGroupedAggregateSqlPlan> sql_plan;
+  // Canonical unique group order. Extra metadata authority is ignored; every committed table
+  // tablet must have one exact current-leader barrier/observation pair.
+  std::span<const query::DistributedVectorGroupReadAuthority> group_authorities;
+};
+
+struct ReplicatedRoutedMutableVectorGroupedAggregateQuery {
+  std::vector<query::DistributedMutableVectorFragment> fragments;
+  std::vector<cluster::DistributedQueryNodeRoute> routes;
+  std::vector<query::VectorGroupKeyDefinition> keys;
+  std::vector<query::VectorAggregateDefinition> aggregates;
+};
+
 enum class ReplicatedIngestDatabaseStartupStage : std::uint8_t {
   kRootOwnerReady,
   kCatalogRecovered,
@@ -149,6 +164,13 @@ public:
   [[nodiscard]] common::Result<ReplicatedRoutedMutableVectorQuery>
   prepare_linearizable_mutable_vector_rows_query(
       const ReplicatedMutableVectorRowsSqlBinding& binding,
+      std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts,
+      cluster::DistributedQueryRouteResolutionLimits limits = {}) const;
+  // Binds the direct grouped SQL product through the same complete mutable plan preparation, then
+  // derives one exact key/sufficient-state authority from the pinned destination schema.
+  [[nodiscard]] common::Result<ReplicatedRoutedMutableVectorGroupedAggregateQuery>
+  prepare_linearizable_mutable_vector_grouped_aggregate_query(
+      const ReplicatedMutableVectorGroupedAggregateSqlBinding& binding,
       std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts,
       cluster::DistributedQueryRouteResolutionLimits limits = {}) const;
 

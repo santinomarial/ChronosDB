@@ -116,9 +116,13 @@ DistributedMutableVectorGroupedAggregateQueryExecution::create(
       std::vector<query::VectorGroupKeyDefinition> sender_keys(keys.begin(), keys.end());
       std::vector<query::VectorAggregateDefinition> sender_aggregates(aggregates.begin(),
                                                                       aggregates.end());
-      auto sender = DistributedMutableVectorGroupedAggregateQuerySender::create(
-          source_node_id, std::move(fragment), std::move(sender_keys), std::move(sender_aggregates),
-          *resources, limits.sender);
+      auto sender = serving_node == source_node_id
+                        ? DistributedMutableVectorGroupedAggregateQuerySender::create_local(
+                              source_node_id, std::move(fragment), std::move(sender_keys),
+                              std::move(sender_aggregates), *resources, limits.sender)
+                        : DistributedMutableVectorGroupedAggregateQuerySender::create(
+                              source_node_id, std::move(fragment), std::move(sender_keys),
+                              std::move(sender_aggregates), *resources, limits.sender);
       if (!sender.has_value())
         return common::make_unexpected(sender.error());
       if (!indexes.emplace(tablet_id, index).second)
@@ -174,6 +178,21 @@ DistributedMutableVectorGroupedAggregateQueryExecution::begin_attempt(
   if (!index.has_value())
     return common::make_unexpected(index.error());
   return senders_[*index].sender.begin_attempt(now);
+}
+
+common::Status DistributedMutableVectorGroupedAggregateQueryExecution::execute_local(
+    const schema::TabletId& tablet_id,
+    DistributedMutableVectorGroupedAggregateQueryWorkerService& worker, const TimePoint now) {
+  if (ready_ || failure_.has_value())
+    return failure_.value_or(invalid("mutable grouped query execution is sealed"));
+  auto index = sender_index(tablet_id);
+  if (!index.has_value())
+    return index.error();
+  SenderSlot& slot = senders_[*index];
+  common::Status executed = slot.sender.execute_local(worker, now);
+  if (!executed.is_ok())
+    return executed;
+  return publish_terminal_state(slot);
 }
 
 common::Status DistributedMutableVectorGroupedAggregateQueryExecution::accept_responses(

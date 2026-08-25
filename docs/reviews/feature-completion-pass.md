@@ -1222,6 +1222,18 @@ were deliberately not run.
   down remote work, and suppresses the complete response. Retryable local or remote failure now
   discards the whole attempt and installs only a freshly barrier-covered, logically identical
   all-group fragment/route set under the original deadline.
+- Packaged mutable grouped Native continuation: replicated SQL preparation now selects the direct
+  grouped sufficient-state lifecycle on successful lowering and uses the row-backed grouped path
+  only for explicit unsupported shapes. A proof-revalidated in-process sender serves self-led
+  fragments without an invalid mutable self-route; remote fragments share the committed mTLS
+  endpoint. Whole-attempt rebinding requires unchanged logical, key, and aggregate authority before
+  global merge, checked final projection/order/limit, and atomic Native publication. The two-tablet
+  service fixture proves remote grouped dispatch and byte-identical local output; the mixed
+  scheduler fixture proves local/remote state merge. The warning-as-error build, 109 service tests,
+  264 cluster tests, six service allocation-failure tests, 39 cluster allocation-failure tests, and
+  focused ASan/UBSan cases pass. Changed-file formatting and whitespace pass. Repository-wide
+  formatting retains one pre-existing unchanged-file violation; LLVM 18 static analysis remains
+  incompatible with the installed macOS 26 libc++ builtin set.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

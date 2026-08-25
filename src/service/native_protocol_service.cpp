@@ -443,6 +443,44 @@ bounded_grouped_finalization_limits(const NativeDistributedMutableVectorRowsQuer
   return limits;
 }
 
+[[nodiscard]] cluster::DistributedVectorGroupedAggregateFinalizationLimitsV2
+bounded_grouped_aggregate_finalization_limits(
+    const NativeDistributedMutableVectorRowsQueryConfig& config,
+    const NativeProtocolServiceLimits& service) noexcept {
+  cluster::DistributedVectorGroupedAggregateFinalizationLimitsV2 limits =
+      config.grouped_aggregate_finalization;
+  limits.maximum_output_rows = std::min(limits.maximum_output_rows, service.maximum_result_rows);
+  limits.maximum_output_batches =
+      std::min(limits.maximum_output_batches, service.maximum_result_batches);
+  limits.maximum_output_encoded_bytes =
+      std::min(limits.maximum_output_encoded_bytes, service.maximum_response_payload_bytes);
+  limits.sort.maximum_rows = static_cast<std::uint32_t>(
+      std::min<std::uint64_t>(limits.sort.maximum_rows,
+                              std::min<std::uint64_t>(service.maximum_result_rows,
+                                                      std::numeric_limits<std::uint32_t>::max())));
+  limits.sort.maximum_state_bytes =
+      std::min(limits.sort.maximum_state_bytes, service.maximum_query_memory_bytes);
+  limits.sort.output_limits.maximum_rows = static_cast<std::uint32_t>(
+      std::min<std::uint64_t>(limits.sort.output_limits.maximum_rows,
+                              std::min<std::uint64_t>(service.maximum_result_rows,
+                                                      std::numeric_limits<std::uint32_t>::max())));
+  limits.sort.output_limits.maximum_columns = std::min<std::size_t>(
+      limits.sort.output_limits.maximum_columns, service.query_result.maximum_columns);
+  limits.output_batch.maximum_rows = static_cast<std::uint32_t>(
+      std::min<std::uint64_t>(limits.output_batch.maximum_rows,
+                              std::min<std::uint64_t>(service.maximum_result_rows,
+                                                      std::numeric_limits<std::uint32_t>::max())));
+  limits.output_batch.maximum_columns =
+      std::min(limits.output_batch.maximum_columns, service.query_result.maximum_columns);
+  limits.output_batch.maximum_column_name_bytes =
+      std::min(limits.output_batch.maximum_column_name_bytes,
+               service.query_result.maximum_column_name_bytes);
+  limits.output_batch.protocol = service.protocol;
+  limits.sort.output_limits.maximum_rows =
+      std::min(limits.sort.output_limits.maximum_rows, limits.output_batch.maximum_rows);
+  return limits;
+}
+
 [[nodiscard]] common::Result<NativeProtocolResponseSequence>
 distributed_rows_result(const ResponseRoute& target,
                         cluster::DistributedVectorRowsFinalizedResultV2&& result,
@@ -1020,6 +1058,7 @@ NativeProtocolService::execute_query(network::NetworkTask request,
       std::optional<query::DistributedVectorRowsSqlPlan> lowered_rows;
       std::optional<query::DistributedVectorAggregateSqlPlan> lowered_aggregate;
       std::optional<query::DistributedVectorGroupedSqlPlan> lowered_grouped;
+      std::optional<query::DistributedVectorGroupedAggregateSqlPlan> lowered_grouped_aggregate;
       const query::DistributedVectorRowsSqlPlan* execution_sql{};
       if (bound->aggregate_query()) {
         if (bound->syntax().group_by().empty()) {
@@ -1030,12 +1069,21 @@ NativeProtocolService::execute_query(network::NetworkTask request,
           lowered_aggregate.emplace(std::move(*aggregate));
           execution_sql = &lowered_aggregate->input_rows;
         } else {
-          auto grouped = query::lower_bound_sql_select_to_distributed_vector_grouped(
-              *bound, config.grouped_sql_lowering);
-          if (!grouped.has_value())
-            return query_error(target, grouped.error().status(), limits_.protocol);
-          lowered_grouped.emplace(std::move(*grouped));
-          execution_sql = &lowered_grouped->input_rows;
+          auto grouped_aggregate =
+              query::lower_bound_sql_select_to_distributed_vector_grouped_aggregate(
+                  *bound, config.grouped_aggregate_sql_lowering);
+          if (grouped_aggregate.has_value()) {
+            lowered_grouped_aggregate.emplace(std::move(*grouped_aggregate));
+          } else {
+            if (grouped_aggregate.error().status().code() != common::StatusCode::kNotSupported)
+              return query_error(target, grouped_aggregate.error().status(), limits_.protocol);
+            auto grouped = query::lower_bound_sql_select_to_distributed_vector_grouped(
+                *bound, config.grouped_sql_lowering);
+            if (!grouped.has_value())
+              return query_error(target, grouped.error().status(), limits_.protocol);
+            lowered_grouped.emplace(std::move(*grouped));
+            execution_sql = &lowered_grouped->input_rows;
+          }
         }
       } else {
         auto rows =
@@ -1054,6 +1102,172 @@ NativeProtocolService::execute_query(network::NetworkTask request,
         return query_error(target, query_id.error(), limits_.protocol);
       if (query_id->is_nil()) {
         return query_error(target, internal("identity source returned a nil query UUID"),
+                           limits_.protocol);
+      }
+      if (lowered_grouped_aggregate.has_value()) {
+        if (!distributed_execution_deadline.has_value()) {
+          return query_error(target, internal("distributed Native query deadline is unavailable"),
+                             limits_.protocol);
+        }
+        const auto execution_deadline = *distributed_execution_deadline;
+        auto prepared =
+            replicated_snapshot->prepare_linearizable_mutable_vector_grouped_aggregate_query(
+                {.query_id = *query_id,
+                 .sql_plan = std::cref(*lowered_grouped_aggregate),
+                 .group_authorities = *replicated_authorities},
+                config.tls_contexts, config.route_resolution);
+        if (!prepared.has_value())
+          return query_error(target, prepared.error(), limits_.protocol);
+        if (prepared->fragments.empty()) {
+          return query_error(target,
+                             internal("distributed Native grouped query prepared no fragments"),
+                             limits_.protocol);
+        }
+        auto logical_identity = cluster::distributed_mutable_vector_query_logical_identity(
+            std::span<const query::DistributedMutableVectorFragment>{prepared->fragments});
+        if (!logical_identity.has_value())
+          return query_error(target, logical_identity.error(), limits_.protocol);
+        const std::vector<query::VectorGroupKeyDefinition> expected_keys = prepared->keys;
+        const std::vector<query::VectorAggregateDefinition> expected_aggregates =
+            prepared->aggregates;
+        ReplicatedRoutedMutableVectorGroupedAggregateQuery current = std::move(*prepared);
+        std::size_t authority_rebindings{};
+
+        auto same_keys = [](const std::span<const query::VectorGroupKeyDefinition> left,
+                            const std::span<const query::VectorGroupKeyDefinition> right) noexcept {
+          return std::ranges::equal(left, right, [](const auto& lhs, const auto& rhs) {
+            return lhs.column_ordinal == rhs.column_ordinal && lhs.type == rhs.type &&
+                   lhs.nullable == rhs.nullable;
+          });
+        };
+        auto install_fresh_grouped_authority = [&](common::Status failure) -> common::Status {
+          for (;;) {
+            if (!retryable_authority_failure(failure.code()) ||
+                authority_rebindings >= config.maximum_authority_rebindings) {
+              return failure;
+            }
+            if (cancellation != nullptr && cancellation->requested())
+              return {common::StatusCode::kCancelled, "native query was cancelled"};
+            if (std::chrono::steady_clock::now() >= execution_deadline) {
+              return {common::StatusCode::kCancelled,
+                      "distributed Native query execution deadline expired"};
+            }
+            ++authority_rebindings;
+            auto authorities = acquire_distributed_read_authorities(
+                *replicated_database_, *replicated_read_barrier_, config, execution_deadline,
+                cancellation);
+            if (!authorities.has_value()) {
+              failure = std::move(authorities.error());
+            } else {
+              std::vector<raft::GroupReadBarrier> barriers;
+              barriers.reserve(authorities->size());
+              for (const ReplicatedReadAuthority& authority : *authorities)
+                barriers.push_back(authority.barrier);
+              auto snapshot = replicated_database_->acquire_query_snapshot(barriers);
+              if (!snapshot.has_value()) {
+                failure = std::move(snapshot.error());
+              } else {
+                auto replacement =
+                    snapshot->prepare_linearizable_mutable_vector_grouped_aggregate_query(
+                        {.query_id = *query_id,
+                         .sql_plan = std::cref(*lowered_grouped_aggregate),
+                         .group_authorities = *authorities},
+                        config.tls_contexts, config.route_resolution);
+                if (!replacement.has_value()) {
+                  failure = std::move(replacement.error());
+                } else {
+                  auto replacement_identity =
+                      cluster::distributed_mutable_vector_query_logical_identity(
+                          std::span<const query::DistributedMutableVectorFragment>{
+                              replacement->fragments});
+                  if (!replacement_identity.has_value())
+                    return replacement_identity.error();
+                  if (*replacement_identity != *logical_identity ||
+                      !same_keys(replacement->keys, expected_keys) ||
+                      replacement->aggregates != expected_aggregates) {
+                    return invalid("fresh distributed Native grouped authority changes logical "
+                                   "query identity");
+                  }
+                  if (cancellation != nullptr && cancellation->requested())
+                    return {common::StatusCode::kCancelled, "native query was cancelled"};
+                  if (std::chrono::steady_clock::now() >= execution_deadline) {
+                    return {common::StatusCode::kCancelled,
+                            "distributed Native query execution deadline expired"};
+                  }
+                  current = std::move(*replacement);
+                  return common::Status::ok();
+                }
+              }
+            }
+            if (!retryable_authority_failure(failure.code()) ||
+                authority_rebindings >= config.maximum_authority_rebindings) {
+              return failure;
+            }
+            std::this_thread::sleep_for(config.maximum_poll_wait);
+          }
+        };
+
+        for (;;) {
+          auto portable = cluster::DistributedMutableVectorGroupedAggregateQueryExecution::create(
+              config.source_node_id, std::move(current.fragments), std::move(current.keys),
+              std::move(current.aggregates), config.grouped_aggregate_execution);
+          if (!portable.has_value())
+            return query_error(target, portable.error(), limits_.protocol);
+          const bool local_enabled = config.local_grouped_worker != nullptr;
+          auto scheduler =
+              cluster::DistributedMutableVectorGroupedAggregateQueryTcpExecution::create(
+                  std::move(*portable),
+                  {.authenticator = config.authenticator,
+                   .node_authorizer = config.node_authorizer,
+                   .local_node_id = local_enabled ? config.source_node_id : raft::NodeId{},
+                   .local_worker = config.local_grouped_worker,
+                   .routes = std::move(current.routes),
+                   .carrier_limits = config.grouped_aggregate_carrier,
+                   .finalization_limits =
+                       bounded_grouped_aggregate_finalization_limits(config, limits_),
+                   .coordinator_projection = lowered_grouped_aggregate->coordinator_projection,
+                   .connect_timeout = config.connect_timeout,
+                   .execution_deadline = execution_deadline,
+                   .maximum_rebindings = 0U});
+          if (!scheduler.has_value())
+            return query_error(target, scheduler.error(), limits_.protocol);
+          std::optional<common::Status> retryable_failure;
+          while (
+              scheduler->state() ==
+              cluster::DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kRunning) {
+            if (cancellation != nullptr && cancellation->requested()) {
+              static_cast<void>(scheduler->cancel());
+              return query_error(target,
+                                 {common::StatusCode::kCancelled, "native query was cancelled"},
+                                 limits_.protocol);
+            }
+            const common::Status polled = scheduler->poll_once(config.maximum_poll_wait);
+            if (!polled.is_ok()) {
+              if (retryable_authority_failure(polled.code()))
+                retryable_failure.emplace(polled);
+              else
+                return query_error(target, polled, limits_.protocol);
+              break;
+            }
+          }
+          if (retryable_failure.has_value()) {
+            common::Status rebound = install_fresh_grouped_authority(std::move(*retryable_failure));
+            if (!rebound.is_ok())
+              return query_error(target, rebound, limits_.protocol);
+            continue;
+          }
+          if (scheduler->state() !=
+              cluster::DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kComplete) {
+            return query_error(target, scheduler->failure(), limits_.protocol);
+          }
+          auto finalized = scheduler->take_result();
+          if (!finalized.has_value())
+            return query_error(target, finalized.error(), limits_.protocol);
+          return distributed_rows_result(target, std::move(*finalized), limits_);
+        }
+      }
+      if (execution_sql == nullptr) {
+        return query_error(target, internal("distributed row SQL plan is absent"),
                            limits_.protocol);
       }
       auto prepared = replicated_snapshot->prepare_linearizable_mutable_vector_rows_query(

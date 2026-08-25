@@ -11,7 +11,7 @@
 #include "chronos/raft/schema_definition_codec.hpp"
 #include "chronos/raft/tablet_group_binding_codec.hpp"
 #include "chronos/service/native_protocol_service.hpp"
-#include "chronos/service/replicated_distributed_mutable_vector_query_tcp_server.hpp"
+#include "chronos/service/replicated_distributed_mutable_query_control_tcp_server.hpp"
 #include "chronos/service/replicated_ingest_database.hpp"
 #include "chronos/service/replicated_ingest_service.hpp"
 #include "chronos/service/replicated_read_barrier.hpp"
@@ -1064,6 +1064,39 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   }
   ASSERT_EQ(prepared_sql_query->routes.size(), 1U);
   EXPECT_EQ(prepared_sql_query->routes.front().node_id, 1U);
+
+  auto grouped_parsed = query::parse_sql_v1_select(
+      "SELECT tag, count(*) AS n FROM events GROUP BY tag ORDER BY n DESC LIMIT 1");
+  ASSERT_TRUE(grouped_parsed.has_value()) << grouped_parsed.error().status().to_string();
+  auto grouped_bound =
+      query::bind_sql_v1_select(std::move(*grouped_parsed), mutable_snapshot->catalog());
+  ASSERT_TRUE(grouped_bound.has_value()) << grouped_bound.error().status().to_string();
+  auto grouped_sql =
+      query::lower_bound_sql_select_to_distributed_vector_grouped_aggregate(*grouped_bound);
+  ASSERT_TRUE(grouped_sql.has_value()) << grouped_sql.error().status().to_string();
+  auto prepared_grouped =
+      mutable_snapshot->prepare_linearizable_mutable_vector_grouped_aggregate_query(
+          {.query_id = id(0x7bU),
+           .sql_plan = std::cref(*grouped_sql),
+           .group_authorities = *authorities},
+          mutable_tls_contexts);
+  ASSERT_TRUE(prepared_grouped.has_value()) << prepared_grouped.error().to_string();
+  ASSERT_EQ(prepared_grouped->fragments.size(), 2U);
+  EXPECT_EQ(prepared_grouped->routes.size(), 1U);
+  ASSERT_EQ(prepared_grouped->keys.size(), 1U);
+  EXPECT_EQ(prepared_grouped->keys.front().column_ordinal, 0U);
+  EXPECT_EQ(prepared_grouped->keys.front().type,
+            columnar::test::type(schema::LogicalTypeKind::kString));
+  EXPECT_TRUE(prepared_grouped->keys.front().nullable);
+  ASSERT_EQ(prepared_grouped->aggregates.size(), 1U);
+  EXPECT_EQ(prepared_grouped->aggregates.front().operation,
+            query::VectorAggregateOperation::kCountStar);
+  EXPECT_FALSE(prepared_grouped->aggregates.front().input.has_value());
+  for (const query::DistributedMutableVectorFragment& fragment : prepared_grouped->fragments) {
+    EXPECT_EQ(fragment.query_id, id(0x7bU));
+    EXPECT_EQ(fragment.plan, grouped_sql->intent);
+    EXPECT_EQ(fragment.result_schema, grouped_sql->result_schema);
+  }
   auto production_worker_context = database->acquire(prepared_sql_query->fragments.front());
   ASSERT_TRUE(production_worker_context.has_value())
       << production_worker_context.error().to_string();
@@ -1091,13 +1124,19 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
       .exchange_timeout = std::chrono::milliseconds{1000},
       .maximum_response_frames = 4U,
       .maximum_response_bytes = std::size_t{1024U} * 1024U};
-  auto distributed_server = ReplicatedDistributedMutableVectorQueryTcpServer::start(
+  auto distributed_server = ReplicatedDistributedMutableQueryControlTcpServer::start(
       {.worker = {.local_node_id = 1U, .context_provider = &*database},
+       .read_barrier = &*read_barrier,
        .listener = {.bind_endpoint = {{127U, 0U, 0U, 1U}, 7411U}},
        .tls = distributed_server_tls(),
        .authenticator = &inbound_authenticator,
        .node_authorizer = &node_authorizer,
-       .carrier_limits = distributed_carrier,
+       .carrier_limits = {.handshake_timeout = distributed_carrier.handshake_timeout,
+                          .exchange_timeout = distributed_carrier.exchange_timeout,
+                          .maximum_mutable_response_frames = 4U,
+                          .maximum_mutable_response_bytes = std::size_t{1024U} * 1024U,
+                          .maximum_mutable_grouped_response_frames = 4U,
+                          .maximum_mutable_grouped_response_bytes = std::size_t{1024U} * 1024U},
        .maximum_connections = 4U,
        .maximum_accepts_per_poll = 4U});
   ASSERT_TRUE(distributed_server.has_value()) << distributed_server.error().to_string();
@@ -1114,8 +1153,17 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
       .execution = {.sender = {.retry = {.maximum_attempts = 1U},
                                .maximum_response_frames = 4U,
                                .maximum_response_bytes = std::size_t{1024U} * 1024U}},
+      .grouped_aggregate_execution = {.sender = {.retry = {.maximum_attempts = 1U},
+                                                 .maximum_response_frames = 4U,
+                                                 .maximum_response_bytes =
+                                                     std::size_t{1024U} * 1024U}},
       .carrier = distributed_carrier,
+      .grouped_aggregate_carrier = {.handshake_timeout = std::chrono::milliseconds{1000},
+                                    .exchange_timeout = std::chrono::milliseconds{1000},
+                                    .maximum_response_frames = 4U,
+                                    .maximum_response_bytes = std::size_t{1024U} * 1024U},
       .finalization = {.output_batch = {.maximum_rows = 2U}},
+      .grouped_aggregate_finalization = {.output_batch = {.maximum_rows = 2U}},
       .connect_timeout = std::chrono::milliseconds{1000},
       .execution_timeout = std::chrono::milliseconds{5000},
       .maximum_poll_wait = std::chrono::milliseconds{1}};
@@ -1144,6 +1192,8 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   auto native_distributed_grouped = distributed_native.execute_query(query_request(
       "SELECT coalesce(lower(tag), 'missing') AS bucket, enabled, count(*) AS n FROM events "
       "GROUP BY coalesce(lower(tag), 'missing'), enabled ORDER BY n DESC, bucket ASC LIMIT 2"));
+  auto native_distributed_grouped_sufficient = distributed_native.execute_query(query_request(
+      "SELECT tag, count(*) AS n FROM events GROUP BY tag ORDER BY n DESC, tag ASC LIMIT 2"));
   auto native_distributed_constants = distributed_native.execute_query(
       query_request("SELECT 7 AS marker, upper('ok') AS word FROM events LIMIT 1"));
   auto native_distributed_expressions = distributed_native.execute_query(
@@ -1272,6 +1322,44 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   EXPECT_EQ(grouped_second_count.read_i64_le().value(), 2);
   EXPECT_EQ(native_distributed_grouped->responses[1].frame.header.message_type,
             network::MessageType::kQueryEnd);
+  ASSERT_TRUE(native_distributed_grouped_sufficient.has_value())
+      << native_distributed_grouped_sufficient.error().to_string();
+  if (native_distributed_grouped_sufficient->responses.size() == 1U &&
+      native_distributed_grouped_sufficient->responses.front().frame.header.message_type ==
+          network::MessageType::kError) {
+    auto error = network::decode_error_message(
+        native_distributed_grouped_sufficient->responses.front().frame.payload);
+    ASSERT_TRUE(error.has_value());
+    std::string message;
+    message.reserve(error->message.size());
+    for (const std::byte byte : error->message)
+      message.push_back(static_cast<char>(byte));
+    ADD_FAILURE() << "distributed sufficient-state GROUP BY returned error: " << message;
+  }
+  ASSERT_EQ(native_distributed_grouped_sufficient->responses.size(), 2U);
+  EXPECT_EQ(native_distributed_grouped_sufficient->result_rows, 2U);
+  const auto remote_grouped_sufficient_batch = network::decode_query_result_batch(
+      native_distributed_grouped_sufficient->responses[0].frame.payload);
+  ASSERT_TRUE(remote_grouped_sufficient_batch.has_value())
+      << remote_grouped_sufficient_batch.error().to_string();
+  ASSERT_EQ(remote_grouped_sufficient_batch->row_count(), 2U);
+  ASSERT_EQ(remote_grouped_sufficient_batch->columns().size(), 2U);
+  EXPECT_EQ(remote_grouped_sufficient_batch->columns()[0].name, "tag");
+  EXPECT_EQ(remote_grouped_sufficient_batch->columns()[1].name, "n");
+  ASSERT_FALSE(remote_grouped_sufficient_batch->cell(0U, 0U)->is_null);
+  EXPECT_EQ(std::string(reinterpret_cast<const char*>(
+                            remote_grouped_sufficient_batch->cell(0U, 0U)->value.data()),
+                        remote_grouped_sufficient_batch->cell(0U, 0U)->value.size()),
+            "x");
+  EXPECT_TRUE(remote_grouped_sufficient_batch->cell(1U, 0U)->is_null);
+  common::ByteReader grouped_sufficient_first_count{
+      remote_grouped_sufficient_batch->cell(0U, 1U)->value};
+  common::ByteReader grouped_sufficient_second_count{
+      remote_grouped_sufficient_batch->cell(1U, 1U)->value};
+  EXPECT_EQ(grouped_sufficient_first_count.read_i64_le().value(), 2);
+  EXPECT_EQ(grouped_sufficient_second_count.read_i64_le().value(), 2);
+  EXPECT_EQ(native_distributed_grouped_sufficient->responses[1].frame.header.message_type,
+            network::MessageType::kQueryEnd);
   ASSERT_TRUE(native_distributed_constants.has_value())
       << native_distributed_constants.error().to_string();
   ASSERT_EQ(native_distributed_constants->responses.size(), 2U);
@@ -1304,14 +1392,24 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   EXPECT_EQ(remote_expression_batch->columns()[0].name, "folded");
   EXPECT_EQ(remote_expression_batch->columns()[1].name, "enabled");
   EXPECT_EQ(remote_expression_batch->columns()[2].name, "shifted");
+  const auto distributed_server_metrics = distributed_server->metrics();
+  // Each of the six row-backed queries and the one sufficient-state query opens one request for
+  // each of the two tablets hosted by this serving node.
+  EXPECT_EQ(distributed_server_metrics.completed_mutable_queries, 12U);
+  EXPECT_EQ(distributed_server_metrics.completed_mutable_grouped_queries, 2U);
+  EXPECT_EQ(distributed_server_metrics.completed_read_authorities, 0U);
   ASSERT_TRUE(distributed_server->shutdown().is_ok());
 
   auto local_worker = ReplicatedDistributedMutableVectorQueryWorker::create(
       {.local_node_id = 1U, .context_provider = &*database});
   ASSERT_TRUE(local_worker.has_value()) << local_worker.error().to_string();
+  auto local_grouped_worker = ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker::create(
+      {.local_node_id = 1U, .context_provider = &*database});
+  ASSERT_TRUE(local_grouped_worker.has_value()) << local_grouped_worker.error().to_string();
   auto local_distributed_config = distributed_config;
   local_distributed_config.source_node_id = 1U;
   local_distributed_config.local_worker = &*local_worker;
+  local_distributed_config.local_grouped_worker = &*local_grouped_worker;
   NativeProtocolService local_distributed_native{*database, *read_barrier,
                                                  local_distributed_config};
   auto native_local = local_distributed_native.execute_query(
@@ -1328,6 +1426,20 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   EXPECT_EQ(native_local->responses[0].frame.payload,
             native_distributed->responses[0].frame.payload);
   EXPECT_EQ(native_local->responses[1].frame.header.message_type, network::MessageType::kQueryEnd);
+
+  auto native_local_grouped_sufficient = local_distributed_native.execute_query(query_request(
+      "SELECT tag, count(*) AS n FROM events GROUP BY tag ORDER BY n DESC, tag ASC LIMIT 2"));
+  ASSERT_TRUE(native_local_grouped_sufficient.has_value())
+      << native_local_grouped_sufficient.error().to_string();
+  ASSERT_EQ(native_local_grouped_sufficient->responses.size(), 2U);
+  EXPECT_EQ(native_local_grouped_sufficient->result_rows,
+            native_distributed_grouped_sufficient->result_rows);
+  EXPECT_EQ(native_local_grouped_sufficient->payload_bytes,
+            native_distributed_grouped_sufficient->payload_bytes);
+  EXPECT_EQ(native_local_grouped_sufficient->responses[0].frame.payload,
+            native_distributed_grouped_sufficient->responses[0].frame.payload);
+  EXPECT_EQ(native_local_grouped_sufficient->responses[1].frame.header.message_type,
+            network::MessageType::kQueryEnd);
 
   auto native_local_aggregate = local_distributed_native.execute_query(
       query_request("SELECT count(*) + 1 AS rows_plus, count(tag) * 2 AS tags_twice, "

@@ -205,9 +205,11 @@ now prevalidates complete immutable routes and nested wire limits, rotates only 
 finite address list, arbitrates retry and query deadlines, cancels all active clients on failure,
 and enables merged physical output only after every mutable tablet closes. Native finalization and
 scheduler publication now reuse the same authority-revalidating, query-accounted projection,
-sort/limit, and all-or-nothing encoder as the Manifest-pinned path. Replicated/package query
-preparation still does not select this mutable lifecycle, so row-backed grouped execution remains
-the packaged differential oracle. The packaged shared query-control endpoint now exact-decodes the
+sort/limit, and all-or-nothing encoder as the Manifest-pinned path. Replicated Native preparation
+selects this mutable lifecycle after successful direct grouped lowering. A local serving node uses
+the same worker and canonical state validation without constructing a forbidden TCP self-route;
+remote fragments use committed routes. Only `NOT_SUPPORTED` from direct lowering selects the
+row-backed grouped differential oracle. The packaged shared query-control endpoint exact-decodes the
 common mutable request before selecting the row or grouped receiver by plan mode. Grouped replies
 retain their distinct envelope and independent frame, byte, nested decode-memory, and completion
 checks; remote authority, rows, and grouped sufficient state therefore share the one committed node

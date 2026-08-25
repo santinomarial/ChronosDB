@@ -22,6 +22,8 @@ namespace chronos::cluster {
 struct DistributedMutableVectorGroupedAggregateQueryTcpExecutionConfig {
   network::ConnectionAuthenticator* authenticator{};
   const ClusterNodePrincipalAuthorizer* node_authorizer{};
+  raft::NodeId local_node_id{};
+  DistributedMutableVectorGroupedAggregateQueryWorkerService* local_worker{};
   std::vector<DistributedQueryNodeRoute> routes;
   DistributedMutableVectorGroupedAggregateQueryTlsLimits carrier_limits;
   DistributedVectorGroupedAggregateFinalizationLimitsV2 finalization_limits;
@@ -37,6 +39,8 @@ struct DistributedMutableVectorGroupedAggregateQueryTcpExecutionMetrics {
   std::uint64_t retries_started{};
   std::uint64_t transport_completed_attempts{};
   std::uint64_t transport_failed_attempts{};
+  std::uint64_t local_completed_attempts{};
+  std::uint64_t local_failed_attempts{};
   std::uint64_t rebindings_started{};
   std::size_t active_attempts{};
 };
@@ -48,11 +52,13 @@ enum class DistributedMutableVectorGroupedAggregateQueryTcpExecutionState : std:
   kCancelled = 4,
 };
 
-// Single-threaded poll owner for one immutable all-tablet mutable grouped execution. It owns at
-// most one grouped authority-bound TCP/mTLS client per tablet. Complete grouped output remains
-// unavailable until every tablet stream closes and the coordinator seals globally. Borrowed route
-// TLS contexts and authentication policy outlive it. Native output remains unavailable until all
-// tablets close and grouped merge, final projection/order/limit, and encoding all succeed.
+// Single-threaded poll owner for one immutable all-tablet mutable grouped execution. A target whose
+// serving node equals local_node_id executes through the borrowed in-process worker; every other
+// target owns at most one grouped authority-bound TCP/mTLS client. Complete grouped output remains
+// unavailable until every tablet stream closes and the coordinator seals globally. Borrowed local
+// worker, route TLS contexts, and authentication policy outlive it. Native output remains
+// unavailable until all tablets close and grouped merge, final projection/order/limit, and
+// encoding all succeed.
 class DistributedMutableVectorGroupedAggregateQueryTcpExecution {
 public:
   DistributedMutableVectorGroupedAggregateQueryTcpExecution() noexcept;

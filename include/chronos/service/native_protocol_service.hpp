@@ -1,6 +1,7 @@
 #ifndef CHRONOS_SERVICE_NATIVE_PROTOCOL_SERVICE_HPP_
 #define CHRONOS_SERVICE_NATIVE_PROTOCOL_SERVICE_HPP_
 
+#include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_execution.hpp"
 #include "chronos/cluster/distributed_mutable_vector_rows_query_tcp_execution.hpp"
 #include "chronos/cluster/distributed_vector_aggregate_rows_finalization_v2.hpp"
 #include "chronos/cluster/distributed_vector_physical_rows_finalization_v2.hpp"
@@ -82,11 +83,12 @@ public:
 
 using NativeIdentityGenerator = common::UuidGenerator;
 
-// Borrowed split-leader mutable-query client policy for direct rows and transitional global
-// aggregates. source_node_id names the coordinator transport identity. Fragments led by that node
-// execute through local_worker; all others use authenticated TLS routes because the carrier rejects
-// self-routes. The config, worker, security owners, TLS contexts, and every referenced TLS client
-// context must outlive the NativeProtocolService.
+// Borrowed split-leader mutable-query client policy for direct rows, transitional global
+// aggregates, and direct-input grouped sufficient state. source_node_id names the coordinator
+// transport identity. Fragments led by that node execute through the matching local worker; all
+// others use authenticated TLS routes because the carrier rejects self-routes. The config, workers,
+// security owners, TLS contexts, and every referenced TLS client context must outlive the
+// NativeProtocolService.
 struct NativeDistributedMutableVectorRowsQueryConfig {
   raft::NodeId source_node_id{};
   network::ConnectionAuthenticator* authenticator{};
@@ -94,18 +96,26 @@ struct NativeDistributedMutableVectorRowsQueryConfig {
   // Optional synchronous worker for fragments whose serving node equals source_node_id. Required
   // when a prepared query contains such a fragment; it must outlive the service.
   cluster::DistributedMutableVectorQueryWorkerService* local_worker{};
+  // Optional synchronous sufficient-state GROUP BY worker for fragments served by
+  // source_node_id. Required when an eligible grouped query contains such a fragment; it must
+  // outlive the service.
+  cluster::DistributedMutableVectorGroupedAggregateQueryWorkerService* local_grouped_worker{};
   std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts;
   cluster::DistributedQueryRouteResolutionLimits route_resolution;
   query::DistributedVectorRowsSqlLoweringLimits sql_lowering;
   query::DistributedVectorAggregateSqlLoweringLimits aggregate_sql_lowering;
   query::DistributedVectorGroupedSqlLoweringLimits grouped_sql_lowering;
+  query::DistributedVectorGroupedAggregateSqlLoweringLimits grouped_aggregate_sql_lowering;
   cluster::DistributedMutableVectorQueryExecutionLimits execution;
+  cluster::DistributedMutableVectorGroupedAggregateQueryExecutionLimits grouped_aggregate_execution;
   cluster::DistributedMutableVectorQueryTlsLimits carrier;
+  cluster::DistributedMutableVectorGroupedAggregateQueryTlsLimits grouped_aggregate_carrier;
   cluster::RaftReadAuthorityTlsClientLimits authority_carrier;
   cluster::RaftReadAuthorityTcpRetryLimits authority_retry;
   cluster::DistributedVectorRowFinalizationLimitsV2 finalization;
   cluster::DistributedVectorAggregateRowsFinalizationLimitsV2 aggregate_finalization;
   cluster::DistributedVectorPhysicalRowsFinalizationLimitsV2 grouped_finalization;
+  cluster::DistributedVectorGroupedAggregateFinalizationLimitsV2 grouped_aggregate_finalization;
   std::chrono::milliseconds connect_timeout{5000};
   std::chrono::milliseconds authority_connect_timeout{5000};
   std::chrono::milliseconds execution_timeout{30000};
