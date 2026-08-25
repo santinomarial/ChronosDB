@@ -901,6 +901,13 @@ Focused executions passed:
   encoder synchronously, and local output still materializes through the same table. Focused
   encode/decode evidence proves COUNT/SUM states without a second grouping oracle. Worker plan
   splitting, stream construction, global merge, transport, and routing remain.
+- Grouped partial-state merge continuation: the shared table now accepts exact borrowed scalar keys
+  and sufficient states, coalesces them with the physical-row all-type hash/equality rules, and
+  finalizes first-seen rows only after entering a sealed output phase. Query-context mismatches fail
+  closed; allocation/state errors destroy the table so partial merge is never observable. Every
+  frozen type plus signed-zero/NaN differential coverage, COUNT/SUM/AVG cross-tablet results, and
+  variable key/extremum allocation injection pass. Canonical all-tablet stream arbitration, worker
+  plan splitting, transport, and partition routing remain.
 - Cross-tablet aggregate-definition ownership continuation: the compatible Fragment-v2 snapshot
   derives ungrouped definitions independently under every tablet's projected destination schema,
   rejects any exact mismatch, and retains the shared vector once with the Manifest pin and result

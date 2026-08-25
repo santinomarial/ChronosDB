@@ -178,11 +178,11 @@ private:
   bool emitted_{};
 };
 
-// The single query-accounted multi-key/all-type group-state owner used by local GROUP BY and
-// distributed sufficient-state workers. It preserves the existing canonical hash/equality,
+// The single query-accounted multi-key/all-type group-state owner used by local GROUP BY,
+// distributed sufficient-state workers, and coordinators. It preserves the canonical hash/equality,
 // first-seen order, fixed-capacity admission, cancellation, and aggregate kernels. Returned spans
 // borrow this thread-affine table and remain valid until its next mutating call, move, destruction,
-// or that group's materialization by the local operator.
+// or that group's materialization.
 class MergeableVectorGroupedAggregateTable {
 public:
   MergeableVectorGroupedAggregateTable() = delete;
@@ -200,20 +200,31 @@ public:
 
   [[nodiscard]] common::Result<void> accumulate(const AccountedVectorChunk& chunk,
                                                 const QueryResourceContext& resources);
+  // Coordinator-side merge. Keys and states are borrowed only for this synchronous call. An error
+  // makes the table terminal and releases all retained state so no partially merged group can be
+  // observed or retried.
+  [[nodiscard]] common::Result<void>
+  merge_group(std::span<const ScalarValue> keys,
+              std::span<const MergeableVectorAggregateState> states,
+              const QueryResourceContext& resources);
   [[nodiscard]] std::size_t group_count() const noexcept;
   [[nodiscard]] common::Result<std::span<const ScalarValue>>
   group_keys(std::size_t group_index) const;
   [[nodiscard]] common::Result<std::span<const MergeableVectorAggregateState>>
   group_states(std::size_t group_index) const;
+  // Starts the terminal output phase and must be called in first-seen group order. No accumulation
+  // or merge is accepted after the first materialization.
+  [[nodiscard]] common::Result<PhysicalOperatorStep>
+  materialize_group(std::size_t group_index, const QueryResourceContext& resources,
+                    VectorChunkLimits output_limits = {});
 
 private:
   class Impl;
   explicit MergeableVectorGroupedAggregateTable(std::unique_ptr<Impl> impl) noexcept;
-  [[nodiscard]] common::Result<PhysicalOperatorStep>
-  materialize_group(std::size_t group_index, const QueryResourceContext& resources,
-                    VectorChunkLimits output_limits);
 
   std::unique_ptr<Impl> impl_;
+  std::size_t next_output_group_{};
+  bool output_started_{};
 
   friend class GroupedAggregateOperator;
 };

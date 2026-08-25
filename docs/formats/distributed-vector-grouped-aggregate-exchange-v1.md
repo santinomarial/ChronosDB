@@ -88,7 +88,10 @@ before any frame-length allocation. Exact framing, canonical position/flags/coun
 limits, reserved bytes, complete-frame CRC, and payload CRC pass before key or nested-state
 allocation. Per-key and per-state CRCs then pass before canonical scalar or nested-state decode.
 Checksum-valid unknown versions are unsupported; damaged/noncanonical bytes are corruption; lower
-deployment bounds are resource exhaustion.
+deployment bounds are resource exhaustion. After decode, the shared query-accounted grouped table
+can synchronously copy the key, merge the sufficient states, and release the message. The enclosing
+coordinator must supply one canonical accepted-tablet/group order because floating sufficient-state
+merge order is observable.
 
 Decoded key containers and payloads retain one conservative query-memory reservation. Nested
 variable extrema retain their independent existing reservations. Failure exposes no partial group
@@ -99,5 +102,5 @@ complete.
 
 CRC32C provides accidental-damage detection, not authentication. An enclosing mutually
 authenticated transport must bind the exact fragment and peer identities. Stream retry,
-all-tablet closure, duplicate arbitration, group hashing/merge, skew bounds, global finalization,
+all-tablet closure, duplicate arbitration, canonical merge ordering, skew bounds, final projection,
 ORDER BY, and LIMIT remain enclosing responsibilities.

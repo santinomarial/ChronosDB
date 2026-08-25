@@ -924,6 +924,74 @@ void hash_bytes(std::uint64_t& hash, const common::ByteView bytes) noexcept {
   return {};
 }
 
+[[nodiscard]] common::Result<void>
+hash_group_scalar(std::uint64_t& hash, const schema::LogicalType type, const ScalarValue& value) {
+  if (value.type() != std::optional<schema::LogicalType>{type})
+    return common::make_unexpected(invalid("group key scalar type is invalid"));
+  hash_integer(hash, type.code());
+  hash_integer(hash, type.parameter_0());
+  hash_integer(hash, type.parameter_1());
+  hash_byte(hash, value.is_null() ? 0U : 1U);
+  if (value.is_null())
+    return {};
+  if (type.kind() == schema::LogicalTypeKind::kBool) {
+    const auto* boolean = std::get_if<bool>(&value.storage());
+    if (boolean == nullptr)
+      return common::make_unexpected(invalid("Boolean group hash storage is invalid"));
+    hash_byte(hash, *boolean ? 1U : 0U);
+    return {};
+  }
+  if (type.kind() == schema::LogicalTypeKind::kFloat32) {
+    const auto* number = std::get_if<float>(&value.storage());
+    if (number == nullptr)
+      return common::make_unexpected(invalid("FLOAT32 group hash storage is invalid"));
+    const std::uint32_t bits =
+        std::isnan(*number)
+            ? std::uint32_t{0x7fc00000U}
+            : (*number == 0.0F ? std::uint32_t{0U} : std::bit_cast<std::uint32_t>(*number));
+    hash_integer(hash, bits);
+    return {};
+  }
+  if (type.kind() == schema::LogicalTypeKind::kFloat64) {
+    const auto* number = std::get_if<double>(&value.storage());
+    if (number == nullptr)
+      return common::make_unexpected(invalid("FLOAT64 group hash storage is invalid"));
+    const std::uint64_t bits =
+        std::isnan(*number)
+            ? std::uint64_t{0x7ff8000000000000ULL}
+            : (*number == 0.0 ? std::uint64_t{0U} : std::bit_cast<std::uint64_t>(*number));
+    hash_integer(hash, bits);
+    return {};
+  }
+  if (type.kind() == schema::LogicalTypeKind::kString ||
+      type.kind() == schema::LogicalTypeKind::kSymbol) {
+    const auto* text = std::get_if<std::string>(&value.storage());
+    if (text == nullptr)
+      return common::make_unexpected(invalid("text group hash storage is invalid"));
+    hash_bytes(hash, std::as_bytes(std::span{text->data(), text->size()}));
+    return {};
+  }
+  if (type.kind() == schema::LogicalTypeKind::kBinary) {
+    const auto* bytes = std::get_if<std::vector<std::byte>>(&value.storage());
+    if (bytes == nullptr)
+      return common::make_unexpected(invalid("binary group hash storage is invalid"));
+    hash_bytes(hash, *bytes);
+    return {};
+  }
+  std::array<std::byte, 16U> canonical{};
+  const auto size = canonical_scalar_value_size(value);
+  if (!size.has_value())
+    return common::make_unexpected(size.error());
+  if (*size > canonical.size())
+    return common::make_unexpected(invalid("fixed group hash payload is invalid"));
+  const std::span<std::byte> payload = std::span{canonical}.first(*size);
+  const auto written = write_canonical_scalar_value(value, payload);
+  if (!written.has_value())
+    return common::make_unexpected(written.error());
+  hash_bytes(hash, payload);
+  return {};
+}
+
 [[nodiscard]] common::Result<std::size_t> group_bucket_count(const std::size_t maximum_groups) {
   const std::optional<std::size_t> required =
       common::checked_multiply(maximum_groups, std::size_t{2U});
@@ -1083,10 +1151,51 @@ public:
     return {};
   }
 
+  [[nodiscard]] common::Result<void>
+  merge_group(const std::span<const ScalarValue> keys,
+              const std::span<const MergeableVectorAggregateState> states,
+              const QueryResourceContext& resources) {
+    if (keys.size() != keys_.size() || states.size() != definitions_.size())
+      return common::make_unexpected(invalid("grouped aggregate merge width is invalid"));
+    for (std::size_t index = 0U; index < keys.size(); ++index) {
+      if (keys[index].type() != std::optional<schema::LogicalType>{keys_[index].type} ||
+          (keys[index].is_null() && !keys_[index].nullable)) {
+        return common::make_unexpected(invalid("grouped aggregate merge key shape is invalid"));
+      }
+    }
+    for (std::size_t index = 0U; index < states.size(); ++index) {
+      if (states[index].definition() != definitions_[index])
+        return common::make_unexpected(invalid("grouped aggregate merge state shape is invalid"));
+    }
+    const common::Result<void> storage = ensure_group_storage(resources);
+    if (!storage.has_value())
+      return common::make_unexpected(storage.error());
+    common::Result<GroupLookup> lookup = find_group(keys);
+    if (!lookup.has_value())
+      return common::make_unexpected(lookup.error());
+    if (!lookup->group_index.has_value())
+      return create_merged_group(keys, states, *lookup, resources);
+    const std::size_t destination_index = lookup->group_index.value_or(groups_.size());
+    if (destination_index >= groups_.size())
+      return common::make_unexpected(invalid("grouped aggregate lookup result is invalid"));
+    GroupState& destination = groups_[destination_index];
+    for (std::size_t index = 0U; index < states.size(); ++index) {
+      const common::Result<void> merged =
+          destination.aggregates[index].merge(states[index], resources);
+      if (!merged.has_value())
+        return common::make_unexpected(merged.error());
+    }
+    return {};
+  }
+
   [[nodiscard]] common::Result<EmittedGroup> take_output(const std::size_t group_index,
                                                          const QueryResourceContext& resources) {
     if (group_index >= groups_.size())
       return common::make_unexpected(out_of_range("grouped aggregate output index is invalid"));
+    if (!resources.owns(group_storage_reservation_) ||
+        !resources.owns(groups_[group_index].reservation)) {
+      return common::make_unexpected(invalid("grouped aggregate table belongs to another query"));
+    }
     common::Result<std::size_t> position_bytes =
         multiply_bytes(keys_.size() + definitions_.size(), sizeof(ColumnOutputPosition) * 2U,
                        "grouped aggregate output configuration size overflowed");
@@ -1172,6 +1281,47 @@ private:
       if (!hashed.has_value())
         return common::make_unexpected(hashed.error());
     }
+    return find_group_by_hash(hash, [&chunk, selected_row, this](const std::size_t candidate) {
+      for (std::size_t key = 0U; key < keys_.size(); ++key) {
+        const common::Result<columnar::ColumnCellView> cell =
+            chunk.cell({.column_ordinal = keys_[key].column_ordinal, .selected_row = selected_row});
+        if (!cell.has_value())
+          return common::Result<bool>{common::make_unexpected(cell.error())};
+        common::Result<bool> same =
+            cell_equals_scalar(*cell, keys_[key].type, groups_[candidate].key[key]);
+        if (!same.has_value() || !*same)
+          return same;
+      }
+      return common::Result<bool>{true};
+    });
+  }
+
+  [[nodiscard]] common::Result<GroupLookup>
+  find_group(const std::span<const ScalarValue> keys) const {
+    if (buckets_.empty())
+      return common::make_unexpected(invalid("grouped aggregate hash storage is unavailable"));
+    std::uint64_t hash = kGroupHashOffset;
+    for (std::size_t index = 0U; index < keys.size(); ++index) {
+      const common::Result<void> hashed = hash_group_scalar(hash, keys_[index].type, keys[index]);
+      if (!hashed.has_value())
+        return common::make_unexpected(hashed.error());
+    }
+    return find_group_by_hash(hash, [&keys, this](const std::size_t candidate) {
+      for (std::size_t key = 0U; key < keys_.size(); ++key) {
+        const common::Result<int> order = compare_scalar_values(
+            keys[key], groups_[candidate].key[key], ScalarNullPlacement::kLast);
+        if (!order.has_value())
+          return common::Result<bool>{common::make_unexpected(order.error())};
+        if (*order != 0)
+          return common::Result<bool>{false};
+      }
+      return common::Result<bool>{true};
+    });
+  }
+
+  template <typename Equal>
+  [[nodiscard]] common::Result<GroupLookup> find_group_by_hash(const std::uint64_t hash,
+                                                               Equal&& equal) const {
     const std::size_t mask = buckets_.size() - 1U;
     for (std::size_t probe = 0U; probe < buckets_.size(); ++probe) {
       const std::size_t bucket = (static_cast<std::size_t>(hash) + probe) & mask;
@@ -1182,30 +1332,22 @@ private:
         return common::make_unexpected(invalid("grouped aggregate hash bucket is invalid"));
       if (groups_[candidate].hash != hash)
         continue;
-      bool equal = true;
-      for (std::size_t key = 0U; key < keys_.size(); ++key) {
-        const common::Result<columnar::ColumnCellView> cell =
-            chunk.cell({.column_ordinal = keys_[key].column_ordinal, .selected_row = selected_row});
-        if (!cell.has_value())
-          return common::make_unexpected(cell.error());
-        common::Result<bool> same =
-            cell_equals_scalar(*cell, keys_[key].type, groups_[candidate].key[key]);
-        if (!same.has_value())
-          return common::make_unexpected(same.error());
-        if (!*same) {
-          equal = false;
-          break;
-        }
-      }
-      if (equal)
+      common::Result<bool> same = equal(candidate);
+      if (!same.has_value())
+        return common::make_unexpected(same.error());
+      if (*same)
         return GroupLookup{.group_index = candidate, .bucket_index = bucket, .hash = hash};
     }
     return common::make_unexpected(exhausted("grouped aggregate hash table is full"));
   }
 
   [[nodiscard]] common::Result<void> ensure_group_storage(const QueryResourceContext& resources) {
-    if (group_storage_reservation_.is_valid())
-      return {};
+    if (group_storage_reservation_.is_valid()) {
+      return resources.owns(group_storage_reservation_)
+                 ? common::Result<void>{}
+                 : common::Result<void>{common::make_unexpected(
+                       invalid("grouped aggregate table belongs to another query"))};
+    }
     common::Result<std::size_t> slot_bytes = multiply_bytes(
         limits_.maximum_groups, sizeof(GroupState) * 2U, "grouped aggregate slot size overflowed");
     if (!slot_bytes.has_value())
@@ -1307,6 +1449,49 @@ private:
     return add_bytes(*charge, *overhead, "grouped aggregate state size overflowed");
   }
 
+  [[nodiscard]] common::Result<std::size_t>
+  group_charge(const std::span<const ScalarValue> keys) const {
+    common::Result<std::size_t> charge = multiply_bytes(
+        keys_.size(), sizeof(ScalarValue) * 2U, "grouped aggregate key state size overflowed");
+    if (!charge.has_value())
+      return charge;
+    common::Result<std::size_t> aggregate_bytes =
+        multiply_bytes(definitions_.size(), sizeof(MergeableVectorAggregateState) * 2U,
+                       "grouped aggregate state size overflowed");
+    if (!aggregate_bytes.has_value())
+      return aggregate_bytes;
+    charge = add_bytes(*charge, *aggregate_bytes, "grouped aggregate state size overflowed");
+    if (!charge.has_value())
+      return charge;
+    std::size_t key_bytes = 0U;
+    std::size_t allocation_count = 2U;
+    for (std::size_t index = 0U; index < keys.size(); ++index) {
+      const ScalarValue& key = keys[index];
+      if (key.is_null() || !keys_[index].type.is_variable_width())
+        continue;
+      const common::Result<std::size_t> size = canonical_scalar_value_size(key);
+      if (!size.has_value())
+        return common::make_unexpected(size.error());
+      common::Result<std::size_t> next =
+          add_bytes(key_bytes, *size, "group key payload size overflowed");
+      if (!next.has_value())
+        return next;
+      key_bytes = *next;
+      ++allocation_count;
+    }
+    if (key_bytes > limits_.maximum_key_bytes_per_group)
+      return common::make_unexpected(exhausted("group key payload exceeds its byte limit"));
+    charge = add_bytes(*charge, key_bytes, "grouped aggregate state size overflowed");
+    if (!charge.has_value())
+      return charge;
+    common::Result<std::size_t> overhead =
+        multiply_bytes(allocation_count, kConservativeAllocationOverheadBytes,
+                       "grouped aggregate allocation overhead overflowed");
+    if (!overhead.has_value())
+      return overhead;
+    return add_bytes(*charge, *overhead, "grouped aggregate state size overflowed");
+  }
+
   [[nodiscard]] common::Result<std::size_t> create_group(const VectorChunk& chunk,
                                                          const std::size_t selected_row,
                                                          const GroupLookup& lookup,
@@ -1358,6 +1543,55 @@ private:
                                    .hash = lookup.hash});
       buckets_[lookup.bucket_index] = groups_.size() - 1U;
       return groups_.size() - 1U;
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(exhausted("grouped aggregate state allocation failed"));
+    } catch (const std::length_error&) {
+      return common::make_unexpected(exhausted("grouped aggregate state exceeds container limits"));
+    }
+  }
+
+  [[nodiscard]] common::Result<void>
+  create_merged_group(const std::span<const ScalarValue> keys,
+                      const std::span<const MergeableVectorAggregateState> states,
+                      const GroupLookup& lookup, const QueryResourceContext& resources) {
+    if (groups_.size() >= limits_.maximum_groups)
+      return common::make_unexpected(exhausted("grouped aggregate group count exceeds its limit"));
+    if (lookup.group_index.has_value() || lookup.bucket_index >= buckets_.size() ||
+        buckets_[lookup.bucket_index] != kEmptyGroupBucket) {
+      return common::make_unexpected(invalid("grouped aggregate insertion bucket is invalid"));
+    }
+    common::Result<std::size_t> charge = group_charge(keys);
+    if (!charge.has_value())
+      return common::make_unexpected(charge.error());
+    common::Result<QueryMemoryReservation> reservation = resources.reserve(*charge);
+    if (!reservation.has_value())
+      return common::make_unexpected(reservation.error());
+    try {
+      std::vector<ScalarValue> retained_keys{keys.begin(), keys.end()};
+      std::vector<MergeableVectorAggregateState> aggregates;
+      aggregates.reserve(definitions_.size());
+      for (std::size_t index = 0U; index < definitions_.size(); ++index) {
+        auto state = MergeableVectorAggregateState::create(definitions_[index],
+                                                           limits_.maximum_variable_extremum_bytes);
+        if (!state.has_value())
+          return common::make_unexpected(state.error());
+        common::Result<void> merged = state->merge(states[index], resources);
+        if (!merged.has_value())
+          return common::make_unexpected(merged.error());
+        aggregates.push_back(std::move(*state));
+      }
+      common::Result<std::size_t> retained = retained_group_bytes(retained_keys, aggregates);
+      if (!retained.has_value())
+        return common::make_unexpected(retained.error());
+      if (*retained > reservation->bytes())
+        return common::make_unexpected(
+            exhausted("grouped aggregate state allocation exceeded its charge"));
+      groups_.push_back(GroupState{.key = std::move(retained_keys),
+                                   .aggregates = std::move(aggregates),
+                                   .reservation = std::move(*reservation),
+                                   .hash = lookup.hash});
+      buckets_[lookup.bucket_index] = groups_.size() - 1U;
+      return {};
     } catch (const std::bad_alloc&) {
       return common::make_unexpected(exhausted("grouped aggregate state allocation failed"));
     } catch (const std::length_error&) {
@@ -1481,9 +1715,33 @@ MergeableVectorGroupedAggregateTable::accumulate(const AccountedVectorChunk& chu
                                                  const QueryResourceContext& resources) {
   if (impl_ == nullptr)
     return common::make_unexpected(invalid("grouped aggregate table was moved from"));
+  if (output_started_)
+    return common::make_unexpected(invalid("grouped aggregate table output already started"));
   if (!chunk.belongs_to(resources))
     return common::make_unexpected(invalid("grouped aggregate input belongs to another query"));
-  return impl_->consume(chunk.chunk(), resources);
+  common::Result<void> consumed = impl_->consume(chunk.chunk(), resources);
+  if (!consumed.has_value())
+    impl_.reset();
+  return consumed;
+}
+
+common::Result<void> MergeableVectorGroupedAggregateTable::merge_group(
+    const std::span<const ScalarValue> keys,
+    const std::span<const MergeableVectorAggregateState> states,
+    const QueryResourceContext& resources) {
+  if (impl_ == nullptr)
+    return common::make_unexpected(invalid("grouped aggregate table was moved from"));
+  if (output_started_)
+    return common::make_unexpected(invalid("grouped aggregate table output already started"));
+  const common::Result<void> active = resources.check_cancelled();
+  if (!active.has_value()) {
+    impl_.reset();
+    return common::make_unexpected(active.error());
+  }
+  common::Result<void> merged = impl_->merge_group(keys, states, resources);
+  if (!merged.has_value())
+    impl_.reset();
+  return merged;
 }
 
 std::size_t MergeableVectorGroupedAggregateTable::group_count() const noexcept {
@@ -1510,10 +1768,23 @@ MergeableVectorGroupedAggregateTable::materialize_group(const std::size_t group_
                                                         const VectorChunkLimits output_limits) {
   if (impl_ == nullptr)
     return common::make_unexpected(invalid("grouped aggregate table was moved from"));
+  if (group_index != next_output_group_)
+    return common::make_unexpected(
+        invalid("grouped aggregate output must follow first-seen group order"));
+  output_started_ = true;
   auto emitted = impl_->take_output(group_index, resources);
-  if (!emitted.has_value())
+  if (!emitted.has_value()) {
+    impl_.reset();
     return common::make_unexpected(emitted.error());
-  return materialize_single_row(resources, std::move(emitted->positions), output_limits);
+  }
+  common::Result<PhysicalOperatorStep> materialized =
+      materialize_single_row(resources, std::move(emitted->positions), output_limits);
+  if (!materialized.has_value()) {
+    impl_.reset();
+    return common::make_unexpected(materialized.error());
+  }
+  ++next_output_group_;
+  return materialized;
 }
 
 GroupedAggregateOperator::GroupedAggregateOperator(std::unique_ptr<PhysicalOperator> input,

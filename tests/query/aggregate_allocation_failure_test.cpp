@@ -391,5 +391,80 @@ TEST(GroupedAggregateAllocationFailureTest,
   EXPECT_TRUE(reached_success);
 }
 
+TEST(MergeableVectorGroupedAggregateTableAllocationFailureTest,
+     MergeClassifiesEveryVariableKeyAllocationFailureAndDiscardsPartialState) {
+  const std::vector<VectorGroupKeyDefinition> keys{
+      {.column_ordinal = 0U,
+       .type = schema::LogicalType::create(schema::LogicalTypeKind::kString).value(),
+       .nullable = false}};
+  const std::vector<VectorAggregateDefinition> counts{
+      {.operation = VectorAggregateOperation::kCountStar, .input = std::nullopt}};
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 64U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    QueryResourceContext resources = QueryResourceContext::create(8U << 20U).value();
+    auto source = MergeableVectorGroupedAggregateTable::create(keys, counts).value();
+    ASSERT_TRUE(source.accumulate(grouped_input(resources), resources).has_value());
+    auto source_keys = source.group_keys(0U);
+    auto source_states = source.group_states(0U);
+    ASSERT_TRUE(source_keys.has_value());
+    ASSERT_TRUE(source_states.has_value());
+    auto coordinator = MergeableVectorGroupedAggregateTable::create(keys, counts).value();
+    const std::size_t before_merge = resources.reserved_memory_bytes();
+    std::size_t observed = 0U;
+    auto merged = run_with_allocation_failure(fail_after, observed, [&] {
+      return coordinator.merge_group(*source_keys, *source_states, resources);
+    });
+    EXPECT_GT(observed, 0U);
+    if (merged.has_value()) {
+      reached_success = true;
+      break;
+    }
+    EXPECT_EQ(merged.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(coordinator.group_count(), 0U);
+    EXPECT_EQ(resources.reserved_memory_bytes(), before_merge);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(MergeableVectorGroupedAggregateTableAllocationFailureTest,
+     MergeClassifiesEveryVariableExtremumAllocationFailureAndDiscardsPartialState) {
+  const schema::LogicalType string =
+      schema::LogicalType::create(schema::LogicalTypeKind::kString).value();
+  const std::vector<VectorGroupKeyDefinition> keys{
+      {.column_ordinal = 0U, .type = int64_type(), .nullable = false}};
+  const std::vector<VectorAggregateDefinition> extrema{
+      {.operation = VectorAggregateOperation::kMinimum,
+       .input = VectorAggregateInput{.column_ordinal = 1U, .type = string, .nullable = false}},
+      {.operation = VectorAggregateOperation::kMaximum,
+       .input = VectorAggregateInput{.column_ordinal = 1U, .type = string, .nullable = false}}};
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 96U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    QueryResourceContext resources = QueryResourceContext::create(8U << 20U).value();
+    auto source = MergeableVectorGroupedAggregateTable::create(keys, extrema).value();
+    ASSERT_TRUE(source.accumulate(grouped_extremum_input(resources), resources).has_value());
+    auto source_keys = source.group_keys(0U);
+    auto source_states = source.group_states(0U);
+    ASSERT_TRUE(source_keys.has_value());
+    ASSERT_TRUE(source_states.has_value());
+    auto coordinator = MergeableVectorGroupedAggregateTable::create(keys, extrema).value();
+    const std::size_t before_merge = resources.reserved_memory_bytes();
+    std::size_t observed = 0U;
+    auto merged = run_with_allocation_failure(fail_after, observed, [&] {
+      return coordinator.merge_group(*source_keys, *source_states, resources);
+    });
+    EXPECT_GT(observed, 0U);
+    if (merged.has_value()) {
+      reached_success = true;
+      break;
+    }
+    EXPECT_EQ(merged.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(coordinator.group_count(), 0U);
+    EXPECT_EQ(resources.reserved_memory_bytes(), before_merge);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
 } // namespace
 } // namespace chronos::query

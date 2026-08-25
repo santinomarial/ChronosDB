@@ -936,6 +936,135 @@ TEST(MergeableVectorGroupedAggregateTableTest,
       common::make_unexpected(common::Status{common::StatusCode::kInternal, "drop grouped table"});
 }
 
+TEST(MergeableVectorGroupedAggregateTableTest,
+     MergesEqualCrossTabletGroupsAndFinalizesInDeterministicFirstSeenOrder) {
+  QueryResourceContext resources = QueryResourceContext::create(16U << 20U).value();
+  const std::vector<VectorGroupKeyDefinition> group_keys{
+      {.column_ordinal = 0U, .type = type(schema::LogicalTypeKind::kString), .nullable = true}};
+  const std::vector<VectorAggregateDefinition> definitions{
+      {.operation = VectorAggregateOperation::kCountStar, .input = std::nullopt},
+      {.operation = VectorAggregateOperation::kSum,
+       .input = VectorAggregateInput{.column_ordinal = 1U,
+                                     .type = type(schema::LogicalTypeKind::kInt64),
+                                     .nullable = true}},
+      {.operation = VectorAggregateOperation::kAverage,
+       .input = VectorAggregateInput{
+           .column_ordinal = 1U, .type = type(schema::LogicalTypeKind::kInt64), .nullable = true}}};
+  const auto partial = [&resources, &group_keys,
+                        &definitions](const std::span<const std::optional<std::string_view>> keys,
+                                      const std::span<const std::optional<std::int64_t>> values) {
+    std::vector<columnar::OwnedPhysicalColumn> columns;
+    columns.push_back(string_column(keys));
+    columns.push_back(signed_column(schema::LogicalTypeKind::kInt64, values));
+    auto input = accounted_chunk(resources, std::move(columns));
+    auto table = MergeableVectorGroupedAggregateTable::create(group_keys, definitions);
+    EXPECT_TRUE(table.has_value());
+    if (table.has_value())
+      EXPECT_TRUE(table->accumulate(input, resources).has_value());
+    return table;
+  };
+
+  const std::array<std::optional<std::string_view>, 3> first_keys{"A", "A", "B"};
+  const std::array<std::optional<std::int64_t>, 3> first_values{1, 3, 5};
+  const std::array<std::optional<std::string_view>, 3> second_keys{"A", "C", "A"};
+  const std::array<std::optional<std::int64_t>, 3> second_values{7, 9, std::nullopt};
+  auto first = partial(first_keys, first_values);
+  auto second = partial(second_keys, second_values);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(second.has_value());
+
+  auto coordinator = MergeableVectorGroupedAggregateTable::create(group_keys, definitions);
+  ASSERT_TRUE(coordinator.has_value());
+  const auto merge_partial = [&coordinator,
+                              &resources](const MergeableVectorGroupedAggregateTable& source) {
+    for (std::size_t group = 0U; group < source.group_count(); ++group) {
+      auto keys = source.group_keys(group);
+      auto states = source.group_states(group);
+      ASSERT_TRUE(keys.has_value());
+      ASSERT_TRUE(states.has_value());
+      auto merged = coordinator->merge_group(*keys, *states, resources);
+      ASSERT_TRUE(merged.has_value()) << merged.error().to_string();
+    }
+  };
+  merge_partial(*first);
+  merge_partial(*second);
+  ASSERT_EQ(coordinator->group_count(), 3U);
+
+  auto first_group_keys = first->group_keys(0U);
+  auto first_group_states = first->group_states(0U);
+  ASSERT_TRUE(first_group_keys.has_value());
+  ASSERT_TRUE(first_group_states.has_value());
+  auto wrong_context =
+      MergeableVectorGroupedAggregateTable::create(group_keys, definitions).value();
+  ASSERT_TRUE(
+      wrong_context.merge_group(*first_group_keys, *first_group_states, resources).has_value());
+  QueryResourceContext foreign = QueryResourceContext::create(4U << 20U).value();
+  EXPECT_EQ(
+      wrong_context.merge_group(*first_group_keys, *first_group_states, foreign).error().code(),
+      common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(wrong_context.group_count(), 0U);
+
+  EXPECT_EQ(coordinator->materialize_group(1U, resources).error().code(),
+            common::StatusCode::kInvalidArgument);
+
+  const std::array<std::string_view, 3> expected_keys{"A", "B", "C"};
+  const std::array<std::int64_t, 3> expected_counts{4, 1, 1};
+  const std::array<std::int64_t, 3> expected_sums{11, 5, 9};
+  const std::array<double, 3> expected_averages{11.0 / 3.0, 5.0, 9.0};
+  for (std::size_t group = 0U; group < coordinator->group_count(); ++group) {
+    auto output = coordinator->materialize_group(group, resources);
+    ASSERT_TRUE(output.has_value()) << output.error().to_string();
+    const VectorChunk& chunk = output->chunk()->chunk();
+    EXPECT_EQ(std::get<std::string>(cell(chunk, 0U).storage()), expected_keys[group]);
+    EXPECT_EQ(std::get<std::int64_t>(cell(chunk, 1U).storage()), expected_counts[group]);
+    EXPECT_EQ(std::get<std::int64_t>(cell(chunk, 2U).storage()), expected_sums[group]);
+    EXPECT_DOUBLE_EQ(std::get<double>(cell(chunk, 3U).storage()), expected_averages[group]);
+  }
+  auto source_keys = first->group_keys(0U);
+  auto source_states = first->group_states(0U);
+  ASSERT_TRUE(source_keys.has_value());
+  ASSERT_TRUE(source_states.has_value());
+  EXPECT_EQ(coordinator->merge_group(*source_keys, *source_states, resources).error().code(),
+            common::StatusCode::kInvalidArgument);
+}
+
+TEST(MergeableVectorGroupedAggregateTableTest,
+     NormalizesSignedZeroAndNanAcrossPhysicalAndScalarMergeKeys) {
+  const double first_nan = std::bit_cast<double>(std::uint64_t{0x7ff8000000000001ULL});
+  const double second_nan = std::bit_cast<double>(std::uint64_t{0xfff8000000000042ULL});
+  QueryResourceContext resources = QueryResourceContext::create(4U << 20U).value();
+  const std::array<std::optional<double>, 2> local_keys{0.0, first_nan};
+  auto input = accounted_chunk(resources, float64_column(local_keys));
+  const std::vector<VectorGroupKeyDefinition> keys{
+      {.column_ordinal = 0U, .type = type(schema::LogicalTypeKind::kFloat64), .nullable = true}};
+  const std::vector<VectorAggregateDefinition> definitions{
+      {.operation = VectorAggregateOperation::kCountStar, .input = std::nullopt}};
+  auto local = MergeableVectorGroupedAggregateTable::create(keys, definitions).value();
+  ASSERT_TRUE(local.accumulate(input, resources).has_value());
+  auto coordinator = MergeableVectorGroupedAggregateTable::create(keys, definitions).value();
+  for (std::size_t group = 0U; group < local.group_count(); ++group) {
+    auto local_key = local.group_keys(group);
+    auto local_state = local.group_states(group);
+    ASSERT_TRUE(local_key.has_value());
+    ASSERT_TRUE(local_state.has_value());
+    ASSERT_TRUE(coordinator.merge_group(*local_key, *local_state, resources).has_value());
+  }
+  auto one = MergeableVectorAggregateState::create(definitions[0]).value();
+  ASSERT_TRUE(one.accumulate_count_star().has_value());
+  const std::array<ScalarValue, 1> negative_zero{ScalarValue::float64(-0.0).value()};
+  const std::array<ScalarValue, 1> another_nan{ScalarValue::float64(second_nan).value()};
+  ASSERT_TRUE(coordinator.merge_group(negative_zero, std::span{&one, 1U}, resources).has_value());
+  ASSERT_TRUE(coordinator.merge_group(another_nan, std::span{&one, 1U}, resources).has_value());
+  ASSERT_EQ(coordinator.group_count(), 2U);
+  auto zero = coordinator.materialize_group(0U, resources).value();
+  EXPECT_EQ(std::get<double>(cell(zero.chunk()->chunk(), 0U).storage()), 0.0);
+  EXPECT_EQ(std::get<std::int64_t>(cell(zero.chunk()->chunk(), 1U).storage()), 2);
+  zero = PhysicalOperatorStep::end();
+  auto nan = coordinator.materialize_group(1U, resources).value();
+  EXPECT_TRUE(std::isnan(std::get<double>(cell(nan.chunk()->chunk(), 0U).storage())));
+  EXPECT_EQ(std::get<std::int64_t>(cell(nan.chunk()->chunk(), 1U).storage()), 2);
+}
+
 TEST(GroupedAggregateOperatorTest, CanonicalHashMatchesFloatGroupingEquality) {
   const double first_nan = std::bit_cast<double>(std::uint64_t{0x7ff8000000000001ULL});
   const double second_nan = std::bit_cast<double>(std::uint64_t{0xfff8000000000042ULL});
@@ -998,7 +1127,8 @@ TEST(GroupedAggregateOperatorTest, ResolvesHashCollisionsByExactKeyEquality) {
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
-TEST(GroupedAggregateOperatorTest, HashesEveryFrozenLogicalTypeAndDecimalParameters) {
+TEST(MergeableVectorGroupedAggregateTableTest,
+     MatchesPhysicalAndScalarHashesForEveryFrozenLogicalTypeAndDecimalParameters) {
   const schema::LogicalType decimal = schema::LogicalType::decimal(10U, 2U).value();
   common::Uuid::Bytes uuid_bytes{};
   uuid_bytes.front() = std::byte{0x42U};
@@ -1050,18 +1180,27 @@ TEST(GroupedAggregateOperatorTest, HashesEveryFrozenLogicalTypeAndDecimalParamet
           .value();
   const std::vector<VectorAggregateDefinition> definitions{
       {.operation = VectorAggregateOperation::kCountStar, .input = std::nullopt}};
-  auto grouped =
-      GroupedAggregateOperator::create(std::move(materialized), keys, definitions).value();
+  auto table = MergeableVectorGroupedAggregateTable::create(keys, definitions).value();
+  auto input = materialized->next(resources).value();
+  ASSERT_TRUE(table.accumulate(*input.chunk(), resources).has_value());
+  input = PhysicalOperatorStep::end();
+  std::vector<MergeableVectorAggregateState> remote_states;
+  remote_states.push_back(MergeableVectorAggregateState::create(definitions[0]).value());
+  ASSERT_TRUE(remote_states[0].accumulate_count_star().has_value());
+  ASSERT_TRUE(remote_states[0].accumulate_count_star().has_value());
+  ASSERT_TRUE(table.merge_group(values, remote_states, resources).has_value());
+  ASSERT_EQ(table.group_count(), 1U);
 
-  auto step = grouped->next(resources).value();
+  auto step = table.materialize_group(0U, resources).value();
   ASSERT_EQ(step.chunk()->chunk().column_count(), values.size() + 1U);
-  EXPECT_EQ(std::get<std::int64_t>(cell(step.chunk()->chunk(), values.size()).storage()), 2);
+  EXPECT_EQ(std::get<std::int64_t>(cell(step.chunk()->chunk(), values.size()).storage()), 4);
   for (std::size_t ordinal = 0U; ordinal < values.size(); ++ordinal) {
     EXPECT_EQ(cell(step.chunk()->chunk(), ordinal).type(), values[ordinal].type());
     EXPECT_EQ(cell(step.chunk()->chunk(), ordinal).storage(), values[ordinal].storage());
   }
   step = PhysicalOperatorStep::end();
-  EXPECT_EQ(grouped->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  table = MergeableVectorGroupedAggregateTable::create(keys, definitions).value();
+  materialized.reset();
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 

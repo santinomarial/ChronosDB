@@ -28,6 +28,9 @@ The operator uniquely owns its child and one shared grouped table; both remain t
 table accepts only query-accounted chunks from its exact resource context. Input cells are borrowed
 only during synchronous accumulation. Key/state spans borrow the table until its next mutation,
 while returned local chunks and encoded distributed frames own their canonical bytes independently.
+The same table can synchronously merge borrowed scalar-key sufficient states. Its first retained
+allocation binds it to one query context; a merge failure destroys all groups, and first-seen
+materialization seals the table against further mutation.
 
 ## Group semantics and state
 

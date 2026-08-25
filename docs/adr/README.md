@@ -506,3 +506,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0469](0469-split-leader-native-read-authority-coordination.md) | Split-leader Native read-authority coordination | accepted |
 | [0470](0470-canonical-multi-key-grouped-sufficient-state-exchange.md) | Canonical multi-key grouped sufficient-state exchange | accepted |
 | [0471](0471-shared-mergeable-grouped-state-owner.md) | Shared mergeable grouped-state owner | accepted |
+| [0472](0472-query-accounted-grouped-partial-state-merge.md) | Query-accounted grouped partial-state merge | accepted |
