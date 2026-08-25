@@ -551,3 +551,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0514](0514-lossless-grouped-shuffle-destination-execution.md) | Lossless grouped shuffle destination execution | accepted |
 | [0515](0515-exclusive-authority-ordered-grouped-shuffle-result-gathering.md) | Exclusive authority-ordered grouped shuffle result gathering | accepted |
 | [0516](0516-proof-bound-global-grouped-shuffle-finalization.md) | Proof-bound global grouped shuffle finalization | accepted |
+| [0517](0517-owned-end-to-end-grouped-shuffle-lifecycle.md) | Owned end-to-end grouped shuffle lifecycle | accepted |

@@ -36,7 +36,8 @@ output row/batch/byte limits, and schema-bearing empty result.
 
 An in-process completed shuffle can now reach the same global SQL and Native result boundary as the
 portable grouped coordinator without invented metadata or mixed query accounting. Authenticated
-cross-process partition-result transport and one joint lifecycle driver remain open.
+cross-process partition-result transport remains open. [ADR 0517](0517-owned-end-to-end-grouped-shuffle-lifecycle.md)
+subsequently owns the complete post-worker lifecycle through this finalizer.
 
 ## Affected invariants
 
@@ -75,8 +76,7 @@ query resource identity.
 ## Unresolved questions
 
 - Carry partition results over an authenticated, bounded cross-process protocol.
-- Package source, destination, cancellation, deadline, sealing, gathering, and finalization under
-  one coordinator.
+- Integrate the packaged post-worker lifecycle with worker execution and Native SQL selection.
 - Add node/receipt loss, skew, multi-process differential, and performance qualification.
 
 ## References

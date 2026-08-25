@@ -214,6 +214,13 @@ exact-compare shuffle authority while supplying the immutable plan, result schem
 Gathered chunks are canonical-copied from destination resource contexts into the global query
 context before the established checked projection, ORDER BY, LIMIT, and atomic Native encoder run.
 
+One heap-stable post-worker lifecycle now owns that whole chain. It exact-validates source and
+destination coverage, starts every reducer/listener before transport, delivers local edges,
+receipt-schedules all remote edges, keeps ingress live until closure proof, seals, gathers, and
+atomically finalizes Native output. Cancellation tears down both sides. Worker execution and Native
+SQL selection into this lifecycle, computed pre-group programs, and independent-process result
+return remain separate work.
+
 ### Portable sufficient-state execution boundary
 
 `DistributedVectorGroupedAggregateQueryExecutionV2` now joins the compatible snapshot to the

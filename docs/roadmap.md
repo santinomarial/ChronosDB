@@ -1578,7 +1578,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   proves complete unconsumed destination coverage and emits disjoint outputs in partition-ID order.
   Original mutable fragments now proof-bind the gathered stream to final plan/schema authority;
   canonical resource re-ownership feeds global projection, ORDER BY, LIMIT, and atomic Native
-  encoding. Computed pre-group plan splitting, query-wide lifecycle composition, and cross-process
+  encoding. One heap-stable post-worker lifecycle now exact-validates source and destination
+  coverage, starts all reducers/listeners before transport, owns local fan-out and finite remote
+  receipt scheduling, seals only after complete closure, gathers in authority order, and atomically
+  finalizes Native output; a two-node bidirectional mTLS loopback exercises that composition.
+  Computed pre-group plan splitting, worker/Native selection into this lifecycle, and cross-process
   result transport are still missing;
   scheduler request ownership, authenticated transport/read authority, and final SQL
   projection/order/limit are now
