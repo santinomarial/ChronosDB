@@ -275,7 +275,9 @@ placement-backed authenticated remote observation acquisition and transfers only
 canonical authority vector into grouped execution. Retryable grouped failure now permits only a
 finite explicit whole-query replacement with identical logical shape and group-key, a nonregressing
 Manifest generation, unchanged deadline/budget, discarded old partials, and cumulative metrics.
-Multi-key/non-FLOAT64 sufficient-state transport remains incomplete. Replicated Native SQL now
+A distinct bounded multi-key/all-type group-state frame now covers exact key tuples, nested
+sufficient states, empty tablets, and partial-I/O ownership; worker accumulation, stream
+coordination, transport, and global merge remain incomplete. Replicated Native SQL now
 executes that broader grouped surface through a bounded row-backed coordinator physical pipeline,
 including computed keys/inputs, global ordering, and LIMIT, while retaining the existing exchange
 bytes and all-tablet authority gate. A distinct
@@ -886,6 +888,13 @@ Focused executions passed:
   and canonical damage, enumerate every split, and inject allocation failure; a dedicated
   deterministic fuzz target covers arbitrary and mutated frames. Worker execution, stream
   coordination, global merge/finalization, grouped exchange, and process integration remain.
+- Multi-key grouped sufficient-state framing continuation: a distinct grouped v1 frame binds one
+  exact canonical scalar key tuple plus zero or more nested all-type aggregate states to query,
+  tablet, group ordinal/count/sequence, and terminal identity. A separate empty terminal cannot
+  fabricate a NULL-key group. Header-first reads, move-only writes, integrity-before-allocation,
+  query-accounted decoded keys, every-split coverage, and allocation injection pass. Worker-side
+  grouped accumulation, stream arbitration, authenticated transport, global merge/finalization,
+  and shuffle routing remain.
 - Cross-tablet aggregate-definition ownership continuation: the compatible Fragment-v2 snapshot
   derives ungrouped definitions independently under every tablet's projected destination schema,
   rejects any exact mismatch, and retains the shared vector once with the Manifest pin and result
@@ -939,8 +948,9 @@ were deliberately not run.
   lowering and mixed WAL/Raft-source composition remain incomplete.
 - Distributed Native execution covers bounded row-backed multi-key/all-type grouping, global
   ordering and LIMIT in addition to row and global aggregate plans. The scalable sufficient-state
-  grouped exchange remains one FLOAT64 key; arbitrary relational plans, shuffle/skew handling, and
-  fragment-level durable retries remain absent.
+  path now has multi-key/all-type group-state bytes but does not yet feed them from workers or merge
+  them globally; arbitrary relational plans, shuffle/skew handling, and fragment-level durable
+  retries remain absent.
 - Movement now composes deterministic actions with joint Raft membership and durable checkpoints;
   automatic placement-driven orchestration remains external.
 - Cold upload independently performs exact schema/source-bound CSEG validation before remote

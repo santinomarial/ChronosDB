@@ -504,3 +504,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0467](0467-authenticated-shared-query-control-endpoint.md) | Authenticated shared query-control endpoint | accepted |
 | [0468](0468-packaged-shared-query-control-service.md) | Packaged shared query-control service | accepted |
 | [0469](0469-split-leader-native-read-authority-coordination.md) | Split-leader Native read-authority coordination | accepted |
+| [0470](0470-canonical-multi-key-grouped-sufficient-state-exchange.md) | Canonical multi-key grouped sufficient-state exchange | accepted |

@@ -422,9 +422,13 @@ header-first reader and move-only cursor own partial I/O, while variable decode 
 credit before copying. A distinct ungrouped envelope now binds one nested state to nonzero query and
 tablet identities, canonical aggregate ordinal/count/sequence/terminal position, and the exact
 Fragment-v2-derived definition vector. It validates outer and nested integrity before variable
-decode and owns fragmented reads/short writes. Cross-frame retry arbitration, worker execution,
-global merge/finalization, and a separate multi-key grouped exchange still remain, so production
-vector aggregate fragments continue to fail closed.
+decode and owns fragmented reads/short writes. A separate grouped v1 frame now binds one complete
+multi-key canonical scalar tuple and zero or more of those nested sufficient states to exact query,
+tablet, group ordinal/count/sequence, and terminal identity. It has a distinct empty-tablet
+terminal, reserves decoded key/container memory, and owns fragmented reads and short writes without
+changing legacy grouped or ungrouped bytes. Cross-frame retry arbitration, grouped worker
+accumulation, global group merge/finalization, authenticated transport, and shuffle routing still
+remain, so production sufficient-state grouped fragments continue to fail closed.
 The compatible Fragment-v2 snapshot now retains that definition vector once after deriving it under
 each tablet's exact destination schema and rejecting any cross-tablet difference. This matters when
 COUNT, AVG, or variance result descriptors hide the input type; later owners no longer need to

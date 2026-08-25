@@ -1395,8 +1395,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   with a deterministic group-key tie-breaker before LIMIT. Replicated Native SQL additionally has
   a bounded row-backed coordinator baseline that feeds complete authority-proved tablet rows into
   the existing multi-key, all-type physical GROUP BY engine, including checked WHERE, computed
-  keys and aggregate inputs, final expressions, global ordering, and LIMIT. Multi-key/non-FLOAT64
-  sufficient-state transport and shuffle remain deferred. The distinct
+  keys and aggregate inputs, final expressions, global ordering, and LIMIT. A distinct bounded
+  checksummed group-state frame now carries multi-key canonical tuples and all-type sufficient
+  states with exact empty-tablet and partial-I/O ownership. Worker accumulation, authenticated
+  stream coordination, global merge, and shuffle routing remain deferred. The distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;
   a separate canonical checksummed cluster protocol now requests one group-correlated ordered
@@ -1456,8 +1458,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   all-or-nothing remote batch, and re-observes the whole attempt under the Native deadline. A
   focused two-group gate completes SQL with local metadata leadership and remote tablet leadership.
   Linux multi-daemon split-leader process qualification remains. Partitions, multi-process real-CSEG
-  scans, and sufficient-state multi-key shuffle also remain open; the full phase exit gate is not
-  claimed.
+  scans, and sufficient-state multi-key shuffle also remain open. The shuffle now has a distinct
+  bounded checksummed multi-key/all-type group-state frame with exact fragmented-read and short-write
+  ownership; worker accumulation, global merge, authenticated transport, and partition routing are
+  still missing. The full phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
 - **Explicit non-scope:** general cross-tablet write transactions, silent consistency downgrade, unlimited shuffle, and topology changes that invalidate tokens without an explicit error/mapping protocol.

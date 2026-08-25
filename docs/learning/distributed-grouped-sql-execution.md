@@ -98,9 +98,11 @@ separate optimization that needs measured exchange evidence and a retained mappi
 group state can publish output. Lazy decoding then keeps peak canonical input ownership to one
 batch. The second linear pass is an explicit recoverability and memory-bound tradeoff.
 
-**What remains for scalable distributed grouping?** A versioned multi-key, all-type grouped-state
-exchange with partition authority, bounded shuffle/skew policy, authenticated transport, global
-merge, and fault evidence. The row-backed path remains a differential oracle for that work.
+**What remains for scalable distributed grouping?** The versioned multi-key, all-type grouped-state
+frame now exists. Workers still need to feed it from the existing grouped hash/equality owner;
+coordinators need deterministic equal-key state merge, partition authority, bounded shuffle/skew
+policy, authenticated transport, and fault evidence. The row-backed path remains the differential
+oracle for that work.
 
 ## Process qualification boundary
 
@@ -110,7 +112,8 @@ Boolean key, COUNT, global ordering, LIMIT, safe follower redirect, replacement 
 ingest retry, orderly survivor shutdown, and retained-root recovery. Distinct fixed local election
 timeouts make both groups choose the same leader for this deterministic qualification.
 
-That evidence does not prove arbitrary split-leader coordination: packaged query admission still
-requires one process to acquire current leader authority for every involved group, and redirect is
-safe only when every group names the same stable remote leader. Multi-process real-CSEG scans and a
-multi-key/all-type sufficient-state shuffle remain separate gates.
+That evidence does not prove arbitrary split-leader process coordination because it deliberately
+elects one common leader. The Native coordinator now combines local and authenticated remote
+per-group authority in focused in-process coverage, but Linux multi-daemon split-leader
+qualification remains separate. Multi-process real-CSEG scans and a multi-key/all-type
+sufficient-state shuffle also remain separate gates.
