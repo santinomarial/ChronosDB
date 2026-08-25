@@ -1406,9 +1406,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   exact cross-tablet grouped authority vector. A portable move-only execution owner now pins that
   compatible snapshot, exact-decodes complete canonical worker batches under a separate query
   memory bound, makes every partial-batch failure sticky, delegates plan-ordered all-tablet merge,
-  and exposes rows only after global terminal closure. Computed pre-group plan splitting,
-  authenticated coordination/scheduling, final grouped SQL integration, and shuffle routing remain
-  deferred. The
+  and exposes rows only after global terminal closure. A distinct node-routed `CHDVGRP2` envelope
+  now carries one grouped sufficient-state frame with exact route/correlation, independent
+  integrity, authority-bound query-accounted decode, header-first fragmented reads, and move-only
+  short writes. Computed pre-group plan splitting, authenticated receiver/scheduling, final grouped
+  SQL integration, and shuffle routing remain deferred. The
   distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;

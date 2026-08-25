@@ -868,6 +868,15 @@ Focused executions passed:
   incompatibility with the installed macOS 26 libc++ headers after its local findings were fixed.
   Authenticated grouped transport, scheduling, cancellation, computed pre-group splitting, and
   final Native grouped SQL wiring remain.
+- Distinct grouped sufficient-state response-v2 continuation: the existing Fragment-v2 request now
+  pairs with a separate `CHDVGRP2` response that nests exactly one multi-key/all-type grouped-state
+  frame under exact route/query/tablet/status/hint correlation and independent header, payload,
+  outer, and nested integrity. Complete grouped authority and query memory are mandatory on every
+  decode path. Four functional cases cover round trip, failure, type confusion, corruption,
+  versions, authority/correlation drift, every split, coalescing, bounds, and short writes; one
+  allocation sweep covers encode/decode/reader ownership and exact key-credit release. All five
+  pass normally and under ASan/UBSan; the full cluster and allocation-failure suites pass 228 of
+  228 and 29 of 29. Authenticated receiver, finite sender, TLS/TCP ownership, and scheduling remain.
 - Bounded global vector-row finalization continuation: one consuming final pass independently
   validates row-mode plan/schema shape, tablet-stream closure, native descriptors, and exact
   row/message/input/working/output bounds before decoded-state allocation. It stably orders every

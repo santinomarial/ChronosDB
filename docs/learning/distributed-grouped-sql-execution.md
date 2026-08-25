@@ -133,6 +133,14 @@ authenticate responses, own deadlines/retries/cancellation, and feed only comple
 vectors. Keeping that policy outside the owner makes the all-or-none merge and Manifest-pin
 lifetime directly testable before a socket implementation exists.
 
+The first carrier step now reuses the exact Fragment-v2 request but gives grouped states their own
+`CHDVGRP2` response envelope. One success nests one canonical grouped-state frame and binds it to
+exact source/target, query/tablet, status, and optional leader-hint fields. Every decode still
+requires the complete key and aggregate authority plus query memory, including failure-only frames.
+Header-first reading proves fixed integrity and all allocation-driving lengths before retaining an
+exact frame; outer and nested checksums then gate typed decode. Authentication, receiver-side fresh
+authority binding, complete-stream publication, and retry scheduling remain the next boundary.
+
 ## Process qualification boundary
 
 The Linux packaged gate executes this row-backed grouped path in a three-daemon, two-Raft-group

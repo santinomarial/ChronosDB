@@ -117,6 +117,10 @@ existence of a design document alone is not implementation evidence.
   distinct definition-bound aggregate-state response with exact correlation, query-accounted
   variable decode, bounded partial-I/O ownership, and authenticated all-or-nothing state-vector
   publication.
+- [Distributed Vector Grouped Aggregate Query Transport
+  v2](formats/distributed-vector-grouped-aggregate-query-transport-v2.md): shared Fragment-v2
+  request and a distinct multi-key/all-type sufficient-state response with exact correlation,
+  authority-bound query-accounted decode, and bounded partial-I/O ownership.
 - [Distributed Aggregate Fragment v1](formats/distributed-aggregate-fragment-v1.md): bounded,
   integrity-first worker request bytes binding an exact snapshot route, consistency evidence,
   projection, aggregate input, and event-time predicate.
