@@ -42,6 +42,29 @@ inline constexpr std::uint8_t kGroupedExchangePayload = 1U;
   return {common::StatusCode::kResourceExhausted, message};
 }
 
+[[nodiscard]] common::Status unauthenticated(const char* message) {
+  return {common::StatusCode::kUnauthenticated, message};
+}
+
+[[nodiscard]] common::Status unavailable(const char* message) {
+  return {common::StatusCode::kUnavailable, message};
+}
+
+[[nodiscard]] bool retryable_status(const common::StatusCode code) noexcept {
+  return code == common::StatusCode::kUnavailable ||
+         code == common::StatusCode::kResourceExhausted || code == common::StatusCode::kIoError;
+}
+
+[[nodiscard]] DistributedVectorGroupedAggregateQuerySenderV2::TimePoint
+saturating_add(const DistributedVectorGroupedAggregateQuerySenderV2::TimePoint now,
+               const std::chrono::milliseconds delay) noexcept {
+  const auto converted = std::chrono::duration_cast<
+      DistributedVectorGroupedAggregateQuerySenderV2::TimePoint::duration>(delay);
+  if (now > DistributedVectorGroupedAggregateQuerySenderV2::TimePoint::max() - converted)
+    return DistributedVectorGroupedAggregateQuerySenderV2::TimePoint::max();
+  return now + converted;
+}
+
 [[nodiscard]] bool valid_payload_limits(
     const query::DistributedVectorGroupedAggregateExchangeDecodeLimits& limits) noexcept {
   return limits.maximum_frame_length >=
@@ -265,7 +288,107 @@ parse_header(const common::ByteView header,
                       .leader_hint = hint};
 }
 
+[[nodiscard]] common::Result<query::DistributedVectorGroupedAggregateAuthority>
+bind_worker_authority(DistributedVectorGroupedAggregateQueryWorkerServiceV2& worker,
+                      const query::DistributedVectorFragmentDispatchV2& dispatch) noexcept {
+  try {
+    return worker.bind_authority(dispatch);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("grouped vector query v2 authority binding allocation failed"));
+  } catch (...) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kInternal, "grouped vector query v2 authority binding threw"});
+  }
+}
+
+[[nodiscard]] common::Result<query::DistributedVectorGroupedAggregateWorkerResultV2>
+execute_grouped_worker(DistributedVectorGroupedAggregateQueryWorkerServiceV2& worker,
+                       const query::DistributedVectorFragmentDispatchV2& dispatch) noexcept {
+  try {
+    return worker.execute(dispatch);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("grouped vector query v2 worker allocation failed"));
+  } catch (...) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInternal, "grouped vector query v2 worker threw"});
+  }
+}
+
+[[nodiscard]] common::Result<std::vector<std::vector<std::byte>>>
+one_response(std::vector<std::byte> encoded) {
+  try {
+    std::vector<std::vector<std::byte>> frames;
+    frames.push_back(std::move(encoded));
+    return frames;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("grouped vector query v2 response publication allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("grouped vector query v2 response publication exceeds container limits"));
+  }
+}
+
+[[nodiscard]] bool
+same_grouped_authority(const query::DistributedVectorGroupedAggregateAuthority& left,
+                       const query::DistributedVectorGroupedAggregateAuthority& right) noexcept {
+  if (left.keys.size() != right.keys.size() || left.aggregates.size() != right.aggregates.size()) {
+    return false;
+  }
+  for (std::size_t ordinal = 0U; ordinal < left.keys.size(); ++ordinal) {
+    if (left.keys[ordinal].column_ordinal != right.keys[ordinal].column_ordinal ||
+        left.keys[ordinal].type != right.keys[ordinal].type ||
+        left.keys[ordinal].nullable != right.keys[ordinal].nullable) {
+      return false;
+    }
+  }
+  return std::equal(left.aggregates.begin(), left.aggregates.end(), right.aggregates.begin());
+}
+
 } // namespace
+
+common::Status validate_distributed_vector_grouped_aggregate_query_authority_v2(
+    const query::DistributedVectorFragmentDispatchV2& dispatch,
+    const std::span<const query::VectorGroupKeyDefinition> keys,
+    const std::span<const query::VectorAggregateDefinition> aggregates) {
+  const auto& plan = dispatch.dispatch.plan;
+  const auto& columns = dispatch.result_schema.columns;
+  if (plan.mode != query::DistributedVectorPlanMode::kGroupedAggregate || keys.empty() ||
+      keys.size() != plan.group_key_input_indices.size() ||
+      aggregates.size() != plan.aggregates.size() ||
+      columns.size() != keys.size() + aggregates.size()) {
+    return invalid("grouped vector query v2 requires exact key and aggregate authority");
+  }
+  common::Status authority =
+      query::validate_distributed_vector_grouped_aggregate_authority(keys, aggregates);
+  if (!authority.is_ok())
+    return authority;
+  for (std::size_t ordinal = 0U; ordinal < keys.size(); ++ordinal) {
+    if (keys[ordinal].column_ordinal != plan.group_key_input_indices[ordinal] ||
+        keys[ordinal].type != columns[ordinal].type ||
+        keys[ordinal].nullable != columns[ordinal].nullable) {
+      return invalid("grouped vector query v2 key authority differs from the admitted plan");
+    }
+  }
+  for (std::size_t ordinal = 0U; ordinal < aggregates.size(); ++ordinal) {
+    const auto& intent = plan.aggregates[ordinal];
+    const auto& definition = aggregates[ordinal];
+    if (definition.operation != intent.operation ||
+        definition.input.has_value() != intent.input_index.has_value() ||
+        (definition.input.has_value() && definition.input->column_ordinal != *intent.input_index)) {
+      return invalid("grouped vector query v2 aggregate authority differs from the admitted plan");
+    }
+    const auto shape = query::vector_aggregate_output_shape(definition);
+    if (!shape.has_value())
+      return shape.error();
+    const auto& column = columns[keys.size() + ordinal];
+    if (shape->type != column.type || shape->nullable != column.nullable) {
+      return invalid("grouped vector query v2 aggregate authority differs from result schema");
+    }
+  }
+  return common::Status::ok();
+}
 
 common::Result<std::vector<std::byte>>
 encode_distributed_vector_grouped_aggregate_query_response_v2(
@@ -582,6 +705,426 @@ DistributedVectorGroupedAggregateQueryResponseV2WriteCursor::written_bytes() con
 
 bool DistributedVectorGroupedAggregateQueryResponseV2WriteCursor::complete() const noexcept {
   return written_bytes_ == encoded_frame_.size();
+}
+
+DistributedVectorGroupedAggregateQueryReceiverV2::DistributedVectorGroupedAggregateQueryReceiverV2(
+    const DistributedVectorGroupedAggregateQueryReceiverV2Config config) noexcept
+    : config_(config) {}
+
+common::Result<DistributedVectorGroupedAggregateQueryReceiverV2>
+DistributedVectorGroupedAggregateQueryReceiverV2::create(
+    const DistributedVectorGroupedAggregateQueryReceiverV2Config config) {
+  constexpr std::size_t kMinimumResponseBytes =
+      kDistributedVectorGroupedAggregateQueryResponseV2HeaderSize +
+      kDistributedVectorGroupedAggregateQueryResponseV2TrailerSize;
+  if (config.local_node_id == 0U || config.authorizer == nullptr || config.worker == nullptr ||
+      config.maximum_response_frames == 0U ||
+      config.maximum_response_frames >
+          query::distributed_vector_grouped_aggregate_exchange_format::kMaximumGroups ||
+      config.maximum_response_frames > config.payload.maximum_groups ||
+      config.maximum_response_bytes < kMinimumResponseBytes ||
+      config.maximum_response_bytes >
+          kMaximumDistributedVectorGroupedAggregateQueryV2ResponseBytes ||
+      config.maximum_decode_memory_bytes == 0U ||
+      config.maximum_decode_memory_bytes >
+          kMaximumDistributedVectorGroupedAggregateQueryV2DecodeMemoryBytes ||
+      !valid_payload_limits(config.payload)) {
+    return common::make_unexpected(
+        invalid("grouped vector query v2 receiver configuration is invalid"));
+  }
+  return DistributedVectorGroupedAggregateQueryReceiverV2{config};
+}
+
+common::Result<std::vector<std::vector<std::byte>>>
+DistributedVectorGroupedAggregateQueryReceiverV2::receive(
+    const common::ByteView request_bytes,
+    const network::PeerAuthenticationResult& authenticated_peer) {
+  auto bound = receive_bound(request_bytes, authenticated_peer);
+  if (!bound.has_value())
+    return common::make_unexpected(bound.error());
+  return std::move(bound->encoded_responses);
+}
+
+common::Result<DistributedVectorGroupedAggregateQueryBoundResponsesV2>
+DistributedVectorGroupedAggregateQueryReceiverV2::receive_bound(
+    const common::ByteView request_bytes,
+    const network::PeerAuthenticationResult& authenticated_peer) {
+  if (!authenticated_peer.authorized || authenticated_peer.principal_id == 0U) {
+    return common::make_unexpected(
+        unauthenticated("grouped vector query v2 requires an authenticated principal"));
+  }
+  auto request = decode_distributed_vector_query_request_v2_exact(request_bytes);
+  if (!request.has_value())
+    return common::make_unexpected(request.error());
+  auto authorized =
+      config_.authorizer->authorize_node(authenticated_peer.principal_id, request->source_node_id);
+  if (!authorized.has_value())
+    return common::make_unexpected(authorized.error());
+  if (!*authorized) {
+    return common::make_unexpected(unauthenticated(
+        "authenticated principal cannot claim grouped vector query v2 source node"));
+  }
+  if (request->target_node_id != config_.local_node_id) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kUnavailable, "grouped vector query v2 targets a different node"});
+  }
+  if (request->dispatch.dispatch.plan.mode != query::DistributedVectorPlanMode::kGroupedAggregate) {
+    return common::make_unexpected(
+        invalid("grouped vector query v2 receiver requires a grouped aggregate plan"));
+  }
+
+  auto authority = bind_worker_authority(*config_.worker, request->dispatch);
+  if (!authority.has_value())
+    return common::make_unexpected(authority.error());
+  const common::Status authority_status =
+      validate_distributed_vector_grouped_aggregate_query_authority_v2(
+          request->dispatch, authority->keys, authority->aggregates);
+  if (!authority_status.is_ok())
+    return common::make_unexpected(authority_status);
+  auto resources = query::QueryResourceContext::create(config_.maximum_decode_memory_bytes);
+  if (!resources.has_value())
+    return common::make_unexpected(resources.error());
+
+  const auto& identity = request->dispatch.dispatch;
+  const auto encode_failure = [&](const common::StatusCode code,
+                                  const std::optional<DistributedQueryLeaderHint> leader_hint =
+                                      std::nullopt)
+      -> common::Result<DistributedVectorGroupedAggregateQueryBoundResponsesV2> {
+    auto encoded = encode_distributed_vector_grouped_aggregate_query_response_v2(
+        {.source_node_id = config_.local_node_id,
+         .target_node_id = request->source_node_id,
+         .query_id = identity.query_id,
+         .tablet_id = identity.tablet_id,
+         .status_code = code,
+         .leader_hint = leader_hint},
+        authority->keys, authority->aggregates);
+    if (!encoded.has_value())
+      return common::make_unexpected(encoded.error());
+    auto frames = one_response(std::move(*encoded));
+    if (!frames.has_value())
+      return common::make_unexpected(frames.error());
+    return DistributedVectorGroupedAggregateQueryBoundResponsesV2{
+        .authority = std::move(*authority), .encoded_responses = std::move(*frames)};
+  };
+
+  auto result = execute_grouped_worker(*config_.worker, request->dispatch);
+  if (!result.has_value()) {
+    std::optional<DistributedQueryLeaderHint> leader_hint;
+    if (result.error().code() == common::StatusCode::kUnavailable &&
+        config_.leader_hint_provider != nullptr) {
+      auto resolved = config_.leader_hint_provider->current_leader_hint(identity.tablet_id,
+                                                                        identity.raft_group_id);
+      if (!resolved.has_value())
+        return common::make_unexpected(resolved.error());
+      leader_hint = *resolved;
+    }
+    return encode_failure(result.error().code(), leader_hint);
+  }
+  if (!same_grouped_authority(result->authority, *authority)) {
+    return common::make_unexpected(
+        invalid("grouped vector query v2 worker authority changed after binding"));
+  }
+  if (result->messages.empty()) {
+    return common::make_unexpected(
+        invalid("grouped vector query v2 worker returned an empty response vector"));
+  }
+  if (result->messages.size() > config_.maximum_response_frames)
+    return encode_failure(common::StatusCode::kResourceExhausted);
+
+  std::size_t total_response_bytes{};
+  try {
+    std::vector<std::vector<std::byte>> frames;
+    frames.reserve(result->messages.size());
+    for (std::size_t ordinal = 0U; ordinal < result->messages.size(); ++ordinal) {
+      auto decoded = query::decode_distributed_vector_grouped_aggregate_exchange_message_exact(
+          result->messages[ordinal].bytes(), authority->keys, authority->aggregates, *resources,
+          config_.payload);
+      if (!decoded.has_value())
+        return common::make_unexpected(decoded.error());
+      const auto& position = decoded->position();
+      const bool last = ordinal + 1U == result->messages.size();
+      const bool valid_empty = position.empty && result->messages.size() == 1U &&
+                               position.group_count == 0U && position.group_ordinal == 0U &&
+                               position.sequence == 1U && position.terminal;
+      const bool valid_groups = !position.empty &&
+                                position.group_count == result->messages.size() &&
+                                position.group_ordinal == ordinal &&
+                                position.sequence == ordinal + 1U && position.terminal == last;
+      if (position.query_id != identity.query_id || position.tablet_id != identity.tablet_id ||
+          (!valid_empty && !valid_groups)) {
+        return common::make_unexpected(
+            invalid("grouped vector query v2 worker stream is not correlated and complete"));
+      }
+      auto encoded = encode_distributed_vector_grouped_aggregate_query_response_v2(
+          {.source_node_id = config_.local_node_id,
+           .target_node_id = request->source_node_id,
+           .query_id = identity.query_id,
+           .tablet_id = identity.tablet_id,
+           .status_code = common::StatusCode::kOk,
+           .payload = std::move(*decoded)},
+          authority->keys, authority->aggregates);
+      if (!encoded.has_value())
+        return common::make_unexpected(encoded.error());
+      if (encoded->size() > config_.maximum_response_bytes - total_response_bytes)
+        return encode_failure(common::StatusCode::kResourceExhausted);
+      total_response_bytes += encoded->size();
+      frames.push_back(std::move(*encoded));
+    }
+    return DistributedVectorGroupedAggregateQueryBoundResponsesV2{
+        .authority = std::move(*authority), .encoded_responses = std::move(frames)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("grouped vector query v2 response publication allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("grouped vector query v2 response publication exceeds container limits"));
+  }
+}
+
+DistributedVectorGroupedAggregateQuerySenderV2::DistributedVectorGroupedAggregateQuerySenderV2(
+    const raft::NodeId source_node_id, query::DistributedVectorFragmentDispatchV2 dispatch,
+    std::vector<query::VectorGroupKeyDefinition>&& keys,
+    std::vector<query::VectorAggregateDefinition>&& aggregates,
+    query::QueryResourceContext resources, std::vector<std::byte>&& request_bytes,
+    const DistributedVectorGroupedAggregateQuerySenderLimitsV2 limits) noexcept
+    : source_node_id_(source_node_id), dispatch_(std::move(dispatch)), keys_(std::move(keys)),
+      aggregates_(std::move(aggregates)), resources_(std::move(resources)),
+      request_bytes_(std::move(request_bytes)), limits_(limits),
+      next_backoff_(limits.retry.initial_backoff) {}
+
+common::Result<DistributedVectorGroupedAggregateQuerySenderV2>
+DistributedVectorGroupedAggregateQuerySenderV2::create(
+    const raft::NodeId source_node_id, query::DistributedVectorFragmentDispatchV2 dispatch,
+    std::vector<query::VectorGroupKeyDefinition>&& keys,
+    std::vector<query::VectorAggregateDefinition>&& aggregates,
+    query::QueryResourceContext resources,
+    const DistributedVectorGroupedAggregateQuerySenderLimitsV2 limits) {
+  const auto maximum_supported_backoff =
+      std::chrono::duration_cast<std::chrono::milliseconds>(TimePoint::duration::max());
+  constexpr std::size_t kMinimumResponseBytes =
+      kDistributedVectorGroupedAggregateQueryResponseV2HeaderSize +
+      kDistributedVectorGroupedAggregateQueryResponseV2TrailerSize;
+  if (source_node_id == 0U || limits.retry.maximum_attempts == 0U ||
+      limits.retry.maximum_attempts > 1024U || limits.retry.initial_backoff.count() <= 0 ||
+      limits.retry.maximum_backoff < limits.retry.initial_backoff ||
+      limits.retry.maximum_backoff > maximum_supported_backoff ||
+      limits.maximum_response_frames == 0U ||
+      limits.maximum_response_frames >
+          query::distributed_vector_grouped_aggregate_exchange_format::kMaximumGroups ||
+      limits.maximum_response_frames > limits.payload.maximum_groups ||
+      limits.maximum_response_bytes < kMinimumResponseBytes ||
+      limits.maximum_response_bytes >
+          kMaximumDistributedVectorGroupedAggregateQueryV2ResponseBytes ||
+      dispatch.dispatch.serving_node == source_node_id || !valid_payload_limits(limits.payload)) {
+    return common::make_unexpected(
+        invalid("grouped vector query v2 sender configuration is invalid"));
+  }
+  const common::Status authority_status =
+      validate_distributed_vector_grouped_aggregate_query_authority_v2(dispatch, keys, aggregates);
+  if (!authority_status.is_ok())
+    return common::make_unexpected(authority_status);
+  if (keys.size() > limits.payload.maximum_group_keys ||
+      aggregates.size() > limits.payload.maximum_aggregates) {
+    return common::make_unexpected(
+        invalid("grouped vector query v2 sender authority exceeds decode limits"));
+  }
+  auto request_bytes = encode_distributed_vector_query_request_v2(
+      {source_node_id, dispatch.dispatch.serving_node, dispatch});
+  if (!request_bytes.has_value())
+    return common::make_unexpected(request_bytes.error());
+  return DistributedVectorGroupedAggregateQuerySenderV2{
+      source_node_id,       std::move(dispatch),       std::move(keys), std::move(aggregates),
+      std::move(resources), std::move(*request_bytes), limits};
+}
+
+common::Result<DistributedVectorGroupedAggregateQueryAttemptV2>
+DistributedVectorGroupedAggregateQuerySenderV2::begin_attempt(const TimePoint now) {
+  if (state_ == DistributedQuerySenderState::kSucceeded ||
+      state_ == DistributedQuerySenderState::kFailed) {
+    return common::make_unexpected(invalid("grouped vector query v2 sender is terminal"));
+  }
+  if (state_ == DistributedQuerySenderState::kWaitingForResponse) {
+    return common::make_unexpected(unavailable("grouped vector query v2 response is pending"));
+  }
+  if (state_ == DistributedQuerySenderState::kBackoff && now < *next_attempt_not_before_) {
+    return common::make_unexpected(unavailable("grouped vector query v2 retry backoff is active"));
+  }
+  if (attempts_started_ >= limits_.retry.maximum_attempts) {
+    return common::make_unexpected(invalid("grouped vector query v2 retry budget is exhausted"));
+  }
+  try {
+    std::vector<std::byte> request_bytes = request_bytes_;
+    ++attempts_started_;
+    state_ = DistributedQuerySenderState::kWaitingForResponse;
+    suggested_leader_.reset();
+    next_attempt_not_before_.reset();
+    return DistributedVectorGroupedAggregateQueryAttemptV2{
+        attempts_started_, dispatch_.dispatch.serving_node, std::move(request_bytes)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("grouped vector query v2 attempt allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("grouped vector query v2 attempt exceeds container limits"));
+  }
+}
+
+common::Status DistributedVectorGroupedAggregateQuerySenderV2::accept_responses(
+    const std::span<const DistributedVectorGroupedAggregateQueryResponseV2> responses,
+    const TimePoint now) {
+  if (state_ != DistributedQuerySenderState::kWaitingForResponse)
+    return invalid("grouped vector query v2 sender has no pending response");
+  if (responses.empty())
+    return invalid("grouped vector query v2 response vector is empty");
+  if (responses.size() > limits_.maximum_response_frames)
+    return exhausted("grouped vector query v2 response vector exceeds sender frame limit");
+
+  const auto& identity = dispatch_.dispatch;
+  const auto validate_correlation =
+      [&](const DistributedVectorGroupedAggregateQueryResponseV2& response) {
+        return response.source_node_id == identity.serving_node &&
+               response.target_node_id == source_node_id_ &&
+               response.query_id == identity.query_id && response.tablet_id == identity.tablet_id;
+      };
+  if (responses.front().status_code != common::StatusCode::kOk) {
+    if (responses.size() != 1U || responses.front().payload.has_value() ||
+        !validate_correlation(responses.front())) {
+      return invalid("grouped vector query v2 failure response is invalid");
+    }
+    auto encoded = encode_distributed_vector_grouped_aggregate_query_response_v2(
+        responses.front(), keys_, aggregates_);
+    if (!encoded.has_value())
+      return encoded.error();
+    if (encoded->size() > limits_.maximum_response_bytes)
+      return exhausted("grouped vector query v2 response exceeds sender byte limit");
+    auto decoded = decode_distributed_vector_grouped_aggregate_query_response_v2_exact(
+        *encoded, keys_, aggregates_, resources_, limits_.payload);
+    if (!decoded.has_value())
+      return decoded.error();
+    suggested_leader_ = decoded->leader_hint;
+    return schedule(decoded->status_code, now);
+  }
+
+  std::size_t total_response_bytes{};
+  try {
+    std::vector<query::EncodedDistributedVectorGroupedAggregateExchangeMessage> accepted;
+    accepted.reserve(responses.size());
+    for (std::size_t ordinal = 0U; ordinal < responses.size(); ++ordinal) {
+      const auto& response = responses[ordinal];
+      if (!validate_correlation(response) || response.status_code != common::StatusCode::kOk ||
+          !response.payload.has_value() || response.leader_hint.has_value()) {
+        return invalid("grouped vector query v2 success response is invalid");
+      }
+      const auto& position = response.payload->position();
+      const bool last = ordinal + 1U == responses.size();
+      const bool valid_empty = position.empty && responses.size() == 1U &&
+                               position.group_count == 0U && position.group_ordinal == 0U &&
+                               position.sequence == 1U && position.terminal;
+      const bool valid_groups = !position.empty && position.group_count == responses.size() &&
+                                position.group_ordinal == ordinal &&
+                                position.sequence == ordinal + 1U && position.terminal == last;
+      if (position.query_id != identity.query_id || position.tablet_id != identity.tablet_id ||
+          (!valid_empty && !valid_groups)) {
+        return invalid("grouped vector query v2 success response sequence is invalid");
+      }
+      auto encoded = encode_distributed_vector_grouped_aggregate_query_response_v2(response, keys_,
+                                                                                   aggregates_);
+      if (!encoded.has_value())
+        return encoded.error();
+      if (encoded->size() > limits_.maximum_response_bytes - total_response_bytes)
+        return exhausted("grouped vector query v2 response vector exceeds sender byte limit");
+      total_response_bytes += encoded->size();
+      auto decoded = decode_distributed_vector_grouped_aggregate_query_response_v2_exact(
+          *encoded, keys_, aggregates_, resources_, limits_.payload);
+      if (!decoded.has_value())
+        return decoded.error();
+      if (!decoded->payload.has_value())
+        return corruption("grouped vector query v2 canonical success payload is absent");
+      auto nested = query::encode_distributed_vector_grouped_aggregate_exchange_message(
+          *decoded->payload, keys_, aggregates_);
+      if (!nested.has_value())
+        return nested.error();
+      accepted.push_back(std::move(*nested));
+    }
+    result_ = std::move(accepted);
+  } catch (const std::bad_alloc&) {
+    return exhausted("grouped vector query v2 sender result allocation failed");
+  } catch (const std::length_error&) {
+    return exhausted("grouped vector query v2 sender result exceeds container limits");
+  }
+  last_status_code_ = common::StatusCode::kOk;
+  suggested_leader_.reset();
+  state_ = DistributedQuerySenderState::kSucceeded;
+  next_attempt_not_before_.reset();
+  return common::Status::ok();
+}
+
+common::Status DistributedVectorGroupedAggregateQuerySenderV2::record_transport_failure(
+    const common::StatusCode code, const TimePoint now) {
+  if (state_ != DistributedQuerySenderState::kWaitingForResponse)
+    return invalid("grouped vector query v2 sender has no active transport attempt");
+  if (code == common::StatusCode::kOk)
+    return invalid("grouped vector query v2 transport failure cannot be OK");
+  suggested_leader_.reset();
+  return schedule(code, now);
+}
+
+common::Status
+DistributedVectorGroupedAggregateQuerySenderV2::schedule(const common::StatusCode code,
+                                                         const TimePoint now) {
+  last_status_code_ = code;
+  if (!retryable_status(code) || attempts_started_ >= limits_.retry.maximum_attempts) {
+    state_ = DistributedQuerySenderState::kFailed;
+    next_attempt_not_before_.reset();
+    return common::Status::ok();
+  }
+  state_ = DistributedQuerySenderState::kBackoff;
+  next_attempt_not_before_ = saturating_add(now, next_backoff_);
+  if (next_backoff_ < limits_.retry.maximum_backoff) {
+    const auto current = next_backoff_.count();
+    const auto maximum = limits_.retry.maximum_backoff.count();
+    next_backoff_ = current > maximum / 2
+                        ? limits_.retry.maximum_backoff
+                        : std::min(next_backoff_ * 2, limits_.retry.maximum_backoff);
+  }
+  return common::Status::ok();
+}
+
+DistributedQuerySenderState DistributedVectorGroupedAggregateQuerySenderV2::state() const noexcept {
+  return state_;
+}
+
+std::size_t DistributedVectorGroupedAggregateQuerySenderV2::attempts_started() const noexcept {
+  return attempts_started_;
+}
+
+std::optional<DistributedVectorGroupedAggregateQuerySenderV2::TimePoint>
+DistributedVectorGroupedAggregateQuerySenderV2::next_attempt_not_before() const noexcept {
+  return next_attempt_not_before_;
+}
+
+std::optional<common::StatusCode>
+DistributedVectorGroupedAggregateQuerySenderV2::last_status_code() const noexcept {
+  return last_status_code_;
+}
+
+std::optional<DistributedQueryLeaderHint>
+DistributedVectorGroupedAggregateQuerySenderV2::suggested_leader() const noexcept {
+  return suggested_leader_;
+}
+
+std::span<const query::VectorGroupKeyDefinition>
+DistributedVectorGroupedAggregateQuerySenderV2::keys() const noexcept {
+  return keys_;
+}
+
+std::span<const query::VectorAggregateDefinition>
+DistributedVectorGroupedAggregateQuerySenderV2::aggregates() const noexcept {
+  return aggregates_;
+}
+
+const std::optional<std::vector<query::EncodedDistributedVectorGroupedAggregateExchangeMessage>>&
+DistributedVectorGroupedAggregateQuerySenderV2::result() const noexcept {
+  return result_;
 }
 
 } // namespace chronos::cluster

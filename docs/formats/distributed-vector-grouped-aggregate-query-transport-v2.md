@@ -1,8 +1,9 @@
 # Distributed Vector Grouped Aggregate Query Transport v2
 
-> **Status:** accepted and implemented exact response codec and partial-I/O contract. Requests
-> reuse the exact Fragment-v2 `CHDVREQ2` carrier. Authenticated receiver, finite sender/retry,
-> mutual-TLS/TCP ownership, and multi-tablet scheduling remain separate follow-on boundaries.
+> **Status:** accepted and implemented exact response codec, partial-I/O contract, authenticated
+> receiver, and finite sender/retry owner. Requests reuse the exact Fragment-v2 `CHDVREQ2`
+> carrier. Mutual-TLS/TCP ownership and multi-tablet scheduling remain separate follow-on
+> boundaries.
 
 All integers are unsigned little-endian. Reserved bytes are zero. CRC32C detects accidental damage
 and is not authentication. The nested grouped payload retains its own independent checksums.
@@ -64,5 +65,39 @@ moved-from cursor complete.
 
 Unknown versions are `NOT_SUPPORTED`; damage, type confusion, and wire contradiction are
 `CORRUPTION`; invalid local authority/limits are `INVALID_ARGUMENT`; lower deployment bounds and
-allocation failure are `RESOURCE_EXHAUSTED`. The carrier owns no socket, peer authentication,
-retry policy, clock, coordinator, or process lifecycle.
+allocation failure are `RESOURCE_EXHAUSTED`. The codec and partial-I/O cursors own no socket, peer
+authentication, retry policy, clock, coordinator, or process lifecycle.
+
+## Authenticated receiver
+
+The receiver authenticates the peer and authorizes the claimed source node before binding or
+execution. It then verifies the exact local target and grouped plan mode, asks the embedding to bind
+fresh proof-derived grouped authority, validates that authority against the Fragment-v2 plan and
+result schema, and only then executes the worker. Bound authority and executed authority must match
+field for field.
+
+Successful worker output must contain either one canonical empty terminal or a complete contiguous
+group stream whose count, ordinal, sequence, terminal flag, query, and tablet agree exactly. The
+receiver exact-decodes every nested frame under a request-local query-memory ceiling and constructs
+the complete response vector under independent frame and byte ceilings before publishing anything.
+An execution failure becomes one correlated payload-free response. `UNAVAILABLE` may carry a fresh
+advisory leader hint; route, authentication, binding, decoding, and worker-contract failures remain
+local errors. No success prefix crosses the receiver boundary.
+
+## Finite sender
+
+The sender owns one immutable canonical `CHDVREQ2` request, complete grouped authority, query
+resource context, and finite exponential retry budget. Each attempt copies the identical request
+and retains the admitted target; leader hints are advisory and never rewrite request authority.
+Transport failures and retryable response statuses schedule only whole-request retries.
+
+A successful response vector is accepted only while one attempt is pending. Every response must
+have exact route/query/tablet correlation and form either one empty terminal or one complete
+contiguous group stream. The sender canonically encodes and exact-decodes each outer response under
+its owned authority and query memory, then re-encodes the nested grouped frame. Only the complete
+vector is published. Malformed, partial, over-count, over-byte, or allocation-failed vectors leave
+the sender waiting with no retained prefix. Terminal success or failure rejects later attempts.
+
+Receiver and sender are single-thread-affine policy owners. The transport still owns no socket,
+TLS session, multi-address route, wall-clock source, multi-tablet scheduler, cancellation, or
+process lifecycle.

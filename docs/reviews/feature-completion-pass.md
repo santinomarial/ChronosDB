@@ -877,6 +877,20 @@ Focused executions passed:
   allocation sweep covers encode/decode/reader ownership and exact key-credit release. All five
   pass normally and under ASan/UBSan; the full cluster and allocation-failure suites pass 228 of
   228 and 29 of 29. Authenticated receiver, finite sender, TLS/TCP ownership, and scheduling remain.
+- Authenticated complete grouped-state attempt continuation: the receiver authenticates and
+  source-authorizes before fresh grouped-authority binding, validates bound and executed authority,
+  exact-decodes the complete empty-or-contiguous worker stream under independent frame, byte, nested,
+  and query-memory limits, and never publishes a success prefix. Its finite sender owns immutable
+  Fragment-v2 request bytes and exact authority, canonically reconstructs only complete correlated
+  grouped responses, treats hints as advisory, and retries whole attempts under bounded exponential
+  backoff. Focused functional cases cover authentication ordering, route/mode/authority rejection,
+  success and correlated failures, contract drift, atomic bounds, canonical reconstruction,
+  malformed streams, and immutable retries; allocation sweeps cover receiver publication and sender
+  reconstruction with no leaked query credit. All 11 focused grouped transport/execution and three
+  focused allocation cases pass under ASan/UBSan; the full cluster and allocation suites pass 233
+  of 233 and 31 of 31. LLVM 18 static analysis remains blocked by the installed macOS 26 libc++
+  headers after its project-local findings were corrected. TLS/TCP ownership,
+  deadline/cancellation, multi-address routing, and all-tablet scheduling remain.
 - Bounded global vector-row finalization continuation: one consuming final pass independently
   validates row-mode plan/schema shape, tablet-stream closure, native descriptors, and exact
   row/message/input/working/output bounds before decoded-state allocation. It stably orders every

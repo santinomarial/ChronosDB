@@ -138,8 +138,20 @@ The first carrier step now reuses the exact Fragment-v2 request but gives groupe
 exact source/target, query/tablet, status, and optional leader-hint fields. Every decode still
 requires the complete key and aggregate authority plus query memory, including failure-only frames.
 Header-first reading proves fixed integrity and all allocation-driving lengths before retaining an
-exact frame; outer and nested checksums then gate typed decode. Authentication, receiver-side fresh
-authority binding, complete-stream publication, and retry scheduling remain the next boundary.
+exact frame; outer and nested checksums then gate typed decode.
+
+The authenticated receiver now authorizes the claimed source before it binds fresh local grouped
+authority. Binding and execution are deliberately separate: the receiver validates the admitted
+plan/result shape first, then rejects any worker whose executed authority drifted. It exact-decodes
+the entire empty-or-contiguous worker stream under request-local memory and independent count/byte
+limits before publishing any response. Worker failures become one correlated payload-free frame;
+only unavailable leadership may add an advisory hint.
+
+The matching sender owns one immutable request and a finite whole-attempt retry policy. A response
+vector must be completely route-correlated and terminal before the sender canonically reconstructs
+its nested frames under owned authority and query memory. Any partial, malformed, or over-limit
+vector leaves it waiting without a retained prefix. TLS/TCP attempt ownership, deadlines,
+cancellation, multi-address routing, and all-tablet scheduling remain the next boundary.
 
 ## Process qualification boundary
 

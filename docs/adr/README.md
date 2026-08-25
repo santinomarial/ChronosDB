@@ -512,3 +512,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0475](0475-owned-cross-tablet-grouped-vector-authority.md) | Owned cross-tablet grouped vector authority | accepted |
 | [0476](0476-portable-pinned-grouped-sufficient-state-execution-owner.md) | Portable pinned grouped sufficient-state execution owner | accepted |
 | [0477](0477-distinct-grouped-sufficient-state-response-v2.md) | Distinct grouped sufficient-state response v2 | accepted |
+| [0478](0478-authenticated-complete-grouped-state-attempts.md) | Authenticated complete grouped-state attempts | accepted |
