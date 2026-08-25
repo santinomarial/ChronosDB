@@ -5,6 +5,8 @@
 #include "chronos/common/result.hpp"
 #include "chronos/common/uuid.hpp"
 #include "chronos/query/distributed_vector_aggregate_state.hpp"
+#include "chronos/query/distributed_vector_plan.hpp"
+#include "chronos/query/distributed_vector_result_schema.hpp"
 #include "chronos/query/physical_plan.hpp"
 #include "chronos/schema/identity.hpp"
 
@@ -46,6 +48,20 @@ struct DistributedVectorGroupedAggregateExchangePosition {
 };
 
 struct DistributedVectorGroupedAggregateExchangeDecodeLimits;
+
+struct DistributedVectorGroupedAggregateAuthority {
+  std::vector<VectorGroupKeyDefinition> keys;
+  std::vector<VectorAggregateDefinition> aggregates;
+};
+
+// Derives the exact ordered key and sufficient-state authority from one schema-bound grouped
+// Fragment-v2 plan. Result descriptors are checked at the same boundary even though SQL names are
+// not repeated in each group frame.
+[[nodiscard]] common::Result<DistributedVectorGroupedAggregateAuthority>
+bind_distributed_vector_grouped_aggregate_authority(
+    const DistributedVectorPlanIntent& intent,
+    std::span<const PhysicalColumnShape> projected_inputs,
+    const DistributedVectorResultSchema& result_schema);
 
 // One complete group owns an exact multi-column key tuple and one sufficient state per fragment-
 // authorized aggregate. The distinct empty terminal owns neither keys nor states. Decoded variable

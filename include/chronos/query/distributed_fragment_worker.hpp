@@ -11,6 +11,7 @@
 #include "chronos/query/distributed_mutable_vector_fragment.hpp"
 #include "chronos/query/distributed_vector_aggregate_exchange.hpp"
 #include "chronos/query/distributed_vector_fragment_v2.hpp"
+#include "chronos/query/distributed_vector_grouped_aggregate_exchange.hpp"
 #include "chronos/query/scalar_snapshot_scan.hpp"
 #include "chronos/query/temporal_cseg_snapshot.hpp"
 #include "chronos/raft/metadata.hpp"
@@ -232,6 +233,59 @@ execute_distributed_vector_aggregate_fragment_v2(
 [[nodiscard]] common::Result<DistributedVectorAggregateWorkerResultV2>
 execute_distributed_vector_aggregate_fragment_v2(
     const DistributedVectorAggregateWorkerRequestV2& request,
+    const DistributedTemporalPartBatchLoader& loader);
+
+inline constexpr std::size_t kDefaultDistributedVectorGroupedWorkerEncodedBytesV2 =
+    std::size_t{64U} * 1024U * 1024U;
+inline constexpr std::size_t kMaximumDistributedVectorGroupedWorkerEncodedBytesV2 =
+    std::size_t{1024U} * 1024U * 1024U;
+
+struct DistributedVectorGroupedAggregateWorkerLimitsV2 {
+  DistributedAggregateWorkerLimits storage;
+  std::size_t maximum_query_memory_bytes{kDefaultDistributedVectorRowsWorkerMemoryBytesV2};
+  std::size_t maximum_total_encoded_bytes{kDefaultDistributedVectorGroupedWorkerEncodedBytesV2};
+  std::size_t maximum_retained_configuration_bytes{kDefaultGroupedAggregateConfigurationByteLimit};
+  ScalarSnapshotScanLimits scan;
+  VectorChunkLimits projection;
+  GroupedAggregateLimits table;
+};
+
+struct DistributedVectorGroupedAggregateWorkerRequestV2 {
+  std::reference_wrapper<const DistributedVectorFragmentDispatchV2> dispatch;
+  std::reference_wrapper<const manifest::ManifestStorage> storage;
+  std::reference_wrapper<const manifest::TemporalDatabaseStorageSnapshot> snapshot;
+  std::reference_wrapper<const schema::SchemaLineage> lineage;
+  std::reference_wrapper<const raft::TabletPlacementMetadata> placement;
+  common::Uuid raft_group_id;
+  std::uint64_t local_node{};
+  std::optional<raft::ReadBarrier> local_linearizable_barrier;
+  DistributedVectorGroupedAggregateWorkerLimitsV2 limits;
+};
+
+struct DistributedVectorGroupedAggregateWorkerResultV2 {
+  DistributedVectorGroupedAggregateAuthority authority;
+  std::vector<EncodedDistributedVectorGroupedAggregateExchangeMessage> messages;
+  std::uint64_t input_rows{};
+  std::size_t group_count{};
+  std::size_t encoded_bytes{};
+};
+
+// Accepts only the direct-input grouped Fragment-v2 subset. It reuses every row-worker proof and
+// real-CSEG winner-resolution gate, groups the projected input with the shared query-accounted
+// table, and returns one owned canonical frame per local group or one distinct empty terminal.
+// ORDER BY, LIMIT, finalization, computed pre-group expressions, and transport remain enclosing
+// coordinator responsibilities. The binding-only entry point performs no part I/O.
+[[nodiscard]] common::Result<DistributedVectorGroupedAggregateAuthority>
+bind_distributed_vector_grouped_aggregate_worker_authority_v2(
+    const DistributedVectorGroupedAggregateWorkerRequestV2& request);
+
+[[nodiscard]] common::Result<DistributedVectorGroupedAggregateWorkerResultV2>
+execute_distributed_vector_grouped_aggregate_fragment_v2(
+    const DistributedVectorGroupedAggregateWorkerRequestV2& request);
+
+[[nodiscard]] common::Result<DistributedVectorGroupedAggregateWorkerResultV2>
+execute_distributed_vector_grouped_aggregate_fragment_v2(
+    const DistributedVectorGroupedAggregateWorkerRequestV2& request,
     const DistributedTemporalPartBatchLoader& loader);
 
 } // namespace chronos::query

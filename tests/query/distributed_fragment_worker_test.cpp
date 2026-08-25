@@ -458,6 +458,105 @@ TEST(DistributedFragmentWorkerTest, ExecutesPinnedTemporalPartsAndReprovesLocalP
       execute_distributed_vector_aggregate_fragment_v2(narrow_aggregate_request).error().code(),
       common::StatusCode::kResourceExhausted);
 
+  DistributedVectorFragmentDispatchV2 grouped_vector_dispatch = vector_dispatch;
+  grouped_vector_dispatch.dispatch.plan = {
+      .mode = DistributedVectorPlanMode::kGroupedAggregate,
+      .group_key_input_indices = {1U},
+      .aggregates = {{.operation = VectorAggregateOperation::kCountStar,
+                      .input_index = std::nullopt},
+                     {.operation = VectorAggregateOperation::kSum, .input_index = 1U}},
+      .order_keys = {{.output_index = 2U,
+                      .direction = PhysicalSortDirection::kDescending,
+                      .null_placement = ScalarNullPlacement::kLast}},
+      .limit = 1U};
+  grouped_vector_dispatch.result_schema = {
+      .columns = {
+          {"value", schema_value->columns()[1].type(), false},
+          {"count", schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(), false},
+          {"sum", schema_value->columns()[1].type(), true}}};
+  const auto grouped_vector_request = [&](const std::uint64_t local_node) {
+    return DistributedVectorGroupedAggregateWorkerRequestV2{
+        .dispatch = std::cref(grouped_vector_dispatch),
+        .storage = std::cref(*storage),
+        .snapshot = std::cref(*snapshot),
+        .lineage = std::cref(lineage),
+        .placement = std::cref(placement),
+        .raft_group_id = group_id,
+        .local_node = local_node,
+        .local_linearizable_barrier = raft::ReadBarrier{2U, 3U, 10U},
+        .limits = {}};
+  };
+  auto grouped_authority =
+      bind_distributed_vector_grouped_aggregate_worker_authority_v2(grouped_vector_request(11U));
+  ASSERT_TRUE(grouped_authority.has_value()) << grouped_authority.error().to_string();
+  ASSERT_EQ(grouped_authority->keys.size(), 1U);
+  ASSERT_EQ(grouped_authority->aggregates.size(), 2U);
+  EXPECT_EQ(grouped_authority->keys[0].column_ordinal, 1U);
+  EXPECT_EQ(
+      bind_distributed_vector_grouped_aggregate_worker_authority_v2(grouped_vector_request(12U))
+          .error()
+          .code(),
+      common::StatusCode::kUnavailable);
+
+  auto grouped_vector_result =
+      execute_distributed_vector_grouped_aggregate_fragment_v2(grouped_vector_request(11U));
+  ASSERT_TRUE(grouped_vector_result.has_value()) << grouped_vector_result.error().to_string();
+  EXPECT_EQ(grouped_vector_result->input_rows, 2U);
+  EXPECT_EQ(grouped_vector_result->group_count, 2U);
+  EXPECT_GT(grouped_vector_result->encoded_bytes, 0U);
+  ASSERT_EQ(grouped_vector_result->authority.keys.size(), grouped_authority->keys.size());
+  EXPECT_EQ(grouped_vector_result->authority.keys[0].column_ordinal,
+            grouped_authority->keys[0].column_ordinal);
+  EXPECT_EQ(grouped_vector_result->authority.keys[0].type, grouped_authority->keys[0].type);
+  EXPECT_EQ(grouped_vector_result->authority.keys[0].nullable, grouped_authority->keys[0].nullable);
+  EXPECT_EQ(grouped_vector_result->authority.aggregates, grouped_authority->aggregates);
+  ASSERT_EQ(grouped_vector_result->messages.size(), 2U);
+  QueryResourceContext grouped_decode_resources = QueryResourceContext::create(1U << 20U).value();
+  const std::array<double, 2> expected_group_values{1.5, 2.5};
+  for (std::size_t ordinal = 0U; ordinal < grouped_vector_result->messages.size(); ++ordinal) {
+    auto decoded = decode_distributed_vector_grouped_aggregate_exchange_message_exact(
+        grouped_vector_result->messages[ordinal].bytes(), grouped_vector_result->authority.keys,
+        grouped_vector_result->authority.aggregates, grouped_decode_resources);
+    ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+    EXPECT_EQ(decoded->position().query_id, grouped_vector_dispatch.dispatch.query_id);
+    EXPECT_EQ(decoded->position().tablet_id, grouped_vector_dispatch.dispatch.tablet_id);
+    EXPECT_EQ(decoded->position().sequence, ordinal + 1U);
+    EXPECT_EQ(decoded->position().group_ordinal, ordinal);
+    EXPECT_EQ(decoded->position().group_count, 2U);
+    EXPECT_EQ(decoded->position().terminal, ordinal == 1U);
+    EXPECT_FALSE(decoded->position().empty);
+    ASSERT_EQ(decoded->keys().size(), 1U);
+    EXPECT_EQ(std::get<double>(decoded->keys()[0].storage()), expected_group_values[ordinal]);
+    auto states = std::move(*decoded).take_states();
+    ASSERT_EQ(states.size(), 2U);
+    auto grouped_count = std::move(states[0]).take_result();
+    auto grouped_sum = std::move(states[1]).take_result();
+    ASSERT_TRUE(grouped_count.has_value());
+    ASSERT_TRUE(grouped_sum.has_value());
+    EXPECT_EQ(std::get<std::int64_t>(grouped_count->storage()), 1);
+    EXPECT_EQ(std::get<double>(grouped_sum->storage()), expected_group_values[ordinal]);
+  }
+  OmittingPartLoader incomplete_grouped_loader;
+  EXPECT_EQ(execute_distributed_vector_grouped_aggregate_fragment_v2(grouped_vector_request(11U),
+                                                                     incomplete_grouped_loader)
+                .error()
+                .code(),
+            common::StatusCode::kCorruption);
+  EXPECT_EQ(incomplete_grouped_loader.calls(), 1U);
+  auto narrow_grouped_request = grouped_vector_request(11U);
+  narrow_grouped_request.limits.table.maximum_groups = 1U;
+  EXPECT_EQ(execute_distributed_vector_grouped_aggregate_fragment_v2(narrow_grouped_request)
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+  narrow_grouped_request = grouped_vector_request(11U);
+  narrow_grouped_request.limits.maximum_total_encoded_bytes =
+      distributed_vector_grouped_aggregate_exchange_format::kMinimumFrameLength;
+  EXPECT_EQ(execute_distributed_vector_grouped_aggregate_fragment_v2(narrow_grouped_request)
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+
   OmittingPartLoader incomplete_vector_loader;
   Float64RowsConsumer incomplete_rows;
   EXPECT_EQ(execute_distributed_vector_rows_fragment_v2(vector_request(vector_dispatch, 11U),

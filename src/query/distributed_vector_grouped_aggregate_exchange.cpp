@@ -296,6 +296,63 @@ common::Status validate_distributed_vector_grouped_aggregate_authority(
 }
 // NOLINTEND(bugprone-easily-swappable-parameters)
 
+common::Result<DistributedVectorGroupedAggregateAuthority>
+bind_distributed_vector_grouped_aggregate_authority(
+    const DistributedVectorPlanIntent& intent,
+    const std::span<const PhysicalColumnShape> projected_inputs,
+    const DistributedVectorResultSchema& result_schema) {
+  if (projected_inputs.empty() ||
+      projected_inputs.size() > distributed_vector_plan_format::kMaximumInputColumns) {
+    return common::make_unexpected(
+        invalid("distributed grouped aggregate projected input width is invalid"));
+  }
+  const common::Status plan_status = validate_distributed_vector_plan_intent(
+      intent, static_cast<std::uint32_t>(projected_inputs.size()),
+      distributed_vector_plan_format::kMaximumOutputColumns);
+  if (!plan_status.is_ok())
+    return common::make_unexpected(plan_status);
+  if (intent.mode != DistributedVectorPlanMode::kGroupedAggregate) {
+    return common::make_unexpected(
+        invalid("distributed grouped aggregate authority requires a grouped plan"));
+  }
+  const common::Status schema_status =
+      validate_distributed_vector_result_schema(intent, projected_inputs, result_schema);
+  if (!schema_status.is_ok())
+    return common::make_unexpected(schema_status);
+
+  try {
+    DistributedVectorGroupedAggregateAuthority authority;
+    authority.keys.reserve(intent.group_key_input_indices.size());
+    for (const std::uint32_t index : intent.group_key_input_indices) {
+      const PhysicalColumnShape& shape = projected_inputs[index];
+      authority.keys.push_back(
+          {.column_ordinal = index, .type = shape.type, .nullable = shape.nullable});
+    }
+    authority.aggregates.reserve(intent.aggregates.size());
+    for (const DistributedVectorAggregateIntent& aggregate : intent.aggregates) {
+      std::optional<VectorAggregateInput> input;
+      if (aggregate.input_index.has_value()) {
+        const std::uint32_t index = *aggregate.input_index;
+        const PhysicalColumnShape& shape = projected_inputs[index];
+        input = VectorAggregateInput{
+            .column_ordinal = index, .type = shape.type, .nullable = shape.nullable};
+      }
+      authority.aggregates.push_back({.operation = aggregate.operation, .input = input});
+    }
+    const common::Status authority_status = validate_distributed_vector_grouped_aggregate_authority(
+        authority.keys, authority.aggregates);
+    if (!authority_status.is_ok())
+      return common::make_unexpected(authority_status);
+    return authority;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("distributed grouped aggregate authority allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("distributed grouped aggregate authority exceeds container limits"));
+  }
+}
+
 DistributedVectorGroupedAggregateExchangeMessage::DistributedVectorGroupedAggregateExchangeMessage(
     const DistributedVectorGroupedAggregateExchangePosition position, std::vector<ScalarValue> keys,
     std::vector<MergeableVectorAggregateState> states) noexcept

@@ -434,8 +434,10 @@ query-accounted state. The same table now accepts decoded scalar-key states, coa
 with the physical-row hash/equality rules, and finalizes in caller-defined first-seen order. An
 in-memory all-tablet owner now retains exact retry bytes, rejects gaps/conflicts, proves every
 terminal, and imposes plan-tablet/group-ordinal merge order before exposing query-accounted rows.
-Worker execution and authenticated transport are not connected to that owner yet, so production
-sufficient-state grouped fragments continue to fail closed.
+The proof-revalidated real-CSEG worker now derives direct-input key/state authority, accumulates the
+same table, and returns bounded owned canonical frames. Compatible all-tablet ownership and
+authenticated transport are not connected yet, so production sufficient-state grouped queries
+continue to fail closed.
 The compatible Fragment-v2 snapshot now retains that definition vector once after deriving it under
 each tablet's exact destination schema and rejecting any cross-tablet difference. This matters when
 COUNT, AVG, or variance result descriptors hide the input type; later owners no longer need to

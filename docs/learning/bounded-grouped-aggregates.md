@@ -37,6 +37,11 @@ requires every planned tablet terminal, and only then feeds this table in plan-t
 order. Its emitted chunks retain the same query resource context independently of coordinator
 lifetime.
 
+The proof-revalidated Fragment-v2 worker drives the table from committed temporal snapshot chunks
+for direct projected key and aggregate inputs. It borrows each group only during canonical frame
+encoding; the returned frame vector owns its bytes under an independent total limit, while an empty
+table produces the distinct terminal-only frame.
+
 ## Group semantics and state
 
 Each group owns an ordered `ScalarValue` key and one existing fixed aggregate state per definition.

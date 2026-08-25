@@ -209,6 +209,51 @@ TEST(DistributedVectorAggregateWorkerAllocationFailureTest,
     EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
   }
   EXPECT_TRUE(succeeded);
+
+  DistributedVectorFragmentDispatchV2 grouped_dispatch = dispatch;
+  grouped_dispatch.dispatch.plan = {
+      .mode = DistributedVectorPlanMode::kGroupedAggregate,
+      .group_key_input_indices = {1U},
+      .aggregates = {
+          {.operation = VectorAggregateOperation::kCountStar, .input_index = std::nullopt},
+          {.operation = VectorAggregateOperation::kSum, .input_index = 1U}}};
+  grouped_dispatch.result_schema = {
+      .columns = {
+          {"value", schema->columns()[1].type(), true},
+          {"count", schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(), false},
+          {"sum", schema->columns()[1].type(), true}}};
+  const DistributedVectorGroupedAggregateWorkerRequestV2 grouped_request{
+      .dispatch = std::cref(grouped_dispatch),
+      .storage = std::cref(*storage),
+      .snapshot = std::cref(*snapshot),
+      .lineage = std::cref(lineage),
+      .placement = std::cref(placement),
+      .raft_group_id = group_id,
+      .local_node = 11U,
+      .local_linearizable_barrier = raft::ReadBarrier{2U, 3U, 10U}};
+  bool grouped_succeeded{};
+  for (std::size_t fail_after = 0U; fail_after < 192U; ++fail_after) {
+    auto result = run_failure(fail_after, [&] {
+      return execute_distributed_vector_grouped_aggregate_fragment_v2(grouped_request);
+    });
+    if (result.has_value()) {
+      EXPECT_EQ(result->input_rows, 0U);
+      EXPECT_EQ(result->group_count, 0U);
+      EXPECT_GT(result->encoded_bytes, 0U);
+      ASSERT_EQ(result->messages.size(), 1U);
+      QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+      auto decoded = decode_distributed_vector_grouped_aggregate_exchange_message_exact(
+          result->messages[0].bytes(), result->authority.keys, result->authority.aggregates,
+          resources);
+      ASSERT_TRUE(decoded.has_value());
+      EXPECT_TRUE(decoded->position().empty);
+      EXPECT_TRUE(decoded->position().terminal);
+      grouped_succeeded = true;
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(grouped_succeeded);
 }
 
 } // namespace

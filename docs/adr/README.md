@@ -508,3 +508,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0471](0471-shared-mergeable-grouped-state-owner.md) | Shared mergeable grouped-state owner | accepted |
 | [0472](0472-query-accounted-grouped-partial-state-merge.md) | Query-accounted grouped partial-state merge | accepted |
 | [0473](0473-bounded-all-tablet-grouped-state-coordinator.md) | Bounded all-tablet grouped-state coordinator | accepted |
+| [0474](0474-proof-revalidated-grouped-sufficient-state-worker-v2.md) | Proof-revalidated grouped sufficient-state worker v2 | accepted |

@@ -1,8 +1,8 @@
 # Distributed Vector Grouped Aggregate Exchange v1
 
-> **Status: accepted and implemented for exact encoding, decoding, and bounded partial-I/O
-> ownership.** Worker plan execution, cross-tablet merging, authenticated query transport, and
-> partitioned shuffle remain separate owners.
+> **Status: accepted and implemented for exact encoding, decoding, bounded partial-I/O ownership,
+> direct-input Fragment-v2 worker production, and in-memory cross-tablet merge.** Computed
+> pre-group plans, authenticated query transport, and partitioned shuffle remain separate owners.
 
 This distinct frame binds one multi-column group key tuple and zero or more
 [Mergeable Vector Aggregate State v1](mergeable-vector-aggregate-state-v1.md) values to one query,
@@ -105,5 +105,7 @@ complete.
 CRC32C provides accidental-damage detection, not authentication. An enclosing mutually
 authenticated transport must bind the exact fragment and peer identities. The in-memory owner
 handles gap-free sequence, exact duplicate identity, all-tablet closure, and canonical merge order.
-Transport retry scheduling, skew bounds, final projection, ORDER BY, and LIMIT remain enclosing
+The proof-revalidated Fragment-v2 worker produces canonical direct-input grouped streams, including
+the distinct empty terminal, under a total encoded-byte bound. Computed pre-group expressions,
+transport retry scheduling, skew bounds, final projection, ORDER BY, and LIMIT remain enclosing
 responsibilities.

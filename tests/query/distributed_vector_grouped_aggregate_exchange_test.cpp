@@ -77,6 +77,42 @@ states(const std::span<const VectorAggregateDefinition> definitions) {
 }
 
 TEST(DistributedVectorGroupedAggregateExchangeTest,
+     BindsMultiKeyAllTypeAuthorityAgainstTheExactFragmentResultShape) {
+  const std::vector<PhysicalColumnShape> inputs{
+      {.type = type(schema::LogicalTypeKind::kString), .nullable = false},
+      {.type = type(schema::LogicalTypeKind::kBool), .nullable = true},
+      {.type = type(schema::LogicalTypeKind::kInt64), .nullable = true}};
+  const DistributedVectorPlanIntent intent{
+      .mode = DistributedVectorPlanMode::kGroupedAggregate,
+      .group_key_input_indices = {0U, 1U},
+      .aggregates = {
+          {.operation = VectorAggregateOperation::kCountStar, .input_index = std::nullopt},
+          {.operation = VectorAggregateOperation::kCount, .input_index = 2U}}};
+  DistributedVectorResultSchema result_schema{
+      .columns = {{"region", inputs[0].type, false},
+                  {"enabled", inputs[1].type, true},
+                  {"rows", type(schema::LogicalTypeKind::kInt64), false},
+                  {"present", type(schema::LogicalTypeKind::kInt64), false}}};
+  auto authority =
+      bind_distributed_vector_grouped_aggregate_authority(intent, inputs, result_schema);
+  ASSERT_TRUE(authority.has_value()) << authority.error().to_string();
+  ASSERT_EQ(authority->keys.size(), 2U);
+  EXPECT_EQ(authority->keys[0].column_ordinal, 0U);
+  EXPECT_EQ(authority->keys[0].type, inputs[0].type);
+  EXPECT_FALSE(authority->keys[0].nullable);
+  EXPECT_EQ(authority->keys[1].column_ordinal, 1U);
+  EXPECT_EQ(authority->keys[1].type, inputs[1].type);
+  EXPECT_TRUE(authority->keys[1].nullable);
+  EXPECT_EQ(authority->aggregates, aggregates());
+
+  result_schema.columns.back().nullable = true;
+  EXPECT_EQ(bind_distributed_vector_grouped_aggregate_authority(intent, inputs, result_schema)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+}
+
+TEST(DistributedVectorGroupedAggregateExchangeTest,
      RoundTripsMultiKeyAllTypeSufficientStateWithFrozenFraming) {
   const auto expected_keys = keys();
   const auto expected_aggregates = aggregates();

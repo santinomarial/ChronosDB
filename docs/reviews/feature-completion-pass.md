@@ -916,6 +916,12 @@ Focused executions passed:
   retryable from retained bytes. Full allocation injection includes variable keys/extrema and
   output publication. Worker plan splitting, authenticated transport/read authority, final grouped
   projection/order/limit, and partition routing remain.
+- Grouped sufficient-state worker continuation: the proof-revalidated Fragment-v2 real-CSEG worker
+  now derives exact direct-input multi-key/all-type authority, reuses committed temporal winner and
+  event-time gates, accumulates the shared query-accounted grouped table, and returns bounded owned
+  Grouped Exchange v1 frames or the distinct empty terminal. Retained configuration and aggregate
+  encoded bytes have independent hard bounds. Computed pre-group expressions, compatible
+  all-tablet dispatch ownership, transport, and final SQL integration remain.
 - Cross-tablet aggregate-definition ownership continuation: the compatible Fragment-v2 snapshot
   derives ungrouped definitions independently under every tablet's projected destination schema,
   rejects any exact mismatch, and retains the shared vector once with the Manifest pin and result

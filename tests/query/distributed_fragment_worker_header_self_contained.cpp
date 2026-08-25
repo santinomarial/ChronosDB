@@ -10,6 +10,9 @@ static_assert(std::is_aggregate_v<chronos::query::DistributedVectorRowsWorkerReq
 static_assert(std::has_virtual_destructor_v<chronos::query::DistributedVectorRowsChunkConsumerV2>);
 static_assert(std::is_aggregate_v<chronos::query::DistributedVectorAggregateWorkerLimitsV2>);
 static_assert(std::is_aggregate_v<chronos::query::DistributedVectorAggregateWorkerRequestV2>);
+static_assert(std::is_aggregate_v<chronos::query::DistributedVectorGroupedAggregateWorkerLimitsV2>);
+static_assert(
+    std::is_aggregate_v<chronos::query::DistributedVectorGroupedAggregateWorkerRequestV2>);
 
 namespace {
 using Execute = chronos::common::Result<chronos::query::ExchangeMessage> (*)(
@@ -31,4 +34,9 @@ using ExecuteVectorAggregate =
         const chronos::query::DistributedVectorAggregateWorkerRequestV2&);
 [[maybe_unused]] const ExecuteVectorAggregate kExecuteVectorAggregate =
     &chronos::query::execute_distributed_vector_aggregate_fragment_v2;
+using ExecuteVectorGroupedAggregate =
+    chronos::common::Result<chronos::query::DistributedVectorGroupedAggregateWorkerResultV2> (*)(
+        const chronos::query::DistributedVectorGroupedAggregateWorkerRequestV2&);
+[[maybe_unused]] const ExecuteVectorGroupedAggregate kExecuteVectorGroupedAggregate =
+    &chronos::query::execute_distributed_vector_grouped_aggregate_fragment_v2;
 } // namespace

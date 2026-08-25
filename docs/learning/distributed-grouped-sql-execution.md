@@ -104,10 +104,11 @@ to its synchronous encoder without a second grouping oracle. That same query-acc
 coalesces decoded equal-key states and finalizes rows; every logical type, signed zero, and NaN share
 the physical-row identity rules. A bounded in-memory coordinator now retains exact retry identity,
 requires terminal closure for every planned tablet, merges in plan order rather than arrival order,
-and seals input before output. Workers still need pre-group physical plan execution and stream
-construction; the service path still needs partition authority, bounded shuffle/skew policy,
-authenticated transport, and fault evidence. The row-backed path remains the differential oracle
-for that work.
+and seals input before output. A proof-revalidated real-CSEG worker now executes direct projected
+keys and aggregate inputs through the same table and constructs bounded canonical streams.
+Computed pre-group expressions still need a physical-plan split; the service path still needs
+compatible all-tablet authority, partition/shuffle policy, authenticated transport, and fault
+evidence. The row-backed path remains the differential oracle for that work.
 
 ## Process qualification boundary
 

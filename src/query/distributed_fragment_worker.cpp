@@ -757,6 +757,298 @@ private:
   bool repeated_{};
 };
 
+[[nodiscard]] bool valid_vector_grouped_aggregate_limits(
+    const DistributedVectorGroupedAggregateWorkerLimitsV2& limits) noexcept {
+  return limits.maximum_query_memory_bytes > 0U &&
+         limits.maximum_query_memory_bytes <= kMaximumDistributedVectorRowsWorkerMemoryBytesV2 &&
+         limits.maximum_total_encoded_bytes >=
+             distributed_vector_grouped_aggregate_exchange_format::kMinimumFrameLength &&
+         limits.maximum_total_encoded_bytes <=
+             kMaximumDistributedVectorGroupedWorkerEncodedBytesV2 &&
+         limits.maximum_retained_configuration_bytes > 0U &&
+         limits.scan.maximum_rows_per_chunk > 0U && limits.scan.chunk.maximum_rows > 0U &&
+         limits.scan.chunk.maximum_columns > 0U && limits.scan.chunk.maximum_buffer_bytes > 0U &&
+         limits.scan.chunk.maximum_retained_buffer_bytes > 0U &&
+         limits.projection.maximum_rows > 0U && limits.projection.maximum_columns > 0U &&
+         limits.projection.maximum_buffer_bytes > 0U &&
+         limits.projection.maximum_retained_buffer_bytes > 0U &&
+         limits.projection.maximum_rows >=
+             std::min(limits.scan.maximum_rows_per_chunk, limits.scan.chunk.maximum_rows);
+}
+
+struct ValidatedVectorGroupedAggregateWorkerBinding {
+  ValidatedWorkerAuthority authority;
+  std::vector<PhysicalColumnShape> projected_inputs;
+  DistributedVectorGroupedAggregateAuthority grouped;
+};
+
+[[nodiscard]] common::Result<ValidatedVectorGroupedAggregateWorkerBinding>
+validate_vector_grouped_aggregate_worker_binding(
+    const DistributedVectorGroupedAggregateWorkerRequestV2& request) {
+  const DistributedVectorFragmentDispatchV2& dispatch = request.dispatch.get();
+  const DistributedVectorFragmentDispatch& fragment = dispatch.dispatch;
+  const auto structurally_valid = encode_distributed_vector_fragment_dispatch_v2(dispatch);
+  if (!structurally_valid.has_value())
+    return common::make_unexpected(structurally_valid.error());
+  if (!valid_vector_grouped_aggregate_limits(request.limits)) {
+    return common::make_unexpected(
+        invalid("distributed vector grouped aggregate worker limits are invalid"));
+  }
+  if (fragment.plan.mode != DistributedVectorPlanMode::kGroupedAggregate) {
+    return common::make_unexpected(
+        invalid("distributed vector grouped aggregate worker requires a grouped plan"));
+  }
+  auto authority = validate_worker_authority(
+      fragment, fragment.raft_group_id, request.snapshot.get(), request.lineage.get(),
+      request.placement.get(), request.raft_group_id, request.local_node,
+      request.local_linearizable_barrier);
+  if (!authority.has_value())
+    return common::make_unexpected(authority.error());
+
+  try {
+    std::vector<PhysicalColumnShape> projected_inputs;
+    projected_inputs.reserve(fragment.destination_column_ordinals.size());
+    for (const std::uint32_t ordinal : fragment.destination_column_ordinals) {
+      if (ordinal >= authority->schema_value->columns().size()) {
+        return common::make_unexpected(
+            invalid("distributed vector grouped aggregate projection is out of bounds"));
+      }
+      const schema::ColumnDefinition& column = authority->schema_value->columns()[ordinal];
+      projected_inputs.push_back({column.type(), column.nullable()});
+    }
+    auto grouped = bind_distributed_vector_grouped_aggregate_authority(
+        fragment.plan, projected_inputs, dispatch.result_schema);
+    if (!grouped.has_value())
+      return common::make_unexpected(grouped.error());
+    if (projected_inputs.size() > request.limits.projection.maximum_columns) {
+      return common::make_unexpected(
+          exhausted("distributed vector grouped aggregate projection exceeds its width limit"));
+    }
+    const auto projected_bytes =
+        common::checked_multiply(projected_inputs.capacity(), sizeof(PhysicalColumnShape));
+    const auto key_bytes =
+        common::checked_multiply(grouped->keys.capacity(), sizeof(VectorGroupKeyDefinition) * 2U);
+    const auto aggregate_bytes = common::checked_multiply(grouped->aggregates.capacity(),
+                                                          sizeof(VectorAggregateDefinition) * 2U);
+    const auto first = projected_bytes.has_value() && key_bytes.has_value()
+                           ? common::checked_add(*projected_bytes, *key_bytes)
+                           : std::nullopt;
+    const auto retained = first.has_value() && aggregate_bytes.has_value()
+                              ? common::checked_add(*first, *aggregate_bytes)
+                              : std::nullopt;
+    if (!retained.has_value() || *retained > request.limits.maximum_retained_configuration_bytes) {
+      return common::make_unexpected(exhausted(
+          "distributed vector grouped aggregate retained configuration exceeds its limit"));
+    }
+    auto table = MergeableVectorGroupedAggregateTable::create(grouped->keys, grouped->aggregates,
+                                                              request.limits.table);
+    if (!table.has_value())
+      return common::make_unexpected(table.error());
+    return ValidatedVectorGroupedAggregateWorkerBinding{.authority = std::move(*authority),
+                                                        .projected_inputs =
+                                                            std::move(projected_inputs),
+                                                        .grouped = std::move(*grouped)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("distributed vector grouped aggregate worker binding allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("distributed vector grouped aggregate worker binding exceeds limits"));
+  }
+}
+
+[[nodiscard]] common::Result<DistributedVectorGroupedAggregateWorkerResultV2>
+execute_vector_grouped_aggregate_snapshot(
+    const DistributedVectorGroupedAggregateWorkerRequestV2& request,
+    const ValidatedWorkerAuthority& authority,
+    std::shared_ptr<const ScalarTableSnapshot> scalar_snapshot,
+    const std::span<const PhysicalColumnShape> projected_inputs,
+    DistributedVectorGroupedAggregateAuthority grouped) {
+  auto resources = QueryResourceContext::create(request.limits.maximum_query_memory_bytes);
+  if (!resources.has_value())
+    return common::make_unexpected(resources.error());
+  auto pipeline =
+      ScalarSnapshotScanOperator::create(std::move(scalar_snapshot), request.limits.scan);
+  if (!pipeline.has_value())
+    return common::make_unexpected(pipeline.error());
+  const DistributedVectorFragmentDispatch& fragment = request.dispatch.get().dispatch;
+  if (fragment.event_time_predicate.has_value()) {
+    pipeline =
+        TimestampRangeFilterOperator::create(std::move(*pipeline), authority.event_ordinal,
+                                             timestamp_predicate(*fragment.event_time_predicate));
+    if (!pipeline.has_value())
+      return common::make_unexpected(pipeline.error());
+  }
+
+  try {
+    std::vector<std::size_t> output_ordinals;
+    output_ordinals.reserve(fragment.destination_column_ordinals.size());
+    for (const std::uint32_t ordinal : fragment.destination_column_ordinals)
+      output_ordinals.push_back(ordinal);
+    pipeline = SourceColumnOutputOperator::create(std::move(*pipeline), std::move(output_ordinals),
+                                                  request.limits.projection);
+    if (!pipeline.has_value())
+      return common::make_unexpected(pipeline.error());
+    auto table = MergeableVectorGroupedAggregateTable::create(grouped.keys, grouped.aggregates,
+                                                              request.limits.table);
+    if (!table.has_value())
+      return common::make_unexpected(table.error());
+
+    std::uint64_t input_rows{};
+    for (;;) {
+      auto step = (*pipeline)->next(*resources);
+      if (!step.has_value())
+        return common::make_unexpected(step.error());
+      if (step->kind() == PhysicalOperatorStepKind::kEnd)
+        break;
+      const AccountedVectorChunk* chunk = step->chunk();
+      if (chunk == nullptr || !chunk->belongs_to(*resources)) {
+        return common::make_unexpected(
+            corruption("distributed vector grouped aggregate chunk ownership is invalid"));
+      }
+      if (chunk->chunk().column_count() != projected_inputs.size()) {
+        return common::make_unexpected(
+            corruption("distributed vector grouped aggregate projection width differs"));
+      }
+      for (std::size_t column = 0U; column < projected_inputs.size(); ++column) {
+        const columnar::PhysicalColumnView* physical = chunk->chunk().column(column);
+        if (physical == nullptr || physical->type() != projected_inputs[column].type ||
+            physical->nullable() != projected_inputs[column].nullable) {
+          return common::make_unexpected(
+              corruption("distributed vector grouped aggregate projection shape differs"));
+        }
+      }
+      const std::size_t selected_rows = chunk->chunk().selected_row_count();
+      if (selected_rows > std::numeric_limits<std::uint64_t>::max() - input_rows) {
+        return common::make_unexpected(
+            exhausted("distributed vector grouped aggregate rows overflow"));
+      }
+      auto accumulated = table->accumulate(*chunk, *resources);
+      if (!accumulated.has_value())
+        return common::make_unexpected(accumulated.error());
+      input_rows += static_cast<std::uint64_t>(selected_rows);
+    }
+
+    const std::size_t group_count = table->group_count();
+    std::vector<EncodedDistributedVectorGroupedAggregateExchangeMessage> messages;
+    messages.reserve(std::max(group_count, std::size_t{1U}));
+    std::size_t encoded_bytes{};
+    const auto retain_encoded = [&](EncodedDistributedVectorGroupedAggregateExchangeMessage encoded)
+        -> common::Result<void> {
+      if (encoded.bytes().size() > request.limits.maximum_total_encoded_bytes - encoded_bytes) {
+        return common::make_unexpected(exhausted(
+            "distributed vector grouped aggregate encoded result exceeds its byte limit"));
+      }
+      encoded_bytes += encoded.bytes().size();
+      messages.push_back(std::move(encoded));
+      return {};
+    };
+    if (group_count == 0U) {
+      auto encoded = encode_distributed_vector_grouped_aggregate_exchange_message(
+          {.query_id = fragment.query_id,
+           .tablet_id = fragment.tablet_id,
+           .sequence = 1U,
+           .group_ordinal = 0U,
+           .group_count = 0U,
+           .terminal = true,
+           .empty = true},
+          std::span<const ScalarValue>{}, std::span<const MergeableVectorAggregateState>{},
+          grouped.keys, grouped.aggregates);
+      if (!encoded.has_value())
+        return common::make_unexpected(encoded.error());
+      auto retained = retain_encoded(std::move(*encoded));
+      if (!retained.has_value())
+        return common::make_unexpected(retained.error());
+    } else {
+      for (std::size_t ordinal = 0U; ordinal < group_count; ++ordinal) {
+        auto keys = table->group_keys(ordinal);
+        if (!keys.has_value())
+          return common::make_unexpected(keys.error());
+        auto states = table->group_states(ordinal);
+        if (!states.has_value())
+          return common::make_unexpected(states.error());
+        auto encoded = encode_distributed_vector_grouped_aggregate_exchange_message(
+            {.query_id = fragment.query_id,
+             .tablet_id = fragment.tablet_id,
+             .sequence = static_cast<std::uint64_t>(ordinal) + 1U,
+             .group_ordinal = static_cast<std::uint32_t>(ordinal),
+             .group_count = static_cast<std::uint32_t>(group_count),
+             .terminal = ordinal + 1U == group_count,
+             .empty = false},
+            *keys, *states, grouped.keys, grouped.aggregates);
+        if (!encoded.has_value())
+          return common::make_unexpected(encoded.error());
+        auto retained = retain_encoded(std::move(*encoded));
+        if (!retained.has_value())
+          return common::make_unexpected(retained.error());
+      }
+    }
+    return DistributedVectorGroupedAggregateWorkerResultV2{.authority = std::move(grouped),
+                                                           .messages = std::move(messages),
+                                                           .input_rows = input_rows,
+                                                           .group_count = group_count,
+                                                           .encoded_bytes = encoded_bytes};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("distributed vector grouped aggregate worker allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("distributed vector grouped aggregate worker exceeds container limits"));
+  }
+}
+
+class VectorGroupedAggregatePartBatchConsumer final : public DistributedTemporalPartBatchConsumer {
+public:
+  VectorGroupedAggregatePartBatchConsumer(
+      const DistributedVectorGroupedAggregateWorkerRequestV2& request,
+      const ValidatedWorkerAuthority& authority, std::vector<PhysicalColumnShape> projected_inputs,
+      DistributedVectorGroupedAggregateAuthority grouped) noexcept
+      : request_(request), authority_(authority), projected_inputs_(std::move(projected_inputs)),
+        grouped_(std::move(grouped)) {}
+
+  common::Status consume(const std::span<const TemporalManifestCsegPartView> parts) override {
+    if (called_) {
+      repeated_ = true;
+      return corruption(
+          "distributed vector grouped aggregate part consumer was invoked more than once");
+    }
+    called_ = true;
+    auto visible = resolve_manifest_v2_temporal_tablet_snapshot(
+        authority_.get().schema_value, request_.get().lineage.get(), *authority_.get().tablet,
+        parts,
+        {.source = cseg::temporal_format::CommitSource::kRaft,
+         .source_id = request_.get().raft_group_id},
+        std::nullopt, request_.get().limits.storage.resolution);
+    if (!visible.has_value())
+      return visible.error();
+    auto executed = execute_vector_grouped_aggregate_snapshot(
+        request_.get(), authority_.get(), std::move(*visible), projected_inputs_,
+        std::move(grouped_));
+    if (!executed.has_value())
+      return executed.error();
+    result_ = std::move(*executed);
+    return common::Status::ok();
+  }
+
+  [[nodiscard]] bool has_exactly_one_call() const noexcept {
+    return called_ && !repeated_;
+  }
+
+  [[nodiscard]] std::optional<DistributedVectorGroupedAggregateWorkerResultV2>
+  take_result() && noexcept {
+    return std::move(result_);
+  }
+
+private:
+  std::reference_wrapper<const DistributedVectorGroupedAggregateWorkerRequestV2> request_;
+  std::reference_wrapper<const ValidatedWorkerAuthority> authority_;
+  std::vector<PhysicalColumnShape> projected_inputs_;
+  DistributedVectorGroupedAggregateAuthority grouped_;
+  std::optional<DistributedVectorGroupedAggregateWorkerResultV2> result_;
+  bool called_{};
+  bool repeated_{};
+};
+
 } // namespace
 
 common::Result<ExchangeMessage>
@@ -1286,6 +1578,86 @@ execute_distributed_vector_aggregate_fragment_v2(
   } catch (const std::length_error&) {
     return common::make_unexpected(
         exhausted("distributed vector aggregate worker exceeds container limits"));
+  }
+}
+
+common::Result<DistributedVectorGroupedAggregateWorkerResultV2>
+execute_distributed_vector_grouped_aggregate_fragment_v2(
+    const DistributedVectorGroupedAggregateWorkerRequestV2& request) {
+  const LocalTemporalPartBatchLoader loader{request.storage.get()};
+  return execute_distributed_vector_grouped_aggregate_fragment_v2(request, loader);
+}
+
+common::Result<DistributedVectorGroupedAggregateAuthority>
+bind_distributed_vector_grouped_aggregate_worker_authority_v2(
+    const DistributedVectorGroupedAggregateWorkerRequestV2& request) {
+  auto binding = validate_vector_grouped_aggregate_worker_binding(request);
+  if (!binding.has_value())
+    return common::make_unexpected(binding.error());
+  return std::move(binding->grouped);
+}
+
+common::Result<DistributedVectorGroupedAggregateWorkerResultV2>
+execute_distributed_vector_grouped_aggregate_fragment_v2(
+    const DistributedVectorGroupedAggregateWorkerRequestV2& request,
+    const DistributedTemporalPartBatchLoader& loader) {
+  auto binding = validate_vector_grouped_aggregate_worker_binding(request);
+  if (!binding.has_value())
+    return common::make_unexpected(binding.error());
+  const DistributedVectorFragmentDispatch& fragment = request.dispatch.get().dispatch;
+  const manifest::TemporalDatabaseStorageSnapshot& snapshot = request.snapshot.get();
+  const schema::SchemaLineage& lineage = request.lineage.get();
+  ValidatedWorkerAuthority* const authority = &binding->authority;
+
+  try {
+    std::vector<PhysicalColumnShape> projected_inputs = std::move(binding->projected_inputs);
+    DistributedVectorGroupedAggregateAuthority grouped = std::move(binding->grouped);
+    const manifest::TemporalTabletDescriptor& tablet = *authority->tablet;
+    if (tablet.part_count == 0U) {
+      if (tablet.durable_version_count != 0U) {
+        return common::make_unexpected(
+            corruption("distributed vector grouped aggregate empty part set has durable rows"));
+      }
+      auto empty =
+          ScalarTableSnapshot::create(authority->schema_value, tablet.durable_position, {});
+      if (!empty.has_value())
+        return common::make_unexpected(empty.error());
+      return execute_vector_grouped_aggregate_snapshot(
+          request, *authority, std::make_shared<const ScalarTableSnapshot>(std::move(*empty)),
+          projected_inputs, std::move(grouped));
+    }
+
+    const std::span<const manifest::TemporalPartDescriptor> descriptors =
+        snapshot.parts().subspan(static_cast<std::size_t>(tablet.first_part_index),
+                                 static_cast<std::size_t>(tablet.part_count));
+    std::vector<cseg::PartId> part_ids;
+    part_ids.reserve(descriptors.size());
+    for (const manifest::TemporalPartDescriptor& descriptor : descriptors)
+      part_ids.push_back(descriptor.part_id);
+    const std::array bindings{manifest::TabletSchemaBinding{.tablet_id = fragment.tablet_id,
+                                                            .lineage = std::cref(lineage)}};
+    VectorGroupedAggregatePartBatchConsumer consumer{
+        request, *authority, std::move(projected_inputs), std::move(grouped)};
+    const common::Status loaded =
+        loader.load(snapshot, part_ids, bindings, request.limits.storage.part_validation, consumer);
+    if (!loaded.is_ok())
+      return common::make_unexpected(loaded);
+    if (!consumer.has_exactly_one_call()) {
+      return common::make_unexpected(corruption("distributed vector grouped aggregate part loader "
+                                                "did not invoke its consumer exactly once"));
+    }
+    auto result = std::move(consumer).take_result();
+    if (!result.has_value()) {
+      return common::make_unexpected(
+          corruption("distributed vector grouped aggregate part consumer produced no result"));
+    }
+    return std::move(*result);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("distributed vector grouped aggregate worker allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("distributed vector grouped aggregate worker exceeds container limits"));
   }
 }
 
