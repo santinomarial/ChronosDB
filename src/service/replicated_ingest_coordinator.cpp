@@ -120,7 +120,7 @@ public:
       increment(stats.rejected_requests);
       return status;
     };
-    if (request.connection_id == 0U || request.principal_id == 0U ||
+    if (request.connection_id == 0U ||
         request.frame.header.message_type != network::MessageType::kIngestRequest ||
         request.frame.header.request_id == 0U ||
         request.frame.header.protocol_major != request.protocol.protocol_major ||

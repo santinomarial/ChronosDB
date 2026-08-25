@@ -87,6 +87,7 @@ public:
     std::chrono::steady_clock::time_point deadline;
     std::vector<GroupState> groups;
     common::Status result;
+    common::Status last_admission_failure;
     bool capture_observations{};
     bool completed{};
   };
@@ -205,10 +206,20 @@ public:
     } guard{*this};
     try {
       Request next{.deadline = std::chrono::steady_clock::now() + limits.request_timeout,
-                   .capture_observations = observations != nullptr};
+                   .groups = {},
+                   .result = common::Status::ok(),
+                   .last_admission_failure = common::Status::ok(),
+                   .capture_observations = observations != nullptr,
+                   .completed = false};
       next.groups.reserve(group_ids.size());
       for (const raft::GroupId& group_id : group_ids)
-        next.groups.push_back({.group_id = group_id});
+        next.groups.push_back({.group_id = group_id,
+                               .stage = Stage::kCommitPending,
+                               .submission_sequence = 0U,
+                               .barrier_term = 0U,
+                               .barrier_context = 0U,
+                               .ready = std::nullopt,
+                               .observation = std::nullopt});
       request.emplace(std::move(next));
     } catch (const std::bad_alloc&) {
       return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
@@ -223,9 +234,9 @@ public:
           status(common::StatusCode::kUnavailable, "replicated read-barrier owner stopped"));
     }
     if (!request->completed) {
+      common::Status failure = timeout_failure();
       request.reset();
-      return common::make_unexpected(
-          status(common::StatusCode::kUnavailable, "replicated read-barrier request timed out"));
+      return common::make_unexpected(std::move(failure));
     }
     if (!request->result.is_ok()) {
       common::Status failure = request->result;
@@ -273,6 +284,35 @@ public:
     request->result = std::move(result);
     request->completed = true;
     condition.notify_one();
+  }
+
+  [[nodiscard]] common::Status timeout_failure() const {
+    if (!request.has_value())
+      return status(common::StatusCode::kUnavailable, "replicated read-barrier request timed out");
+    if (!request->last_admission_failure.is_ok())
+      return request->last_admission_failure;
+    for (const GroupState& group : request->groups) {
+      switch (group.stage) {
+      case Stage::kCommitPending:
+        return status(common::StatusCode::kUnavailable,
+                      "replicated read-barrier timed out before current-term commit admission");
+      case Stage::kCommitInFlight:
+        return status(common::StatusCode::kUnavailable,
+                      "replicated read-barrier timed out awaiting current-term commit");
+      case Stage::kBarrierPending:
+        return status(common::StatusCode::kUnavailable,
+                      "replicated read-barrier timed out before barrier admission");
+      case Stage::kBarrierInFlight:
+        return status(common::StatusCode::kUnavailable,
+                      "replicated read-barrier timed out awaiting barrier admission result");
+      case Stage::kWaitingForQuorum:
+        return status(common::StatusCode::kUnavailable,
+                      "replicated read-barrier timed out awaiting quorum confirmation");
+      case Stage::kComplete:
+        break;
+      }
+    }
+    return status(common::StatusCode::kUnavailable, "replicated read-barrier request timed out");
   }
 
   void finish_if_complete() {
@@ -410,8 +450,7 @@ common::Status ReplicatedReadBarrier::poll_owner_drive(ReplicatedRaftTransportRu
   if (active_request.completed)
     return common::Status::ok();
   if (std::chrono::steady_clock::now() >= active_request.deadline) {
-    impl_->finish(
-        status(common::StatusCode::kUnavailable, "replicated read-barrier request timed out"));
+    impl_->finish(impl_->timeout_failure());
     return common::Status::ok();
   }
   for (Impl::GroupState& group : active_request.groups) {
@@ -424,11 +463,14 @@ common::Status ReplicatedReadBarrier::poll_owner_drive(ReplicatedRaftTransportRu
       continue;
     auto submitted = transport.try_submit_application({group.group_id, std::move(operation)});
     if (!submitted.has_value()) {
-      if (submitted.error().code() == common::StatusCode::kResourceExhausted)
+      if (submitted.error().code() == common::StatusCode::kResourceExhausted) {
+        active_request.last_admission_failure = submitted.error();
         return common::Status::ok();
+      }
       impl_->finish(submitted.error());
       return common::Status::ok();
     }
+    active_request.last_admission_failure = common::Status::ok();
     group.submission_sequence = *submitted;
     group.stage = group.stage == Impl::Stage::kCommitPending ? Impl::Stage::kCommitInFlight
                                                              : Impl::Stage::kBarrierInFlight;

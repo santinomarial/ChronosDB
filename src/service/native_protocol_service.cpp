@@ -153,6 +153,13 @@ struct ResponseRoute {
                     .payload = std::move(payload)}};
 }
 
+void finish_query_result_stream(std::vector<network::NetworkTask>& responses) noexcept {
+  if (!responses.empty() &&
+      responses.back().frame.header.message_type == network::MessageType::kQueryResult) {
+    responses.back().frame.header.flags |= network::kFrameFlagEndStream;
+  }
+}
+
 [[nodiscard]] common::Result<NativeProtocolResponseSequence>
 query_error(const ResponseRoute& target, const common::Status& status,
             const network::ProtocolLimits& limits) {
@@ -309,6 +316,7 @@ distributed_rows_result(const ResponseRoute& target,
       responses.responses.push_back(
           make_response(target, network::MessageType::kQueryResult, std::move(payload)));
     }
+    finish_query_result_stream(responses.responses);
     responses.responses.push_back(make_response(target, network::MessageType::kQueryEnd));
     return responses;
   } catch (const std::bad_alloc&) {
@@ -336,6 +344,7 @@ distributed_aggregate_result(const ResponseRoute& target,
     responses.responses.reserve(2U);
     responses.responses.push_back(
         make_response(target, network::MessageType::kQueryResult, std::move(result.encoded_batch)));
+    finish_query_result_stream(responses.responses);
     responses.responses.push_back(make_response(target, network::MessageType::kQueryEnd));
     return responses;
   } catch (const std::bad_alloc&) {
@@ -428,6 +437,7 @@ ddl_result(const ResponseRoute& target, const CreatedSingleNodeTable& created,
     result.responses.reserve(2U);
     result.responses.push_back(
         make_response(target, network::MessageType::kQueryResult, std::move(*payload)));
+    finish_query_result_stream(result.responses);
     result.responses.push_back(make_response(target, network::MessageType::kQueryEnd));
     return result;
   } catch (const std::bad_alloc&) {
@@ -487,6 +497,7 @@ insert_result(const ResponseRoute& target, const std::uint32_t applied_rows,
     result.responses.reserve(2U);
     result.responses.push_back(
         make_response(target, network::MessageType::kQueryResult, std::move(*payload)));
+    finish_query_result_stream(result.responses);
     result.responses.push_back(make_response(target, network::MessageType::kQueryEnd));
     return result;
   } catch (const std::bad_alloc&) {
@@ -768,7 +779,6 @@ NativeProtocolService::execute_query(network::NetworkTask request,
                          limits_.protocol);
     }
     if (replicated_database_ != nullptr && replicated_read_barrier_ != nullptr &&
-        distributed_mutable_query_ == nullptr &&
         target.protocol.protocol_major == network::kProtocolV2Major &&
         (target.protocol.feature_bits & network::kProtocolV2LeaderRedirectFeature) != 0U) {
       auto preliminary = replicated_database_->acquire_query_snapshot();
@@ -1258,6 +1268,7 @@ NativeProtocolService::execute_query(network::NetworkTask request,
       result.responses.push_back(
           make_response(target, network::MessageType::kQueryResult, std::move(*payload)));
     }
+    finish_query_result_stream(result.responses);
     result.responses.push_back(make_response(target, network::MessageType::kQueryEnd));
     return result;
   } catch (const std::bad_alloc&) {

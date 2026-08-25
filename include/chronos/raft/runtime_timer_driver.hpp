@@ -63,6 +63,7 @@ public:
                                              TimePoint now);
   [[nodiscard]] common::Status drive(TimePoint now);
   [[nodiscard]] common::Result<RaftTimerCompletedAction> take_completed();
+  [[nodiscard]] std::optional<std::uint64_t> next_outstanding_sequence() const noexcept;
   [[nodiscard]] std::optional<std::uint64_t> next_completed_sequence() const noexcept;
   [[nodiscard]] std::optional<TimePoint> next_deadline() const noexcept;
   [[nodiscard]] std::size_t inflight_actions() const noexcept;

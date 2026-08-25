@@ -54,7 +54,7 @@ inline constexpr std::size_t kMinimumFrameLength =
                                                 const schema::TableId& table_id,
                                                 const schema::TabletId& tablet_id,
                                                 const DistributedReadAdmission& admission,
-                                                const DistributedReadConsistency consistency) {
+                                                const DistributedReadConsistency) {
   if (placement.table_id != table_id || placement.tablet_id != tablet_id ||
       placement.placement_epoch == 0U || placement.replicas.empty() ||
       placement.replicas.size() > raft::MetadataLimits{}.maximum_replicas_per_tablet ||
@@ -66,10 +66,6 @@ inline constexpr std::size_t kMinimumFrameLength =
   if (placement.leader_hint.has_value() &&
       !std::ranges::binary_search(placement.replicas, *placement.leader_hint)) {
     return invalid("mutable vector fragment placement leader is not a replica");
-  }
-  if (consistency == DistributedReadConsistency::kLeaderLinearizable &&
-      placement.leader_hint.has_value() && *placement.leader_hint != admission.serving_node) {
-    return unavailable("mutable vector fragment placement leader differs from admission");
   }
   return common::Status::ok();
 }

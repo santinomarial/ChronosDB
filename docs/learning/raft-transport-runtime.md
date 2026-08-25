@@ -37,9 +37,11 @@ listener, stable inbound connection ID, and fixed outbound node ID. No pointer o
 index crosses the poll call. Its configured bound includes all four categories.
 
 The result ring and application-completion slots are fixed at construction. Inbound, timer, and
-application owners each preserve durable FIFO submission identity; intake compares all three heads.
-Results are routed in that same order and stop at the first missing/full route. A routed entry stays
-owned until pickup, but does not prevent later FIFO entries from being queued. This separates
+application owners each expose both their lowest outstanding durable FIFO submission identity and
+their lowest ready completion. Intake compares the three outstanding heads and waits when the
+global minimum is not ready; a later-ready completion can never pass earlier durable work. Results
+are routed in that same order. A routed entry stays owned until pickup, but does not prevent later
+FIFO entries from being queued. This separates
 network liveness from potentially slower tablet application without creating another unbounded
 queue. Focused real mutual-TLS coverage retains application, timer, and inbound completions together
 and observes their exact consecutive durable-submission order at pickup.
@@ -70,13 +72,16 @@ stable.
 
 ## Failure and backpressure
 
-Disconnected or full outbound routes retain the first unrouted result. Established terminal peers
-transfer complete original frames to capped reconnect; accepted inbound work survives disconnect
-until pickup. A full result ring leaves component completions owned where they are. Ordinary durable
-operation errors are returned as results. Corrupt sequencing, timer inconsistency, listener/poll
-failure, descriptor-bound overflow, and unexpected routing errors fail the aggregate owner closed.
-Application admission returns `RESOURCE_EXHAUSTED` before durable submission when its fixed slot
-bound is full.
+An unknown outbound destination or a full connected route retains the first unrouted result. A
+configured destination that is currently reconnecting is omitted from a new transition so one
+failed peer cannot block quorum traffic to connected peers. Established terminal peers transfer
+already queued complete original frames to capped reconnect; omitted new Raft messages are recovered
+through ordinary heartbeat/election retransmission and duplicate-safe consensus handling. Accepted
+inbound work survives disconnect until pickup. A full result ring leaves component completions owned
+where they are. Ordinary durable operation errors are returned as results. Corrupt sequencing,
+timer inconsistency, listener/poll failure, descriptor-bound overflow, and unexpected routing errors
+fail the aggregate owner closed. Application admission returns `RESOURCE_EXHAUSTED` before durable
+submission when its fixed slot bound is full.
 
 Focused saturation coverage leaves one voter destination without a configured route, retains that
 timer result at the FIFO head, fills the result ring with a later application completion, and proves

@@ -80,6 +80,7 @@ struct QuorumRequestIdentity {
   std::uint64_t connection_id;
   std::uint64_t request_id;
   std::uint8_t seed;
+  std::uint64_t principal_id{9U};
 };
 
 class CoordinatorProgressRecorder final : public ReplicatedIngestCoordinatorProgressObserver {
@@ -120,7 +121,7 @@ private:
                                                 command(identity.seed), context)
                      .value();
   return {.connection_id = identity.connection_id,
-          .principal_id = 9U,
+          .principal_id = identity.principal_id,
           .protocol = {.protocol_major = context.protocol_major,
                        .protocol_minor = context.protocol_minor,
                        .feature_bits = context.feature_bits,
@@ -301,7 +302,9 @@ TEST(ReplicatedIngestCoordinatorTest, BoundsCancelsCompletesAndTimesOutCorrelate
   const auto start = std::chrono::steady_clock::time_point{std::chrono::seconds{10}};
   EXPECT_TRUE(
       coordinator
-          ->admit(quorum_request({.connection_id = 10U, .request_id = 1U, .seed = 1U}), start)
+          ->admit(quorum_request(
+                      {.connection_id = 10U, .request_id = 1U, .seed = 1U, .principal_id = 0U}),
+                  start)
           .is_ok());
   EXPECT_TRUE(
       coordinator

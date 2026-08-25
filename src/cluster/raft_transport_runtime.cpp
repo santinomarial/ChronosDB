@@ -130,7 +130,7 @@ public:
     }
   }
 
-  [[nodiscard]] std::optional<std::size_t> next_ready_application() const noexcept {
+  [[nodiscard]] std::optional<std::size_t> next_application() const noexcept {
     std::optional<std::size_t> next;
     std::uint64_t next_sequence = std::numeric_limits<std::uint64_t>::max();
     for (std::size_t index = 0U; index < applications.size(); ++index) {
@@ -138,7 +138,7 @@ public:
           applications[index]
               .transform([](const PendingApplication& value) { return &value; })
               .value_or(nullptr);
-      if (pending == nullptr || !pending->completion.is_ready())
+      if (pending == nullptr)
         continue;
       const std::uint64_t sequence = pending->completion.submission_sequence();
       if (sequence < next_sequence) {
@@ -194,9 +194,9 @@ public:
   [[nodiscard]] common::Status intake(const TimePoint now) {
     for (std::size_t admitted = 0U;
          admitted < limits.maximum_results_per_poll && result_count != results.size(); ++admitted) {
-      const auto inbound_sequence = inbound.next_completed_sequence();
-      const auto timer_sequence = timer_driver.next_completed_sequence();
-      const std::optional<std::size_t> application = next_ready_application();
+      const auto inbound_sequence = inbound.next_outstanding_sequence();
+      const auto timer_sequence = timer_driver.next_outstanding_sequence();
+      const std::optional<std::size_t> application = next_application();
       const std::size_t application_index = application.value_or(applications.size());
       const PendingApplication* pending_application =
           application_index < applications.size()
@@ -214,6 +214,8 @@ public:
       if (inbound_sequence.has_value() &&
           (!timer_sequence.has_value() || *inbound_sequence < *timer_sequence) &&
           (!application_sequence.has_value() || *inbound_sequence < *application_sequence)) {
+        if (inbound.next_completed_sequence() != inbound_sequence)
+          break;
         auto completed = inbound.take_completed();
         if (!completed.has_value())
           return fail(completed.error());
@@ -239,6 +241,8 @@ public:
           return stored;
       } else if (timer_sequence.has_value() &&
                  (!application_sequence.has_value() || *timer_sequence < *application_sequence)) {
+        if (timer_driver.next_completed_sequence() != timer_sequence)
+          break;
         auto completed = timer_driver.take_completed();
         if (!completed.has_value())
           return fail(completed.error());
@@ -256,6 +260,8 @@ public:
         if (application_index >= applications.size() || !application_sequence.has_value())
           return fail(status(common::StatusCode::kCorruption,
                              "Raft application completion selection is inconsistent"));
+        if (pending_application == nullptr || !pending_application->completion.is_ready())
+          break;
         auto completed = take_application(application_index);
         if (!completed.has_value())
           return fail(completed.error());

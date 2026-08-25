@@ -194,6 +194,7 @@ struct Options {
   std::string raft_tls_certificate_file;
   std::string raft_tls_private_key_file;
   std::string raft_tls_trust_store_file;
+  std::uint64_t raft_election_timeout_ms{};
   std::string native_client_principals_file;
   std::string native_tls_certificate_file;
   std::string native_tls_private_key_file;
@@ -210,7 +211,7 @@ void print_usage(const std::string_view program, std::ostream& stream) {
             " [--log-format text|json]"
             " [--replicated-groups FILE]"
             " [--replicated-peers FILE --raft-tls-cert FILE --raft-tls-key FILE"
-            " --raft-tls-ca FILE]"
+            " --raft-tls-ca FILE] [--raft-election-timeout-ms MILLISECONDS]"
             " [--native-client-principals FILE --native-tls-cert FILE --native-tls-key FILE"
             " --native-tls-ca FILE]"
             " [--subscription-sql SQL --subscription-key-file PATH]\n"
@@ -324,6 +325,12 @@ template <typename Integer>
       options.raft_tls_private_key_file = value;
     } else if (argument == "--raft-tls-ca") {
       options.raft_tls_trust_store_file = value;
+    } else if (argument == "--raft-election-timeout-ms") {
+      if (!parse_integer(value, options.raft_election_timeout_ms) ||
+          options.raft_election_timeout_ms <= 100U || options.raft_election_timeout_ms > 60'000U) {
+        error = "Raft election timeout must be from 101 through 60000 milliseconds";
+        return std::nullopt;
+      }
     } else if (argument == "--native-client-principals") {
       if (value.empty()) {
         error = "native client principal configuration path must be nonempty";
@@ -384,6 +391,10 @@ template <typename Integer>
   }
   if (transport_field_count != 0U && options.replicated_groups_file.empty()) {
     error = "Raft peer transport requires replicated group configuration";
+    return std::nullopt;
+  }
+  if (options.raft_election_timeout_ms != 0U && transport_field_count == 0U) {
+    error = "Raft election timeout requires peer transport configuration";
     return std::nullopt;
   }
   const std::array<bool, 4U> native_security_fields{
@@ -737,7 +748,8 @@ configure_distributed_mutable_query(
     auto authority = chronos::service::ReplicatedPeerAuthority::create(local_node_id, peers);
     if (!authority.has_value())
       return chronos::common::make_unexpected(authority.error());
-    owner->authority.emplace(std::move(*authority));
+    chronos::service::ReplicatedPeerAuthority& installed_authority =
+        owner->authority.emplace(std::move(*authority));
     owner->client_contexts.reserve(peers.size());
     for (const chronos::service::ReplicatedPeer& peer : peers) {
       auto context = chronos::network::TlsClientContext::create(
@@ -756,20 +768,21 @@ configure_distributed_mutable_query(
         {.local_node_id = local_node_id, .context_provider = &database});
     if (!local_worker.has_value())
       return chronos::common::make_unexpected(local_worker.error());
-    owner->local_worker.emplace(std::move(*local_worker));
+    chronos::service::ReplicatedDistributedMutableVectorQueryWorker& installed_worker =
+        owner->local_worker.emplace(std::move(*local_worker));
     auto server = ReplicatedDistributedMutableVectorQueryTcpServer::start(
         {.worker = {.local_node_id = local_node_id, .context_provider = &database},
          .listener = {.bind_endpoint = *local_query_endpoint},
          .tls = {.pem_credentials = credentials},
-         .authenticator = &*owner->authority,
-         .node_authorizer = &*owner->authority});
+         .authenticator = &installed_authority,
+         .node_authorizer = &installed_authority});
     if (!server.has_value())
       return chronos::common::make_unexpected(server.error());
     owner->server.emplace(std::move(*server));
     owner->native_config = {.source_node_id = local_node_id,
-                            .authenticator = &*owner->authority,
-                            .node_authorizer = &*owner->authority,
-                            .local_worker = &*owner->local_worker,
+                            .authenticator = &installed_authority,
+                            .node_authorizer = &installed_authority,
+                            .local_worker = &installed_worker,
                             .tls_contexts = owner->tls_contexts};
     return owner;
   } catch (const std::bad_alloc&) {
@@ -1513,12 +1526,20 @@ int run_daemon(const int argc, const char* const argv[]) {
         resident_groups.reserve(replicated_groups->size());
         for (const auto& group : *replicated_groups)
           resident_groups.push_back(group.group_id);
+        chronos::service::ReplicatedRaftTransportLimits transport_limits;
+        if (options->raft_election_timeout_ms != 0U) {
+          const auto election_timeout = std::chrono::milliseconds{
+              static_cast<std::int64_t>(options->raft_election_timeout_ms)};
+          transport_limits.minimum_election_timeout = election_timeout;
+          transport_limits.maximum_election_timeout = election_timeout;
+        }
         auto transport = ReplicatedRaftTransportRuntime::create(
             {.local_node_id = replicated_database->bootstrap().local_node_id,
              .durable_runtime = replicated_database->ingest_runtime()->runtime(),
              .peers = *replicated_peers,
              .resident_groups = std::move(resident_groups),
-             .tls = {.pem_credentials = raft_tls_credentials}});
+             .tls = {.pem_credentials = raft_tls_credentials},
+             .limits = transport_limits});
         if (!transport.has_value()) {
           static_cast<void>(replicated_database->shutdown());
           logger.error("raft_peer_transport_start_failed",

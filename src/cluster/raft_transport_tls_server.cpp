@@ -281,6 +281,23 @@ RaftTransportTlsServer::next_deadline() const noexcept {
 }
 
 std::optional<std::uint64_t>
+RaftTransportTlsServer::outstanding_submission_sequence() const noexcept {
+  if (!implementation_)
+    return std::nullopt;
+  const auto admitted =
+      implementation_->admission_.transform([](const RaftTransportAdmission& admission) {
+        return admission.completion.submission_sequence();
+      });
+  if (admitted.has_value())
+    return admitted;
+  const auto completed = implementation_->completed_.transform(
+      [](const RaftTransportCompletedReceive& value) { return value.submission_sequence; });
+  if (completed.has_value())
+    return completed;
+  return std::nullopt;
+}
+
+std::optional<std::uint64_t>
 RaftTransportTlsServer::completed_submission_sequence() const noexcept {
   if (!implementation_ || !implementation_->completed_.has_value())
     return std::nullopt;

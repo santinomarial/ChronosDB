@@ -59,10 +59,6 @@ validate_local_placement(const raft::TabletPlacementMetadata& placement, const F
       !std::ranges::binary_search(placement.replicas, *placement.leader_hint)) {
     return invalid("distributed worker placement leader is not a replica");
   }
-  if (fragment.read_policy.consistency == DistributedReadConsistency::kLeaderLinearizable &&
-      placement.leader_hint.has_value() && *placement.leader_hint != local_node) {
-    return unavailable("distributed worker is no longer the placement leader");
-  }
   return common::Status::ok();
 }
 

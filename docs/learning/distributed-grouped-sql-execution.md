@@ -101,3 +101,16 @@ batch. The second linear pass is an explicit recoverability and memory-bound tra
 **What remains for scalable distributed grouping?** A versioned multi-key, all-type grouped-state
 exchange with partition authority, bounded shuffle/skew policy, authenticated transport, global
 merge, and fault evidence. The row-backed path remains a differential oracle for that work.
+
+## Process qualification boundary
+
+The Linux packaged gate executes this row-backed grouped path in a three-daemon, two-Raft-group
+topology before and after abrupt common-leader loss. It checks a computed nullable STRING key, a
+Boolean key, COUNT, global ordering, LIMIT, safe follower redirect, replacement election, exact
+ingest retry, orderly survivor shutdown, and retained-root recovery. Distinct fixed local election
+timeouts make both groups choose the same leader for this deterministic qualification.
+
+That evidence does not prove arbitrary split-leader coordination: packaged query admission still
+requires one process to acquire current leader authority for every involved group, and redirect is
+safe only when every group names the same stable remote leader. Multi-process real-CSEG scans and a
+multi-key/all-type sufficient-state shuffle remain separate gates.

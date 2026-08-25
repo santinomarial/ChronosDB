@@ -1077,6 +1077,7 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   }
   EXPECT_EQ(native_distributed->responses[0].frame.header.message_type,
             network::MessageType::kQueryResult);
+  EXPECT_NE(native_distributed->responses[0].frame.header.flags & network::kFrameFlagEndStream, 0U);
   auto native_batch =
       network::decode_query_result_batch(native_distributed->responses[0].frame.payload);
   ASSERT_TRUE(native_batch.has_value()) << native_batch.error().to_string();
@@ -1118,6 +1119,9 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   EXPECT_EQ(native_distributed_aggregate->result_rows, 1U);
   ASSERT_EQ(native_distributed_aggregate->responses[0].frame.header.message_type,
             network::MessageType::kQueryResult);
+  EXPECT_NE(native_distributed_aggregate->responses[0].frame.header.flags &
+                network::kFrameFlagEndStream,
+            0U);
   const auto remote_aggregate_batch =
       network::decode_query_result_batch(native_distributed_aggregate->responses[0].frame.payload);
   ASSERT_TRUE(remote_aggregate_batch.has_value()) << remote_aggregate_batch.error().to_string();
@@ -1149,6 +1153,9 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
       << native_distributed_grouped.error().to_string();
   ASSERT_EQ(native_distributed_grouped->responses.size(), 2U);
   EXPECT_EQ(native_distributed_grouped->result_rows, 2U);
+  EXPECT_NE(native_distributed_grouped->responses[0].frame.header.flags &
+                network::kFrameFlagEndStream,
+            0U);
   const auto remote_grouped_first =
       network::decode_query_result_batch(native_distributed_grouped->responses[0].frame.payload);
   ASSERT_TRUE(remote_grouped_first.has_value()) << remote_grouped_first.error().to_string();
@@ -1219,6 +1226,7 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   EXPECT_EQ(native_local->payload_bytes, native_distributed->payload_bytes);
   ASSERT_EQ(native_local->responses[0].frame.header.message_type,
             network::MessageType::kQueryResult);
+  EXPECT_NE(native_local->responses[0].frame.header.flags & network::kFrameFlagEndStream, 0U);
   EXPECT_EQ(native_local->responses[0].frame.payload,
             native_distributed->responses[0].frame.payload);
   EXPECT_EQ(native_local->responses[1].frame.header.message_type, network::MessageType::kQueryEnd);
@@ -1918,6 +1926,31 @@ TEST(ReplicatedIngestDatabaseTest, EmitsAnAuthoritativeRedirectForOneCommonRemot
   EXPECT_EQ(redirect->leader_node_id, 2U);
   EXPECT_EQ(redirect->leader_term, 2U);
   EXPECT_EQ(redirect->placement_epoch, 1U);
+
+  DistributedTestAuthenticator distributed_authenticator{92U};
+  DistributedTestNodeAuthorizer distributed_authorizer;
+  network::TlsClientContext remote_tls;
+  const std::array remote_tls_contexts{cluster::DistributedQueryNodeTlsContext{
+      .node_id = 2U, .tls_context = std::addressof(remote_tls)}};
+  const NativeDistributedMutableVectorRowsQueryConfig distributed_config{
+      .source_node_id = 1U,
+      .authenticator = &distributed_authenticator,
+      .node_authorizer = &distributed_authorizer,
+      .tls_contexts = remote_tls_contexts};
+  NativeProtocolService distributed_service{*database, *read_barrier, distributed_config};
+  auto distributed_response =
+      distributed_service.execute_query(query_request("SELECT count(*) AS rows FROM events", true));
+  ASSERT_TRUE(distributed_response.has_value()) << distributed_response.error().to_string();
+  ASSERT_EQ(distributed_response->responses.size(), 1U);
+  ASSERT_EQ(distributed_response->responses.front().frame.header.message_type,
+            network::MessageType::kLeaderRedirect);
+  auto distributed_redirect =
+      network::decode_leader_redirect(distributed_response->responses.front().frame.payload);
+  ASSERT_TRUE(distributed_redirect.has_value()) << distributed_redirect.error().to_string();
+  EXPECT_EQ(distributed_redirect->group_id, tablet_group());
+  EXPECT_EQ(distributed_redirect->leader_node_id, 2U);
+  EXPECT_EQ(distributed_redirect->leader_term, 2U);
+  EXPECT_EQ(distributed_redirect->placement_epoch, 1U);
 
   auto election =
       runtime->runtime()->try_submit({{metadata_group(), raft::StartElectionOperation{}}});

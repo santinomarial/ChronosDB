@@ -1431,8 +1431,16 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   Live DNS churn, resolver-latency policy, caching, and IPv6 remain
   qualification gaps. A focused real-mTLS gate now queries two tablets, drives one through
   checksummed learner-first movement and externally committed promotion/removal milestones, rebinds
-  it to the target, and proves the complete aggregate state is identical before and after. The full
-  phase exit gate is not claimed.
+  it to the target, and proves the complete aggregate state is identical before and after. A
+  bounded Linux process gate now additionally starts three mutually authenticated daemons with
+  deterministic distinct local election deadlines, commits and exactly retries one replicated
+  batch, executes mutable row, global aggregate, scalar/predicate, and row-backed multi-key/all-type
+  grouped SQL through safe common-leader redirect, kills that leader, repeats the retry and query
+  surface through the two-node replacement quorum, shuts down cleanly, and verifies all retained
+  roots. Strict cross-source durable completion FIFO, connected-peer election routing, terminal
+  Native result framing, and advisory placement hints are exercised by that composition. Arbitrary
+  split-leader process coordination, partitions, multi-process real-CSEG scans, and sufficient-state
+  multi-key shuffle remain open; the full phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
 - **Explicit non-scope:** general cross-tablet write transactions, silent consistency downgrade, unlimited shuffle, and topology changes that invalidate tokens without an explicit error/mapping protocol.

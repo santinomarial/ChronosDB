@@ -168,7 +168,8 @@ public:
                                                 const std::string& replicated_peers_file,
                                                 const std::string& certificate_file,
                                                 const std::string& private_key_file,
-                                                const std::string& trust_store_file) {
+                                                const std::string& trust_store_file,
+                                                const std::uint64_t election_timeout_ms) {
     std::array<int, 2U> output{};
     if (::pipe(output.data()) != 0)
       return false;
@@ -180,6 +181,7 @@ public:
     }
     pid_ = ::fork();
     if (pid_ == 0) {
+      const std::string election_timeout = std::to_string(election_timeout_ms);
       static_cast<void>(::dup2(output[1], STDOUT_FILENO));
       ::close(output[0]);
       ::close(output[1]);
@@ -187,7 +189,7 @@ public:
               "--replicated-groups", replicated_groups_file.c_str(), "--replicated-peers",
               replicated_peers_file.c_str(), "--raft-tls-cert", certificate_file.c_str(),
               "--raft-tls-key", private_key_file.c_str(), "--raft-tls-ca", trust_store_file.c_str(),
-              nullptr);
+              "--raft-election-timeout-ms", election_timeout.c_str(), nullptr);
       std::_Exit(127);
     }
     ::close(output[1]);
@@ -1003,6 +1005,7 @@ struct ClusterIngestAcknowledgement {
 await_cluster_ingest(std::array<int, 3U>& clients, const std::array<bool, 3U>& active,
                      std::array<std::uint64_t, 3U>& request_ids) {
   constexpr std::size_t maximum_attempts = 200U;
+  std::string last_response{"no active daemon returned a response"};
   for (std::size_t attempt = 0U; attempt < maximum_attempts; ++attempt) {
     for (std::size_t index = 0U; index < clients.size(); ++index) {
       if (!active[index] || clients[index] < 0)
@@ -1025,10 +1028,17 @@ await_cluster_ingest(std::array<int, 3U>& clients, const std::array<bool, 3U>& a
         EXPECT_EQ(redirect->group_id, replicated_tablet_group());
         EXPECT_GE(redirect->leader_node_id, 1U);
         EXPECT_LE(redirect->leader_node_id, clients.size());
+        last_response = "node " + std::to_string(index + 1U) + " redirected to node " +
+                        std::to_string(redirect->leader_node_id);
         continue;
       }
       if (response.header.message_type == network::MessageType::kError) {
-        EXPECT_TRUE(network::decode_error_message(response.payload).has_value());
+        auto decoded = network::decode_error_message(response.payload);
+        EXPECT_TRUE(decoded.has_value());
+        if (decoded.has_value()) {
+          last_response =
+              "node " + std::to_string(index + 1U) + " returned " + byte_string(decoded->message);
+        }
         continue;
       }
       ADD_FAILURE() << "unexpected replicated ingest response type "
@@ -1037,7 +1047,8 @@ await_cluster_ingest(std::array<int, 3U>& clients, const std::array<bool, 3U>& a
     }
     std::this_thread::sleep_for(std::chrono::milliseconds{25});
   }
-  ADD_FAILURE() << "replicated ingest did not reach a leader before the attempt bound";
+  ADD_FAILURE() << "replicated ingest did not reach a leader before the attempt bound; "
+                << last_response;
   return std::nullopt;
 }
 
@@ -1070,9 +1081,21 @@ void expect_recovered_replicated_cluster(const std::array<std::string, 3U>& root
   return response.value_or(network::Frame{});
 }
 
-void expect_replicated_rows(const int client, const std::uint64_t request_id) {
-  auto response = send_replicated_query(client, request_id,
-                                        "SELECT ts, tag FROM events ORDER BY ts ASC, tag ASC");
+void expect_replicated_rows(const int redirect_client, const int leader_client,
+                            const raft::NodeId leader_node_id, const std::uint64_t request_id) {
+  constexpr std::string_view rows_sql{"SELECT ts, tag FROM events ORDER BY ts ASC, tag ASC"};
+  auto response = send_replicated_query(redirect_client, request_id, rows_sql);
+  int client = redirect_client;
+  if (response.header.message_type == network::MessageType::kLeaderRedirect) {
+    auto redirect = network::decode_leader_redirect(response.payload);
+    ASSERT_TRUE(redirect.has_value()) << redirect.error().to_string();
+    EXPECT_EQ(redirect->group_id, replicated_tablet_group());
+    EXPECT_EQ(redirect->leader_node_id, leader_node_id);
+    EXPECT_GT(redirect->leader_term, 0U);
+    EXPECT_GT(redirect->placement_epoch, 0U);
+    client = leader_client;
+    response = send_replicated_query(client, request_id, rows_sql);
+  }
   if (response.header.message_type == network::MessageType::kError) {
     auto decoded = network::decode_error_message(response.payload);
     ASSERT_TRUE(decoded.has_value());
@@ -1165,6 +1188,50 @@ void expect_replicated_rows(const int client, const std::uint64_t request_id) {
   EXPECT_EQ(expressions->columns()[1].name, "disabled");
   EXPECT_NE(expressions->cell(0U, 0U), nullptr);
   EXPECT_NE(expressions->cell(0U, 1U), nullptr);
+  response = network::decode_frame(receive_frame(client)).value_or(network::Frame{});
+  EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
+
+  response = send_replicated_query(
+      client, request_id + 4U,
+      "SELECT coalesce(lower(tag), 'missing') AS bucket, enabled AS active, count(*) AS n "
+      "FROM events GROUP BY coalesce(lower(tag), 'missing'), enabled "
+      "ORDER BY n DESC, bucket ASC LIMIT 2");
+  if (response.header.message_type == network::MessageType::kError) {
+    auto decoded = network::decode_error_message(response.payload);
+    ASSERT_TRUE(decoded.has_value());
+    ADD_FAILURE() << "distributed grouped query failed: " << byte_string(decoded->message);
+    return;
+  }
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
+  auto grouped = network::decode_query_result_batch(response.payload);
+  ASSERT_TRUE(grouped.has_value()) << grouped.error().to_string();
+  ASSERT_EQ(grouped->row_count(), 2U);
+  ASSERT_EQ(grouped->columns().size(), 3U);
+  EXPECT_EQ(grouped->columns()[0].name, "bucket");
+  EXPECT_EQ(grouped->columns()[1].name, "active");
+  EXPECT_EQ(grouped->columns()[2].name, "n");
+  const network::QueryResultCell* missing_key = grouped->cell(0U, 0U);
+  const network::QueryResultCell* missing_active = grouped->cell(0U, 1U);
+  const network::QueryResultCell* missing_count = grouped->cell(0U, 2U);
+  const network::QueryResultCell* present_key = grouped->cell(1U, 0U);
+  const network::QueryResultCell* present_active = grouped->cell(1U, 1U);
+  const network::QueryResultCell* present_count = grouped->cell(1U, 2U);
+  ASSERT_NE(missing_key, nullptr);
+  ASSERT_NE(missing_active, nullptr);
+  ASSERT_NE(missing_count, nullptr);
+  ASSERT_NE(present_key, nullptr);
+  ASSERT_NE(present_active, nullptr);
+  ASSERT_NE(present_count, nullptr);
+  EXPECT_EQ(byte_string(missing_key->value), "missing");
+  ASSERT_EQ(missing_active->value.size(), 1U);
+  EXPECT_EQ(missing_active->value.front(), std::byte{0U});
+  common::ByteReader missing_count_reader{missing_count->value};
+  EXPECT_EQ(missing_count_reader.read_i64_le().value(), 1);
+  EXPECT_EQ(byte_string(present_key->value), "x");
+  ASSERT_EQ(present_active->value.size(), 1U);
+  EXPECT_EQ(present_active->value.front(), std::byte{1U});
+  common::ByteReader present_count_reader{present_count->value};
+  EXPECT_EQ(present_count_reader.read_i64_le().value(), 1);
   response = network::decode_frame(receive_frame(client)).value_or(network::Frame{});
   EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
 }
@@ -2176,18 +2243,21 @@ TEST(ChronosdProcessTest, ReplicatesRetriesAndFailsOverAcrossThreeAuthenticatedD
 
   std::array<ChildProcess, 3U> children;
   std::array<int, 3U> clients{-1, -1, -1};
+  std::array<std::uint16_t, 3U> native_ports{};
   std::array<bool, 3U> active{true, true, true};
   std::array<std::uint64_t, 3U> request_ids{1U, 1U, 1U};
   for (std::size_t index = 0U; index < children.size(); ++index) {
+    const std::uint64_t election_timeout_ms = 300U + index * 300U;
     ASSERT_TRUE(children[index].start_replicated_transport(
         roots[index], files.groups, files.peers, files.certificates[index],
-        files.private_keys[index], files.trust_store));
+        files.private_keys[index], files.trust_store, election_timeout_ms));
     const std::string startup = children[index].read_startup_line();
     EXPECT_NE(startup.find("data_plane=replicated"), std::string::npos) << startup;
     EXPECT_NE(startup.find("raft_transport=configured"), std::string::npos) << startup;
     EXPECT_NE(startup.find("distributed_query=configured"), std::string::npos) << startup;
     const std::uint16_t port = parse_port(startup);
     ASSERT_NE(port, 0U) << startup;
+    native_ports[index] = port;
     clients[index] = connect_client(port);
     ASSERT_GE(clients[index], 0);
     handshake_quorum_sync(clients[index]);
@@ -2207,13 +2277,22 @@ TEST(ChronosdProcessTest, ReplicatesRetriesAndFailsOverAcrossThreeAuthenticatedD
 
   const std::size_t first_remote_query_node = (first_result.node_index + 1U) % clients.size();
   ASSERT_NE(first_remote_query_node, first_result.node_index);
-  expect_replicated_rows(clients[first_remote_query_node], 10'000U);
+  expect_replicated_rows(clients[first_remote_query_node], clients[first_result.node_index],
+                         first_result.node_index + 1U, 10'000U);
 
   const std::size_t failed_leader = first_result.node_index;
   ::close(clients[failed_leader]);
   clients[failed_leader] = -1;
   active[failed_leader] = false;
   ASSERT_TRUE(children[failed_leader].kill_abruptly());
+  for (std::size_t index = 0U; index < clients.size(); ++index) {
+    if (!active[index])
+      continue;
+    ::close(clients[index]);
+    clients[index] = connect_client(native_ports[index]);
+    ASSERT_GE(clients[index], 0);
+    handshake_quorum_sync(clients[index]);
+  }
 
   auto retried = await_cluster_ingest(clients, active, request_ids);
   if (!retried.has_value()) {
@@ -2238,7 +2317,8 @@ TEST(ChronosdProcessTest, ReplicatesRetriesAndFailsOverAcrossThreeAuthenticatedD
     }
   }
   ASSERT_LT(remote_after_failover, clients.size());
-  expect_replicated_rows(clients[remote_after_failover], 20'000U);
+  expect_replicated_rows(clients[remote_after_failover], clients[retry_result.node_index],
+                         retry_result.node_index + 1U, 20'000U);
 
   for (std::size_t index = 0U; index < children.size(); ++index) {
     if (!active[index])

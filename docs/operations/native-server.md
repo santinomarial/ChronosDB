@@ -157,6 +157,12 @@ For multi-voter groups, configure the complete transport bundle:
 --raft-tls-ca /etc/chronosdb/cluster-ca.pem
 ```
 
+Election timeouts default to a randomized 300--600 ms interval. The optional
+`--raft-election-timeout-ms MILLISECONDS` sets one fixed local value from 101 through 60000 and is
+accepted only with the complete peer-transport bundle. It exists for deterministic qualification
+and measured topology controls. Do not set the same fixed value on all voters: synchronized fixed
+deadlines can repeatedly collide. Prefer the randomized default in ordinary deployments.
+
 The [Replicated Peer Configuration](replicated-peer-config.md) must include the local node and every
 voter of every resident group. The key file must not be accessible to group or other. All four
 options are atomic at startup; partial configuration is rejected. `raft_transport=configured` in
@@ -189,10 +195,13 @@ is unchanged. Set `maximum_authority_rebindings` to zero in an embedding for one
 `chronosd` currently uses the bounded default. Repeated rebinding indicates leadership churn,
 endpoint failure, or resource pressure and should be investigated.
 
-The repository's Linux process qualification uses one CA and a distinct certificate/key for each
-of three loopback nodes. It proves authenticated election, QUORUM_SYNC application, remote SELECT
-from a nonleader, abrupt tablet-leader loss, higher-term retry deduplication, remote SELECT through
-the replacement leader, orderly survivor shutdown, and identical recovery from all retained roots.
+The repository's Linux process qualification uses one CA, a distinct certificate/key for each of
+three loopback nodes, and distinct fixed local election timeouts. It proves authenticated election,
+QUORUM_SYNC application, safe common-leader redirect, mutable row/global-aggregate/expression/
+predicate/multi-key grouped SQL, abrupt common-leader loss, higher-term retry deduplication, the same
+SQL surface through the replacement leader, orderly survivor shutdown, and identical recovery from
+all retained roots. Both resident groups deliberately share one leader in this gate; independently
+led groups still require future cross-process authority coordination.
 It does not qualify deployment DNS, certificate rotation, packet faults, failover latency, snapshot
 transfer, rolling upgrades, globally atomic cross-group time, or dynamic endpoint replacement.
 Operators must not treat `raft_transport=configured` as evidence that those broader gates passed.

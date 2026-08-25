@@ -287,6 +287,25 @@ std::optional<std::uint64_t> RaftTimerDriver::next_completed_sequence() const no
                                : std::nullopt;
 }
 
+std::optional<std::uint64_t> RaftTimerDriver::next_outstanding_sequence() const noexcept {
+  if (!implementation_)
+    return std::nullopt;
+  std::optional<std::uint64_t> next;
+  for (const std::optional<Impl::Pending>& pending : implementation_->pending_) {
+    if (!pending.has_value())
+      continue;
+    const std::uint64_t sequence = pending->completion.submission_sequence();
+    if (!next.has_value() || sequence < *next)
+      next = sequence;
+  }
+  for (const std::optional<RaftTimerCompletedAction>& completed : implementation_->completed_) {
+    if (completed.has_value() && (!next.has_value() || completed->submission_sequence < *next)) {
+      next = completed->submission_sequence;
+    }
+  }
+  return next;
+}
+
 std::optional<RaftTimerDriver::TimePoint> RaftTimerDriver::next_deadline() const noexcept {
   return implementation_ ? implementation_->timers_.next_deadline() : std::nullopt;
 }

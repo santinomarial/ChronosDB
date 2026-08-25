@@ -71,6 +71,7 @@ public:
   [[nodiscard]] RaftTransportTlsServerState state() const noexcept;
   [[nodiscard]] RaftTransportTlsServerInterest interest() const noexcept;
   [[nodiscard]] std::optional<TimePoint> next_deadline() const noexcept;
+  [[nodiscard]] std::optional<std::uint64_t> outstanding_submission_sequence() const noexcept;
   [[nodiscard]] std::optional<std::uint64_t> completed_submission_sequence() const noexcept;
   [[nodiscard]] const common::Status& failure() const noexcept;
 

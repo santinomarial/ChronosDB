@@ -927,15 +927,16 @@ were deliberately not run.
 
 ### Correctness
 
-- The feature graph is not completely process-integrated. Replicated distributed aggregate
-  construction now preserves committed catalog and correlated Raft proof preconditions through the
-  TCP lifecycle, but remote observation acquisition and the native client/process entry point are
-  still absent.
+- The feature graph is not completely process-integrated. A three-daemon Linux gate now covers the
+  packaged mutable row, global aggregate, expression/predicate, and row-backed grouped SQL surfaces
+  before and after common-leader loss, but arbitrary split-leader authority acquisition,
+  multi-process real-CSEG execution, and partition schedules remain absent.
 - Temporal corrections have durable WAL/CSEG v2/Manifest v2 composition; direct vector winner
   lowering and mixed WAL/Raft-source composition remain incomplete.
-- The distributed implementation covers numeric global aggregate state with finite whole-query
-  retry/rebinding, not arbitrary plans, grouping, order, top-N, limits, or fragment-level durable
-  retries.
+- Distributed Native execution covers bounded row-backed multi-key/all-type grouping, global
+  ordering and LIMIT in addition to row and global aggregate plans. The scalable sufficient-state
+  grouped exchange remains one FLOAT64 key; arbitrary relational plans, shuffle/skew handling, and
+  fragment-level durable retries remain absent.
 - Movement now composes deterministic actions with joint Raft membership and durable checkpoints;
   automatic placement-driven orchestration remains external.
 - Cold upload independently performs exact schema/source-bound CSEG validation before remote
@@ -970,10 +971,11 @@ were deliberately not run.
   packaged. Replicated query snapshots pin one committed binder catalog, fail closed for partial
   table residency, and now require every metadata/tablet publication to cover an exactly correlated
   current-term quorum read barrier before bounded native SELECT dispatch. Bounded Linux evidence now
-  covers three authenticated daemon processes, quorum ingest, tablet-leader loss, a higher-term
-  matching retry, remote mutable-tablet SELECT before and after failover, and identical retained-
-  root recovery. A globally atomic cross-group instant and broader distributed relational and
-  aggregate execution remain absent. Strict native
+  covers three authenticated daemon processes, quorum ingest, common-leader loss, a higher-term
+  matching retry, mutable row/global-aggregate/expression/predicate/multi-key grouped SQL before and
+  after failover, and identical retained-root recovery. This is a controlled common-leader topology;
+  a globally atomic cross-group instant, independently led group coordination, and broader
+  distributed relational execution remain absent. Strict native
   endpoint/certificate-principal configuration, secure TLS-route/context ownership, redirect
   selection, exact QUORUM_SYNC body/session replay, the deadline-bound authenticated TCP/TLS
   reconnect carrier, single-operation poll scheduling, and the packaged `chronosctl quorum-sync`

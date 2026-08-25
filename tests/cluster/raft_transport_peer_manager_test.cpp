@@ -110,7 +110,7 @@ TEST(RaftTransportPeerManagerTest, ConnectsFixedRoutesRoutesAtomicallyAndRecycle
 
   ASSERT_TRUE(manager->on_transport_closed(2U, start + std::chrono::milliseconds{6}).is_ok());
   EXPECT_EQ(manager->connected_peer_count(), 1U);
-  EXPECT_EQ(manager->route_result(group(), result, start).code(), common::StatusCode::kNotFound);
+  EXPECT_TRUE(manager->route_result(group(), result, start).is_ok());
   ASSERT_TRUE(manager->drive(start + std::chrono::milliseconds{10}).is_ok());
   interests = manager->interests();
   ASSERT_TRUE(interests.has_value());

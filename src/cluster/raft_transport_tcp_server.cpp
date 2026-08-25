@@ -308,6 +308,18 @@ std::optional<std::uint64_t> RaftTransportTcpServer::next_completed_sequence() c
   return next;
 }
 
+std::optional<std::uint64_t> RaftTransportTcpServer::next_outstanding_sequence() const noexcept {
+  std::optional<std::uint64_t> next;
+  if (!implementation_ || !implementation_->running)
+    return next;
+  for (const std::unique_ptr<Impl::Connection>& connection : implementation_->connections) {
+    const auto sequence = connection->carrier.outstanding_submission_sequence();
+    if (sequence.has_value() && (!next.has_value() || *sequence < *next))
+      next = sequence;
+  }
+  return next;
+}
+
 common::Result<std::optional<RaftTransportCompletedReceive>>
 RaftTransportTcpServer::take_completed() {
   if (!implementation_ || !implementation_->running)

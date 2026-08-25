@@ -169,7 +169,32 @@ common::Status RaftTransportPeerManager::route_result(const raft::GroupId& group
                                                       const TimePoint now) {
   if (!implementation_)
     return status(common::StatusCode::kInvalidArgument, "Raft peer manager is empty");
-  return implementation_->pool.route_result(group, result, now);
+  if (!result.status.is_ok())
+    return result.status;
+  if (!result.transition.has_value())
+    return status(common::StatusCode::kInvalidArgument,
+                  "Raft routed result does not contain a transition");
+  try {
+    raft::MultiRaftTransition connected_transition;
+    connected_transition.outbound.reserve(result.transition->outbound.size());
+    for (const raft::GroupOutboundMessage& outbound : result.transition->outbound) {
+      Impl::Route* const route = implementation_->find(outbound.outbound.destination);
+      if (route == nullptr)
+        return status(common::StatusCode::kNotFound,
+                      "Raft outbound destination has no configured route");
+      if (route->reconnect.state() == RaftTransportPeerReconnectState::kConnected)
+        connected_transition.outbound.push_back(outbound);
+    }
+    const raft::DurableRaftResult connected{common::Status::ok(), std::move(connected_transition),
+                                            std::nullopt};
+    return implementation_->pool.route_result(group, connected, now);
+  } catch (const std::bad_alloc&) {
+    return status(common::StatusCode::kResourceExhausted,
+                  "Raft peer manager routing allocation failed");
+  } catch (const std::length_error&) {
+    return status(common::StatusCode::kResourceExhausted,
+                  "Raft peer manager routing exceeds limits");
+  }
 }
 
 common::Result<std::vector<RaftTransportPeerInterest>> RaftTransportPeerManager::interests() const {

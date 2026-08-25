@@ -122,7 +122,7 @@ TEST(DistributedMutableVectorFragmentTest,
                                                 .tablet_id = fixture.tablet_id,
                                                 .placement_epoch = 7U,
                                                 .replicas = {11U, 12U},
-                                                .leader_hint = 11U};
+                                                .leader_hint = 12U};
   const std::array<std::uint32_t, 3U> projection{0U, 1U, 2U};
   const DistributedVectorResultSchema result_schema{
       .columns = {{"tag", fixture.schema_value->columns()[1].type(), true}}};
