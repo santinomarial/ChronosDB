@@ -1055,6 +1055,45 @@ std::span<const raft::GroupId> ReplicatedIngestDatabase::query_barrier_groups() 
                       : std::span<const raft::GroupId>{};
 }
 
+common::Result<std::vector<raft::RaftGroupObservation>>
+ReplicatedIngestDatabase::observe_query_groups() const {
+  if (!is_running())
+    return common::make_unexpected(invalid("replicated query database is unavailable"));
+  raft::AsyncDurableMultiRaftRuntime* const runtime = impl_->runtime.runtime();
+  raft::AsyncRaftMetadataApplication* const metadata = impl_->runtime.metadata_application();
+  if (runtime == nullptr || metadata == nullptr)
+    return common::make_unexpected(invalid("replicated query authority is unavailable"));
+  try {
+    std::vector<raft::RaftGroupObservation> observations;
+    observations.reserve(impl_->query_groups.size());
+    for (const raft::GroupId& group_id : impl_->query_groups) {
+      auto observed = observe_group(*runtime, group_id);
+      if (!observed.has_value())
+        return common::make_unexpected(observed.error());
+      observations.push_back(std::move(*observed));
+    }
+    auto catalog = metadata->catalog_snapshot();
+    if (!catalog.has_value())
+      return common::make_unexpected(catalog.error());
+    const auto& descriptor = impl_->bootstrap_owner.descriptor();
+    for (std::size_t index = 0U; index < observations.size(); ++index) {
+      const common::Status shaped = validate_observation_shape(
+          observations[index], impl_->query_groups[index], descriptor.local_node_id);
+      if (!shaped.is_ok())
+        return common::make_unexpected(shaped);
+      const common::Status placed =
+          validate_group_placement(**catalog, observations[index], descriptor.metadata_group_id);
+      if (!placed.is_ok())
+        return common::make_unexpected(placed);
+    }
+    return observations;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("replicated query observation allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("replicated query observations exceed limits"));
+  }
+}
+
 common::Result<std::optional<ReplicatedQueryLeaderRoute>>
 ReplicatedIngestDatabase::resolve_query_leader(const ReplicatedSingleGroupQueryRoute& route) {
   if (!is_running())

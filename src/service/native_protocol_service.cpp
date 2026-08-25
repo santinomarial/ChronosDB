@@ -19,10 +19,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <new>
 #include <optional>
+#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -220,6 +222,150 @@ query_redirect(const ResponseRoute& target, const ReplicatedQueryLeaderRoute& ro
 [[nodiscard]] bool retryable_authority_failure(const common::StatusCode code) noexcept {
   return code == common::StatusCode::kUnavailable ||
          code == common::StatusCode::kResourceExhausted || code == common::StatusCode::kIoError;
+}
+
+[[nodiscard]] common::Result<std::vector<ReplicatedReadAuthority>>
+acquire_distributed_read_authorities(ReplicatedIngestDatabase& database,
+                                     ReplicatedReadBarrier& read_barrier,
+                                     const NativeDistributedMutableVectorRowsQueryConfig& config,
+                                     const std::chrono::steady_clock::time_point execution_deadline,
+                                     const NativeQueryCancellation* const cancellation) {
+  auto route_snapshot = database.acquire_query_snapshot();
+  if (!route_snapshot.has_value())
+    return common::make_unexpected(route_snapshot.error());
+  auto observations = database.observe_query_groups();
+  if (!observations.has_value())
+    return common::make_unexpected(observations.error());
+  if (observations->size() != read_barrier.groups().size()) {
+    return common::make_unexpected(
+        internal("distributed Native authority observation count is inconsistent"));
+  }
+  try {
+    std::vector<raft::GroupId> local_groups;
+    std::vector<cluster::RaftReadAuthorityTcpAcquisitionConfig> remote_groups;
+    local_groups.reserve(observations->size());
+    remote_groups.reserve(observations->size());
+    for (std::size_t index = 0U; index < observations->size(); ++index) {
+      const raft::RaftGroupObservation& observation = (*observations)[index];
+      if (observation.role == raft::Role::kLeader) {
+        local_groups.push_back(observation.group_id);
+        continue;
+      }
+      if (observation.role != raft::Role::kFollower || !observation.leader_id.has_value()) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kUnavailable,
+                           "distributed Native authority observation has no current leader"});
+      }
+      const raft::NodeId leader = *observation.leader_id;
+      const raft::ClusterNodeMetadata* const advertised = route_snapshot->cluster_node(leader);
+      if (advertised == nullptr) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kUnavailable,
+                           "distributed Native authority leader has no committed endpoint"});
+      }
+      auto endpoint = network::parse_ipv4_endpoint(advertised->endpoint);
+      if (!endpoint.has_value())
+        return common::make_unexpected(endpoint.error());
+      const auto tls = std::ranges::find(config.tls_contexts, leader,
+                                         &cluster::DistributedQueryNodeTlsContext::node_id);
+      if (tls == config.tls_contexts.end() || tls->tls_context == nullptr) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kUnavailable,
+                           "distributed Native authority leader has no authenticated TLS context"});
+      }
+      remote_groups.push_back(
+          {.route = {.node_id = leader, .endpoints = {*endpoint}, .tls_context = tls->tls_context},
+           .authenticator = config.authenticator,
+           .node_authorizer = config.node_authorizer,
+           .request = {.source_node_id = config.source_node_id,
+                       .target_node_id = leader,
+                       .group_id = observation.group_id,
+                       .correlation_id = static_cast<std::uint64_t>(index + 1U)},
+           .carrier_limits = config.authority_carrier,
+           .connect_timeout = config.authority_connect_timeout,
+           .retry = config.authority_retry});
+    }
+
+    std::optional<cluster::RaftReadAuthorityTcpBatchAcquisition> remote;
+    if (!remote_groups.empty()) {
+      auto created = cluster::RaftReadAuthorityTcpBatchAcquisition::create(
+          {.groups = std::move(remote_groups), .maximum_groups = observations->size()});
+      if (!created.has_value())
+        return common::make_unexpected(created.error());
+      remote.emplace(std::move(*created));
+      const common::Status started = remote->poll_once(std::chrono::milliseconds{0});
+      if (!started.is_ok())
+        return common::make_unexpected(started);
+    }
+
+    std::vector<ReplicatedReadAuthority> authorities;
+    authorities.reserve(observations->size());
+    for (const raft::GroupId& group_id : local_groups) {
+      if (cancellation != nullptr && cancellation->requested()) {
+        if (remote.has_value())
+          static_cast<void>(remote->cancel());
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kCancelled, "native query was cancelled"});
+      }
+      if (std::chrono::steady_clock::now() >= execution_deadline) {
+        if (remote.has_value())
+          static_cast<void>(remote->cancel());
+        return common::make_unexpected(common::Status{
+            common::StatusCode::kCancelled, "distributed Native query execution deadline expired"});
+      }
+      auto local = read_barrier.await_group_authority(group_id);
+      if (!local.has_value()) {
+        if (remote.has_value())
+          static_cast<void>(remote->cancel());
+        return common::make_unexpected(local.error());
+      }
+      authorities.push_back(std::move(*local));
+    }
+
+    if (remote.has_value()) {
+      while (remote->state() == cluster::RaftReadAuthorityTcpBatchAcquisitionState::kRunning) {
+        if (cancellation != nullptr && cancellation->requested()) {
+          static_cast<void>(remote->cancel());
+          return common::make_unexpected(
+              common::Status{common::StatusCode::kCancelled, "native query was cancelled"});
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= execution_deadline) {
+          static_cast<void>(remote->cancel());
+          return common::make_unexpected(
+              common::Status{common::StatusCode::kCancelled,
+                             "distributed Native query execution deadline expired"});
+        }
+        const auto remaining =
+            std::chrono::duration_cast<std::chrono::milliseconds>(execution_deadline - now);
+        const common::Status progress =
+            remote->poll_once(std::min(config.maximum_poll_wait, remaining));
+        if (!progress.is_ok())
+          return common::make_unexpected(progress);
+      }
+      auto acquired = remote->result();
+      if (!acquired.has_value())
+        return common::make_unexpected(acquired.error());
+      authorities.insert(authorities.end(), std::make_move_iterator(acquired->begin()),
+                         std::make_move_iterator(acquired->end()));
+    }
+    std::ranges::sort(authorities, {}, [](const ReplicatedReadAuthority& authority) {
+      return authority.observation.group_id;
+    });
+    if (authorities.size() != observations->size() ||
+        std::ranges::adjacent_find(authorities, {}, [](const ReplicatedReadAuthority& authority) {
+          return authority.observation.group_id;
+        }) != authorities.end()) {
+      return common::make_unexpected(
+          internal("distributed Native authority result set is inconsistent"));
+    }
+    return authorities;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("distributed Native authority allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("distributed Native authority exceeds container limits"));
+  }
 }
 
 [[nodiscard]] cluster::DistributedVectorRowFinalizationLimitsV2
@@ -778,7 +924,8 @@ NativeProtocolService::execute_query(network::NetworkTask request,
       return query_error(target, invalid("distributed Native query config is invalid"),
                          limits_.protocol);
     }
-    if (replicated_database_ != nullptr && replicated_read_barrier_ != nullptr &&
+    if (distributed_mutable_query_ == nullptr && replicated_database_ != nullptr &&
+        replicated_read_barrier_ != nullptr &&
         target.protocol.protocol_major == network::kProtocolV2Major &&
         (target.protocol.feature_bits & network::kProtocolV2LeaderRedirectFeature) != 0U) {
       auto preliminary = replicated_database_->acquire_query_snapshot();
@@ -806,6 +953,11 @@ NativeProtocolService::execute_query(network::NetworkTask request,
       if (!parsed.has_value())
         return query_error(target, parsed.error().status(), limits_.protocol);
     }
+    std::optional<std::chrono::steady_clock::time_point> distributed_execution_deadline;
+    if (distributed_mutable_query_ != nullptr) {
+      distributed_execution_deadline.emplace(std::chrono::steady_clock::now() +
+                                             distributed_mutable_query_->execution_timeout);
+    }
     std::optional<ReplicatedQuerySnapshot> replicated_snapshot;
     std::optional<std::vector<ReplicatedReadAuthority>> replicated_authorities;
     std::shared_ptr<const query::QueryCatalogSnapshot> query_catalog;
@@ -820,7 +972,13 @@ NativeProtocolService::execute_query(network::NetworkTask request,
                 common::make_unexpected(std::move(barriers.error()))};
           return replicated_database_->acquire_query_snapshot(*barriers);
         }
-        auto authorities = replicated_read_barrier_->await_authority();
+        if (!distributed_execution_deadline.has_value()) {
+          return common::Result<ReplicatedQuerySnapshot>{common::make_unexpected(
+              internal("distributed Native query deadline is unavailable"))};
+        }
+        auto authorities = acquire_distributed_read_authorities(
+            *replicated_database_, *replicated_read_barrier_, *distributed_mutable_query_,
+            *distributed_execution_deadline, cancellation);
         if (!authorities.has_value()) {
           return common::Result<ReplicatedQuerySnapshot>{
               common::make_unexpected(std::move(authorities.error()))};
@@ -913,7 +1071,11 @@ NativeProtocolService::execute_query(network::NetworkTask request,
           std::span<const query::DistributedMutableVectorFragment>{prepared->fragments});
       if (!logical_identity.has_value())
         return query_error(target, logical_identity.error(), limits_.protocol);
-      const auto execution_deadline = std::chrono::steady_clock::now() + config.execution_timeout;
+      if (!distributed_execution_deadline.has_value()) {
+        return query_error(target, internal("distributed Native query deadline is unavailable"),
+                           limits_.protocol);
+      }
+      const auto execution_deadline = *distributed_execution_deadline;
       ReplicatedRoutedMutableVectorQuery current = std::move(*prepared);
       std::size_t authority_rebindings{};
       auto install_fresh_authority = [&](common::Status failure) -> common::Status {
@@ -930,7 +1092,9 @@ NativeProtocolService::execute_query(network::NetworkTask request,
                     "distributed Native query execution deadline expired"};
           }
           ++authority_rebindings;
-          auto authorities = replicated_read_barrier_->await_authority();
+          auto authorities =
+              acquire_distributed_read_authorities(*replicated_database_, *replicated_read_barrier_,
+                                                   config, execution_deadline, cancellation);
           if (!authorities.has_value()) {
             failure = std::move(authorities.error());
           } else {

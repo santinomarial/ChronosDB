@@ -1452,9 +1452,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   authenticates before selecting mutable-query or read-authority framing by exact frozen magic.
   The packaged daemon now owns that shared listener on the committed local endpoint, composes both
   production receivers in reverse-safe lifetime order, and polls them off the Raft thread. Native
-  outbound authority integration remains before arbitrary split-leader process coordination is
-  implemented. Partitions, multi-process real-CSEG scans, and
-  sufficient-state multi-key shuffle also remain open; the full phase exit gate is not claimed.
+  outbound authority integration now observes each local group, combines local barriers with one
+  all-or-nothing remote batch, and re-observes the whole attempt under the Native deadline. A
+  focused two-group gate completes SQL with local metadata leadership and remote tablet leadership.
+  Linux multi-daemon split-leader process qualification remains. Partitions, multi-process real-CSEG
+  scans, and sufficient-state multi-key shuffle also remain open; the full phase exit gate is not
+  claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
 - **Explicit non-scope:** general cross-tablet write transactions, silent consistency downgrade, unlimited shuffle, and topology changes that invalidate tokens without an explicit error/mapping protocol.

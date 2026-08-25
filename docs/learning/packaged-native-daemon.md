@@ -62,8 +62,16 @@ visible before loop exit, and failure is visible before the main thread reports 
 The packaged owner constructs the mutable worker and per-group replicated authority adapter before
 their two receivers, and constructs the shared listener last. Destruction therefore closes TLS and
 TCP ownership before any borrowed receiver dependency disappears. The daemon passes its existing
-replicated barrier into this owner; the Native coordinator does not yet use the remote authority
-client, so independently led groups still fail closed rather than being described as supported.
+replicated barrier into this owner. The Native coordinator uses the remote authority client against
+peer instances of that inbound owner.
+
+For distributed Native SELECT, the query thread now observes every resident group before each whole
+attempt. Locally led groups use the local barrier; follower observations select the current remote
+leader, whose committed private endpoint and immutable TLS peer context construct the authority
+request. All remote connections start before local waits. Only the complete sorted local/remote
+proof vector can pin the publication set and bind fragments. Cancellation and retry share the same
+absolute query deadline, and retry re-observes every leader. The proof set is still per-group, not a
+globally atomic cross-group instant.
 
 The replicated queue adapter separately admits one joined Native query thread. This keeps its queue
 owner available for an exact later `CANCEL`: the matching connection/request publishes a sticky

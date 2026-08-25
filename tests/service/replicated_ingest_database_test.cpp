@@ -1,3 +1,4 @@
+#include "chronos/cluster/distributed_mutable_query_control_tcp.hpp"
 #include "chronos/columnar/columnar_batch_codec.hpp"
 #include "chronos/common/byte_reader.hpp"
 #include "chronos/ingest/raft_tablet_state_machine.hpp"
@@ -70,8 +71,69 @@ class DistributedTestNodeAuthorizer final : public cluster::ClusterNodePrincipal
 public:
   common::Result<bool> authorize_node(const std::uint64_t principal,
                                       const raft::NodeId node) const override {
-    return (principal == 91U && node == 9U) || (principal == 92U && node == 1U);
+    return (principal == 91U && node == 9U) || (principal == 92U && node == 1U) ||
+           (principal == 93U && node == 2U);
   }
+};
+
+class EmptyRowsMutableWorker final : public cluster::DistributedMutableVectorQueryWorkerService {
+public:
+  common::Result<std::vector<cluster::DistributedVectorResultExchangeMessage>>
+  execute(const query::DistributedMutableVectorFragment& fragment) override {
+    ++calls;
+    try {
+      std::vector<network::QueryResultColumn> columns;
+      columns.reserve(fragment.result_schema.columns.size());
+      for (const query::DistributedVectorResultColumn& column : fragment.result_schema.columns)
+        columns.push_back({column.name, column.type, column.nullable});
+      auto encoded = network::encode_query_result_batch(0U, columns, {});
+      if (!encoded.has_value())
+        return common::make_unexpected(encoded.error());
+      return std::vector<cluster::DistributedVectorResultExchangeMessage>{
+          {.query_id = fragment.query_id,
+           .tablet_id = fragment.tablet_id,
+           .sequence = 1U,
+           .terminal = true,
+           .encoded_result_batch = std::move(*encoded)}};
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                    "empty rows worker allocation failed"});
+    }
+  }
+
+  std::size_t calls{};
+};
+
+class ObservedLeaderAuthorityService final : public cluster::RaftReadAuthorityService {
+public:
+  explicit ObservedLeaderAuthorityService(std::vector<raft::RaftGroupObservation> observations)
+      : observations_(std::move(observations)) {
+    for (raft::RaftGroupObservation& observation : observations_) {
+      observation.node_id = 2U;
+      observation.role = raft::Role::kLeader;
+      observation.leader_id = 2U;
+    }
+  }
+
+  common::Result<cluster::RaftReadAuthority> acquire(const raft::GroupId& group_id) override {
+    ++calls;
+    const auto found =
+        std::ranges::find(observations_, group_id, &raft::RaftGroupObservation::group_id);
+    if (found == observations_.end()) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kNotFound, "authority group is absent"});
+    }
+    return cluster::RaftReadAuthority{.barrier = {.group_id = group_id,
+                                                  .barrier = {.term = found->current_term,
+                                                              .context = calls,
+                                                              .read_index = found->applied_index}},
+                                      .observation = *found};
+  }
+
+  std::uint64_t calls{};
+
+private:
+  std::vector<raft::RaftGroupObservation> observations_;
 };
 
 class AdvancingFailOnceMutableWorker final
@@ -229,8 +291,8 @@ private:
   return {{metadata_group(), {1U}}, {tablet_group(), {1U, 2U}}};
 }
 
-[[nodiscard]] std::vector<raft::RaftGroupConfiguration> two_node_groups() {
-  return {{metadata_group(), {1U, 2U}}, {tablet_group(), {1U, 2U}}};
+[[nodiscard]] std::vector<raft::RaftGroupConfiguration> split_leader_groups() {
+  return {{metadata_group(), {1U}}, {tablet_group(), {1U, 2U}}};
 }
 
 [[nodiscard]] std::vector<raft::RaftGroupConfiguration> multi_tablet_groups() {
@@ -449,8 +511,23 @@ void propose_and_replicate(ReplicatedIngestRuntime& owner, const raft::GroupId& 
   replicate_current(owner, group_id);
 }
 
-void provision_two_node_query(ReplicatedIngestRuntime& owner) {
-  elect_two_node_group(owner, metadata_group());
+void provision_two_node_query(ReplicatedIngestRuntime& owner,
+                              const network::Ipv4Endpoint remote_query_endpoint) {
+  auto metadata_election =
+      owner.runtime()->try_submit({{metadata_group(), raft::StartElectionOperation{}},
+                                   {metadata_group(), raft::CommitCurrentTermOperation{}}});
+  ASSERT_TRUE(metadata_election.has_value()) << metadata_election.error().to_string();
+  ASSERT_TRUE(metadata_election->wait().has_value());
+  propose_and_replicate(
+      owner, metadata_group(),
+      {raft::kRaftMetadataCommandEntryType,
+       raft::encode_metadata_command_v1(raft::ClusterNodeMetadata{1U, "127.0.0.1:1"}).value()});
+  propose_and_replicate(
+      owner, metadata_group(),
+      {raft::kRaftMetadataCommandEntryType,
+       raft::encode_metadata_command_v1(
+           raft::ClusterNodeMetadata{2U, "127.0.0.1:" + std::to_string(remote_query_endpoint.port)})
+           .value()});
   propose_and_replicate(
       owner, metadata_group(),
       {raft::kRaftSchemaDefinitionEntryType,
@@ -476,6 +553,7 @@ void provision_two_node_query(ReplicatedIngestRuntime& owner) {
       {raft::kRaftTabletGroupBindingEntryType,
        raft::encode_tablet_group_binding_v1({tablet_id(), tablet_group()}).value()});
   elect_two_node_group(owner, tablet_group());
+  propose_and_replicate(owner, tablet_group(), {ingest::kRaftColumnarAppendEntryType, command()});
 }
 
 void elect_and_provision_multiple_tablets(ReplicatedIngestRuntime& owner) {
@@ -1856,44 +1934,51 @@ TEST(ReplicatedIngestDatabaseTest, PinsCommittedWholeTableQueryStateBeyondOwnerS
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
-TEST(ReplicatedIngestDatabaseTest, EmitsAnAuthoritativeRedirectForOneCommonRemoteQueryLeader) {
+TEST(ReplicatedIngestDatabaseTest, CoordinatesNativeQueryAcrossSplitLocalAndRemoteLeaders) {
   TemporaryDirectory directory;
+  auto reservation = network::TcpListener::bind({});
+  if (!reservation.has_value())
+    GTEST_SKIP() << "workspace does not permit loopback listener creation";
+  const network::Ipv4Endpoint remote_query_endpoint = reservation->bound_endpoint();
+  ASSERT_TRUE(reservation->close().is_ok());
   runtime::DatabaseBootstrapConfig bootstrap_config{.database_root = directory.path().string(),
                                                     .new_database = descriptor()};
   auto bootstrap = runtime::DatabaseBootstrap::open_or_create(bootstrap_config);
   ASSERT_TRUE(bootstrap.has_value()) << bootstrap.error().to_string();
   auto config = initial_runtime_config(*bootstrap);
-  config.groups = two_node_groups();
+  config.groups = split_leader_groups();
   auto initial = ReplicatedIngestRuntime::create_new(std::move(config));
   ASSERT_TRUE(initial.has_value()) << initial.error().to_string();
-  provision_two_node_query(*initial);
+  provision_two_node_query(*initial, remote_query_endpoint);
   ASSERT_TRUE(initial->shutdown().is_ok());
   ASSERT_TRUE(bootstrap->close().is_ok());
 
   auto database = ReplicatedIngestDatabase::open_existing(
-      {.bootstrap = bootstrap_config, .groups = two_node_groups()});
+      {.bootstrap = bootstrap_config, .groups = split_leader_groups()});
   ASSERT_TRUE(database.has_value()) << database.error().to_string();
   ReplicatedIngestRuntime* const runtime = database->ingest_runtime();
   ASSERT_NE(runtime, nullptr);
-  for (const raft::GroupId group_id : {metadata_group(), tablet_group()}) {
-    const raft::RaftGroupObservation before = observe(*runtime, group_id);
-    ASSERT_NE(before.current_term, 0U);
-    auto followed = runtime->runtime()->try_submit(
-        {{group_id,
-          raft::ReceiveOperation{
-              2U, raft::AppendEntriesRequest{
-                      .term = before.current_term + 1U,
-                      .leader_id = 2U,
-                      .previous_log_index = before.last_log_index,
-                      .previous_log_term = before.last_log_index == 0U ? 0U : before.current_term,
-                      .entries = {},
-                      .leader_commit = before.commit_index}}}});
-    ASSERT_TRUE(followed.has_value()) << followed.error().to_string();
-    auto result = followed->wait();
-    ASSERT_TRUE(result.has_value()) << result.error().to_string();
-    ASSERT_EQ(result->size(), 1U);
-    ASSERT_TRUE(result->front().status.is_ok()) << result->front().status.to_string();
-  }
+  auto metadata_election =
+      runtime->runtime()->try_submit({{metadata_group(), raft::StartElectionOperation{}},
+                                      {metadata_group(), raft::CommitCurrentTermOperation{}}});
+  ASSERT_TRUE(metadata_election.has_value()) << metadata_election.error().to_string();
+  ASSERT_TRUE(metadata_election->wait().has_value());
+  const raft::RaftGroupObservation before = observe(*runtime, tablet_group());
+  ASSERT_NE(before.current_term, 0U);
+  auto followed = runtime->runtime()->try_submit(
+      {{tablet_group(), raft::ReceiveOperation{2U, raft::AppendEntriesRequest{
+                                                       .term = before.current_term + 1U,
+                                                       .leader_id = 2U,
+                                                       .previous_log_index = before.last_log_index,
+                                                       .previous_log_term = before.current_term,
+                                                       .entries = {},
+                                                       .leader_commit = before.commit_index}}}});
+  ASSERT_TRUE(followed.has_value()) << followed.error().to_string();
+  auto followed_result = followed->wait();
+  ASSERT_TRUE(followed_result.has_value()) << followed_result.error().to_string();
+  ASSERT_EQ(followed_result->size(), 1U);
+  ASSERT_TRUE(followed_result->front().status.is_ok())
+      << followed_result->front().status.to_string();
 
   auto snapshot = database->acquire_query_snapshot();
   ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
@@ -1901,12 +1986,17 @@ TEST(ReplicatedIngestDatabaseTest, EmitsAnAuthoritativeRedirectForOneCommonRemot
       snapshot->single_group_route(columnar::test::batch_schema()->table_id());
   ASSERT_NE(query_route, nullptr);
   auto resolved = database->resolve_query_leader(*query_route);
-  ASSERT_TRUE(resolved.has_value()) << resolved.error().to_string();
-  ASSERT_TRUE(resolved->has_value());
-  EXPECT_EQ((**resolved).group_id, tablet_group());
-  EXPECT_EQ((**resolved).leader_node_id, 2U);
-  EXPECT_EQ((**resolved).leader_term, 2U);
-  EXPECT_EQ((**resolved).placement_epoch, 1U);
+  ASSERT_FALSE(resolved.has_value());
+  EXPECT_EQ(resolved.error().code(), common::StatusCode::kUnavailable);
+  auto follower_observations = database->observe_query_groups();
+  ASSERT_TRUE(follower_observations.has_value()) << follower_observations.error().to_string();
+  ASSERT_EQ(follower_observations->size(), 2U);
+  EXPECT_EQ((*follower_observations)[0].group_id, metadata_group());
+  EXPECT_EQ((*follower_observations)[0].role, raft::Role::kLeader);
+  EXPECT_EQ((*follower_observations)[0].leader_id, 1U);
+  EXPECT_EQ((*follower_observations)[1].group_id, tablet_group());
+  EXPECT_EQ((*follower_observations)[1].role, raft::Role::kFollower);
+  EXPECT_EQ((*follower_observations)[1].leader_id, 2U);
 
   auto read_barrier = ReplicatedReadBarrier::create_local(
       runtime->runtime(),
@@ -1916,55 +2006,99 @@ TEST(ReplicatedIngestDatabaseTest, EmitsAnAuthoritativeRedirectForOneCommonRemot
   auto response = service.execute_query(query_request("SELECT count(*) AS rows FROM events", true));
   ASSERT_TRUE(response.has_value()) << response.error().to_string();
   ASSERT_EQ(response->responses.size(), 1U);
-  const network::NetworkTask& redirected = response->responses.front();
-  EXPECT_EQ(redirected.protocol.protocol_major, network::kProtocolV2Major);
-  EXPECT_EQ(redirected.frame.header.protocol_major, network::kProtocolV2Major);
-  ASSERT_EQ(redirected.frame.header.message_type, network::MessageType::kLeaderRedirect);
-  auto redirect = network::decode_leader_redirect(redirected.frame.payload);
-  ASSERT_TRUE(redirect.has_value()) << redirect.error().to_string();
-  EXPECT_EQ(redirect->group_id, tablet_group());
-  EXPECT_EQ(redirect->leader_node_id, 2U);
-  EXPECT_EQ(redirect->leader_term, 2U);
-  EXPECT_EQ(redirect->placement_epoch, 1U);
+  EXPECT_EQ(response->responses.front().frame.header.message_type, network::MessageType::kError);
 
-  DistributedTestAuthenticator distributed_authenticator{92U};
+  EmptyRowsMutableWorker remote_worker;
+  ObservedLeaderAuthorityService remote_authority{*follower_observations};
   DistributedTestNodeAuthorizer distributed_authorizer;
-  network::TlsClientContext remote_tls;
+  DistributedTestAuthenticator inbound_authenticator{92U};
+  auto mutable_receiver = cluster::DistributedMutableVectorQueryReceiver::create(
+      {.local_node_id = 2U,
+       .authorizer = &distributed_authorizer,
+       .worker = &remote_worker,
+       .maximum_response_frames = 4U,
+       .maximum_response_bytes = std::size_t{1024U} * 1024U});
+  auto authority_receiver = cluster::RaftReadAuthorityReceiver::create(
+      {.local_node_id = 2U, .authorizer = &distributed_authorizer, .service = &remote_authority});
+  ASSERT_TRUE(mutable_receiver.has_value()) << mutable_receiver.error().to_string();
+  ASSERT_TRUE(authority_receiver.has_value()) << authority_receiver.error().to_string();
+  auto remote_server = cluster::DistributedMutableQueryControlTcpServer::start(
+      {.listener = {.bind_endpoint = remote_query_endpoint},
+       .tls = distributed_server_tls(),
+       .authenticator = &inbound_authenticator,
+       .mutable_receiver = &*mutable_receiver,
+       .read_authority_receiver = &*authority_receiver,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000},
+                          .maximum_mutable_response_frames = 4U,
+                          .maximum_mutable_response_bytes = std::size_t{1024U} * 1024U},
+       .maximum_connections = 8U,
+       .maximum_accepts_per_poll = 8U});
+  ASSERT_TRUE(remote_server.has_value()) << remote_server.error().to_string();
+  auto remote_tls = network::TlsClientContext::create(distributed_client_tls());
+  ASSERT_TRUE(remote_tls.has_value()) << remote_tls.error().to_string();
   const std::array remote_tls_contexts{cluster::DistributedQueryNodeTlsContext{
-      .node_id = 2U, .tls_context = std::addressof(remote_tls)}};
+      .node_id = 2U, .tls_context = std::addressof(*remote_tls)}};
+  DistributedTestAuthenticator distributed_authenticator{93U};
   const NativeDistributedMutableVectorRowsQueryConfig distributed_config{
       .source_node_id = 1U,
       .authenticator = &distributed_authenticator,
       .node_authorizer = &distributed_authorizer,
-      .tls_contexts = remote_tls_contexts};
+      .tls_contexts = remote_tls_contexts,
+      .execution = {.sender = {.retry = {.maximum_attempts = 1U},
+                               .maximum_response_frames = 4U,
+                               .maximum_response_bytes = std::size_t{1024U} * 1024U}},
+      .carrier = {.handshake_timeout = std::chrono::milliseconds{1000},
+                  .exchange_timeout = std::chrono::milliseconds{1000},
+                  .maximum_response_frames = 4U,
+                  .maximum_response_bytes = std::size_t{1024U} * 1024U},
+      .authority_carrier = {.handshake_timeout = std::chrono::milliseconds{1000},
+                            .exchange_timeout = std::chrono::milliseconds{1000}},
+      .authority_retry = {.maximum_attempts = 1U},
+      .connect_timeout = std::chrono::milliseconds{1000},
+      .authority_connect_timeout = std::chrono::milliseconds{1000},
+      .execution_timeout = std::chrono::milliseconds{5000},
+      .maximum_poll_wait = std::chrono::milliseconds{1}};
   NativeProtocolService distributed_service{*database, *read_barrier, distributed_config};
+  std::jthread remote_thread{[&](const std::stop_token& stop) {
+    while (!stop.stop_requested())
+      EXPECT_TRUE(remote_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }};
   auto distributed_response =
       distributed_service.execute_query(query_request("SELECT count(*) AS rows FROM events", true));
   ASSERT_TRUE(distributed_response.has_value()) << distributed_response.error().to_string();
-  ASSERT_EQ(distributed_response->responses.size(), 1U);
+  if (distributed_response->responses.size() == 1U &&
+      distributed_response->responses.front().frame.header.message_type ==
+          network::MessageType::kError) {
+    auto error =
+        network::decode_error_message(distributed_response->responses.front().frame.payload);
+    ASSERT_TRUE(error.has_value());
+    std::string message;
+    for (const std::byte byte : error->message)
+      message.push_back(static_cast<char>(byte));
+    ADD_FAILURE() << "distributed authority query returned error: " << message;
+  }
+  ASSERT_EQ(distributed_response->responses.size(), 2U);
   ASSERT_EQ(distributed_response->responses.front().frame.header.message_type,
-            network::MessageType::kLeaderRedirect);
-  auto distributed_redirect =
-      network::decode_leader_redirect(distributed_response->responses.front().frame.payload);
-  ASSERT_TRUE(distributed_redirect.has_value()) << distributed_redirect.error().to_string();
-  EXPECT_EQ(distributed_redirect->group_id, tablet_group());
-  EXPECT_EQ(distributed_redirect->leader_node_id, 2U);
-  EXPECT_EQ(distributed_redirect->leader_term, 2U);
-  EXPECT_EQ(distributed_redirect->placement_epoch, 1U);
-
-  auto election =
-      runtime->runtime()->try_submit({{metadata_group(), raft::StartElectionOperation{}}});
-  ASSERT_TRUE(election.has_value()) << election.error().to_string();
-  ASSERT_TRUE(election->wait().has_value());
-  const raft::RaftGroupObservation candidate = observe(*runtime, metadata_group());
-  auto vote = runtime->runtime()->try_submit(
-      {{metadata_group(),
-        raft::ReceiveOperation{2U, raft::RequestVoteResponse{candidate.current_term, true}}}});
-  ASSERT_TRUE(vote.has_value()) << vote.error().to_string();
-  ASSERT_TRUE(vote->wait().has_value());
-  auto split = database->resolve_query_leader(*query_route);
-  ASSERT_FALSE(split.has_value());
-  EXPECT_EQ(split.error().code(), common::StatusCode::kUnavailable);
+            network::MessageType::kQueryResult);
+  EXPECT_EQ(distributed_response->responses.back().frame.header.message_type,
+            network::MessageType::kQueryEnd);
+  auto distributed_batch =
+      network::decode_query_result_batch(distributed_response->responses.front().frame.payload);
+  ASSERT_TRUE(distributed_batch.has_value()) << distributed_batch.error().to_string();
+  ASSERT_EQ(distributed_batch->row_count(), 1U);
+  const network::QueryResultCell* const count = distributed_batch->cell(0U, 0U);
+  ASSERT_NE(count, nullptr);
+  common::ByteReader count_reader{count->value};
+  EXPECT_EQ(count_reader.read_i64_le().value(), 0);
+  EXPECT_EQ(remote_authority.calls, 1U);
+  EXPECT_EQ(remote_worker.calls, 1U);
+  const auto remote_metrics = remote_server->metrics();
+  EXPECT_EQ(remote_metrics.completed_read_authorities, 1U);
+  EXPECT_EQ(remote_metrics.completed_mutable_queries, 1U);
+  remote_thread.request_stop();
+  remote_thread.join();
+  EXPECT_TRUE(remote_server->shutdown().is_ok());
   ASSERT_TRUE(read_barrier->shutdown().is_ok());
   ASSERT_TRUE(database->shutdown().is_ok());
 }

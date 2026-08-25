@@ -4,6 +4,7 @@
 #include "chronos/cluster/distributed_mutable_vector_rows_query_tcp_execution.hpp"
 #include "chronos/cluster/distributed_vector_aggregate_rows_finalization_v2.hpp"
 #include "chronos/cluster/distributed_vector_physical_rows_finalization_v2.hpp"
+#include "chronos/cluster/raft_read_authority_tcp_batch_acquisition.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/common/uuid.hpp"
 #include "chronos/common/uuid_generator.hpp"
@@ -100,10 +101,13 @@ struct NativeDistributedMutableVectorRowsQueryConfig {
   query::DistributedVectorGroupedSqlLoweringLimits grouped_sql_lowering;
   cluster::DistributedMutableVectorQueryExecutionLimits execution;
   cluster::DistributedMutableVectorQueryTlsLimits carrier;
+  cluster::RaftReadAuthorityTlsClientLimits authority_carrier;
+  cluster::RaftReadAuthorityTcpRetryLimits authority_retry;
   cluster::DistributedVectorRowFinalizationLimitsV2 finalization;
   cluster::DistributedVectorAggregateRowsFinalizationLimitsV2 aggregate_finalization;
   cluster::DistributedVectorPhysicalRowsFinalizationLimitsV2 grouped_finalization;
   std::chrono::milliseconds connect_timeout{5000};
+  std::chrono::milliseconds authority_connect_timeout{5000};
   std::chrono::milliseconds execution_timeout{30000};
   std::chrono::milliseconds maximum_poll_wait{10};
   std::size_t maximum_authority_rebindings{3U};

@@ -91,13 +91,15 @@ bounded listener admission, finite accepts per poll, metrics, and TLS-before-des
 finite retry owner rotates a bounded immutable address snapshot under one capped attempt/backoff
 budget without changing request authority. An all-or-nothing batch owner concurrently drives one
 finite acquisition per canonical group, cancels every sibling on failure, and publishes only the
-complete authority vector. Daemon listener and Native query integration remain subsequent consumers.
-The production service adapter now issues only the requested configured group through the existing
-durable replicated barrier owner on a non-poll thread. Daemon listener and Native query integration
-remain subsequent consumers.
+complete authority vector. The production service adapter issues only the requested configured group
+through the existing durable replicated barrier owner on a non-poll thread.
 The implemented shared query-control listener authenticates the client certificate before reading
 the eight-byte application magic and selects this protocol only for exact `CHRRAUQ1`; mutable
 `CHDMREQ1` requests retain their separate reader and all other magic is rejected without dispatch.
 The packaged multi-peer daemon now owns that shared listener on its committed private data endpoint
-and serves one requested local group through the replicated read-barrier adapter. Native outbound
-authority acquisition remains a subsequent consumer; this is not yet split-leader query support.
+and serves one requested local group through the replicated read-barrier adapter.
+The Native distributed coordinator now observes every local resident group, uses the local barrier
+for groups it leads, and sends this request to the observed authenticated remote leader for every
+follower group. It starts all remote groups before local waits, publishes only the complete canonical
+mixed proof vector, and re-observes the whole vector on retry under one query deadline. This changes
+no transport bytes.

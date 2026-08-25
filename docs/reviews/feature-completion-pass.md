@@ -931,9 +931,10 @@ were deliberately not run.
   packaged mutable row, global aggregate, expression/predicate, and row-backed grouped SQL surfaces
   before and after common-leader loss. A canonical authenticated remote read-authority codec and
   receiver, bounded stream owners, mutual-TLS sessions, deadline/admission-bound TCP endpoints, and
-  finite immutable-route retry now cover the first split-leader prerequisites, but daemon service
-  and all-group attempt coordination remain absent, as do multi-process real-CSEG execution and
-  partition schedules.
+  finite immutable-route retry now feed the packaged daemon service and all-group Native attempt
+  coordination. Focused in-process coverage proves local-metadata/remote-tablet SQL; Linux
+  multi-daemon split-leader qualification, multi-process real-CSEG execution, and partition
+  schedules remain absent.
 - Temporal corrections have durable WAL/CSEG v2/Manifest v2 composition; direct vector winner
   lowering and mixed WAL/Raft-source composition remain incomplete.
 - Distributed Native execution covers bounded row-backed multi-key/all-type grouping, global
@@ -1036,13 +1037,15 @@ were deliberately not run.
   that same production worker while remote fragments retain mutual-TLS scheduling, and one
   all-tablet coordinator withholds global finalization and Native output until both subsets close.
   Remote read-authority transport now also has bounded mutual-TLS/TCP owners, finite immutable-route
-  retry, and concurrent all-or-nothing group fan-out; the Native query path does not yet consume
-  that authority endpoint. A production service adapter now issues one exact group
-  through the durable replicated barrier owner on a required non-poll thread. One bounded shared
+  retry, and concurrent all-or-nothing group fan-out. A production service adapter issues one exact
+  group through the durable replicated barrier owner on a required non-poll thread. One bounded shared
   private endpoint can authenticate before routing either existing mutable or authority protocol.
   The packaged daemon now owns both production receivers on that one committed endpoint with the
   replicated barrier and listener thread in explicit deadlock-safe lifetime order; Native outbound
-  authority acquisition and arbitrary split-leader coordination remain absent.
+  authority acquisition now observes every group, combines locally led barriers with an
+  all-or-nothing batch to observed authenticated remote leaders, and re-observes the whole attempt
+  under one deadline. A focused local-metadata/remote-tablet SQL gate passes; Linux multi-daemon
+  split-leader qualification remains absent.
   The packaged daemon now binds the committed local private query endpoint, reuses the immutable
   authenticated peer bundle for inbound/outbound query TLS, polls synchronous workers separately
   from Raft, and extends its three-process gate through remote SELECT before and after tablet-leader

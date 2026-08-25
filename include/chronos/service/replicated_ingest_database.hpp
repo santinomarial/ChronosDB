@@ -209,6 +209,12 @@ public:
   [[nodiscard]] common::Result<ReplicatedDistributedMutableVectorQueryWorkerContext>
   acquire(const query::DistributedMutableVectorFragment& fragment) override;
   [[nodiscard]] std::span<const raft::GroupId> query_barrier_groups() const noexcept;
+  // Returns one canonical current local observation for every query barrier group after checking
+  // its group identity, local-node identity, stable committed membership, leader shape, and current
+  // committed placement. Followers retain the current remote leader identifier used to construct
+  // authenticated read-authority requests; no barrier is issued by this observation call.
+  [[nodiscard]] common::Result<std::vector<raft::RaftGroupObservation>>
+  observe_query_groups() const;
   // Obtains ordered observations for the complete packaged query-barrier group vector. It returns
   // a redirect only when every group has the same stable remote leader and committed placement is
   // unchanged; all-local leadership returns an empty optional. Split or unknown authority fails.
