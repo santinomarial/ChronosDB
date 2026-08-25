@@ -1562,9 +1562,13 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   client now validates route identity before connect, proves `SO_ERROR`, and transfers exactly one
   attempt into that TLS/receipt lifecycle. A bounded listener reserves preallocated completion
   capacity before admission, progresses finite mTLS sessions, and publishes acknowledged streams
-  through an allocation-free FIFO. Computed pre-group plan splitting, catalog-derived destination
-  selection, duplicate admission, and partition reducer ownership are still missing; scheduler request
-  ownership, authenticated transport/read authority, and final SQL projection/order/limit are now
+  through an allocation-free FIFO. One authority-bound local partition reducer now revalidates
+  complete stream shape and hash routing, suppresses byte-exact retries, rejects conflicting reuse,
+  survives retryable allocation failure through exact prefix admission, and withholds deterministic
+  source-order merge output until every authority source closes. Computed pre-group plan splitting,
+  catalog-derived destination selection, and packaged all-edge scheduling are still missing;
+  scheduler request ownership, authenticated transport/read authority, and final SQL
+  projection/order/limit are now
   integrated. The one committed private query-control endpoint now dispatches exact decoded mutable
   plans to row or grouped receivers and retains distinct bounded response codecs, so remote grouped
   work no longer requires an unadvertised second listener. Native SQL preparation still has to

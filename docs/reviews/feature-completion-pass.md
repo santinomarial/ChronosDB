@@ -1296,7 +1296,14 @@ were deliberately not run.
   capacity-one test proves pre-accept backpressure, and allocation injection sweeps startup storage.
   The warning-as-error ASan/UBSan build, all 284 cluster tests, and 47 cluster allocation-failure
   tests pass. LLVM 18 reaches only the known macOS 26 libc++ incompatibility without a source
-  diagnostic. Duplicate arbitration, partition reducers, and packaged scheduling remain open.
+  diagnostic. Partition reducers and packaged scheduling remain open.
+- Idempotent grouped shuffle partition reducer: one authority-bound local owner revalidates every
+  complete source stream and canonical hash route, reserves finite outer bytes, resumes exact
+  prefix admission after allocation failure, suppresses whole-stream duplicates, and rejects
+  conflicting reuse. Reverse source arrival still merges equal keys in authority order and no
+  output escapes before every source terminal. Focused and allocation-injection tests pass under
+  the warning-as-error ASan/UBSan build; complete suite counts are recorded in ADR 0510. Packaged
+  multi-partition scheduling, placement selection, cancellation, and crash recovery remain open.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

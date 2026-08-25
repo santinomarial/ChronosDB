@@ -164,7 +164,15 @@ transfers the attempt into TLS with carrier-before-descriptor teardown. It does 
 listener admission or idempotent duplicate admission. The complementary listener now reserves one
 preallocated result slot per admitted TLS session, rejects capacity pressure before application
 acceptance, and retains receipt-acknowledged complete streams in allocation-free FIFO order. The
-current packaged path still sends complete tablet streams to one coordinator.
+listener hands retained results to an authority-bound local partition reducer. That reducer
+revalidates complete extent, source, destination, terminal sequence, and canonical hash route even
+though transport already authenticated the peer. It reserves finite per-source and total outer
+bytes, feeds the existing query-accounted coordinator, and records the exact accepted prefix so a
+caller-retained stream can resume after allocation failure. A byte-identical whole-stream retry is
+a no-op; a conflicting retry fails closed. Output remains unavailable until every authority source
+terminal arrives and then merges in authority source order. The reducer is intentionally in-memory:
+it does not claim process-crash recovery or durable deduplication. The current packaged path still
+sends complete tablet streams to one coordinator rather than scheduling every partition edge.
 
 ### Portable sufficient-state execution boundary
 
