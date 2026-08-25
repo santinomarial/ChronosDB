@@ -134,6 +134,11 @@ public:
   [[nodiscard]] const std::optional<
       std::vector<query::EncodedDistributedVectorGroupedAggregateExchangeMessage>>&
   result() const noexcept;
+  // Transfers the complete canonical stream exactly once after success. The sender remains
+  // terminal and retains its diagnostic authority.
+  [[nodiscard]] common::Result<
+      std::vector<query::EncodedDistributedVectorGroupedAggregateExchangeMessage>>
+  take_result();
 
 private:
   DistributedMutableVectorGroupedAggregateQuerySender(

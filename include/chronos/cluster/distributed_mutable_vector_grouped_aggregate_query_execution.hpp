@@ -37,6 +37,11 @@ struct DistributedMutableVectorGroupedAggregateQueryTarget {
                          const DistributedMutableVectorGroupedAggregateQueryTarget&) = default;
 };
 
+struct DistributedMutableVectorGroupedAggregateCompletedSource {
+  schema::TabletId tablet_id;
+  std::vector<query::EncodedDistributedVectorGroupedAggregateExchangeMessage> messages;
+};
+
 // Portable single-threaded owner for one exact mutable fragment per tablet. It owns finite senders,
 // shared query decode authority, complete grouped key/state authority, and the all-tablet grouped
 // coordinator. Transport is caller-owned. No group becomes visible until every sender publishes a
@@ -81,6 +86,10 @@ public:
   suggested_leader(const schema::TabletId& tablet_id) const;
 
   [[nodiscard]] common::Status finish();
+  // Transfers every complete canonical tablet stream in fragment order. This is mutually
+  // exclusive with finish()/next() and is intended for a partitioned shuffle coordinator.
+  [[nodiscard]] common::Result<std::vector<DistributedMutableVectorGroupedAggregateCompletedSource>>
+  take_completed_sources();
   [[nodiscard]] common::Result<query::PhysicalOperatorStep> next();
   [[nodiscard]] std::span<const DistributedMutableVectorGroupedAggregateQueryTarget>
   targets() const noexcept;
@@ -130,6 +139,7 @@ private:
   query::DistributedVectorGroupedAggregateExchangeDecodeLimits decode_limits_;
   std::optional<common::Status> failure_;
   bool ready_{};
+  bool sources_taken_{};
 };
 
 } // namespace chronos::cluster

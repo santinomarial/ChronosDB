@@ -151,5 +151,36 @@ TEST(DistributedMutableVectorGroupedAggregateQueryExecutionTest,
             failed);
 }
 
+TEST(DistributedMutableVectorGroupedAggregateQueryExecutionTest,
+     TransfersCompleteCanonicalSourcesExactlyOnceInFragmentOrder) {
+  std::vector fragments{fragment(4U, 11U), fragment(6U, 12U)};
+  const auto first = fragments[0];
+  const auto second = fragments[1];
+  auto execution = DistributedMutableVectorGroupedAggregateQueryExecution::create(
+      1U, std::move(fragments), keys(), aggregates(),
+      {.coordinator = {
+           .messages = {.maximum_messages_per_fragment = 1U, .maximum_total_messages = 2U}}});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+  EXPECT_EQ(execution->take_completed_sources().error().code(), common::StatusCode::kUnavailable);
+  ASSERT_TRUE(execution->begin_attempt(first.tablet_id, {}).has_value());
+  const auto first_response = response(first, 1U);
+  ASSERT_TRUE(
+      execution->accept_responses(first.tablet_id, std::span{&first_response, 1U}, {}).is_ok());
+  ASSERT_TRUE(execution->begin_attempt(second.tablet_id, {}).has_value());
+  const auto second_response = response(second, 2U);
+  ASSERT_TRUE(
+      execution->accept_responses(second.tablet_id, std::span{&second_response, 1U}, {}).is_ok());
+  auto sources = execution->take_completed_sources();
+  ASSERT_TRUE(sources.has_value()) << sources.error().to_string();
+  ASSERT_EQ(sources->size(), 2U);
+  EXPECT_EQ((*sources)[0].tablet_id, first.tablet_id);
+  EXPECT_EQ((*sources)[1].tablet_id, second.tablet_id);
+  EXPECT_EQ((*sources)[0].messages.size(), 1U);
+  EXPECT_EQ((*sources)[1].messages.size(), 1U);
+  EXPECT_EQ(execution->take_completed_sources().error().code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(execution->finish().code(), common::StatusCode::kInvalidArgument);
+}
+
 } // namespace
 } // namespace chronos::cluster

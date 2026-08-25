@@ -336,6 +336,15 @@ public:
     }
     if (!all_succeeded)
       return common::Status::ok();
+    if (config.publication ==
+        DistributedMutableVectorGroupedAggregateQueryPublication::kCompletedSources) {
+      auto sources = execution.take_completed_sources();
+      if (!sources.has_value())
+        return fail(sources.error());
+      completed_sources.emplace(std::move(*sources));
+      execution_state = DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kComplete;
+      return common::Status::ok();
+    }
     common::Status finished = execution.finish();
     if (!finished.is_ok())
       return fail(std::move(finished));
@@ -359,6 +368,8 @@ public:
   std::vector<std::size_t> poll_slot_indexes;
   DistributedMutableVectorGroupedAggregateQueryTcpExecutionMetrics execution_metrics;
   std::optional<DistributedVectorRowsFinalizedResultV2> execution_result;
+  std::optional<std::vector<DistributedMutableVectorGroupedAggregateCompletedSource>>
+      completed_sources;
   DistributedMutableVectorGroupedAggregateQueryTcpExecutionState execution_state{
       DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kRunning};
   common::Status execution_failure{common::StatusCode::kInternal,
@@ -387,13 +398,22 @@ DistributedMutableVectorGroupedAggregateQueryTcpExecution::create(
   if (config.authenticator == nullptr || config.node_authorizer == nullptr ||
       config.routes.size() > 65'536U || config.maximum_rebindings > 1024U ||
       !valid_timeout(config.connect_timeout) || !valid_limits(config.carrier_limits) ||
-      !validate_distributed_vector_grouped_aggregate_finalization_limits_v2(
-           config.finalization_limits)
-           .is_ok() ||
-      !valid_finalization_authority(execution, config.finalization_limits,
-                                    config.coordinator_projection.has_value()
-                                        ? std::addressof(*config.coordinator_projection)
-                                        : nullptr) ||
+      (config.publication !=
+           DistributedMutableVectorGroupedAggregateQueryPublication::kNativeResult &&
+       config.publication !=
+           DistributedMutableVectorGroupedAggregateQueryPublication::kCompletedSources) ||
+      (config.publication ==
+           DistributedMutableVectorGroupedAggregateQueryPublication::kNativeResult &&
+       (!validate_distributed_vector_grouped_aggregate_finalization_limits_v2(
+             config.finalization_limits)
+             .is_ok() ||
+        !valid_finalization_authority(execution, config.finalization_limits,
+                                      config.coordinator_projection.has_value()
+                                          ? std::addressof(*config.coordinator_projection)
+                                          : nullptr))) ||
+      (config.publication ==
+           DistributedMutableVectorGroupedAggregateQueryPublication::kCompletedSources &&
+       config.coordinator_projection.has_value()) ||
       execution.key_definitions().size() > config.carrier_limits.payload.maximum_group_keys ||
       execution.aggregate_definitions().size() > config.carrier_limits.payload.maximum_aggregates) {
     return common::make_unexpected(
@@ -580,6 +600,7 @@ common::Status DistributedMutableVectorGroupedAggregateQueryTcpExecution::rebind
       config.maximum_rebindings != previous.config.maximum_rebindings ||
       config.local_node_id != previous.config.local_node_id ||
       config.local_worker != previous.config.local_worker ||
+      config.publication != previous.config.publication ||
       !equal_finalization_limits(config.finalization_limits, previous.config.finalization_limits) ||
       config.coordinator_projection != previous.config.coordinator_projection ||
       previous.execution.logical_identity() != execution.logical_identity() ||
@@ -638,6 +659,20 @@ DistributedMutableVectorGroupedAggregateQueryTcpExecution::take_result() {
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("mutable grouped TCP result transfer failed"));
   }
+}
+
+common::Result<std::vector<DistributedMutableVectorGroupedAggregateCompletedSource>>
+DistributedMutableVectorGroupedAggregateQueryTcpExecution::take_completed_sources() {
+  if (!implementation_ ||
+      implementation_->execution_state !=
+          DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kComplete ||
+      !implementation_->completed_sources.has_value()) {
+    return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
+                                                  "mutable grouped TCP sources are unavailable"});
+  }
+  auto sources = std::move(*implementation_->completed_sources);
+  implementation_->completed_sources.reset();
+  return sources;
 }
 
 std::span<const query::VectorGroupKeyDefinition>

@@ -217,9 +217,16 @@ context before the established checked projection, ORDER BY, LIMIT, and atomic N
 One heap-stable post-worker lifecycle now owns that whole chain. It exact-validates source and
 destination coverage, starts every reducer/listener before transport, delivers local edges,
 receipt-schedules all remote edges, keeps ingress live until closure proof, seals, gathers, and
-atomically finalizes Native output. Cancellation tears down both sides. Worker execution and Native
-SQL selection into this lifecycle, computed pre-group programs, and independent-process result
-return remain separate work.
+atomically finalizes Native output. Cancellation tears down both sides. At this boundary worker
+execution, Native SQL selection, computed pre-group programs, and independent-process result return
+remain separate work.
+
+The mutable grouped worker scheduler can now publish complete canonical tablet streams instead of
+draining them through its direct coordinator. A second stable owner derives shuffle authority from
+the same fragments, schedules local or authenticated remote workers, performs that one-shot source
+handoff, and then delegates to the full shuffle lifecycle. Source publication and direct grouped
+finalization are mutually exclusive, so the embedding cannot accidentally expose both answers.
+Replicated Native SQL selection and independent-process partition-result return remain separate.
 
 ### Portable sufficient-state execution boundary
 

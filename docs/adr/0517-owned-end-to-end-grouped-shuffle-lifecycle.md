@@ -47,9 +47,10 @@ The partitioned sufficient-state path now has one executable boundary from compl
 through local/remote shuffle and atomic Native output. Two serving nodes can exchange opposite
 edges over authenticated loopback TLS within this owner and finalize one complete result.
 
-Worker execution and Native SQL selection are not yet folded into this owner. Destination results
-also remain coordinator-process objects; running destination reducers in independent processes
-requires a distinct authenticated result-return protocol.
+[ADR 0518](0518-worker-to-shuffle-grouped-execution.md) subsequently composes mutable worker
+execution with this owner. Native SQL selection remains separate. Destination results also remain
+coordinator-process objects; running destination reducers in independent processes requires a
+distinct authenticated result-return protocol.
 
 ## Affected invariants
 
@@ -89,7 +90,7 @@ to callers; all component protocols and execution types remain independently usa
 
 ## Unresolved questions
 
-- Integrate mutable worker execution and Native SQL selection directly with this lifecycle.
+- Select the worker-to-shuffle composition from replicated Native SQL execution.
 - Carry completed destination partition results back from independent processes.
 - Add process-loss, result-return retry/deduplication, skew, and scale-out measurements.
 - Carry computed pre-group expressions in an owned, versioned worker program.

@@ -308,6 +308,8 @@ DistributedMutableVectorGroupedAggregateQueryExecution::suggested_leader(
 common::Status DistributedMutableVectorGroupedAggregateQueryExecution::finish() {
   if (ready_)
     return invalid("mutable grouped query execution is already finished");
+  if (sources_taken_)
+    return invalid("mutable grouped query execution sources were transferred");
   if (failure_.has_value())
     return *failure_;
   for (const SenderSlot& slot : senders_) {
@@ -321,6 +323,40 @@ common::Status DistributedMutableVectorGroupedAggregateQueryExecution::finish() 
     return finished;
   ready_ = true;
   return common::Status::ok();
+}
+
+common::Result<std::vector<DistributedMutableVectorGroupedAggregateCompletedSource>>
+DistributedMutableVectorGroupedAggregateQueryExecution::take_completed_sources() {
+  if (ready_ || sources_taken_)
+    return common::make_unexpected(
+        invalid("mutable grouped query execution cannot transfer sources"));
+  if (failure_.has_value())
+    return common::make_unexpected(*failure_);
+  for (const SenderSlot& slot : senders_) {
+    if (slot.sender.state() != DistributedQuerySenderState::kSucceeded ||
+        !slot.sender.result().has_value()) {
+      return common::make_unexpected(
+          unavailable("mutable grouped query execution sources are incomplete"));
+    }
+  }
+  try {
+    std::vector<DistributedMutableVectorGroupedAggregateCompletedSource> sources;
+    sources.reserve(senders_.size());
+    for (SenderSlot& slot : senders_) {
+      auto messages = slot.sender.take_result();
+      if (!messages.has_value())
+        return common::make_unexpected(messages.error());
+      sources.push_back({slot.tablet_id, std::move(*messages)});
+    }
+    sources_taken_ = true;
+    return sources;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("mutable grouped query source transfer allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("mutable grouped query source transfer exceeds limits"));
+  }
 }
 
 common::Result<query::PhysicalOperatorStep>

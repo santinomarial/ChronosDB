@@ -750,4 +750,15 @@ DistributedMutableVectorGroupedAggregateQuerySender::result() const noexcept {
   return result_;
 }
 
+common::Result<std::vector<query::EncodedDistributedVectorGroupedAggregateExchangeMessage>>
+DistributedMutableVectorGroupedAggregateQuerySender::take_result() {
+  if (state_ != DistributedQuerySenderState::kSucceeded || !result_.has_value()) {
+    return common::make_unexpected(
+        unavailable("mutable grouped vector query result is unavailable"));
+  }
+  auto result = std::move(*result_);
+  result_.reset();
+  return result;
+}
+
 } // namespace chronos::cluster

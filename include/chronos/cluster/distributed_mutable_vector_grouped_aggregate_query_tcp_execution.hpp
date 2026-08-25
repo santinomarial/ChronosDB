@@ -19,6 +19,11 @@
 
 namespace chronos::cluster {
 
+enum class DistributedMutableVectorGroupedAggregateQueryPublication : std::uint8_t {
+  kNativeResult = 1,
+  kCompletedSources = 2,
+};
+
 struct DistributedMutableVectorGroupedAggregateQueryTcpExecutionConfig {
   network::ConnectionAuthenticator* authenticator{};
   const ClusterNodePrincipalAuthorizer* node_authorizer{};
@@ -29,6 +34,8 @@ struct DistributedMutableVectorGroupedAggregateQueryTcpExecutionConfig {
   DistributedVectorGroupedAggregateFinalizationLimitsV2 finalization_limits;
   std::optional<query::DistributedVectorGroupedAggregateCoordinatorProjection>
       coordinator_projection;
+  DistributedMutableVectorGroupedAggregateQueryPublication publication{
+      DistributedMutableVectorGroupedAggregateQueryPublication::kNativeResult};
   std::chrono::milliseconds connect_timeout{5000};
   std::optional<std::chrono::steady_clock::time_point> execution_deadline;
   std::size_t maximum_rebindings{3U};
@@ -88,6 +95,8 @@ public:
   [[nodiscard]] const std::optional<DistributedVectorRowsFinalizedResultV2>&
   result() const noexcept;
   [[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2> take_result();
+  [[nodiscard]] common::Result<std::vector<DistributedMutableVectorGroupedAggregateCompletedSource>>
+  take_completed_sources();
   [[nodiscard]] std::span<const query::VectorGroupKeyDefinition> key_definitions() const noexcept;
   [[nodiscard]] std::span<const query::VectorAggregateDefinition>
   aggregate_definitions() const noexcept;

@@ -1582,8 +1582,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   coverage, starts all reducers/listeners before transport, owns local fan-out and finite remote
   receipt scheduling, seals only after complete closure, gathers in authority order, and atomically
   finalizes Native output; a two-node bidirectional mTLS loopback exercises that composition.
-  Computed pre-group plan splitting, worker/Native selection into this lifecycle, and cross-process
-  result transport are still missing;
+  Mutable worker scheduling now composes with this lifecycle through a one-shot, complete canonical
+  source-stream handoff while retaining the existing direct path as the default. Computed pre-group
+  plan splitting, Native selection/configuration of the composed path, and cross-process result
+  transport are still missing;
   scheduler request ownership, authenticated transport/read authority, and final SQL
   projection/order/limit are now
   integrated. The one committed private query-control endpoint now dispatches exact decoded mutable
