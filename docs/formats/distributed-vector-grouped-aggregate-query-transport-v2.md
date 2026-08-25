@@ -2,9 +2,9 @@
 
 > **Status:** accepted and implemented exact response codec, partial-I/O contract, authenticated
 > receiver, finite sender/retry owner, mutual-TLS session carrier, outbound nonblocking TCP owner,
-> bounded inbound TCP server, and production real-CSEG inbound composition. Requests reuse the
-> exact Fragment-v2 `CHDVREQ2` carrier. Multi-tablet scheduling remains a separate follow-on
-> boundary.
+> bounded inbound TCP server, production real-CSEG inbound composition, and all-tablet outbound
+> scheduling. Requests reuse the exact Fragment-v2 `CHDVREQ2` carrier. Native grouped SQL result
+> finalization remains a separate follow-on boundary.
 
 All integers are unsigned little-endian. Reserved bytes are zero. CRC32C detects accidental damage
 and is not authentication. The nested grouped payload retains its own independent checksums.
@@ -120,5 +120,12 @@ The production inbound owner heap-stabilizes the proof-revalidating real-CSEG wo
 server in dependency order. Binding and execution reacquire independent coherent Manifest, schema,
 placement, group, and barrier authority; a changed proof cannot reuse the binding result.
 
-The transport still owns no multi-address route, wall-clock source, multi-tablet scheduler,
-cancellation, or process lifecycle.
+The all-tablet scheduler owns a finite prevalidated route snapshot, one sender and at most one TCP
+client per plan-ordered tablet, retry-address rotation, earliest-deadline polling, whole-query
+cancellation, metrics, and the portable grouped execution. It shares the pinned execution's query
+resource authority with every sender and client. Complete sender results enter the coordinator once;
+physical rows remain unavailable until every tablet and the global merge close. Leader hints remain
+advisory and never alter route or snapshot authority.
+
+The transport and scheduler still own no process lifecycle, Native protocol result packaging,
+computed pre-group plan splitting, or shuffle routing.

@@ -942,6 +942,19 @@ Focused executions passed:
   formatting, and whitespace checks pass. LLVM 18 static analysis remains blocked by the installed
   macOS 26 libc++ headers after two project-local test findings were corrected. Multi-address
   routing, cancellation, all-tablet scheduling, and final grouped Native integration remain.
+- Pinned grouped sufficient-state TCP-scheduling continuation: one move-only owner prevalidates the
+  complete immutable route table, retains the portable grouped execution, constructs one finite
+  authority-bound sender per plan-ordered tablet, and drives at most one TCP client per slot through
+  a preallocated poll table. Attempt number rotates only within the exact target's finite addresses;
+  retry and query deadlines bound waits, and failure or cancellation tears down every client before
+  returning. Complete canonical sender streams enter the coordinator once and no merged row is
+  visible before global closure. A two-server mutual-TLS case proves one refused endpoint rotates,
+  both workers bind/execute once, equal keys merge to count three, and exact attempt metrics close at
+  zero active clients. Focused route, bound, deadline, and cancellation cases also pass normally and
+  under ASan/UBSan; the complete cluster and allocation-failure suites pass 244 of 244 and 31 of 31.
+  Header self-containment, formatting, and whitespace checks pass. LLVM 18 static analysis remains
+  blocked by the installed macOS 26 libc++ headers after its one new test finding was corrected.
+  Final grouped Native integration, computed pre-group splitting, and shuffle routing remain.
 - Bounded global vector-row finalization continuation: one consuming final pass independently
   validates row-mode plan/schema shape, tablet-stream closure, native descriptors, and exact
   row/message/input/working/output bounds before decoded-state allocation. It stably orders every
@@ -1066,9 +1079,11 @@ were deliberately not run.
   lowering and mixed WAL/Raft-source composition remain incomplete.
 - Distributed Native execution covers bounded row-backed multi-key/all-type grouping, global
   ordering and LIMIT in addition to row and global aggregate plans. The scalable sufficient-state
-  path now has multi-key/all-type group-state bytes but does not yet feed them from workers or merge
-  them globally; arbitrary relational plans, shuffle/skew handling, and fragment-level durable
-  retries remain absent.
+  path now feeds direct-input grouped plans from proof-revalidated real-CSEG workers through
+  authenticated finite TCP scheduling and globally merges complete all-tablet state streams, but it
+  does not yet package that output through the final Native grouped SQL boundary. Computed pre-group
+  plans, arbitrary relational plans, shuffle/skew handling, and fragment-level durable retries
+  remain absent.
 - Movement now composes deterministic actions with joint Raft membership and durable checkpoints;
   automatic placement-driven orchestration remains external.
 - Cold upload independently performs exact schema/source-bound CSEG validation before remote

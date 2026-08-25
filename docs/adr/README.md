@@ -517,3 +517,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0480](0480-deadline-bound-grouped-sufficient-state-tcp-client.md) | Deadline-bound grouped sufficient-state TCP client | accepted |
 | [0481](0481-bounded-grouped-sufficient-state-tcp-server.md) | Bounded grouped sufficient-state TCP server | accepted |
 | [0482](0482-owned-grouped-sufficient-state-tcp-service.md) | Owned grouped sufficient-state TCP service | accepted |
+| [0483](0483-pinned-grouped-sufficient-state-tcp-scheduling.md) | Pinned grouped sufficient-state TCP scheduling | accepted |

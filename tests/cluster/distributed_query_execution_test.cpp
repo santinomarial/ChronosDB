@@ -8,6 +8,8 @@
 #include "chronos/cluster/distributed_vector_aggregate_query_tcp_execution_v2.hpp"
 #include "chronos/cluster/distributed_vector_aggregate_query_tcp_server_v2.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_query_execution_v2.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_query_tcp_execution_v2.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_query_tcp_server_v2.hpp"
 #include "chronos/cluster/distributed_vector_query_execution_v2.hpp"
 #include "chronos/cluster/distributed_vector_query_tcp_execution_v2.hpp"
 #include "chronos/cluster/distributed_vector_query_tcp_server_v2.hpp"
@@ -603,6 +605,80 @@ private:
   std::size_t tablet_index_{};
 };
 
+class VectorGroupedAggregateExecutionWorkerV2 final
+    : public DistributedVectorGroupedAggregateQueryWorkerServiceV2 {
+public:
+  VectorGroupedAggregateExecutionWorkerV2(
+      const std::size_t tablet_index,
+      const query::DistributedVectorGroupedAggregateAuthority& authority)
+      : tablet_index_(tablet_index), keys_(authority.keys), aggregates_(authority.aggregates) {}
+
+  common::Result<query::DistributedVectorGroupedAggregateAuthority>
+  bind_authority(const query::DistributedVectorFragmentDispatchV2&) override {
+    ++bind_calls;
+    try {
+      return query::DistributedVectorGroupedAggregateAuthority{keys_, aggregates_};
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kResourceExhausted,
+                         "grouped aggregate execution test authority allocation failed"});
+    }
+  }
+
+  common::Result<query::DistributedVectorGroupedAggregateWorkerResultV2>
+  execute(const query::DistributedVectorFragmentDispatchV2& dispatch) override {
+    ++execute_calls;
+    try {
+      query::DistributedVectorGroupedAggregateWorkerResultV2 result{
+          .authority = {.keys = keys_, .aggregates = aggregates_},
+          .input_rows = tablet_index_ + 1U,
+          .group_count = 1U};
+      auto state =
+          query::MergeableVectorAggregateState::create(result.authority.aggregates.front());
+      if (!state.has_value())
+        return common::make_unexpected(state.error());
+      for (std::size_t count = 0U; count < tablet_index_ + 1U; ++count) {
+        auto accumulated = state->accumulate_count_star();
+        if (!accumulated.has_value())
+          return common::make_unexpected(accumulated.error());
+      }
+      std::vector<query::ScalarValue> key_values;
+      key_values.push_back(query::ScalarValue::float64(1.5).value());
+      std::vector<query::MergeableVectorAggregateState> states;
+      states.push_back(std::move(*state));
+      query::DistributedVectorGroupedAggregateExchangeMessage message{
+          {.query_id = dispatch.dispatch.query_id,
+           .tablet_id = dispatch.dispatch.tablet_id,
+           .sequence = 1U,
+           .group_ordinal = 0U,
+           .group_count = 1U,
+           .terminal = true,
+           .empty = false},
+          std::move(key_values),
+          std::move(states)};
+      auto encoded = query::encode_distributed_vector_grouped_aggregate_exchange_message(
+          message, result.authority.keys, result.authority.aggregates);
+      if (!encoded.has_value())
+        return common::make_unexpected(encoded.error());
+      result.encoded_bytes = encoded->bytes().size();
+      result.messages.push_back(std::move(*encoded));
+      return result;
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kResourceExhausted,
+                         "grouped aggregate execution test worker allocation failed"});
+    }
+  }
+
+  std::size_t bind_calls{};
+  std::size_t execute_calls{};
+
+private:
+  std::size_t tablet_index_{};
+  std::vector<query::VectorGroupKeyDefinition> keys_;
+  std::vector<query::VectorAggregateDefinition> aggregates_;
+};
+
 [[nodiscard]] DistributedQueryTcpServerConfig
 execution_server_config(ExecutionAuthenticator& authenticator, DistributedQueryReceiver& receiver) {
   return {.listener = {},
@@ -654,6 +730,22 @@ vector_aggregate_execution_server_config(ExecutionAuthenticator& authenticator,
           .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
                              .exchange_timeout = std::chrono::milliseconds{1000},
                              .maximum_response_frames = 2U,
+                             .maximum_response_bytes = std::size_t{1024U} * 1024U},
+          .maximum_connections = 8U,
+          .maximum_accepts_per_poll = 8U};
+}
+
+[[nodiscard]] DistributedVectorGroupedAggregateQueryTcpServerConfigV2
+vector_grouped_aggregate_execution_server_config(
+    ExecutionAuthenticator& authenticator,
+    DistributedVectorGroupedAggregateQueryReceiverV2& receiver) {
+  return {.listener = {},
+          .tls = execution_tls_server_config(),
+          .authenticator = &authenticator,
+          .receiver = &receiver,
+          .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                             .exchange_timeout = std::chrono::milliseconds{1000},
+                             .maximum_response_frames = 1U,
                              .maximum_response_bytes = std::size_t{1024U} * 1024U},
           .maximum_connections = 8U,
           .maximum_accepts_per_poll = 8U};
@@ -993,6 +1085,203 @@ TEST(DistributedVectorGroupedAggregateQueryExecutionV2Test,
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);
+}
+
+TEST(DistributedVectorGroupedAggregateQueryTcpExecutionV2Test,
+     SchedulesGroupedTabletsAndPublishesOnlyCompleteMergedRows) {
+  TemporaryDirectory directory;
+  auto input = make_input(directory);
+  ASSERT_TRUE(input.has_value()) << input.error().to_string();
+  auto execution = DistributedVectorGroupedAggregateQueryExecutionV2::create(
+      std::move(input->vector_grouped_aggregate_snapshot),
+      {.coordinator = {.messages = {.maximum_messages_per_fragment = 1U,
+                                    .maximum_total_messages = 2U},
+                       .maximum_total_encoded_bytes = std::size_t{1024U} * 1024U},
+       .maximum_decode_memory_bytes = std::size_t{1024U} * 1024U});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+
+  auto refused_listener = network::TcpListener::bind();
+  ASSERT_TRUE(refused_listener.has_value()) << refused_listener.error().to_string();
+  const network::Ipv4Endpoint refused_endpoint = refused_listener->bound_endpoint();
+  ASSERT_TRUE(refused_listener->close().is_ok());
+
+  std::vector<query::VectorGroupKeyDefinition> first_keys(execution->key_definitions().begin(),
+                                                          execution->key_definitions().end());
+  std::vector<query::VectorGroupKeyDefinition> second_keys(execution->key_definitions().begin(),
+                                                           execution->key_definitions().end());
+  std::vector<query::VectorAggregateDefinition> first_aggregates(
+      execution->aggregate_definitions().begin(), execution->aggregate_definitions().end());
+  std::vector<query::VectorAggregateDefinition> second_aggregates(
+      execution->aggregate_definitions().begin(), execution->aggregate_definitions().end());
+  ExecutionNodeAuthorizer authorizer;
+  VectorGroupedAggregateExecutionWorkerV2 first_worker{
+      0U, {.keys = std::move(first_keys), .aggregates = std::move(first_aggregates)}};
+  VectorGroupedAggregateExecutionWorkerV2 second_worker{
+      1U, {.keys = std::move(second_keys), .aggregates = std::move(second_aggregates)}};
+  auto first_receiver = DistributedVectorGroupedAggregateQueryReceiverV2::create(
+      {.local_node_id = 11U, .authorizer = &authorizer, .worker = &first_worker});
+  auto second_receiver = DistributedVectorGroupedAggregateQueryReceiverV2::create(
+      {.local_node_id = 12U, .authorizer = &authorizer, .worker = &second_worker});
+  ASSERT_TRUE(first_receiver.has_value()) << first_receiver.error().to_string();
+  ASSERT_TRUE(second_receiver.has_value()) << second_receiver.error().to_string();
+  ExecutionAuthenticator client_authenticator{91U};
+  auto first_server = DistributedVectorGroupedAggregateQueryTcpServerV2::start(
+      vector_grouped_aggregate_execution_server_config(client_authenticator, *first_receiver));
+  auto second_server = DistributedVectorGroupedAggregateQueryTcpServerV2::start(
+      vector_grouped_aggregate_execution_server_config(client_authenticator, *second_receiver));
+  ASSERT_TRUE(first_server.has_value()) << first_server.error().to_string();
+  ASSERT_TRUE(second_server.has_value()) << second_server.error().to_string();
+
+  auto tls_context = network::TlsClientContext::create(execution_tls_client_config());
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  ExecutionAuthenticator server_authenticator{92U};
+  auto scheduled = DistributedVectorGroupedAggregateQueryTcpExecutionV2::create(
+      std::move(*execution),
+      {.source_node_id = 1U,
+       .authenticator = &server_authenticator,
+       .node_authorizer = &authorizer,
+       .routes = {{.node_id = 11U,
+                   .endpoints = {refused_endpoint, first_server->bound_endpoint()},
+                   .tls_context = std::addressof(*tls_context)},
+                  {.node_id = 12U,
+                   .endpoints = {second_server->bound_endpoint()},
+                   .tls_context = std::addressof(*tls_context)}},
+       .sender_limits = {.retry = {.maximum_attempts = 2U,
+                                   .initial_backoff = std::chrono::milliseconds{1},
+                                   .maximum_backoff = std::chrono::milliseconds{1}},
+                         .maximum_response_frames = 1U,
+                         .maximum_response_bytes = std::size_t{1024U} * 1024U},
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000},
+                          .maximum_response_frames = 1U,
+                          .maximum_response_bytes = std::size_t{1024U} * 1024U},
+       .connect_timeout = std::chrono::milliseconds{1000},
+       .execution_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5}});
+  ASSERT_TRUE(scheduled.has_value()) << scheduled.error().to_string();
+  EXPECT_EQ(scheduled->next().error().code(), common::StatusCode::kInvalidArgument);
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       scheduled->state() == DistributedVectorGroupedAggregateQueryTcpExecutionStateV2::kRunning;
+       ++iteration) {
+    ASSERT_TRUE(scheduled->poll_once(std::chrono::milliseconds{1}).is_ok())
+        << scheduled->failure().to_string();
+    ASSERT_TRUE(first_server->poll_once(std::chrono::milliseconds{0}).is_ok());
+    ASSERT_TRUE(second_server->poll_once(std::chrono::milliseconds{0}).is_ok());
+  }
+  ASSERT_EQ(scheduled->state(),
+            DistributedVectorGroupedAggregateQueryTcpExecutionStateV2::kComplete)
+      << scheduled->failure().to_string();
+  auto output = scheduled->next();
+  ASSERT_TRUE(output.has_value()) << output.error().to_string();
+  ASSERT_EQ(output->kind(), query::PhysicalOperatorStepKind::kChunk);
+  const query::VectorChunk& chunk = output->chunk()->chunk();
+  EXPECT_EQ(std::get<double>(grouped_cell(chunk, 0U).storage()), 1.5);
+  EXPECT_EQ(std::get<std::int64_t>(grouped_cell(chunk, 1U).storage()), 3);
+  EXPECT_EQ(scheduled->next()->kind(), query::PhysicalOperatorStepKind::kEnd);
+  EXPECT_TRUE(scheduled->poll_once(std::chrono::milliseconds{0}).is_ok());
+  EXPECT_EQ(first_worker.bind_calls, 1U);
+  EXPECT_EQ(first_worker.execute_calls, 1U);
+  EXPECT_EQ(second_worker.bind_calls, 1U);
+  EXPECT_EQ(second_worker.execute_calls, 1U);
+  const auto metrics = scheduled->metrics();
+  EXPECT_EQ(metrics.attempts_started, 3U);
+  EXPECT_EQ(metrics.retries_started, 1U);
+  EXPECT_EQ(metrics.transport_completed_attempts, 2U);
+  EXPECT_EQ(metrics.transport_failed_attempts, 1U);
+  EXPECT_EQ(metrics.active_attempts, 0U);
+  EXPECT_TRUE(first_server->shutdown().is_ok());
+  EXPECT_TRUE(second_server->shutdown().is_ok());
+}
+
+TEST(DistributedVectorGroupedAggregateQueryTcpExecutionV2Test,
+     RejectsIncompleteRoutesAndOwnsDeadlineAndExplicitCancellation) {
+  ExecutionNodeAuthorizer authorizer;
+  ExecutionAuthenticator authenticator{92U};
+  auto tls_context = network::TlsClientContext::create(execution_tls_client_config());
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  auto listener = network::TcpListener::bind();
+  ASSERT_TRUE(listener.has_value()) << listener.error().to_string();
+  const DistributedQueryNodeRoute first_route{.node_id = 11U,
+                                              .endpoints = {listener->bound_endpoint()},
+                                              .tls_context = std::addressof(*tls_context)};
+  const DistributedQueryNodeRoute second_route{.node_id = 12U,
+                                               .endpoints = {listener->bound_endpoint()},
+                                               .tls_context = std::addressof(*tls_context)};
+
+  TemporaryDirectory missing_directory;
+  auto missing_input = make_input(missing_directory);
+  ASSERT_TRUE(missing_input.has_value()) << missing_input.error().to_string();
+  auto missing_execution = DistributedVectorGroupedAggregateQueryExecutionV2::create(
+      std::move(missing_input->vector_grouped_aggregate_snapshot));
+  ASSERT_TRUE(missing_execution.has_value());
+  EXPECT_EQ(DistributedVectorGroupedAggregateQueryTcpExecutionV2::create(
+                std::move(*missing_execution), {.source_node_id = 1U,
+                                                .authenticator = &authenticator,
+                                                .node_authorizer = &authorizer,
+                                                .routes = {first_route}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  TemporaryDirectory bounded_directory;
+  auto bounded_input = make_input(bounded_directory);
+  ASSERT_TRUE(bounded_input.has_value()) << bounded_input.error().to_string();
+  auto bounded_execution = DistributedVectorGroupedAggregateQueryExecutionV2::create(
+      std::move(bounded_input->vector_grouped_aggregate_snapshot));
+  ASSERT_TRUE(bounded_execution.has_value());
+  EXPECT_EQ(DistributedVectorGroupedAggregateQueryTcpExecutionV2::create(
+                std::move(*bounded_execution),
+                {.source_node_id = 1U,
+                 .authenticator = &authenticator,
+                 .node_authorizer = &authorizer,
+                 .routes = {first_route, second_route},
+                 .carrier_limits = {.payload = {.maximum_group_keys = 0U}}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  TemporaryDirectory expired_directory;
+  auto expired_input = make_input(expired_directory);
+  ASSERT_TRUE(expired_input.has_value()) << expired_input.error().to_string();
+  auto expired_execution = DistributedVectorGroupedAggregateQueryExecutionV2::create(
+      std::move(expired_input->vector_grouped_aggregate_snapshot));
+  ASSERT_TRUE(expired_execution.has_value());
+  auto expired = DistributedVectorGroupedAggregateQueryTcpExecutionV2::create(
+      std::move(*expired_execution),
+      {.source_node_id = 1U,
+       .authenticator = &authenticator,
+       .node_authorizer = &authorizer,
+       .routes = {first_route, second_route},
+       .execution_deadline = std::chrono::steady_clock::now() - std::chrono::milliseconds{1}});
+  ASSERT_TRUE(expired.has_value()) << expired.error().to_string();
+  EXPECT_EQ(expired->poll_once(std::chrono::milliseconds{0}).code(),
+            common::StatusCode::kCancelled);
+  EXPECT_EQ(expired->state(),
+            DistributedVectorGroupedAggregateQueryTcpExecutionStateV2::kCancelled);
+  EXPECT_EQ(expired->metrics().attempts_started, 0U);
+  EXPECT_EQ(expired->metrics().active_attempts, 0U);
+
+  TemporaryDirectory cancelled_directory;
+  auto cancelled_input = make_input(cancelled_directory);
+  ASSERT_TRUE(cancelled_input.has_value()) << cancelled_input.error().to_string();
+  auto cancelled_execution = DistributedVectorGroupedAggregateQueryExecutionV2::create(
+      std::move(cancelled_input->vector_grouped_aggregate_snapshot));
+  ASSERT_TRUE(cancelled_execution.has_value());
+  auto cancelled = DistributedVectorGroupedAggregateQueryTcpExecutionV2::create(
+      std::move(*cancelled_execution), {.source_node_id = 1U,
+                                        .authenticator = &authenticator,
+                                        .node_authorizer = &authorizer,
+                                        .routes = {first_route, second_route}});
+  ASSERT_TRUE(cancelled.has_value()) << cancelled.error().to_string();
+  ASSERT_TRUE(cancelled->poll_once(std::chrono::milliseconds{0}).is_ok());
+  EXPECT_EQ(cancelled->state(),
+            DistributedVectorGroupedAggregateQueryTcpExecutionStateV2::kRunning);
+  EXPECT_GT(cancelled->metrics().active_attempts, 0U);
+  EXPECT_EQ(cancelled->cancel().code(), common::StatusCode::kCancelled);
+  EXPECT_EQ(cancelled->state(),
+            DistributedVectorGroupedAggregateQueryTcpExecutionStateV2::kCancelled);
+  EXPECT_EQ(cancelled->metrics().active_attempts, 0U);
+  EXPECT_TRUE(listener->close().is_ok());
 }
 
 TEST(DistributedVectorAggregateQueryTcpExecutionV2Test,
