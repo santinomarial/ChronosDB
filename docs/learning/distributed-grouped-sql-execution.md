@@ -207,7 +207,11 @@ and enables merged physical output only after every mutable tablet closes. Nativ
 scheduler publication now reuse the same authority-revalidating, query-accounted projection,
 sort/limit, and all-or-nothing encoder as the Manifest-pinned path. Replicated/package query
 preparation still does not select this mutable lifecycle, so row-backed grouped execution remains
-the packaged differential oracle.
+the packaged differential oracle. The packaged shared query-control endpoint now exact-decodes the
+common mutable request before selecting the row or grouped receiver by plan mode. Grouped replies
+retain their distinct envelope and independent frame, byte, nested decode-memory, and completion
+checks; remote authority, rows, and grouped sufficient state therefore share the one committed node
+endpoint without inferred ports.
 
 ## Process qualification boundary
 

@@ -49,6 +49,9 @@ public:
       const auto protocol = connections[index]->carrier.protocol();
       if (protocol == DistributedMutableQueryControlProtocol::kMutableVectorQuery)
         increment_saturated(server_metrics.completed_mutable_queries);
+      else if (protocol ==
+               DistributedMutableQueryControlProtocol::kMutableVectorGroupedAggregateQuery)
+        increment_saturated(server_metrics.completed_mutable_grouped_queries);
       else if (protocol == DistributedMutableQueryControlProtocol::kRaftReadAuthority)
         increment_saturated(server_metrics.completed_read_authorities);
       else
@@ -95,6 +98,7 @@ public:
           std::move(*tls),
           {.authenticator = config.authenticator,
            .mutable_receiver = config.mutable_receiver,
+           .mutable_grouped_receiver = config.mutable_grouped_receiver,
            .read_authority_receiver = config.read_authority_receiver,
            .peer_ipv4_address = peer->address,
            .limits = config.carrier_limits},
@@ -139,9 +143,9 @@ common::Result<DistributedMutableQueryControlTcpServer>
 DistributedMutableQueryControlTcpServer::start(
     DistributedMutableQueryControlTcpServerConfig config) {
   if (config.authenticator == nullptr || config.mutable_receiver == nullptr ||
-      config.read_authority_receiver == nullptr || config.maximum_connections == 0U ||
-      config.maximum_connections > 65536U || config.maximum_accepts_per_poll == 0U ||
-      config.maximum_accepts_per_poll > 1024U) {
+      config.mutable_grouped_receiver == nullptr || config.read_authority_receiver == nullptr ||
+      config.maximum_connections == 0U || config.maximum_connections > 65536U ||
+      config.maximum_accepts_per_poll == 0U || config.maximum_accepts_per_poll > 1024U) {
     return common::make_unexpected(status(common::StatusCode::kInvalidArgument,
                                           "query-control TCP server configuration is invalid"));
   }

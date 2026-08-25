@@ -1,4 +1,5 @@
 #include "chronos/cluster/distributed_mutable_query_control_tcp.hpp"
+#include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_client.hpp"
 #include "chronos/cluster/distributed_mutable_vector_query_tcp.hpp"
 #include "chronos/cluster/raft_read_authority_tcp_client.hpp"
 
@@ -65,6 +66,31 @@ template <typename Id> [[nodiscard]] Id id(const std::uint8_t seed) {
           .result_schema = result_schema()};
 }
 
+[[nodiscard]] schema::LogicalType string_type() {
+  return schema::LogicalType::create(schema::LogicalTypeKind::kString).value();
+}
+
+[[nodiscard]] std::vector<query::VectorGroupKeyDefinition> grouped_keys() {
+  return {{.column_ordinal = 0U, .type = string_type(), .nullable = false}};
+}
+
+[[nodiscard]] std::vector<query::VectorAggregateDefinition> grouped_aggregates() {
+  return {{.operation = query::VectorAggregateOperation::kCountStar}};
+}
+
+[[nodiscard]] query::DistributedMutableVectorFragment grouped_fragment() {
+  auto result = fragment();
+  result.destination_column_ordinals = {1U};
+  result.plan = {.mode = query::DistributedVectorPlanMode::kGroupedAggregate,
+                 .group_key_input_indices = {0U},
+                 .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}}};
+  result.result_schema = {
+      .columns = {
+          {"region", string_type(), false},
+          {"count", schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(), false}}};
+  return result;
+}
+
 [[nodiscard]] RaftReadAuthority authority() {
   return {
       .barrier = {.group_id = uuid(6U), .barrier = {.term = 2U, .context = 3U, .read_index = 10U}},
@@ -122,6 +148,51 @@ public:
   std::size_t calls{};
 };
 
+class GroupedWorker final : public DistributedMutableVectorGroupedAggregateQueryWorkerService {
+public:
+  common::Result<query::DistributedVectorGroupedAggregateAuthority>
+  bind_authority(const query::DistributedMutableVectorFragment&) override {
+    ++bind_calls;
+    return query::DistributedVectorGroupedAggregateAuthority{grouped_keys(), grouped_aggregates()};
+  }
+
+  common::Result<query::DistributedVectorGroupedAggregateWorkerResultV2>
+  execute(const query::DistributedMutableVectorFragment& received) override {
+    ++execute_calls;
+    query::DistributedVectorGroupedAggregateWorkerResultV2 result{
+        .authority = {.keys = grouped_keys(), .aggregates = grouped_aggregates()},
+        .input_rows = 1U,
+        .group_count = 1U};
+    auto state =
+        query::MergeableVectorAggregateState::create(result.authority.aggregates.front()).value();
+    EXPECT_TRUE(state.accumulate_count_star().has_value());
+    std::vector<query::ScalarValue> key_values;
+    key_values.push_back(query::ScalarValue::text(string_type(), "east").value());
+    std::vector<query::MergeableVectorAggregateState> states;
+    states.push_back(std::move(state));
+    query::DistributedVectorGroupedAggregateExchangeMessage message{
+        {.query_id = received.query_id,
+         .tablet_id = received.tablet_id,
+         .sequence = 1U,
+         .group_ordinal = 0U,
+         .group_count = 1U,
+         .terminal = true,
+         .empty = false},
+        std::move(key_values),
+        std::move(states)};
+    auto encoded = query::encode_distributed_vector_grouped_aggregate_exchange_message(
+        message, result.authority.keys, result.authority.aggregates);
+    if (!encoded.has_value())
+      return common::make_unexpected(encoded.error());
+    result.encoded_bytes = encoded->bytes().size();
+    result.messages.push_back(std::move(*encoded));
+    return result;
+  }
+
+  std::size_t bind_calls{};
+  std::size_t execute_calls{};
+};
+
 class AuthorityService final : public RaftReadAuthorityService {
 public:
   common::Result<RaftReadAuthority> acquire(const raft::GroupId& group_id) override {
@@ -136,7 +207,10 @@ public:
   return {.handshake_timeout = std::chrono::milliseconds{1000},
           .exchange_timeout = std::chrono::milliseconds{1000},
           .maximum_mutable_response_frames = 2U,
-          .maximum_mutable_response_bytes = 1024U};
+          .maximum_mutable_response_bytes = 1024U,
+          .maximum_mutable_grouped_response_frames = 2U,
+          .maximum_mutable_grouped_response_bytes = 4096U,
+          .maximum_mutable_grouped_decode_memory_bytes = 4096U};
 }
 
 // Receivers retain pointers to their worker/service, so the final owner constructs them only after
@@ -146,13 +220,23 @@ struct ReceiverOwner {
       : mutable_receiver(DistributedMutableVectorQueryReceiver::create(
                              {.local_node_id = 2U, .authorizer = &authorizer, .worker = &worker})
                              .value()),
+        mutable_grouped_receiver(DistributedMutableVectorGroupedAggregateQueryReceiver::create(
+                                     {.local_node_id = 2U,
+                                      .authorizer = &authorizer,
+                                      .worker = &grouped_worker,
+                                      .maximum_response_frames = 2U,
+                                      .maximum_response_bytes = 4096U,
+                                      .maximum_decode_memory_bytes = 4096U})
+                                     .value()),
         authority_receiver(
             RaftReadAuthorityReceiver::create(
                 {.local_node_id = 2U, .authorizer = &authorizer, .service = &authority_service})
                 .value()) {}
   Worker worker;
+  GroupedWorker grouped_worker;
   AuthorityService authority_service;
   DistributedMutableVectorQueryReceiver mutable_receiver;
+  DistributedMutableVectorGroupedAggregateQueryReceiver mutable_grouped_receiver;
   RaftReadAuthorityReceiver authority_receiver;
 };
 
@@ -178,7 +262,32 @@ mutable_client(const network::Ipv4Endpoint endpoint,
       .value();
 }
 
-TEST(DistributedMutableQueryControlTcpTest, RoutesBothProtocolsAfterOneAuthenticatedTlsBoundary) {
+[[nodiscard]] DistributedMutableVectorGroupedAggregateQueryTcpClient
+mutable_grouped_client(const network::Ipv4Endpoint endpoint,
+                       const network::TlsClientContext& client_context,
+                       Authenticator& authenticator, Authorizer& authorizer) {
+  auto request = encode_distributed_mutable_vector_query_request(
+                     {.source_node_id = 1U, .target_node_id = 2U, .fragment = grouped_fragment()})
+                     .value();
+  auto resources = query::QueryResourceContext::create(4096U).value();
+  return DistributedMutableVectorGroupedAggregateQueryTcpClient::begin(
+             {1U, 2U, std::move(request)}, grouped_keys(), grouped_aggregates(),
+             std::move(resources),
+             {.remote_endpoint = endpoint,
+              .tls_context = &client_context,
+              .carrier = {.authenticator = &authenticator,
+                          .node_authorizer = &authorizer,
+                          .peer_ipv4_address = endpoint.address,
+                          .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                                     .exchange_timeout = std::chrono::milliseconds{1000},
+                                     .maximum_response_frames = 2U,
+                                     .maximum_response_bytes = 4096U}},
+              .connect_timeout = std::chrono::milliseconds{1000}},
+             std::chrono::steady_clock::now())
+      .value();
+}
+
+TEST(DistributedMutableQueryControlTcpTest, RoutesAllProtocolsAfterOneAuthenticatedTlsBoundary) {
   Authorizer authorizer;
   ReceiverOwner receiver_owner{authorizer};
   Authenticator client_authenticator{91U};
@@ -187,6 +296,7 @@ TEST(DistributedMutableQueryControlTcpTest, RoutesBothProtocolsAfterOneAuthentic
        .tls = server_tls(),
        .authenticator = &client_authenticator,
        .mutable_receiver = &receiver_owner.mutable_receiver,
+       .mutable_grouped_receiver = &receiver_owner.mutable_grouped_receiver,
        .read_authority_receiver = &receiver_owner.authority_receiver,
        .carrier_limits = limits(),
        .maximum_connections = 8U,
@@ -216,6 +326,31 @@ TEST(DistributedMutableQueryControlTcpTest, RoutesBothProtocolsAfterOneAuthentic
   ASSERT_EQ(mutable_query.state(), DistributedMutableVectorQueryTcpClientState::kComplete);
   ASSERT_TRUE(mutable_query.responses().has_value());
   EXPECT_EQ(receiver_owner.worker.calls, 1U);
+
+  auto mutable_grouped_query = mutable_grouped_client(server->bound_endpoint(), *client_context,
+                                                      server_authenticator, authorizer);
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       mutable_grouped_query.state() !=
+           DistributedMutableVectorGroupedAggregateQueryTcpClientState::kComplete;
+       ++iteration) {
+    const auto interest = mutable_grouped_query.interest();
+    pollfd descriptor{.fd = mutable_grouped_query.descriptor(),
+                      .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
+                                                   (interest.want_write ? POLLOUT : 0))};
+    ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
+    const auto progress = mutable_grouped_query.on_ready((descriptor.revents & POLLIN) != 0,
+                                                         (descriptor.revents & POLLOUT) != 0,
+                                                         std::chrono::steady_clock::now());
+    ASSERT_TRUE(progress.is_ok()) << progress.to_string();
+    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(mutable_grouped_query.state(),
+            DistributedMutableVectorGroupedAggregateQueryTcpClientState::kComplete)
+      << mutable_grouped_query.failure().to_string();
+  ASSERT_TRUE(mutable_grouped_query.responses().has_value());
+  EXPECT_EQ(receiver_owner.grouped_worker.bind_calls, 1U);
+  EXPECT_EQ(receiver_owner.grouped_worker.execute_calls, 1U);
 
   auto read_authority = RaftReadAuthorityTcpClient::begin(
       {.remote_endpoint = server->bound_endpoint(),
@@ -248,12 +383,13 @@ TEST(DistributedMutableQueryControlTcpTest, RoutesBothProtocolsAfterOneAuthentic
   ASSERT_TRUE(read_authority->result().has_value());
   EXPECT_EQ(*read_authority->result(), authority());
   EXPECT_EQ(receiver_owner.authority_service.calls, 1U);
-  EXPECT_EQ(client_authenticator.calls, 2U);
+  EXPECT_EQ(client_authenticator.calls, 3U);
   EXPECT_TRUE(client_authenticator.saw_fingerprint);
   EXPECT_TRUE(server_authenticator.saw_fingerprint);
   const auto metrics = server->metrics();
-  EXPECT_EQ(metrics.accepted_connections, 2U);
+  EXPECT_EQ(metrics.accepted_connections, 3U);
   EXPECT_EQ(metrics.completed_mutable_queries, 1U);
+  EXPECT_EQ(metrics.completed_mutable_grouped_queries, 1U);
   EXPECT_EQ(metrics.completed_read_authorities, 1U);
   EXPECT_EQ(metrics.failed_connections, 0U);
   EXPECT_EQ(metrics.active_connections, 0U);
@@ -268,6 +404,7 @@ TEST(DistributedMutableQueryControlTcpTest, RejectsPrincipalBeforeProtocolOrRece
        .tls = server_tls(),
        .authenticator = &denied_client,
        .mutable_receiver = &receiver_owner.mutable_receiver,
+       .mutable_grouped_receiver = &receiver_owner.mutable_grouped_receiver,
        .read_authority_receiver = &receiver_owner.authority_receiver,
        .carrier_limits = limits(),
        .maximum_connections = 2U,

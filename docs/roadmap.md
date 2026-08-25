@@ -1538,7 +1538,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   bounded canonical streams under one compatible snapshot-owned all-tablet key/state authority.
   Computed pre-group plan splitting and partition routing are still missing; scheduler request
   ownership, authenticated transport/read authority, and final SQL projection/order/limit are now
-  integrated.
+  integrated. The one committed private query-control endpoint now dispatches exact decoded mutable
+  plans to row or grouped receivers and retains distinct bounded response codecs, so remote grouped
+  work no longer requires an unadvertised second listener. Native SQL preparation still has to
+  select that lifecycle before the row-backed oracle can become fallback-only.
   The full phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.

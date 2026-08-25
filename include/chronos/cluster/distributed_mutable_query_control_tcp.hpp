@@ -18,6 +18,7 @@ struct DistributedMutableQueryControlTcpServerConfig {
   network::TlsServerConfig tls;
   network::ConnectionAuthenticator* authenticator{};
   DistributedMutableVectorQueryReceiver* mutable_receiver{};
+  DistributedMutableVectorGroupedAggregateQueryReceiver* mutable_grouped_receiver{};
   RaftReadAuthorityReceiver* read_authority_receiver{};
   DistributedMutableQueryControlTlsServerLimits carrier_limits;
   std::size_t maximum_connections{1024U};
@@ -29,12 +30,13 @@ struct DistributedMutableQueryControlTcpServerMetrics {
   std::uint64_t rejected_connections{};
   std::uint64_t accept_errors{};
   std::uint64_t completed_mutable_queries{};
+  std::uint64_t completed_mutable_grouped_queries{};
   std::uint64_t completed_read_authorities{};
   std::uint64_t failed_connections{};
   std::size_t active_connections{};
 };
 
-// Bounded single-threaded listener for both authenticated private query-control protocols. TLS
+// Bounded single-threaded listener for all authenticated private query-control protocols. TLS
 // sessions are destroyed before their owning descriptors, and admission is finite.
 class DistributedMutableQueryControlTcpServer {
 public:

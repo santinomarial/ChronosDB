@@ -97,3 +97,7 @@ all-or-nothing finalization rather than expose a prefix.
 - [Bounded grouped sufficient-state Native finalization](0484-bounded-grouped-sufficient-state-native-finalization.md)
 - [Atomic grouped Native TCP publication](0485-atomic-grouped-native-tcp-publication.md)
 - [Bounded mutable grouped sufficient-state TCP scheduling](0497-bounded-mutable-grouped-sufficient-state-tcp-scheduling.md)
+
+**Retrospective (2026-08-25):** [ADR 0499](0499-shared-mutable-grouped-query-control-endpoint.md)
+makes the committed private endpoint capable of serving the scheduler's remote mutable grouped
+requests alongside rows and read authority. Native SQL selection remains separate.

@@ -86,3 +86,7 @@ rollback must disable that dependency first.
 - [Raft Read Authority Transport v1](../formats/raft-read-authority-transport-v1.md)
 - [Packaged Native Daemon](../learning/packaged-native-daemon.md)
 - [Implementation Roadmap](../roadmap.md)
+
+**Retrospective (2026-08-25):** [ADR 0499](0499-shared-mutable-grouped-query-control-endpoint.md)
+adds plan-mode dispatch for the distinct mutable grouped response protocol and installs the grouped
+production worker behind the same committed endpoint.

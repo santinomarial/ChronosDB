@@ -104,6 +104,26 @@ public:
   std::size_t calls{};
 };
 
+class UnusedGroupedMutableWorker final
+    : public cluster::DistributedMutableVectorGroupedAggregateQueryWorkerService {
+public:
+  common::Result<query::DistributedVectorGroupedAggregateAuthority>
+  bind_authority(const query::DistributedMutableVectorFragment&) override {
+    ++calls;
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "unexpected mutable grouped worker call"});
+  }
+
+  common::Result<query::DistributedVectorGroupedAggregateWorkerResultV2>
+  execute(const query::DistributedMutableVectorFragment&) override {
+    ++calls;
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "unexpected mutable grouped worker call"});
+  }
+
+  std::size_t calls{};
+};
+
 class ObservedLeaderAuthorityService final : public cluster::RaftReadAuthorityService {
 public:
   explicit ObservedLeaderAuthorityService(std::vector<raft::RaftGroupObservation> observations)
@@ -2009,6 +2029,7 @@ TEST(ReplicatedIngestDatabaseTest, CoordinatesNativeQueryAcrossSplitLocalAndRemo
   EXPECT_EQ(response->responses.front().frame.header.message_type, network::MessageType::kError);
 
   EmptyRowsMutableWorker remote_worker;
+  UnusedGroupedMutableWorker remote_grouped_worker;
   ObservedLeaderAuthorityService remote_authority{*follower_observations};
   DistributedTestNodeAuthorizer distributed_authorizer;
   DistributedTestAuthenticator inbound_authenticator{92U};
@@ -2018,15 +2039,24 @@ TEST(ReplicatedIngestDatabaseTest, CoordinatesNativeQueryAcrossSplitLocalAndRemo
        .worker = &remote_worker,
        .maximum_response_frames = 4U,
        .maximum_response_bytes = std::size_t{1024U} * 1024U});
+  auto mutable_grouped_receiver =
+      cluster::DistributedMutableVectorGroupedAggregateQueryReceiver::create(
+          {.local_node_id = 2U,
+           .authorizer = &distributed_authorizer,
+           .worker = &remote_grouped_worker,
+           .maximum_response_frames = 4U,
+           .maximum_response_bytes = std::size_t{1024U} * 1024U});
   auto authority_receiver = cluster::RaftReadAuthorityReceiver::create(
       {.local_node_id = 2U, .authorizer = &distributed_authorizer, .service = &remote_authority});
   ASSERT_TRUE(mutable_receiver.has_value()) << mutable_receiver.error().to_string();
+  ASSERT_TRUE(mutable_grouped_receiver.has_value()) << mutable_grouped_receiver.error().to_string();
   ASSERT_TRUE(authority_receiver.has_value()) << authority_receiver.error().to_string();
   auto remote_server = cluster::DistributedMutableQueryControlTcpServer::start(
       {.listener = {.bind_endpoint = remote_query_endpoint},
        .tls = distributed_server_tls(),
        .authenticator = &inbound_authenticator,
        .mutable_receiver = &*mutable_receiver,
+       .mutable_grouped_receiver = &*mutable_grouped_receiver,
        .read_authority_receiver = &*authority_receiver,
        .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
                           .exchange_timeout = std::chrono::milliseconds{1000},
@@ -2093,6 +2123,7 @@ TEST(ReplicatedIngestDatabaseTest, CoordinatesNativeQueryAcrossSplitLocalAndRemo
   EXPECT_EQ(count_reader.read_i64_le().value(), 0);
   EXPECT_EQ(remote_authority.calls, 1U);
   EXPECT_EQ(remote_worker.calls, 1U);
+  EXPECT_EQ(remote_grouped_worker.calls, 0U);
   const auto remote_metrics = remote_server->metrics();
   EXPECT_EQ(remote_metrics.completed_read_authorities, 1U);
   EXPECT_EQ(remote_metrics.completed_mutable_queries, 1U);

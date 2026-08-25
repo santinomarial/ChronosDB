@@ -25,12 +25,45 @@ inline constexpr std::size_t kScratchSize = std::size_t{16U} * 1024U;
       DistributedMutableQueryControlTlsServer::TimePoint::duration::max());
   constexpr std::size_t minimum_response_bytes =
       kDistributedVectorQueryResponseV2HeaderSize + kDistributedVectorQueryResponseV2TrailerSize;
+  constexpr std::size_t minimum_grouped_response_bytes =
+      kDistributedVectorGroupedAggregateQueryResponseV2HeaderSize +
+      kDistributedVectorGroupedAggregateQueryResponseV2TrailerSize;
   return limits.handshake_timeout.count() > 0 && limits.handshake_timeout <= maximum &&
          limits.exchange_timeout.count() > 0 && limits.exchange_timeout <= maximum &&
          limits.maximum_mutable_response_frames > 0U &&
          limits.maximum_mutable_response_frames <= query::kMaximumDistributedCoordinatorMessages &&
          limits.maximum_mutable_response_bytes >= minimum_response_bytes &&
-         limits.maximum_mutable_response_bytes <= kMaximumDistributedVectorQueryV2ResponseBytes;
+         limits.maximum_mutable_response_bytes <= kMaximumDistributedVectorQueryV2ResponseBytes &&
+         limits.maximum_mutable_grouped_response_frames > 0U &&
+         limits.maximum_mutable_grouped_response_frames <=
+             query::distributed_vector_grouped_aggregate_exchange_format::kMaximumGroups &&
+         limits.maximum_mutable_grouped_response_frames <=
+             limits.mutable_grouped_payload.maximum_groups &&
+         limits.maximum_mutable_grouped_response_bytes >= minimum_grouped_response_bytes &&
+         limits.maximum_mutable_grouped_response_bytes <=
+             kMaximumDistributedVectorGroupedAggregateQueryV2ResponseBytes &&
+         limits.maximum_mutable_grouped_decode_memory_bytes > 0U &&
+         limits.maximum_mutable_grouped_decode_memory_bytes <=
+             kMaximumDistributedVectorGroupedAggregateQueryV2DecodeMemoryBytes &&
+         limits.mutable_grouped_payload.maximum_frame_length >=
+             query::distributed_vector_grouped_aggregate_exchange_format::kMinimumFrameLength &&
+         limits.mutable_grouped_payload.maximum_frame_length <=
+             query::distributed_vector_grouped_aggregate_exchange_format::kMaximumFrameLength &&
+         limits.mutable_grouped_payload.maximum_key_payload_bytes > 0U &&
+         limits.mutable_grouped_payload.maximum_key_payload_bytes <=
+             query::distributed_vector_grouped_aggregate_exchange_format::kMaximumKeyPayloadBytes &&
+         limits.mutable_grouped_payload.maximum_group_keys > 0U &&
+         limits.mutable_grouped_payload.maximum_group_keys <=
+             query::distributed_vector_grouped_aggregate_exchange_format::kMaximumGroupKeys &&
+         limits.mutable_grouped_payload.maximum_aggregates <=
+             query::distributed_vector_grouped_aggregate_exchange_format::kMaximumAggregates &&
+         limits.mutable_grouped_payload.state.maximum_frame_length >=
+             query::distributed_vector_aggregate_state_format::kMinimumFrameLength &&
+         limits.mutable_grouped_payload.state.maximum_frame_length <=
+             query::distributed_vector_aggregate_state_format::kMaximumFrameLength &&
+         limits.mutable_grouped_payload.state.maximum_variable_extremum_bytes > 0U &&
+         limits.mutable_grouped_payload.state.maximum_variable_extremum_bytes <=
+             query::distributed_vector_aggregate_state_format::kMaximumExtremumBytes;
 }
 
 [[nodiscard]] DistributedMutableQueryControlTlsServer::TimePoint
@@ -59,6 +92,7 @@ public:
       state_ = DistributedMutableQueryControlTlsServerState::kFailed;
       interest_ = {};
       mutable_writers_.clear();
+      mutable_grouped_writers_.clear();
       authority_writer_.reset();
     }
     return failure_;
@@ -230,12 +264,111 @@ public:
     if (authenticated == nullptr)
       return fail(
           status(common::StatusCode::kInternal, "query-control authenticated peer is unavailable"));
+    if (request.fragment.plan.mode == query::DistributedVectorPlanMode::kGroupedAggregate)
+      return accept_mutable_grouped_request(request, *encoded, *authenticated);
     auto responses = config_.mutable_receiver->receive(*encoded, *authenticated);
     if (!responses.has_value())
       return fail(responses.error());
     const common::Status valid = validate_mutable_responses(*responses, request);
     if (!valid.is_ok())
       return fail(valid);
+    state_ = DistributedMutableQueryControlTlsServerState::kWritingResponse;
+    interest_ = {.want_write = true};
+    return common::Status::ok();
+  }
+
+  [[nodiscard]] common::Status validate_mutable_grouped_responses(
+      DistributedMutableVectorGroupedAggregateQueryBoundResponses bound,
+      const DistributedMutableVectorQueryRequest& request) {
+    common::Status authority_status =
+        validate_distributed_mutable_vector_grouped_aggregate_query_authority(
+            request.fragment, bound.authority.keys, bound.authority.aggregates);
+    if (!authority_status.is_ok())
+      return authority_status;
+    if (bound.authority.keys.size() > config_.limits.mutable_grouped_payload.maximum_group_keys ||
+        bound.authority.aggregates.size() >
+            config_.limits.mutable_grouped_payload.maximum_aggregates ||
+        bound.encoded_responses.empty() ||
+        bound.encoded_responses.size() > config_.limits.maximum_mutable_grouped_response_frames) {
+      return status(common::StatusCode::kResourceExhausted,
+                    "query-control mutable grouped response count exceeds limit");
+    }
+    std::size_t total_bytes{};
+    for (const auto& response : bound.encoded_responses) {
+      if (response.size() > config_.limits.maximum_mutable_grouped_response_bytes - total_bytes) {
+        return status(common::StatusCode::kResourceExhausted,
+                      "query-control mutable grouped response bytes exceed limit");
+      }
+      total_bytes += response.size();
+    }
+    auto resources = query::QueryResourceContext::create(
+        config_.limits.maximum_mutable_grouped_decode_memory_bytes);
+    if (!resources.has_value())
+      return resources.error();
+    try {
+      mutable_grouped_writers_.reserve(bound.encoded_responses.size());
+      for (std::size_t index = 0U; index < bound.encoded_responses.size(); ++index) {
+        auto decoded = decode_distributed_vector_grouped_aggregate_query_response_v2_exact(
+            bound.encoded_responses[index], bound.authority.keys, bound.authority.aggregates,
+            *resources, config_.limits.mutable_grouped_payload);
+        if (!decoded.has_value())
+          return decoded.error();
+        if (decoded->source_node_id != request.target_node_id ||
+            decoded->target_node_id != request.source_node_id ||
+            decoded->query_id != request.fragment.query_id ||
+            decoded->tablet_id != request.fragment.tablet_id) {
+          return status(common::StatusCode::kCorruption,
+                        "query-control mutable grouped response route is not correlated");
+        }
+        const bool last = index + 1U == bound.encoded_responses.size();
+        if (decoded->status_code == common::StatusCode::kOk) {
+          if (!decoded->payload.has_value()) {
+            return status(common::StatusCode::kCorruption,
+                          "query-control mutable grouped success response has no payload");
+          }
+          const auto& position = decoded->payload->position();
+          const bool valid_empty = position.empty && bound.encoded_responses.size() == 1U &&
+                                   position.group_count == 0U && position.group_ordinal == 0U &&
+                                   position.sequence == 1U && position.terminal;
+          const bool valid_groups = !position.empty &&
+                                    position.group_count == bound.encoded_responses.size() &&
+                                    position.group_ordinal == index &&
+                                    position.sequence == index + 1U && position.terminal == last;
+          if (!valid_empty && !valid_groups) {
+            return status(common::StatusCode::kCorruption,
+                          "query-control mutable grouped success response is invalid");
+          }
+        } else if (bound.encoded_responses.size() != 1U || decoded->payload.has_value()) {
+          return status(common::StatusCode::kCorruption,
+                        "query-control mutable grouped failure response is invalid");
+        }
+        auto writer = DistributedVectorGroupedAggregateQueryResponseV2WriteCursor::create(
+            *decoded, bound.authority.keys, bound.authority.aggregates);
+        if (!writer.has_value())
+          return writer.error();
+        mutable_grouped_writers_.push_back(std::move(*writer));
+      }
+      return common::Status::ok();
+    } catch (const std::bad_alloc&) {
+      return status(common::StatusCode::kResourceExhausted,
+                    "query-control mutable grouped response allocation failed");
+    } catch (const std::length_error&) {
+      return status(common::StatusCode::kResourceExhausted,
+                    "query-control mutable grouped response exceeds container limits");
+    }
+  }
+
+  [[nodiscard]] common::Status
+  accept_mutable_grouped_request(const DistributedMutableVectorQueryRequest& request,
+                                 const common::ByteView encoded,
+                                 const network::PeerAuthenticationResult& authenticated) {
+    auto responses = config_.mutable_grouped_receiver->receive_bound(encoded, authenticated);
+    if (!responses.has_value())
+      return fail(responses.error());
+    const common::Status valid = validate_mutable_grouped_responses(std::move(*responses), request);
+    if (!valid.is_ok())
+      return fail(valid);
+    protocol_ = DistributedMutableQueryControlProtocol::kMutableVectorGroupedAggregateQuery;
     state_ = DistributedMutableQueryControlTlsServerState::kWritingResponse;
     interest_ = {.want_write = true};
     return common::Status::ok();
@@ -325,6 +458,12 @@ public:
         return fail(status(common::StatusCode::kInternal,
                            "query-control mutable response writer is unavailable"));
       pending = mutable_writers_[mutable_writer_index_].pending_write();
+    } else if (protocol_ ==
+               DistributedMutableQueryControlProtocol::kMutableVectorGroupedAggregateQuery) {
+      if (mutable_grouped_writer_index_ >= mutable_grouped_writers_.size())
+        return fail(status(common::StatusCode::kInternal,
+                           "query-control mutable grouped response writer is unavailable"));
+      pending = mutable_grouped_writers_[mutable_grouped_writer_index_].pending_write();
     } else if (protocol_ == DistributedMutableQueryControlProtocol::kRaftReadAuthority &&
                authority_writer_.has_value()) {
       pending = authority_writer_->pending_write();
@@ -358,6 +497,15 @@ public:
       if (writer.complete())
         ++mutable_writer_index_;
       complete = mutable_writer_index_ == mutable_writers_.size();
+    } else if (protocol_ ==
+               DistributedMutableQueryControlProtocol::kMutableVectorGroupedAggregateQuery) {
+      auto& writer = mutable_grouped_writers_[mutable_grouped_writer_index_];
+      const common::Status consumed = writer.consume_written(progress->bytes_transferred);
+      if (!consumed.is_ok())
+        return fail(consumed);
+      if (writer.complete())
+        ++mutable_grouped_writer_index_;
+      complete = mutable_grouped_writer_index_ == mutable_grouped_writers_.size();
     } else {
       const common::Status consumed =
           authority_writer_->consume_written(progress->bytes_transferred);
@@ -390,6 +538,8 @@ public:
   std::array<std::byte, kScratchSize> request_scratch_{};
   std::vector<DistributedVectorQueryFrameV2WriteCursor> mutable_writers_;
   std::size_t mutable_writer_index_{};
+  std::vector<DistributedVectorGroupedAggregateQueryResponseV2WriteCursor> mutable_grouped_writers_;
+  std::size_t mutable_grouped_writer_index_{};
   std::optional<RaftReadAuthorityFrameWriteCursor> authority_writer_;
   common::Status failure_{common::StatusCode::kInternal, "query-control TLS server has not failed"};
 };
@@ -408,7 +558,8 @@ DistributedMutableQueryControlTlsServer::create(
     network::TlsSocket socket, const DistributedMutableQueryControlTlsServerConfig config,
     const TimePoint now) {
   if (config.authenticator == nullptr || config.mutable_receiver == nullptr ||
-      config.read_authority_receiver == nullptr || !valid_limits(config.limits)) {
+      config.mutable_grouped_receiver == nullptr || config.read_authority_receiver == nullptr ||
+      !valid_limits(config.limits)) {
     return common::make_unexpected(status(common::StatusCode::kInvalidArgument,
                                           "query-control TLS server configuration is invalid"));
   }

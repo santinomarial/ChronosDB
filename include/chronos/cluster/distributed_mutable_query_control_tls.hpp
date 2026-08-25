@@ -1,6 +1,7 @@
 #ifndef CHRONOS_CLUSTER_DISTRIBUTED_MUTABLE_QUERY_CONTROL_TLS_HPP_
 #define CHRONOS_CLUSTER_DISTRIBUTED_MUTABLE_QUERY_CONTROL_TLS_HPP_
 
+#include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tls.hpp"
 #include "chronos/cluster/distributed_mutable_vector_query_tls.hpp"
 #include "chronos/cluster/raft_read_authority_tls_server.hpp"
 #include "chronos/common/result.hpp"
@@ -20,12 +21,20 @@ struct DistributedMutableQueryControlTlsServerLimits {
   std::chrono::milliseconds exchange_timeout{30000};
   std::size_t maximum_mutable_response_frames{1024U};
   std::size_t maximum_mutable_response_bytes{kDefaultDistributedVectorQueryV2ResponseBytes};
+  std::size_t maximum_mutable_grouped_response_frames{
+      query::distributed_vector_grouped_aggregate_exchange_format::kMaximumGroups};
+  std::size_t maximum_mutable_grouped_response_bytes{
+      kDefaultDistributedVectorGroupedAggregateQueryV2ResponseBytes};
+  std::size_t maximum_mutable_grouped_decode_memory_bytes{
+      kDefaultDistributedVectorGroupedAggregateQueryV2DecodeMemoryBytes};
+  query::DistributedVectorGroupedAggregateExchangeDecodeLimits mutable_grouped_payload;
   RaftReadAuthorityTransportLimits read_authority_transport;
 };
 
 struct DistributedMutableQueryControlTlsServerConfig {
   network::ConnectionAuthenticator* authenticator{};
   DistributedMutableVectorQueryReceiver* mutable_receiver{};
+  DistributedMutableVectorGroupedAggregateQueryReceiver* mutable_grouped_receiver{};
   RaftReadAuthorityReceiver* read_authority_receiver{};
   std::array<std::uint8_t, 4U> peer_ipv4_address{};
   DistributedMutableQueryControlTlsServerLimits limits;
@@ -35,6 +44,7 @@ enum class DistributedMutableQueryControlProtocol : std::uint8_t {
   kUndetermined = 0,
   kMutableVectorQuery = 1,
   kRaftReadAuthority = 2,
+  kMutableVectorGroupedAggregateQuery = 3,
 };
 
 enum class DistributedMutableQueryControlTlsServerState : std::uint8_t {
@@ -51,9 +61,11 @@ struct DistributedMutableQueryControlTlsInterest {
   bool want_write{};
 };
 
-// Authenticates before reading the exact application magic, then serves one mutable-fragment or
-// Raft read-authority request on the shared private query-control TLS endpoint. One event-loop
-// thread serializes calls; all authentication and receiver dependencies are borrowed.
+// Authenticates before reading the exact application magic, then serves one mutable row,
+// mutable grouped sufficient-state, or Raft read-authority request on the shared private
+// query-control TLS endpoint. The two mutable requests share CHDMREQ1 and are distinguished only
+// after exact request decoding by the bound plan mode. One event-loop thread serializes calls; all
+// authentication and receiver dependencies are borrowed.
 class DistributedMutableQueryControlTlsServer {
 public:
   using TimePoint = std::chrono::steady_clock::time_point;

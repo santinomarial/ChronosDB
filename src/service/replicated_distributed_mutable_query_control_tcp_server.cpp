@@ -20,12 +20,17 @@ namespace {
 class ReplicatedDistributedMutableQueryControlTcpServer::Impl {
 public:
   Impl(ReplicatedDistributedMutableVectorQueryWorker owned_worker,
+       ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker owned_grouped_worker,
        ReplicatedRaftReadAuthorityService owned_authority_service) noexcept
-      : worker(std::move(owned_worker)), authority_service(std::move(owned_authority_service)) {}
+      : worker(std::move(owned_worker)), grouped_worker(std::move(owned_grouped_worker)),
+        authority_service(std::move(owned_authority_service)) {}
 
   ReplicatedDistributedMutableVectorQueryWorker worker;
+  ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker grouped_worker;
   ReplicatedRaftReadAuthorityService authority_service;
   std::optional<cluster::DistributedMutableVectorQueryReceiver> mutable_receiver;
+  std::optional<cluster::DistributedMutableVectorGroupedAggregateQueryReceiver>
+      mutable_grouped_receiver;
   std::optional<cluster::RaftReadAuthorityReceiver> authority_receiver;
   std::optional<cluster::DistributedMutableQueryControlTcpServer> server;
 
@@ -71,11 +76,18 @@ ReplicatedDistributedMutableQueryControlTcpServer::start(
   auto worker = ReplicatedDistributedMutableVectorQueryWorker::create(config.worker);
   if (!worker.has_value())
     return common::make_unexpected(worker.error());
+  auto grouped_worker = ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker::create(
+      {.local_node_id = config.worker.local_node_id,
+       .context_provider = config.worker.context_provider,
+       .limits = config.grouped_worker_limits});
+  if (!grouped_worker.has_value())
+    return common::make_unexpected(grouped_worker.error());
   auto authority_service = ReplicatedRaftReadAuthorityService::create(config.read_barrier);
   if (!authority_service.has_value())
     return common::make_unexpected(authority_service.error());
   try {
-    auto implementation = std::make_unique<Impl>(std::move(*worker), std::move(*authority_service));
+    auto implementation = std::make_unique<Impl>(std::move(*worker), std::move(*grouped_worker),
+                                                 std::move(*authority_service));
     auto mutable_receiver = cluster::DistributedMutableVectorQueryReceiver::create(
         {.local_node_id = config.worker.local_node_id,
          .authorizer = config.node_authorizer,
@@ -85,6 +97,20 @@ ReplicatedDistributedMutableQueryControlTcpServer::start(
          .maximum_response_bytes = config.carrier_limits.maximum_mutable_response_bytes});
     if (!mutable_receiver.has_value())
       return common::make_unexpected(mutable_receiver.error());
+    auto mutable_grouped_receiver =
+        cluster::DistributedMutableVectorGroupedAggregateQueryReceiver::create(
+            {.local_node_id = config.worker.local_node_id,
+             .authorizer = config.node_authorizer,
+             .worker = std::addressof(implementation->grouped_worker),
+             .leader_hint_provider = config.leader_hint_provider,
+             .maximum_response_frames =
+                 config.carrier_limits.maximum_mutable_grouped_response_frames,
+             .maximum_response_bytes = config.carrier_limits.maximum_mutable_grouped_response_bytes,
+             .maximum_decode_memory_bytes =
+                 config.carrier_limits.maximum_mutable_grouped_decode_memory_bytes,
+             .payload = config.carrier_limits.mutable_grouped_payload});
+    if (!mutable_grouped_receiver.has_value())
+      return common::make_unexpected(mutable_grouped_receiver.error());
     auto authority_receiver = cluster::RaftReadAuthorityReceiver::create(
         {.local_node_id = config.worker.local_node_id,
          .authorizer = config.node_authorizer,
@@ -93,6 +119,8 @@ ReplicatedDistributedMutableQueryControlTcpServer::start(
     if (!authority_receiver.has_value())
       return common::make_unexpected(authority_receiver.error());
     auto& installed_mutable_receiver = implementation->mutable_receiver.emplace(*mutable_receiver);
+    auto& installed_mutable_grouped_receiver =
+        implementation->mutable_grouped_receiver.emplace(*mutable_grouped_receiver);
     auto& installed_authority_receiver =
         implementation->authority_receiver.emplace(*authority_receiver);
     auto server = cluster::DistributedMutableQueryControlTcpServer::start(
@@ -100,6 +128,7 @@ ReplicatedDistributedMutableQueryControlTcpServer::start(
          .tls = std::move(config.tls),
          .authenticator = config.authenticator,
          .mutable_receiver = std::addressof(installed_mutable_receiver),
+         .mutable_grouped_receiver = std::addressof(installed_mutable_grouped_receiver),
          .read_authority_receiver = std::addressof(installed_authority_receiver),
          .carrier_limits = config.carrier_limits,
          .maximum_connections = config.maximum_connections,
