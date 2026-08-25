@@ -1446,7 +1446,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   address rotation now preserves one immutable target/group/correlation under a capped retry and
   backoff budget. One all-or-nothing batch now concurrently acquires every canonical group,
   cancels all siblings on one failure, and withholds the authority vector until the whole attempt
-  succeeds. Daemon service and Native query integration remain before arbitrary split-leader
+  succeeds. A production adapter now issues only one requested configured group through the durable
+  replicated barrier owner while a separate Raft poll thread drives completion. Daemon listener
+  and Native query integration remain before arbitrary split-leader
   process coordination is implemented. Partitions, multi-process real-CSEG scans, and
   sufficient-state multi-key shuffle also remain open; the full phase exit gate is not claimed.
 

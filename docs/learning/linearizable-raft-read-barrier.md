@@ -24,8 +24,10 @@ same proof through a distinct authenticated request/response boundary. A success
 leader observation alongside the barrier tuple and repeats the route, group, and correlation in both
 layers. Bounded partial-I/O, mutual-TLS, TCP connect/listen, finite route retry, and concurrent
 all-group fan-out owners are implemented. The batch withholds its canonical vector until every
-group succeeds and cancels all siblings on one failure. Daemon service and Native query integration
-are still required before packaged admission can use those remote authorities.
+group succeeds and cancels all siblings on one failure. Daemon listener and Native query integration
+are still required before packaged admission can use those remote authorities. The production
+service adapter now selects one configured group through this same barrier owner; it must run on a
+separate listener thread while the Raft poll owner continues driving durable and quorum completion.
 
 ## Data structures and invariants
 
@@ -56,6 +58,11 @@ The deterministic node owns barrier state and uses no clock, socket, thread, or 
 serializes calls just as it does for elections and replication. Request/response values may outlive
 a transition, but a response cannot complete a later barrier unless its exact term and context are
 pending. Leadership changes synchronously discard pending state.
+
+The replicated service owner adds one mutex-protected synchronous waiter across local Native and
+remote per-group callers. A remote adapter call must never run on the transport poll thread: that
+thread is the mechanism that admits and observes the operation needed to wake the waiter. Listener
+shutdown therefore precedes barrier shutdown, and barrier shutdown precedes transport teardown.
 
 Barrier issuance is prepare-before-publish. The node first owns the frozen voter vectors, local
 acknowledgement set, and complete outbound transition in temporaries. Only after that fallible work

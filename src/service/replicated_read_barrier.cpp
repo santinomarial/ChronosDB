@@ -99,7 +99,8 @@ public:
         limits(configured_limits) {}
 
   [[nodiscard]] common::Result<std::vector<raft::GroupReadBarrier>>
-  await_local(std::vector<raft::RaftGroupObservation>* const observations) {
+  await_local(const std::span<const raft::GroupId> requested_groups,
+              std::vector<raft::RaftGroupObservation>* const observations) {
     std::scoped_lock lock(mutex);
     if (!accepting)
       return common::make_unexpected(
@@ -116,16 +117,16 @@ public:
     } guard{waiter_active};
     std::vector<raft::GroupReadBarrier> barriers;
     try {
-      barriers.reserve(group_ids.size());
+      barriers.reserve(requested_groups.size());
       if (observations != nullptr) {
         observations->clear();
-        observations->reserve(group_ids.size());
+        observations->reserve(requested_groups.size());
       }
     } catch (const std::bad_alloc&) {
       return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
                                             "replicated read-barrier allocation failed"));
     }
-    for (const raft::GroupId& group_id : group_ids) {
+    for (const raft::GroupId& group_id : requested_groups) {
       std::vector<raft::DurableRaftRequest> requests;
       try {
         requests.reserve(observations == nullptr ? 2U : 3U);
@@ -188,7 +189,8 @@ public:
   }
 
   [[nodiscard]] common::Result<std::vector<raft::GroupReadBarrier>>
-  await_transported(std::vector<raft::RaftGroupObservation>* const observations) {
+  await_transported(const std::span<const raft::GroupId> requested_groups,
+                    std::vector<raft::RaftGroupObservation>* const observations) {
     std::unique_lock lock(mutex);
     if (!accepting)
       return common::make_unexpected(
@@ -211,8 +213,8 @@ public:
                    .last_admission_failure = common::Status::ok(),
                    .capture_observations = observations != nullptr,
                    .completed = false};
-      next.groups.reserve(group_ids.size());
-      for (const raft::GroupId& group_id : group_ids)
+      next.groups.reserve(requested_groups.size());
+      for (const raft::GroupId& group_id : requested_groups)
         next.groups.push_back({.group_id = group_id,
                                .stage = Stage::kCommitPending,
                                .submission_sequence = 0U,
@@ -276,6 +278,36 @@ public:
     }
     request.reset();
     return barriers;
+  }
+
+  [[nodiscard]] common::Result<std::vector<ReplicatedReadAuthority>>
+  await_authority(const std::span<const raft::GroupId> requested_groups) {
+    std::vector<raft::RaftGroupObservation> observations;
+    auto barriers = mode == Mode::kLocal ? await_local(requested_groups, &observations)
+                                         : await_transported(requested_groups, &observations);
+    if (!barriers.has_value())
+      return common::make_unexpected(barriers.error());
+    if (barriers->size() != observations.size())
+      return common::make_unexpected(status(common::StatusCode::kCorruption,
+                                            "replicated read authority vector is incomplete"));
+    try {
+      std::vector<ReplicatedReadAuthority> authority;
+      authority.reserve(barriers->size());
+      for (std::size_t index = 0U; index < barriers->size(); ++index) {
+        if ((*barriers)[index].group_id != observations[index].group_id) {
+          return common::make_unexpected(status(common::StatusCode::kCorruption,
+                                                "replicated read authority group order differs"));
+        }
+        authority.push_back({(*barriers)[index], std::move(observations[index])});
+      }
+      return authority;
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
+                                            "replicated read authority allocation failed"));
+    } catch (const std::length_error&) {
+      return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
+                                            "replicated read authority exceeds limits"));
+    }
   }
 
   void finish(common::Status result) {
@@ -401,39 +433,36 @@ common::Result<std::vector<raft::GroupReadBarrier>> ReplicatedReadBarrier::await
   if (impl_ == nullptr)
     return common::make_unexpected(
         status(common::StatusCode::kUnavailable, "replicated read-barrier owner was moved from"));
-  return impl_->mode == Impl::Mode::kLocal ? impl_->await_local(nullptr)
-                                           : impl_->await_transported(nullptr);
+  return impl_->mode == Impl::Mode::kLocal ? impl_->await_local(impl_->group_ids, nullptr)
+                                           : impl_->await_transported(impl_->group_ids, nullptr);
 }
 
 common::Result<std::vector<ReplicatedReadAuthority>> ReplicatedReadBarrier::await_authority() {
   if (impl_ == nullptr)
     return common::make_unexpected(
         status(common::StatusCode::kUnavailable, "replicated read-barrier owner was moved from"));
-  std::vector<raft::RaftGroupObservation> observations;
-  auto barriers = impl_->mode == Impl::Mode::kLocal ? impl_->await_local(&observations)
-                                                    : impl_->await_transported(&observations);
-  if (!barriers.has_value())
-    return common::make_unexpected(barriers.error());
-  if (barriers->size() != observations.size())
+  return impl_->await_authority(impl_->group_ids);
+}
+
+common::Result<ReplicatedReadAuthority>
+ReplicatedReadBarrier::await_group_authority(const raft::GroupId& group_id) {
+  if (impl_ == nullptr)
     return common::make_unexpected(
-        status(common::StatusCode::kCorruption, "replicated read authority vector is incomplete"));
-  try {
-    std::vector<ReplicatedReadAuthority> authority;
-    authority.reserve(barriers->size());
-    for (std::size_t index = 0U; index < barriers->size(); ++index) {
-      if ((*barriers)[index].group_id != observations[index].group_id)
-        return common::make_unexpected(status(common::StatusCode::kCorruption,
-                                              "replicated read authority group order differs"));
-      authority.push_back({(*barriers)[index], std::move(observations[index])});
-    }
-    return authority;
-  } catch (const std::bad_alloc&) {
-    return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
-                                          "replicated read authority allocation failed"));
-  } catch (const std::length_error&) {
+        status(common::StatusCode::kUnavailable, "replicated read-barrier owner was moved from"));
+  const auto configured = std::ranges::lower_bound(impl_->group_ids, group_id);
+  if (configured == impl_->group_ids.end() || *configured != group_id) {
     return common::make_unexpected(
-        status(common::StatusCode::kResourceExhausted, "replicated read authority exceeds limits"));
+        status(common::StatusCode::kNotFound, "replicated read-barrier group is not configured"));
   }
+  const std::span<const raft::GroupId> requested{std::addressof(*configured), 1U};
+  auto authority = impl_->await_authority(requested);
+  if (!authority.has_value())
+    return common::make_unexpected(authority.error());
+  if (authority->size() != 1U) {
+    return common::make_unexpected(status(common::StatusCode::kCorruption,
+                                          "replicated group read authority count is invalid"));
+  }
+  return std::move(authority->front());
 }
 
 common::Status ReplicatedReadBarrier::poll_owner_drive(ReplicatedRaftTransportRuntime& transport) {

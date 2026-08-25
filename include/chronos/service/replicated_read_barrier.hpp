@@ -51,6 +51,11 @@ public:
   // Captures the ordered current-leader observation that exact-validated each completed barrier.
   // Existing barrier-only callers do not allocate or retain these observation copies.
   [[nodiscard]] common::Result<std::vector<ReplicatedReadAuthority>> await_authority();
+  // Acquires only one configured group through the same sole-waiter and poll-owner contract. This
+  // is the service boundary for an authenticated remote authority request; it must not run on the
+  // transport poll-owner thread that drives its completion.
+  [[nodiscard]] common::Result<ReplicatedReadAuthority>
+  await_group_authority(const raft::GroupId& group_id);
 
   // Transport-poll-owner-only. drive() is nonblocking and admits at most one operation per group
   // per call. observe() must receive every completed transport result in FIFO order.

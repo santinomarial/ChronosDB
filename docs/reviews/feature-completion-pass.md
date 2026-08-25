@@ -1037,7 +1037,8 @@ were deliberately not run.
   all-tablet coordinator withholds global finalization and Native output until both subsets close.
   Remote read-authority transport now also has bounded mutual-TLS/TCP owners, finite immutable-route
   retry, and concurrent all-or-nothing group fan-out; the packaged daemon and Native query path do
-  not yet consume that authority endpoint.
+  not yet consume that authority endpoint. A production service adapter now issues one exact group
+  through the durable replicated barrier owner on a required non-poll thread.
   The packaged daemon now binds the committed local private query endpoint, reuses the immutable
   authenticated peer bundle for inbound/outbound query TLS, polls synchronous workers separately
   from Raft, and extends its three-process gate through remote SELECT before and after tablet-leader

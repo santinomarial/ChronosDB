@@ -91,4 +91,7 @@ bounded listener admission, finite accepts per poll, metrics, and TLS-before-des
 finite retry owner rotates a bounded immutable address snapshot under one capped attempt/backoff
 budget without changing request authority. An all-or-nothing batch owner concurrently drives one
 finite acquisition per canonical group, cancels every sibling on failure, and publishes only the
-complete authority vector. Daemon service and Native query integration remain subsequent consumers.
+complete authority vector. Daemon listener and Native query integration remain subsequent consumers.
+The production service adapter now issues only the requested configured group through the existing
+durable replicated barrier owner on a non-poll thread. Daemon listener and Native query integration
+remain subsequent consumers.

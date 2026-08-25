@@ -1,3 +1,4 @@
+#include "chronos/service/replicated_raft_read_authority_service.hpp"
 #include "chronos/service/replicated_read_barrier.hpp"
 
 #include <chrono>
@@ -75,6 +76,22 @@ TEST(ReplicatedReadBarrierTest, ConfirmsSortedSingleVoterGroupsAfterCurrentTermN
     EXPECT_EQ(proof.observation.current_term, proof.barrier.barrier.term);
     EXPECT_GE(proof.observation.commit_index, proof.barrier.barrier.read_index);
   }
+  auto group_authority = moved_barrier.await_group_authority(group(0x22U));
+  ASSERT_TRUE(group_authority.has_value()) << group_authority.error().to_string();
+  EXPECT_EQ(group_authority->barrier.group_id, group(0x22U));
+  EXPECT_EQ(group_authority->observation.group_id, group(0x22U));
+  EXPECT_EQ(group_authority->observation.role, raft::Role::kLeader);
+  EXPECT_EQ(moved_barrier.await_group_authority(group(0x33U)).error().code(),
+            common::StatusCode::kNotFound);
+  EXPECT_EQ(ReplicatedRaftReadAuthorityService::create(nullptr).error().code(),
+            common::StatusCode::kInvalidArgument);
+  auto remote_service = ReplicatedRaftReadAuthorityService::create(&moved_barrier);
+  ASSERT_TRUE(remote_service.has_value());
+  auto remote_authority = remote_service->acquire(group(0x11U));
+  ASSERT_TRUE(remote_authority.has_value()) << remote_authority.error().to_string();
+  EXPECT_EQ(remote_authority->barrier.group_id, group(0x11U));
+  EXPECT_EQ(remote_authority->observation.group_id, group(0x11U));
+  EXPECT_EQ(remote_authority->observation.role, raft::Role::kLeader);
   EXPECT_TRUE(moved_barrier.shutdown().is_ok());
   EXPECT_FALSE(moved_barrier.await().has_value());
   EXPECT_TRUE(runtime->shutdown().is_ok());
