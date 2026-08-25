@@ -9,6 +9,7 @@
 #include "chronos/raft/multi_raft.hpp"
 #include "chronos/raft/types.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -64,6 +65,96 @@ encode_raft_read_authority_response_v1(const RaftReadAuthorityResponse& response
 [[nodiscard]] common::Result<RaftReadAuthorityResponse>
 decode_raft_read_authority_response_v1(common::ByteView bytes,
                                        RaftReadAuthorityTransportLimits limits = {});
+
+// Header-only allocation gates for nonblocking stream carriers. Full checksum and semantic
+// validation still occurs after the exact frame has arrived.
+[[nodiscard]] common::Result<std::size_t>
+raft_read_authority_request_frame_length_v1(common::ByteView header);
+[[nodiscard]] common::Result<std::size_t>
+raft_read_authority_response_frame_length_v1(common::ByteView header,
+                                             RaftReadAuthorityTransportLimits limits = {});
+
+struct RaftReadAuthorityRequestReadStep {
+  std::size_t consumed_bytes{};
+  std::optional<RaftReadAuthorityRequest> request;
+};
+
+class RaftReadAuthorityRequestReader {
+public:
+  RaftReadAuthorityRequestReader() = default;
+  RaftReadAuthorityRequestReader(const RaftReadAuthorityRequestReader&) = delete;
+  RaftReadAuthorityRequestReader& operator=(const RaftReadAuthorityRequestReader&) = delete;
+  RaftReadAuthorityRequestReader(RaftReadAuthorityRequestReader&&) = delete;
+  RaftReadAuthorityRequestReader& operator=(RaftReadAuthorityRequestReader&&) = delete;
+
+  [[nodiscard]] common::Result<RaftReadAuthorityRequestReadStep> consume(common::ByteView bytes);
+  [[nodiscard]] std::size_t buffered_bytes() const noexcept;
+  [[nodiscard]] std::optional<std::size_t> expected_frame_bytes() const noexcept;
+  [[nodiscard]] bool failed() const noexcept;
+
+private:
+  std::array<std::byte, kRaftReadAuthorityRequestSize> frame_{};
+  std::size_t buffered_bytes_{};
+  std::optional<std::size_t> expected_frame_bytes_;
+  std::optional<common::Status> failure_;
+};
+
+struct RaftReadAuthorityResponseReadStep {
+  std::size_t consumed_bytes{};
+  std::optional<RaftReadAuthorityResponse> response;
+};
+
+class RaftReadAuthorityResponseReader {
+public:
+  RaftReadAuthorityResponseReader() = delete;
+  RaftReadAuthorityResponseReader(const RaftReadAuthorityResponseReader&) = delete;
+  RaftReadAuthorityResponseReader& operator=(const RaftReadAuthorityResponseReader&) = delete;
+  RaftReadAuthorityResponseReader(RaftReadAuthorityResponseReader&& other) noexcept;
+  RaftReadAuthorityResponseReader& operator=(RaftReadAuthorityResponseReader&& other) noexcept;
+
+  [[nodiscard]] static common::Result<RaftReadAuthorityResponseReader>
+  create(RaftReadAuthorityTransportLimits limits = {});
+  [[nodiscard]] common::Result<RaftReadAuthorityResponseReadStep> consume(common::ByteView bytes);
+  [[nodiscard]] std::size_t buffered_bytes() const noexcept;
+  [[nodiscard]] std::optional<std::size_t> expected_frame_bytes() const noexcept;
+  [[nodiscard]] bool failed() const noexcept;
+
+private:
+  explicit RaftReadAuthorityResponseReader(RaftReadAuthorityTransportLimits limits) noexcept;
+  [[nodiscard]] common::Result<RaftReadAuthorityResponseReadStep> fail(common::Status status);
+  void reset_frame() noexcept;
+
+  RaftReadAuthorityTransportLimits limits_;
+  std::array<std::byte, kRaftReadAuthorityResponseHeaderSize> header_{};
+  std::size_t header_bytes_{};
+  std::vector<std::byte> frame_;
+  std::size_t frame_bytes_{};
+  std::optional<std::size_t> expected_frame_bytes_;
+  std::optional<common::Status> failure_;
+};
+
+// Owns one canonical request or response and exposes exactly its unwritten suffix. Moving transfers
+// the only write obligation and leaves the source complete.
+class RaftReadAuthorityFrameWriteCursor {
+public:
+  RaftReadAuthorityFrameWriteCursor() = delete;
+  RaftReadAuthorityFrameWriteCursor(const RaftReadAuthorityFrameWriteCursor&) = delete;
+  RaftReadAuthorityFrameWriteCursor& operator=(const RaftReadAuthorityFrameWriteCursor&) = delete;
+  RaftReadAuthorityFrameWriteCursor(RaftReadAuthorityFrameWriteCursor&& other) noexcept;
+  RaftReadAuthorityFrameWriteCursor& operator=(RaftReadAuthorityFrameWriteCursor&& other) noexcept;
+
+  [[nodiscard]] static common::Result<RaftReadAuthorityFrameWriteCursor>
+  create(std::vector<std::byte> encoded_frame, RaftReadAuthorityTransportLimits limits = {});
+  [[nodiscard]] common::ByteView pending_write() const noexcept;
+  [[nodiscard]] common::Status consume_written(std::size_t bytes) noexcept;
+  [[nodiscard]] std::size_t written_bytes() const noexcept;
+  [[nodiscard]] bool complete() const noexcept;
+
+private:
+  explicit RaftReadAuthorityFrameWriteCursor(std::vector<std::byte> encoded_frame) noexcept;
+  std::vector<std::byte> encoded_frame_;
+  std::size_t written_bytes_{};
+};
 
 class RaftReadAuthorityService {
 public:

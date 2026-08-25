@@ -43,6 +43,11 @@ void store_u32(std::vector<std::byte>& bytes, const std::size_t offset, const st
     bytes[offset + index] = static_cast<std::byte>(value >> (index * 8U));
 }
 
+void store_u64(std::vector<std::byte>& bytes, const std::size_t offset, const std::uint64_t value) {
+  for (std::size_t index = 0U; index < sizeof(value); ++index)
+    bytes[offset + index] = static_cast<std::byte>(value >> (index * 8U));
+}
+
 void rewrite_request_checksums(std::vector<std::byte>& bytes) {
   store_u32(bytes, 76U, common::crc32c(common::ByteView{bytes}.first(76U)));
   store_u32(bytes, 80U, common::crc32c(common::ByteView{bytes}.first(80U)));
@@ -173,6 +178,132 @@ TEST(RaftReadAuthorityTransportCodecTest, RejectsDamageAndUncorrelatedAuthorityP
   success.authority.reset();
   EXPECT_EQ(encode_raft_read_authority_response_v1(success).error().code(),
             common::StatusCode::kInvalidArgument);
+}
+
+TEST(RaftReadAuthorityStreamTest, OwnsEverySplitCoalescedSuffixAndShortWrite) {
+  const auto request = encode_raft_read_authority_request_v1({1U, 2U, group(), 19U}).value();
+  for (std::size_t split = 0U; split <= request.size(); ++split) {
+    RaftReadAuthorityRequestReader reader;
+    auto first = reader.consume(common::ByteView{request}.first(split));
+    ASSERT_TRUE(first.has_value()) << "request split " << split;
+    EXPECT_EQ(first->consumed_bytes, split);
+    if (split == request.size()) {
+      EXPECT_TRUE(first->request.has_value());
+      continue;
+    }
+    EXPECT_FALSE(first->request.has_value());
+    auto second = reader.consume(common::ByteView{request}.subspan(split));
+    ASSERT_TRUE(second.has_value()) << "request split " << split;
+    ASSERT_TRUE(second->request.has_value());
+    EXPECT_EQ(second->request->correlation_id, 19U);
+  }
+
+  const RaftReadAuthorityResponse success{.source_node_id = 2U,
+                                          .target_node_id = 1U,
+                                          .group_id = group(),
+                                          .correlation_id = 19U,
+                                          .status_code = common::StatusCode::kOk,
+                                          .authority = authority()};
+  const RaftReadAuthorityResponse failure{.source_node_id = 2U,
+                                          .target_node_id = 1U,
+                                          .group_id = group(),
+                                          .correlation_id = 20U,
+                                          .status_code = common::StatusCode::kUnavailable};
+  const std::vector<std::vector<std::byte>> responses{
+      encode_raft_read_authority_response_v1(success).value(),
+      encode_raft_read_authority_response_v1(failure).value()};
+  for (const auto& response : responses) {
+    for (std::size_t split = 0U; split <= response.size(); ++split) {
+      auto reader = RaftReadAuthorityResponseReader::create().value();
+      auto first = reader.consume(common::ByteView{response}.first(split));
+      ASSERT_TRUE(first.has_value()) << "response size " << response.size() << " split " << split;
+      if (split == response.size()) {
+        EXPECT_TRUE(first->response.has_value());
+        continue;
+      }
+      EXPECT_FALSE(first->response.has_value());
+      auto second = reader.consume(common::ByteView{response}.subspan(split));
+      ASSERT_TRUE(second.has_value()) << "response size " << response.size() << " split " << split;
+      ASSERT_TRUE(second->response.has_value());
+      EXPECT_EQ(second->response->source_node_id, 2U);
+    }
+  }
+
+  std::vector<std::byte> coalesced = responses.front();
+  coalesced.insert(coalesced.end(), responses.back().begin(), responses.back().end());
+  auto reader = RaftReadAuthorityResponseReader::create().value();
+  auto first = reader.consume(coalesced);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(first->response.has_value());
+  EXPECT_EQ(first->consumed_bytes, responses.front().size());
+  auto second = reader.consume(common::ByteView{coalesced}.subspan(first->consumed_bytes));
+  ASSERT_TRUE(second.has_value());
+  ASSERT_TRUE(second->response.has_value());
+  EXPECT_EQ(second->response->status_code, common::StatusCode::kUnavailable);
+
+  auto cursor = RaftReadAuthorityFrameWriteCursor::create(request);
+  ASSERT_TRUE(cursor.has_value()) << cursor.error().to_string();
+  EXPECT_EQ(cursor->pending_write().size(), request.size());
+  ASSERT_TRUE(cursor->consume_written(17U).is_ok());
+  EXPECT_EQ(cursor->written_bytes(), 17U);
+  EXPECT_EQ(cursor->consume_written(cursor->pending_write().size() + 1U).code(),
+            common::StatusCode::kInvalidArgument);
+  RaftReadAuthorityFrameWriteCursor moved = std::move(*cursor);
+  EXPECT_TRUE(cursor->complete());
+  ASSERT_TRUE(moved.consume_written(moved.pending_write().size()).is_ok());
+  EXPECT_TRUE(moved.complete());
+  EXPECT_TRUE(RaftReadAuthorityFrameWriteCursor::create(responses.front()).has_value());
+}
+
+TEST(RaftReadAuthorityStreamTest, RejectsHostileHeadersBeforeAllocationAndFailsSticky) {
+  auto damaged = encode_raft_read_authority_request_v1({1U, 2U, group(), 19U}).value();
+  damaged[40U] ^= std::byte{1U};
+  RaftReadAuthorityRequestReader request_reader;
+  auto rejected = request_reader.consume(damaged);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
+  EXPECT_TRUE(request_reader.failed());
+  EXPECT_EQ(request_reader.consume({}).error(), rejected.error());
+
+  const RaftReadAuthorityResponse success{.source_node_id = 2U,
+                                          .target_node_id = 1U,
+                                          .group_id = group(),
+                                          .correlation_id = 19U,
+                                          .status_code = common::StatusCode::kOk,
+                                          .authority = authority()};
+  auto oversized = encode_raft_read_authority_response_v1(success).value();
+  constexpr std::uint64_t kOversizedDefaultResponse = 1297U;
+  store_u64(oversized, 16U, kOversizedDefaultResponse);
+  store_u64(oversized, 96U,
+            kOversizedDefaultResponse - kRaftReadAuthorityResponseHeaderSize -
+                kRaftReadAuthorityFrameTrailerSize);
+  store_u32(oversized, 124U, common::crc32c(common::ByteView{oversized}.first(124U)));
+  auto response_reader = RaftReadAuthorityResponseReader::create().value();
+  auto response_rejected = response_reader.consume(
+      common::ByteView{oversized}.first(kRaftReadAuthorityResponseHeaderSize));
+  ASSERT_FALSE(response_rejected.has_value());
+  EXPECT_EQ(response_rejected.error().code(), common::StatusCode::kCorruption);
+  EXPECT_EQ(response_reader.buffered_bytes(), kRaftReadAuthorityResponseHeaderSize);
+  EXPECT_FALSE(response_reader.expected_frame_bytes().has_value());
+  EXPECT_TRUE(response_reader.failed());
+
+  auto valid = encode_raft_read_authority_response_v1(success).value();
+  auto partial_reader = RaftReadAuthorityResponseReader::create().value();
+  auto partial = partial_reader.consume(common::ByteView{valid}.first(151U));
+  ASSERT_TRUE(partial.has_value());
+  EXPECT_FALSE(partial->response.has_value());
+  RaftReadAuthorityResponseReader moved_reader = std::move(partial_reader);
+  // The moved-from reader is deliberately reusable and empty.
+  // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
+  EXPECT_EQ(partial_reader.buffered_bytes(), 0U);
+  auto completed = moved_reader.consume(common::ByteView{valid}.subspan(151U));
+  ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
+  EXPECT_TRUE(completed->response.has_value());
+
+  auto corrupt = valid;
+  corrupt.back() ^= std::byte{1U};
+  EXPECT_EQ(RaftReadAuthorityFrameWriteCursor::create(std::move(corrupt)).error().code(),
+            common::StatusCode::kCorruption);
 }
 
 TEST(RaftReadAuthorityReceiverTest, AuthenticatesAuthorizesCorrelatesAndContainsFailures) {

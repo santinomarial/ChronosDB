@@ -1,6 +1,7 @@
 # Raft Read Authority Transport v1
 
-> **Status:** accepted with implemented exact request/response codecs and authenticated receiver.
+> **Status:** accepted with implemented codecs, bounded stream ownership, authenticated receiver,
+> and maintained mutual-TLS sessions.
 
 This cluster protocol asks one exact node to issue one linearizable read barrier for one Raft group
 and returns that barrier with the leader observation that proves its meaning. It is distinct from
@@ -81,5 +82,9 @@ The decoder validates both checksums, fixed lengths, bounded nested payload leng
 canonical presence/status relationships, the nested observation codec, and authority semantics.
 Unknown checksum-valid versions return `NOT_SUPPORTED`; damaged or noncanonical bytes return
 `CORRUPTION`; invalid local construction returns `INVALID_ARGUMENT`. Minor-version compatibility is
-exact. TCP partial-I/O ownership, mutual-TLS carrier integration, finite retries, and all-group query
-fan-out are subsequent protocol consumers and are not claimed by this format.
+exact. Implemented readers validate each fixed header before retaining the exact bounded frame,
+consume at most one frame per call, and expose any coalesced suffix through exact prefix accounting.
+The move-only cursor owns short-write progress. Maintained mutual-TLS client/server sessions
+authenticate both node claims before request dispatch and impose exact handshake/exchange deadlines.
+TCP connect/listen ownership, finite route retries, daemon integration, and all-group query fan-out
+remain subsequent protocol consumers.

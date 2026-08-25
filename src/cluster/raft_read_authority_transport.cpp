@@ -173,6 +173,125 @@ acquire_service(RaftReadAuthorityService& service, const raft::GroupId& group_id
 
 } // namespace
 
+common::Result<std::size_t>
+raft_read_authority_request_frame_length_v1(const common::ByteView header) {
+  if (header.size() != kRaftReadAuthorityRequestHeaderSize)
+    return common::make_unexpected(
+        corruption("Raft read-authority request header length is invalid"));
+  if (!std::ranges::equal(header.first(kRequestMagic.size()), kRequestMagic))
+    return common::make_unexpected(
+        corruption("Raft read-authority request header magic is invalid"));
+  common::ByteReader crc_reader{header.subspan(kRequestHeaderCrcOffset, 4U)};
+  auto header_crc = crc_reader.read_u32_le();
+  if (!header_crc.has_value() ||
+      *header_crc != common::crc32c(header.first(kRequestHeaderCrcOffset))) {
+    return common::make_unexpected(
+        corruption("Raft read-authority request header checksum differs"));
+  }
+  common::ByteReader reader{header};
+  if (!reader.skip(kRequestMagic.size()).is_ok())
+    return common::make_unexpected(corruption("Raft read-authority request header is truncated"));
+  auto major = reader.read_u16_le();
+  auto minor = reader.read_u16_le();
+  auto header_size = reader.read_u32_le();
+  auto total_size = reader.read_u64_le();
+  auto source = reader.read_u64_le();
+  auto target = reader.read_u64_le();
+  auto group = read_group(reader);
+  auto correlation = reader.read_u64_le();
+  auto reserved = reader.read_exact(12U);
+  if (!major.has_value() || !minor.has_value() || !header_size.has_value() ||
+      !total_size.has_value() || !source.has_value() || !target.has_value() || !group.has_value() ||
+      !correlation.has_value() || !reserved.has_value()) {
+    return common::make_unexpected(corruption("Raft read-authority request header is truncated"));
+  }
+  if (*major != kMajor || *minor != kMinor)
+    return common::make_unexpected(
+        unsupported("Raft read-authority request version is unsupported"));
+  if (*header_size != kRaftReadAuthorityRequestHeaderSize ||
+      *total_size != kRaftReadAuthorityRequestSize || *source == 0U || *target == 0U ||
+      *source == *target || group->is_nil() || *correlation == 0U || !zero(*reserved)) {
+    return common::make_unexpected(
+        corruption("Raft read-authority request header semantics are invalid"));
+  }
+  return kRaftReadAuthorityRequestSize;
+}
+
+common::Result<std::size_t>
+raft_read_authority_response_frame_length_v1(const common::ByteView header,
+                                             const RaftReadAuthorityTransportLimits limits) {
+  if (!valid_limits(limits))
+    return common::make_unexpected(invalid("Raft read-authority response limits are invalid"));
+  if (header.size() != kRaftReadAuthorityResponseHeaderSize)
+    return common::make_unexpected(
+        corruption("Raft read-authority response header length is invalid"));
+  if (!std::ranges::equal(header.first(kResponseMagic.size()), kResponseMagic))
+    return common::make_unexpected(
+        corruption("Raft read-authority response header magic is invalid"));
+  common::ByteReader crc_reader{header.subspan(kResponseHeaderCrcOffset, 4U)};
+  auto header_crc = crc_reader.read_u32_le();
+  if (!header_crc.has_value() ||
+      *header_crc != common::crc32c(header.first(kResponseHeaderCrcOffset))) {
+    return common::make_unexpected(
+        corruption("Raft read-authority response header checksum differs"));
+  }
+  common::ByteReader reader{header};
+  if (!reader.skip(kResponseMagic.size()).is_ok())
+    return common::make_unexpected(corruption("Raft read-authority response header is truncated"));
+  auto major = reader.read_u16_le();
+  auto minor = reader.read_u16_le();
+  auto header_size = reader.read_u32_le();
+  auto total_size = reader.read_u64_le();
+  auto source = reader.read_u64_le();
+  auto target = reader.read_u64_le();
+  auto group = read_group(reader);
+  auto correlation = reader.read_u64_le();
+  auto raw_status = reader.read_u8();
+  auto authority_present = reader.read_u8();
+  auto reserved = reader.read_exact(6U);
+  auto term = reader.read_u64_le();
+  auto context = reader.read_u64_le();
+  auto read_index = reader.read_u64_le();
+  auto payload_size = reader.read_u64_le();
+  auto payload_crc = reader.read_u32_le();
+  auto reserved_tail = reader.read_exact(16U);
+  if (!major.has_value() || !minor.has_value() || !header_size.has_value() ||
+      !total_size.has_value() || !source.has_value() || !target.has_value() || !group.has_value() ||
+      !correlation.has_value() || !raw_status.has_value() || !authority_present.has_value() ||
+      !reserved.has_value() || !term.has_value() || !context.has_value() ||
+      !read_index.has_value() || !payload_size.has_value() || !payload_crc.has_value() ||
+      !reserved_tail.has_value()) {
+    return common::make_unexpected(corruption("Raft read-authority response header is truncated"));
+  }
+  if (*major != kMajor || *minor != kMinor)
+    return common::make_unexpected(
+        unsupported("Raft read-authority response version is unsupported"));
+  auto status = decode_status(*raw_status);
+  if (!status.has_value())
+    return common::make_unexpected(status.error());
+  constexpr std::size_t kFixedBytes =
+      kRaftReadAuthorityResponseHeaderSize + kRaftReadAuthorityFrameTrailerSize;
+  constexpr std::size_t kNestedFixedBytes =
+      kRaftObservationResponseHeaderSize + kRaftObservationFrameTrailerSize;
+  const std::size_t maximum_nested =
+      kNestedFixedBytes + kRaftObservationPayloadHeaderSize +
+      4U * limits.observation.maximum_voters_per_set * sizeof(raft::NodeId);
+  const std::size_t maximum_frame = kFixedBytes + maximum_nested;
+  if (*header_size != kRaftReadAuthorityResponseHeaderSize || *total_size < kFixedBytes ||
+      *total_size > maximum_frame || *source == 0U || *target == 0U || *source == *target ||
+      group->is_nil() || *correlation == 0U || *authority_present > 1U || !zero(*reserved) ||
+      !zero(*reserved_tail) || *payload_size != *total_size - kFixedBytes ||
+      ((*status == common::StatusCode::kOk) != (*authority_present == 1U)) ||
+      ((*authority_present == 0U) != (*payload_size == 0U)) ||
+      (*authority_present == 1U &&
+       (*term == 0U || *context == 0U || *read_index == 0U || *payload_size < kNestedFixedBytes)) ||
+      (*authority_present == 0U && (*term != 0U || *context != 0U || *read_index != 0U))) {
+    return common::make_unexpected(
+        corruption("Raft read-authority response header semantics are invalid"));
+  }
+  return static_cast<std::size_t>(*total_size);
+}
+
 common::Result<std::vector<std::byte>>
 encode_raft_read_authority_request_v1(const RaftReadAuthorityRequest& request) {
   if (request.source_node_id == 0U || request.target_node_id == 0U ||
@@ -454,6 +573,227 @@ decode_raft_read_authority_response_v1(const common::ByteView bytes,
   }
   return RaftReadAuthorityResponse{*source,      *target, *group,
                                    *correlation, *status, std::move(authority)};
+}
+
+common::Result<RaftReadAuthorityRequestReadStep>
+RaftReadAuthorityRequestReader::consume(const common::ByteView bytes) {
+  if (failure_.has_value())
+    return common::make_unexpected(*failure_);
+  std::size_t consumed = 0U;
+  if (!expected_frame_bytes_.has_value()) {
+    const std::size_t copied =
+        std::min(bytes.size(), kRaftReadAuthorityRequestHeaderSize - buffered_bytes_);
+    std::ranges::copy(bytes.first(copied),
+                      frame_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_));
+    buffered_bytes_ += copied;
+    consumed += copied;
+    if (buffered_bytes_ != kRaftReadAuthorityRequestHeaderSize)
+      return RaftReadAuthorityRequestReadStep{.consumed_bytes = consumed};
+    auto expected = raft_read_authority_request_frame_length_v1(
+        common::ByteView{frame_}.first(kRaftReadAuthorityRequestHeaderSize));
+    if (!expected.has_value()) {
+      failure_.emplace(expected.error());
+      return common::make_unexpected(*failure_);
+    }
+    expected_frame_bytes_ = *expected;
+  }
+  const std::size_t copied =
+      std::min(bytes.size() - consumed, *expected_frame_bytes_ - buffered_bytes_);
+  std::ranges::copy(bytes.subspan(consumed, copied),
+                    frame_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_));
+  buffered_bytes_ += copied;
+  consumed += copied;
+  if (buffered_bytes_ != *expected_frame_bytes_)
+    return RaftReadAuthorityRequestReadStep{.consumed_bytes = consumed};
+  auto decoded = decode_raft_read_authority_request_v1(frame_);
+  if (!decoded.has_value()) {
+    failure_.emplace(decoded.error());
+    return common::make_unexpected(*failure_);
+  }
+  buffered_bytes_ = 0U;
+  expected_frame_bytes_.reset();
+  return RaftReadAuthorityRequestReadStep{.consumed_bytes = consumed, .request = *decoded};
+}
+
+std::size_t RaftReadAuthorityRequestReader::buffered_bytes() const noexcept {
+  return buffered_bytes_;
+}
+
+std::optional<std::size_t> RaftReadAuthorityRequestReader::expected_frame_bytes() const noexcept {
+  return expected_frame_bytes_;
+}
+
+bool RaftReadAuthorityRequestReader::failed() const noexcept {
+  return failure_.has_value();
+}
+
+RaftReadAuthorityResponseReader::RaftReadAuthorityResponseReader(
+    const RaftReadAuthorityTransportLimits limits) noexcept
+    : limits_(limits) {}
+
+RaftReadAuthorityResponseReader::RaftReadAuthorityResponseReader(
+    RaftReadAuthorityResponseReader&& other) noexcept
+    : limits_(other.limits_), header_(other.header_), header_bytes_(other.header_bytes_),
+      frame_(std::move(other.frame_)), frame_bytes_(other.frame_bytes_),
+      expected_frame_bytes_(other.expected_frame_bytes_), failure_(std::move(other.failure_)) {
+  other.reset_frame();
+  other.failure_.reset();
+}
+
+RaftReadAuthorityResponseReader&
+RaftReadAuthorityResponseReader::operator=(RaftReadAuthorityResponseReader&& other) noexcept {
+  if (this != &other) {
+    limits_ = other.limits_;
+    header_ = other.header_;
+    header_bytes_ = other.header_bytes_;
+    frame_ = std::move(other.frame_);
+    frame_bytes_ = other.frame_bytes_;
+    expected_frame_bytes_ = other.expected_frame_bytes_;
+    failure_ = std::move(other.failure_);
+    other.reset_frame();
+    other.failure_.reset();
+  }
+  return *this;
+}
+
+common::Result<RaftReadAuthorityResponseReader>
+RaftReadAuthorityResponseReader::create(const RaftReadAuthorityTransportLimits limits) {
+  if (!valid_limits(limits))
+    return common::make_unexpected(
+        invalid("Raft read-authority response reader limits are invalid"));
+  return RaftReadAuthorityResponseReader{limits};
+}
+
+common::Result<RaftReadAuthorityResponseReadStep>
+RaftReadAuthorityResponseReader::fail(common::Status status) {
+  failure_.emplace(std::move(status));
+  return common::make_unexpected(*failure_);
+}
+
+void RaftReadAuthorityResponseReader::reset_frame() noexcept {
+  header_bytes_ = 0U;
+  frame_.clear();
+  frame_bytes_ = 0U;
+  expected_frame_bytes_.reset();
+}
+
+common::Result<RaftReadAuthorityResponseReadStep>
+RaftReadAuthorityResponseReader::consume(const common::ByteView bytes) {
+  if (failure_.has_value())
+    return common::make_unexpected(*failure_);
+  std::size_t consumed = 0U;
+  if (!expected_frame_bytes_.has_value()) {
+    const std::size_t copied =
+        std::min(bytes.size(), kRaftReadAuthorityResponseHeaderSize - header_bytes_);
+    std::ranges::copy(bytes.first(copied),
+                      header_.begin() + static_cast<std::ptrdiff_t>(header_bytes_));
+    header_bytes_ += copied;
+    consumed += copied;
+    if (header_bytes_ != kRaftReadAuthorityResponseHeaderSize)
+      return RaftReadAuthorityResponseReadStep{.consumed_bytes = consumed};
+    auto expected = raft_read_authority_response_frame_length_v1(header_, limits_);
+    if (!expected.has_value())
+      return fail(expected.error());
+    try {
+      frame_.resize(*expected);
+    } catch (const std::bad_alloc&) {
+      return fail(exhausted("Raft read-authority response reader allocation failed"));
+    } catch (const std::length_error&) {
+      return fail(exhausted("Raft read-authority response frame exceeds containers"));
+    }
+    std::ranges::copy(header_, frame_.begin());
+    frame_bytes_ = kRaftReadAuthorityResponseHeaderSize;
+    expected_frame_bytes_ = *expected;
+  }
+  const common::ByteView remainder = bytes.subspan(consumed);
+  const std::size_t copied = std::min(remainder.size(), *expected_frame_bytes_ - frame_bytes_);
+  std::ranges::copy(remainder.first(copied),
+                    frame_.begin() + static_cast<std::ptrdiff_t>(frame_bytes_));
+  frame_bytes_ += copied;
+  consumed += copied;
+  if (frame_bytes_ != *expected_frame_bytes_)
+    return RaftReadAuthorityResponseReadStep{.consumed_bytes = consumed};
+  auto decoded = decode_raft_read_authority_response_v1(frame_, limits_);
+  if (!decoded.has_value())
+    return fail(decoded.error());
+  RaftReadAuthorityResponse response = std::move(*decoded);
+  reset_frame();
+  return RaftReadAuthorityResponseReadStep{.consumed_bytes = consumed,
+                                           .response = std::move(response)};
+}
+
+std::size_t RaftReadAuthorityResponseReader::buffered_bytes() const noexcept {
+  return expected_frame_bytes_.has_value() ? frame_bytes_ : header_bytes_;
+}
+
+std::optional<std::size_t> RaftReadAuthorityResponseReader::expected_frame_bytes() const noexcept {
+  return expected_frame_bytes_;
+}
+
+bool RaftReadAuthorityResponseReader::failed() const noexcept {
+  return failure_.has_value();
+}
+
+RaftReadAuthorityFrameWriteCursor::RaftReadAuthorityFrameWriteCursor(
+    std::vector<std::byte> encoded_frame) noexcept
+    : encoded_frame_(std::move(encoded_frame)) {}
+
+RaftReadAuthorityFrameWriteCursor::RaftReadAuthorityFrameWriteCursor(
+    RaftReadAuthorityFrameWriteCursor&& other) noexcept
+    : encoded_frame_(std::move(other.encoded_frame_)), written_bytes_(other.written_bytes_) {
+  other.written_bytes_ = other.encoded_frame_.size();
+}
+
+RaftReadAuthorityFrameWriteCursor&
+RaftReadAuthorityFrameWriteCursor::operator=(RaftReadAuthorityFrameWriteCursor&& other) noexcept {
+  if (this != &other) {
+    encoded_frame_ = std::move(other.encoded_frame_);
+    written_bytes_ = other.written_bytes_;
+    other.written_bytes_ = other.encoded_frame_.size();
+  }
+  return *this;
+}
+
+common::Result<RaftReadAuthorityFrameWriteCursor>
+RaftReadAuthorityFrameWriteCursor::create(std::vector<std::byte> encoded_frame,
+                                          const RaftReadAuthorityTransportLimits limits) {
+  if (!valid_limits(limits))
+    return common::make_unexpected(invalid("Raft read-authority write limits are invalid"));
+  if (encoded_frame.size() < kRequestMagic.size())
+    return common::make_unexpected(corruption("Raft read-authority frame is truncated"));
+  const common::ByteView bytes{encoded_frame};
+  if (std::ranges::equal(bytes.first(kRequestMagic.size()), kRequestMagic)) {
+    auto decoded = decode_raft_read_authority_request_v1(bytes);
+    if (!decoded.has_value())
+      return common::make_unexpected(decoded.error());
+  } else if (std::ranges::equal(bytes.first(kResponseMagic.size()), kResponseMagic)) {
+    auto decoded = decode_raft_read_authority_response_v1(bytes, limits);
+    if (!decoded.has_value())
+      return common::make_unexpected(decoded.error());
+  } else {
+    return common::make_unexpected(corruption("Raft read-authority frame magic is invalid"));
+  }
+  return RaftReadAuthorityFrameWriteCursor{std::move(encoded_frame)};
+}
+
+common::ByteView RaftReadAuthorityFrameWriteCursor::pending_write() const noexcept {
+  return common::ByteView{encoded_frame_}.subspan(written_bytes_);
+}
+
+common::Status
+RaftReadAuthorityFrameWriteCursor::consume_written(const std::size_t bytes) noexcept {
+  if (bytes > encoded_frame_.size() - written_bytes_)
+    return invalid("Raft read-authority write completion exceeds pending bytes");
+  written_bytes_ += bytes;
+  return common::Status::ok();
+}
+
+std::size_t RaftReadAuthorityFrameWriteCursor::written_bytes() const noexcept {
+  return written_bytes_;
+}
+
+bool RaftReadAuthorityFrameWriteCursor::complete() const noexcept {
+  return written_bytes_ == encoded_frame_.size();
 }
 
 RaftReadAuthorityReceiver::RaftReadAuthorityReceiver(

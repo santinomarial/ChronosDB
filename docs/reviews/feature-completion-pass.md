@@ -930,9 +930,9 @@ were deliberately not run.
 - The feature graph is not completely process-integrated. A three-daemon Linux gate now covers the
   packaged mutable row, global aggregate, expression/predicate, and row-backed grouped SQL surfaces
   before and after common-leader loss. A canonical authenticated remote read-authority codec and
-  receiver now cover the first split-leader prerequisite, but its carrier, daemon service, and
-  all-group attempt coordinator remain absent, as do multi-process real-CSEG execution and partition
-  schedules.
+  receiver, bounded stream owners, and mutual-TLS sessions now cover the first split-leader
+  prerequisites, but TCP endpoint ownership, daemon service, and all-group attempt coordinator
+  remain absent, as do multi-process real-CSEG execution and partition schedules.
 - Temporal corrections have durable WAL/CSEG v2/Manifest v2 composition; direct vector winner
   lowering and mixed WAL/Raft-source composition remain incomplete.
 - Distributed Native execution covers bounded row-backed multi-key/all-type grouping, global
