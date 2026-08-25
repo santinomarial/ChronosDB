@@ -677,6 +677,7 @@ add_library(
   src/cluster/distributed_vector_grouped_aggregate_shuffle_authority.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_reducer.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_retry.cpp
+  src/cluster/distributed_vector_grouped_aggregate_shuffle_source_plan.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_stream.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_client.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_server.cpp
@@ -1437,6 +1438,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_reducer_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_retry_header_self_contained.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_retry_test.cpp
+    tests/cluster/distributed_vector_grouped_aggregate_shuffle_source_plan_header_self_contained.cpp
+    tests/cluster/distributed_vector_grouped_aggregate_shuffle_source_plan_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_stream_header_self_contained.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_stream_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_client_header_self_contained.cpp
@@ -1605,6 +1608,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_authority_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_reducer_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_retry_allocation_failure_test.cpp
+    tests/cluster/distributed_vector_grouped_aggregate_shuffle_source_plan_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_stream_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_client_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_server_allocation_failure_test.cpp

@@ -180,6 +180,14 @@ order remains plan order for deterministic merge, while the sorted unique servin
 one contiguous partition per participating node. This mapping is deterministic and placement-aware
 but deliberately not load-aware; it does not consult route order, DNS, or live utilization.
 
+One atomic source-plan owner now joins that authority to canonical partitioning. It privately
+constructs every edge for one complete tablet stream. A self-route exact-decodes into the same
+complete-stream value accepted by the local reducer; a remote route becomes a finite byte-identical
+retry owner. Both paths recheck the frozen authority, empty partitions remain explicit, and the
+whole source fails before publication if any edge or total outer-byte bound fails. Extracting local
+and remote vectors transfers ownership without allocating. This is fan-out preparation, not yet
+the event-loop scheduler that drives all remote edges and destination reducers.
+
 ### Portable sufficient-state execution boundary
 
 `DistributedVectorGroupedAggregateQueryExecutionV2` now joins the compatible snapshot to the

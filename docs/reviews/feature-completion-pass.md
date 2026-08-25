@@ -1309,6 +1309,12 @@ were deliberately not run.
   set of exact serving nodes. Query drift, invalid identities, duplicates, lower bounds, and every
   observed allocation are fail-closed. Packaged all-edge ownership, result gathering, cancellation,
   fault qualification, and measurement remain open.
+- Atomic grouped shuffle source fan-out: one move-only owner joins canonical partitioning to every
+  authority edge before publication. Local self-routes become exact-decoded reducer streams;
+  remote routes become finite byte-identical retry owners. A focused mixed local/remote case proves
+  local reduction and remote attempt creation, while allocation injection proves failed fan-out
+  releases query reservations. Event-loop polling, destination integration, result gathering,
+  cancellation, and process qualification remain open.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
