@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace chronos::query {
@@ -177,6 +178,46 @@ private:
   bool emitted_{};
 };
 
+// The single query-accounted multi-key/all-type group-state owner used by local GROUP BY and
+// distributed sufficient-state workers. It preserves the existing canonical hash/equality,
+// first-seen order, fixed-capacity admission, cancellation, and aggregate kernels. Returned spans
+// borrow this thread-affine table and remain valid until its next mutating call, move, destruction,
+// or that group's materialization by the local operator.
+class MergeableVectorGroupedAggregateTable {
+public:
+  MergeableVectorGroupedAggregateTable() = delete;
+  ~MergeableVectorGroupedAggregateTable();
+  MergeableVectorGroupedAggregateTable(const MergeableVectorGroupedAggregateTable&) = delete;
+  MergeableVectorGroupedAggregateTable&
+  operator=(const MergeableVectorGroupedAggregateTable&) = delete;
+  MergeableVectorGroupedAggregateTable(MergeableVectorGroupedAggregateTable&&) noexcept;
+  MergeableVectorGroupedAggregateTable& operator=(MergeableVectorGroupedAggregateTable&&) noexcept;
+
+  [[nodiscard]] static common::Result<MergeableVectorGroupedAggregateTable>
+  create(const std::vector<VectorGroupKeyDefinition>& keys,
+         const std::vector<VectorAggregateDefinition>& definitions,
+         GroupedAggregateLimits limits = {});
+
+  [[nodiscard]] common::Result<void> accumulate(const AccountedVectorChunk& chunk,
+                                                const QueryResourceContext& resources);
+  [[nodiscard]] std::size_t group_count() const noexcept;
+  [[nodiscard]] common::Result<std::span<const ScalarValue>>
+  group_keys(std::size_t group_index) const;
+  [[nodiscard]] common::Result<std::span<const MergeableVectorAggregateState>>
+  group_states(std::size_t group_index) const;
+
+private:
+  class Impl;
+  explicit MergeableVectorGroupedAggregateTable(std::unique_ptr<Impl> impl) noexcept;
+  [[nodiscard]] common::Result<PhysicalOperatorStep>
+  materialize_group(std::size_t group_index, const QueryResourceContext& resources,
+                    VectorChunkLimits output_limits);
+
+  std::unique_ptr<Impl> impl_;
+
+  friend class GroupedAggregateOperator;
+};
+
 // Consumes its complete input stream into a finite query-accounted hash table and then emits one
 // canonical accounted row per pull in first-seen group order. Key order in each row is caller
 // order, followed by aggregate order. Empty input emits no groups. NULL key cells compare equal for
@@ -194,13 +235,12 @@ public:
   next(const QueryResourceContext& resources) override;
 
 private:
-  class Impl;
-
-  GroupedAggregateOperator(std::unique_ptr<PhysicalOperator> input, std::unique_ptr<Impl> impl,
+  GroupedAggregateOperator(std::unique_ptr<PhysicalOperator> input,
+                           MergeableVectorGroupedAggregateTable table,
                            VectorChunkLimits output_limits) noexcept;
 
   std::unique_ptr<PhysicalOperator> input_;
-  std::unique_ptr<Impl> impl_;
+  std::optional<MergeableVectorGroupedAggregateTable> table_;
   VectorChunkLimits output_limits_;
   std::size_t output_group_{};
   bool input_consumed_{};

@@ -1020,7 +1020,7 @@ retained_group_bytes(const std::vector<ScalarValue>& key,
 
 } // namespace
 
-class GroupedAggregateOperator::Impl {
+class MergeableVectorGroupedAggregateTable::Impl {
 public:
   struct EmittedGroup {
     std::vector<ColumnOutputPosition> positions;
@@ -1035,6 +1035,20 @@ public:
 
   [[nodiscard]] std::size_t group_count() const noexcept {
     return groups_.size();
+  }
+
+  [[nodiscard]] common::Result<std::span<const ScalarValue>>
+  group_keys(const std::size_t group_index) const {
+    if (group_index >= groups_.size())
+      return common::make_unexpected(out_of_range("grouped aggregate group index is invalid"));
+    return std::span<const ScalarValue>{groups_[group_index].key};
+  }
+
+  [[nodiscard]] common::Result<std::span<const MergeableVectorAggregateState>>
+  group_states(const std::size_t group_index) const {
+    if (group_index >= groups_.size())
+      return common::make_unexpected(out_of_range("grouped aggregate group index is invalid"));
+    return std::span<const MergeableVectorAggregateState>{groups_[group_index].aggregates};
   }
 
   [[nodiscard]] common::Result<void> consume(const VectorChunk& chunk,
@@ -1384,20 +1398,20 @@ private:
   QueryMemoryReservation group_storage_reservation_;
 };
 
-GroupedAggregateOperator::GroupedAggregateOperator(std::unique_ptr<PhysicalOperator> input,
-                                                   std::unique_ptr<Impl> impl,
-                                                   const VectorChunkLimits output_limits) noexcept
-    : input_(std::move(input)), impl_(std::move(impl)), output_limits_(output_limits) {}
+MergeableVectorGroupedAggregateTable::MergeableVectorGroupedAggregateTable(
+    std::unique_ptr<Impl> impl) noexcept
+    : impl_(std::move(impl)) {}
 
-GroupedAggregateOperator::~GroupedAggregateOperator() = default;
+MergeableVectorGroupedAggregateTable::~MergeableVectorGroupedAggregateTable() = default;
+MergeableVectorGroupedAggregateTable::MergeableVectorGroupedAggregateTable(
+    MergeableVectorGroupedAggregateTable&&) noexcept = default;
+MergeableVectorGroupedAggregateTable& MergeableVectorGroupedAggregateTable::operator=(
+    MergeableVectorGroupedAggregateTable&&) noexcept = default;
 
-common::Result<std::unique_ptr<PhysicalOperator>>
-GroupedAggregateOperator::create(std::unique_ptr<PhysicalOperator> input,
-                                 const std::vector<VectorGroupKeyDefinition>& keys,
-                                 const std::vector<VectorAggregateDefinition>& definitions,
-                                 const GroupedAggregateLimits limits) {
-  if (input == nullptr)
-    return common::make_unexpected(invalid("grouped aggregate input operator is required"));
+common::Result<MergeableVectorGroupedAggregateTable> MergeableVectorGroupedAggregateTable::create(
+    const std::vector<VectorGroupKeyDefinition>& keys,
+    const std::vector<VectorAggregateDefinition>& definitions,
+    const GroupedAggregateLimits limits) {
   if (limits.maximum_groups == 0U || limits.maximum_groups > kMaximumGroupedAggregateGroups ||
       limits.maximum_group_keys == 0U || limits.maximum_group_keys > kMaximumGroupedAggregateKeys ||
       limits.maximum_aggregates > kMaximumGroupedAggregateWidth ||
@@ -1452,15 +1466,78 @@ GroupedAggregateOperator::create(std::unique_ptr<PhysicalOperator> input,
       return common::make_unexpected(
           exhausted("grouped aggregate retained configuration exceeds its byte limit"));
     }
-    auto impl =
-        std::make_unique<Impl>(std::move(retained_keys), std::move(retained_definitions), limits);
-    return std::unique_ptr<PhysicalOperator>{
-        new GroupedAggregateOperator{std::move(input), std::move(impl), limits.output_limits}};
+    return MergeableVectorGroupedAggregateTable{
+        std::make_unique<Impl>(std::move(retained_keys), std::move(retained_definitions), limits)};
   } catch (const std::bad_alloc&) {
-    return common::make_unexpected(exhausted("grouped aggregate operator allocation failed"));
+    return common::make_unexpected(exhausted("grouped aggregate table allocation failed"));
   } catch (const std::length_error&) {
     return common::make_unexpected(
         exhausted("grouped aggregate configuration exceeds container limits"));
+  }
+}
+
+common::Result<void>
+MergeableVectorGroupedAggregateTable::accumulate(const AccountedVectorChunk& chunk,
+                                                 const QueryResourceContext& resources) {
+  if (impl_ == nullptr)
+    return common::make_unexpected(invalid("grouped aggregate table was moved from"));
+  if (!chunk.belongs_to(resources))
+    return common::make_unexpected(invalid("grouped aggregate input belongs to another query"));
+  return impl_->consume(chunk.chunk(), resources);
+}
+
+std::size_t MergeableVectorGroupedAggregateTable::group_count() const noexcept {
+  return impl_ == nullptr ? 0U : impl_->group_count();
+}
+
+common::Result<std::span<const ScalarValue>>
+MergeableVectorGroupedAggregateTable::group_keys(const std::size_t group_index) const {
+  if (impl_ == nullptr)
+    return common::make_unexpected(invalid("grouped aggregate table was moved from"));
+  return impl_->group_keys(group_index);
+}
+
+common::Result<std::span<const MergeableVectorAggregateState>>
+MergeableVectorGroupedAggregateTable::group_states(const std::size_t group_index) const {
+  if (impl_ == nullptr)
+    return common::make_unexpected(invalid("grouped aggregate table was moved from"));
+  return impl_->group_states(group_index);
+}
+
+common::Result<PhysicalOperatorStep>
+MergeableVectorGroupedAggregateTable::materialize_group(const std::size_t group_index,
+                                                        const QueryResourceContext& resources,
+                                                        const VectorChunkLimits output_limits) {
+  if (impl_ == nullptr)
+    return common::make_unexpected(invalid("grouped aggregate table was moved from"));
+  auto emitted = impl_->take_output(group_index, resources);
+  if (!emitted.has_value())
+    return common::make_unexpected(emitted.error());
+  return materialize_single_row(resources, std::move(emitted->positions), output_limits);
+}
+
+GroupedAggregateOperator::GroupedAggregateOperator(std::unique_ptr<PhysicalOperator> input,
+                                                   MergeableVectorGroupedAggregateTable table,
+                                                   const VectorChunkLimits output_limits) noexcept
+    : input_(std::move(input)), table_(std::move(table)), output_limits_(output_limits) {}
+
+GroupedAggregateOperator::~GroupedAggregateOperator() = default;
+
+common::Result<std::unique_ptr<PhysicalOperator>>
+GroupedAggregateOperator::create(std::unique_ptr<PhysicalOperator> input,
+                                 const std::vector<VectorGroupKeyDefinition>& keys,
+                                 const std::vector<VectorAggregateDefinition>& definitions,
+                                 const GroupedAggregateLimits limits) {
+  if (input == nullptr)
+    return common::make_unexpected(invalid("grouped aggregate input operator is required"));
+  auto table = MergeableVectorGroupedAggregateTable::create(keys, definitions, limits);
+  if (!table.has_value())
+    return common::make_unexpected(table.error());
+  try {
+    return std::unique_ptr<PhysicalOperator>{
+        new GroupedAggregateOperator{std::move(input), std::move(*table), limits.output_limits}};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("grouped aggregate operator allocation failed"));
   }
 }
 
@@ -1472,13 +1549,17 @@ GroupedAggregateOperator::next(const QueryResourceContext& resources) {
                      &resources](common::Status status) -> common::Result<PhysicalOperatorStep> {
     static_cast<void>(resources.request_cancel());
     input_.reset();
-    impl_.reset();
+    table_.reset();
     ended_ = true;
     return common::make_unexpected(std::move(status));
   };
   const common::Result<void> active = resources.check_cancelled();
   if (!active.has_value())
     return fail(active.error());
+  if (!table_.has_value())
+    return fail(invalid("grouped aggregate table is unavailable"));
+  // The explicit presence check above guards accesses until a branch resets the table and returns.
+  // NOLINTBEGIN(bugprone-unchecked-optional-access)
   if (!input_consumed_) {
     while (input_ != nullptr) {
       common::Result<PhysicalOperatorStep> step = input_->next(resources);
@@ -1493,22 +1574,20 @@ GroupedAggregateOperator::next(const QueryResourceContext& resources) {
         return fail(chunk.error());
       if (!chunk->belongs_to(resources))
         return fail(invalid("grouped aggregate input chunk belongs to another query"));
-      common::Result<void> consumed = impl_->consume(chunk->chunk(), resources);
+      common::Result<void> consumed = table_->accumulate(*chunk, resources);
       if (!consumed.has_value())
         return fail(consumed.error());
     }
     input_consumed_ = true;
   }
-  if (output_group_ >= impl_->group_count()) {
-    impl_.reset();
+  if (output_group_ >= table_->group_count()) {
+    table_.reset();
     ended_ = true;
     return PhysicalOperatorStep::end();
   }
-  common::Result<Impl::EmittedGroup> emitted = impl_->take_output(output_group_, resources);
-  if (!emitted.has_value())
-    return fail(emitted.error());
   common::Result<PhysicalOperatorStep> output =
-      materialize_single_row(resources, std::move(emitted->positions), output_limits_);
+      table_->materialize_group(output_group_, resources, output_limits_);
+  // NOLINTEND(bugprone-unchecked-optional-access)
   if (!output.has_value())
     return fail(output.error());
   ++output_group_;

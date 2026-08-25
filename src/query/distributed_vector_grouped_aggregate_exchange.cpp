@@ -89,19 +89,20 @@ validate_limits(const DistributedVectorGroupedAggregateExchangeDecodeLimits& lim
 }
 
 [[nodiscard]] common::Status
-validate_message(const DistributedVectorGroupedAggregateExchangeMessage& message,
+validate_message(const DistributedVectorGroupedAggregateExchangePosition& position,
+                 const std::span<const ScalarValue> keys,
+                 const std::span<const MergeableVectorAggregateState> states,
                  const std::span<const VectorGroupKeyDefinition> expected_keys,
                  const std::span<const VectorAggregateDefinition> expected_aggregates) {
   common::Status authority =
       validate_distributed_vector_grouped_aggregate_authority(expected_keys, expected_aggregates);
   if (!authority.is_ok())
     return authority;
-  const auto& position = message.position();
   if (position.query_id.is_nil() || position.tablet_id.uuid().is_nil())
     return invalid("distributed grouped aggregate exchange identity is invalid");
   if (position.empty) {
     if (position.group_count != 0U || position.group_ordinal != 0U || position.sequence != 1U ||
-        !position.terminal || !message.keys().empty() || !message.states().empty()) {
+        !position.terminal || !keys.empty() || !states.empty()) {
       return invalid("distributed grouped aggregate empty terminal is noncanonical");
     }
     return common::Status::ok();
@@ -113,13 +114,12 @@ validate_message(const DistributedVectorGroupedAggregateExchangeMessage& message
       position.terminal != (position.group_ordinal + 1U == position.group_count)) {
     return invalid("distributed grouped aggregate exchange position is noncanonical");
   }
-  if (message.keys().size() != expected_keys.size() ||
-      message.states().size() != expected_aggregates.size()) {
+  if (keys.size() != expected_keys.size() || states.size() != expected_aggregates.size()) {
     return invalid("distributed grouped aggregate exchange width differs from its fragment");
   }
   std::size_t key_payload_bytes = 0U;
   for (std::size_t index = 0U; index < expected_keys.size(); ++index) {
-    const ScalarValue& key = message.keys()[index];
+    const ScalarValue& key = keys[index];
     if (key.type() != std::optional<schema::LogicalType>{expected_keys[index].type} ||
         (key.is_null() && !expected_keys[index].nullable)) {
       return invalid("distributed grouped aggregate key differs from its fragment");
@@ -138,7 +138,7 @@ validate_message(const DistributedVectorGroupedAggregateExchangeMessage& message
     return exhausted("distributed grouped aggregate key payload exceeds its limit");
   }
   for (std::size_t index = 0U; index < expected_aggregates.size(); ++index) {
-    if (message.states()[index].definition() != expected_aggregates[index])
+    if (states[index].definition() != expected_aggregates[index])
       return invalid("distributed grouped aggregate state differs from its fragment");
   }
   return common::Status::ok();
@@ -341,8 +341,20 @@ encode_distributed_vector_grouped_aggregate_exchange_message(
     const DistributedVectorGroupedAggregateExchangeMessage& message,
     const std::span<const VectorGroupKeyDefinition> expected_keys,
     const std::span<const VectorAggregateDefinition> expected_aggregates) {
+  return encode_distributed_vector_grouped_aggregate_exchange_message(
+      message.position(), message.keys(), message.states(), expected_keys, expected_aggregates);
+}
+
+common::Result<EncodedDistributedVectorGroupedAggregateExchangeMessage>
+encode_distributed_vector_grouped_aggregate_exchange_message(
+    const DistributedVectorGroupedAggregateExchangePosition& position,
+    const std::span<const ScalarValue> keys,
+    const std::span<const MergeableVectorAggregateState> states,
+    const std::span<const VectorGroupKeyDefinition> expected_keys,
+    const std::span<const VectorAggregateDefinition> expected_aggregates) {
   using namespace distributed_vector_grouped_aggregate_exchange_format;
-  const common::Status validation = validate_message(message, expected_keys, expected_aggregates);
+  const common::Status validation =
+      validate_message(position, keys, states, expected_keys, expected_aggregates);
   if (!validation.is_ok())
     return common::make_unexpected(validation);
   try {
@@ -350,9 +362,9 @@ encode_distributed_vector_grouped_aggregate_exchange_message(
     std::vector<EncodedMergeableVectorAggregateState> encoded_states;
     std::size_t key_section_length = 0U;
     std::size_t state_section_length = 0U;
-    if (!message.position().empty) {
-      key_lengths.reserve(message.keys().size());
-      for (const ScalarValue& key : message.keys()) {
+    if (!position.empty) {
+      key_lengths.reserve(keys.size());
+      for (const ScalarValue& key : keys) {
         auto length = canonical_scalar_value_size(key);
         if (!length.has_value())
           return common::make_unexpected(length.error());
@@ -363,8 +375,8 @@ encode_distributed_vector_grouped_aggregate_exchange_message(
           return common::make_unexpected(next.error());
         key_section_length = *next;
       }
-      encoded_states.reserve(message.states().size());
-      for (const MergeableVectorAggregateState& state : message.states()) {
+      encoded_states.reserve(states.size());
+      for (const MergeableVectorAggregateState& state : states) {
         auto encoded = encode_mergeable_vector_aggregate_state(state);
         if (!encoded.has_value())
           return common::make_unexpected(encoded.error());
@@ -405,23 +417,23 @@ encode_distributed_vector_grouped_aggregate_exchange_message(
     if (status.is_ok())
       status = writer.write_u64_le(*frame_length);
     if (status.is_ok())
-      status = writer.write_exact(message.position().query_id.bytes());
+      status = writer.write_exact(position.query_id.bytes());
     if (status.is_ok())
-      status = writer.write_exact(message.position().tablet_id.bytes());
+      status = writer.write_exact(position.tablet_id.bytes());
     if (status.is_ok())
-      status = writer.write_u64_le(message.position().sequence);
+      status = writer.write_u64_le(position.sequence);
     if (status.is_ok())
-      status = writer.write_u32_le(message.position().group_ordinal);
+      status = writer.write_u32_le(position.group_ordinal);
     if (status.is_ok())
-      status = writer.write_u32_le(message.position().group_count);
-    if (status.is_ok())
-      status = writer.write_u32_le(
-          message.position().empty ? 0U : static_cast<std::uint32_t>(expected_keys.size()));
+      status = writer.write_u32_le(position.group_count);
     if (status.is_ok())
       status = writer.write_u32_le(
-          message.position().empty ? 0U : static_cast<std::uint32_t>(expected_aggregates.size()));
-    const std::uint32_t flags = (message.position().terminal ? kTerminalFlag : 0U) |
-                                (message.position().empty ? kEmptyFlag : 0U);
+          position.empty ? 0U : static_cast<std::uint32_t>(expected_keys.size()));
+    if (status.is_ok())
+      status = writer.write_u32_le(
+          position.empty ? 0U : static_cast<std::uint32_t>(expected_aggregates.size()));
+    const std::uint32_t flags =
+        (position.terminal ? kTerminalFlag : 0U) | (position.empty ? kEmptyFlag : 0U);
     if (status.is_ok())
       status = writer.write_u32_le(flags);
     if (status.is_ok())
@@ -432,9 +444,9 @@ encode_distributed_vector_grouped_aggregate_exchange_message(
       status = writer.zero_fill(8U);
     if (status.is_ok())
       status = writer.zero_fill(28U);
-    for (std::size_t index = 0U; status.is_ok() && index < message.keys().size(); ++index) {
+    for (std::size_t index = 0U; status.is_ok() && index < keys.size(); ++index) {
       const VectorGroupKeyDefinition& definition = expected_keys[index];
-      const ScalarValue& key = message.keys()[index];
+      const ScalarValue& key = keys[index];
       status = writer.write_u16_le(definition.type.code());
       if (status.is_ok())
         status = writer.write_u16_le(definition.type.parameter_0());

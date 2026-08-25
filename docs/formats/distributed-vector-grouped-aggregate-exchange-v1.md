@@ -1,7 +1,7 @@
 # Distributed Vector Grouped Aggregate Exchange v1
 
 > **Status: accepted and implemented for exact encoding, decoding, and bounded partial-I/O
-> ownership.** Worker accumulation, cross-tablet merging, authenticated query transport, and
+> ownership.** Worker plan execution, cross-tablet merging, authenticated query transport, and
 > partitioned shuffle remain separate owners.
 
 This distinct frame binds one multi-column group key tuple and zero or more

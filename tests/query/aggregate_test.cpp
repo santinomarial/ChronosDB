@@ -1,5 +1,6 @@
 #include "chronos/query/aggregate.hpp"
 #include "chronos/query/column_output.hpp"
+#include "chronos/query/distributed_vector_grouped_aggregate_exchange.hpp"
 #include "chronos/query/physical_plan.hpp"
 
 #include <algorithm>
@@ -864,6 +865,75 @@ TEST(GroupedAggregateOperatorTest, GroupsVariableKeysNullsAndAggregatesAcrossSel
   third = PhysicalOperatorStep::end();
   EXPECT_EQ(grouped->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(MergeableVectorGroupedAggregateTableTest,
+     ExposesTheSameFirstSeenMultiKeyStatesForCanonicalWorkerEncoding) {
+  QueryResourceContext resources = QueryResourceContext::create(8U << 20U).value();
+  const std::array<std::optional<std::string_view>, 5> key_values{"A", "B", "A", std::nullopt,
+                                                                  std::nullopt};
+  const std::array<std::optional<std::int64_t>, 5> input_values{1, 2, std::nullopt, 4, 6};
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(string_column(key_values));
+  columns.push_back(signed_column(schema::LogicalTypeKind::kInt64, input_values));
+  auto input = accounted_chunk(resources, std::move(columns));
+  const std::vector<VectorGroupKeyDefinition> group_keys{
+      {.column_ordinal = 0U, .type = type(schema::LogicalTypeKind::kString), .nullable = true}};
+  const std::vector<VectorAggregateDefinition> definitions{
+      {.operation = VectorAggregateOperation::kCountStar, .input = std::nullopt},
+      {.operation = VectorAggregateOperation::kSum,
+       .input = VectorAggregateInput{
+           .column_ordinal = 1U, .type = type(schema::LogicalTypeKind::kInt64), .nullable = true}}};
+  auto table = MergeableVectorGroupedAggregateTable::create(group_keys, definitions);
+  ASSERT_TRUE(table.has_value()) << table.error().to_string();
+  ASSERT_TRUE(table->accumulate(input, resources).has_value());
+  ASSERT_EQ(table->group_count(), 3U);
+
+  const std::array<std::optional<std::string_view>, 3> expected_keys{"A", "B", std::nullopt};
+  const std::array<std::int64_t, 3> expected_counts{2, 1, 2};
+  const std::array<std::int64_t, 3> expected_sums{1, 2, 10};
+  for (std::size_t group = 0U; group < table->group_count(); ++group) {
+    auto retained_keys = table->group_keys(group);
+    auto retained_states = table->group_states(group);
+    ASSERT_TRUE(retained_keys.has_value());
+    ASSERT_TRUE(retained_states.has_value());
+    ASSERT_EQ(retained_keys->size(), 1U);
+    ASSERT_EQ(retained_states->size(), 2U);
+    if (expected_keys[group].has_value()) {
+      EXPECT_EQ(std::get<std::string>((*retained_keys)[0].storage()),
+                expected_keys[group].value_or(std::string_view{}));
+    } else {
+      EXPECT_TRUE((*retained_keys)[0].is_null());
+    }
+    common::Uuid::Bytes query_bytes{};
+    common::Uuid::Bytes tablet_bytes{};
+    query_bytes.back() = std::byte{1U};
+    tablet_bytes.back() = std::byte{2U};
+    auto encoded = encode_distributed_vector_grouped_aggregate_exchange_message(
+        {.query_id = common::Uuid{query_bytes},
+         .tablet_id = schema::TabletId::from_bytes(tablet_bytes).value(),
+         .sequence = group + 1U,
+         .group_ordinal = static_cast<std::uint32_t>(group),
+         .group_count = static_cast<std::uint32_t>(table->group_count()),
+         .terminal = group + 1U == table->group_count(),
+         .empty = false},
+        *retained_keys, *retained_states, group_keys, definitions);
+    ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+    auto decoded = decode_distributed_vector_grouped_aggregate_exchange_message_exact(
+        encoded->bytes(), group_keys, definitions, resources);
+    ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+    auto decoded_states = std::move(*decoded).take_states();
+    auto count = std::move(decoded_states[0]).take_result();
+    auto sum = std::move(decoded_states[1]).take_result();
+    ASSERT_TRUE(count.has_value());
+    ASSERT_TRUE(sum.has_value());
+    EXPECT_EQ(std::get<std::int64_t>(count->storage()), expected_counts[group]);
+    EXPECT_EQ(std::get<std::int64_t>(sum->storage()), expected_sums[group]);
+  }
+  EXPECT_EQ(table->group_keys(3U).error().code(), common::StatusCode::kOutOfRange);
+  EXPECT_EQ(table->group_states(3U).error().code(), common::StatusCode::kOutOfRange);
+  table =
+      common::make_unexpected(common::Status{common::StatusCode::kInternal, "drop grouped table"});
 }
 
 TEST(GroupedAggregateOperatorTest, CanonicalHashMatchesFloatGroupingEquality) {

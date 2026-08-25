@@ -125,6 +125,11 @@ private:
   encode_distributed_vector_grouped_aggregate_exchange_message(
       const DistributedVectorGroupedAggregateExchangeMessage&,
       std::span<const VectorGroupKeyDefinition>, std::span<const VectorAggregateDefinition>);
+  friend common::Result<EncodedDistributedVectorGroupedAggregateExchangeMessage>
+  encode_distributed_vector_grouped_aggregate_exchange_message(
+      const DistributedVectorGroupedAggregateExchangePosition&, std::span<const ScalarValue>,
+      std::span<const MergeableVectorAggregateState>, std::span<const VectorGroupKeyDefinition>,
+      std::span<const VectorAggregateDefinition>);
 };
 
 [[nodiscard]] common::Status validate_distributed_vector_grouped_aggregate_authority(
@@ -138,6 +143,15 @@ private:
 [[nodiscard]] common::Result<EncodedDistributedVectorGroupedAggregateExchangeMessage>
 encode_distributed_vector_grouped_aggregate_exchange_message(
     const DistributedVectorGroupedAggregateExchangeMessage& message,
+    std::span<const VectorGroupKeyDefinition> expected_keys,
+    std::span<const VectorAggregateDefinition> expected_aggregates);
+
+// Borrowing worker-side form: the key/state owner must outlive this synchronous call. This avoids
+// moving query-accounted group storage or duplicating it merely to produce canonical bytes.
+[[nodiscard]] common::Result<EncodedDistributedVectorGroupedAggregateExchangeMessage>
+encode_distributed_vector_grouped_aggregate_exchange_message(
+    const DistributedVectorGroupedAggregateExchangePosition& position,
+    std::span<const ScalarValue> keys, std::span<const MergeableVectorAggregateState> states,
     std::span<const VectorGroupKeyDefinition> expected_keys,
     std::span<const VectorAggregateDefinition> expected_aggregates);
 

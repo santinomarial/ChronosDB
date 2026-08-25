@@ -16,14 +16,18 @@ kernel; versioned transport, scheduling, and spill remain separate work.
 - `VectorGroupKeyDefinition`, carrying one ordinal/type/nullability assertion;
 - `GroupedAggregateLimits`, bounding groups, keys, aggregates, variable key/extremum bytes,
   retained configuration, and output chunks; and
+- `MergeableVectorGroupedAggregateTable`, the move-only shared accumulator exposing borrowed
+  first-seen key/sufficient-state spans for synchronous distributed encoding; and
 - `GroupedAggregateOperator::create(input, keys, definitions, limits)`.
 
 [`physical_plan.hpp`](../../include/chronos/query/physical_plan.hpp) adds
 `GroupedAggregateStage`. Plan creation validates each key and aggregate input against the shape at
 that exact stage. Its output shape is every key in caller order followed by every aggregate result.
 
-The operator uniquely owns its child and retained state and remains thread-affine. Input cells are
-borrowed only during one synchronous pull. Returned chunks own their canonical bytes independently.
+The operator uniquely owns its child and one shared grouped table; both remain thread-affine. The
+table accepts only query-accounted chunks from its exact resource context. Input cells are borrowed
+only during synchronous accumulation. Key/state spans borrow the table until its next mutation,
+while returned local chunks and encoded distributed frames own their canonical bytes independently.
 
 ## Group semantics and state
 

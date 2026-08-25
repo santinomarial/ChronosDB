@@ -427,8 +427,10 @@ multi-key canonical scalar tuple and zero or more of those nested sufficient sta
 tablet, group ordinal/count/sequence, and terminal identity. It has a distinct empty-tablet
 terminal, reserves decoded key/container memory, and owns fragmented reads and short writes without
 changing legacy grouped or ungrouped bytes. Cross-frame retry arbitration, grouped worker
-accumulation, global group merge/finalization, authenticated transport, and shuffle routing still
-remain, so production sufficient-state grouped fragments continue to fail closed.
+execution, global group merge/finalization, authenticated transport, and shuffle routing still
+remain. The local grouped table now exposes the exact first-seen keys and unfinalized states through
+stable borrowed spans, and the encoder consumes those spans synchronously without copying or moving
+query-accounted state. Production sufficient-state grouped fragments still fail closed.
 The compatible Fragment-v2 snapshot now retains that definition vector once after deriving it under
 each tablet's exact destination schema and rejecting any cross-tablet difference. This matters when
 COUNT, AVG, or variance result descriptors hide the input type; later owners no longer need to

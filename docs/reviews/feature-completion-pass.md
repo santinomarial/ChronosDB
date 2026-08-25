@@ -895,6 +895,12 @@ Focused executions passed:
   query-accounted decoded keys, every-split coverage, and allocation injection pass. Worker-side
   grouped accumulation, stream arbitration, authenticated transport, global merge/finalization,
   and shuffle routing remain.
+- Shared grouped-state owner continuation: the local operator now composes one public move-only,
+  query-accounted table retaining the existing canonical hash/equality and all-type state kernels.
+  Accounted input ownership is exact, stable borrowed group spans feed the canonical grouped
+  encoder synchronously, and local output still materializes through the same table. Focused
+  encode/decode evidence proves COUNT/SUM states without a second grouping oracle. Worker plan
+  splitting, stream construction, global merge, transport, and routing remain.
 - Cross-tablet aggregate-definition ownership continuation: the compatible Fragment-v2 snapshot
   derives ungrouped definitions independently under every tablet's projected destination schema,
   rejects any exact mismatch, and retains the shared vector once with the Manifest pin and result

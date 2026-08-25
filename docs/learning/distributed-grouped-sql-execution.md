@@ -99,10 +99,11 @@ group state can publish output. Lazy decoding then keeps peak canonical input ow
 batch. The second linear pass is an explicit recoverability and memory-bound tradeoff.
 
 **What remains for scalable distributed grouping?** The versioned multi-key, all-type grouped-state
-frame now exists. Workers still need to feed it from the existing grouped hash/equality owner;
-coordinators need deterministic equal-key state merge, partition authority, bounded shuffle/skew
-policy, authenticated transport, and fault evidence. The row-backed path remains the differential
-oracle for that work.
+frame now exists, and the local grouped hash/equality/state table now exposes stable borrowed groups
+to its synchronous encoder without a second grouping oracle. Workers still need pre-group physical
+plan execution and stream construction; coordinators need deterministic equal-key state merge,
+partition authority, bounded shuffle/skew policy, authenticated transport, and fault evidence. The
+row-backed path remains the differential oracle for that work.
 
 ## Process qualification boundary
 
