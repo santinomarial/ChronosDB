@@ -135,8 +135,11 @@ amplification before a partial vector can escape. Allocation failure is likewise
 immutable owner can retry the same caller-owned input.
 
 This is not yet a network shuffle. The partition ID is owned beside the unchanged grouped frame;
-no transport currently binds hash version, partition count, destination node, or source set. The
-current packaged path therefore continues to send complete tablet streams to one coordinator.
+the complete shuffle authority now binds hash version, partition count, every ordered source
+tablet/node, every partition/destination node, and exact key/state shape. It permits local edges but
+requires them to bypass a self-network route. No carrier yet authenticates that authority or moves
+partition bytes, and the current packaged path therefore continues to send complete tablet streams
+to one coordinator.
 
 ### Portable sufficient-state execution boundary
 
