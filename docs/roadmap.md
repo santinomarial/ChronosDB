@@ -1437,8 +1437,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   transfer the complete bounded lifecycle into that scheduler. A distinct proof-revalidated mutable
   `TabletState` grouped worker now reacquires exact publication authority and emits the same
   canonical sufficient-state frames through a request-local production adapter without
-  reinterpreting Manifest/CSEG Fragment-v2 transport. Its distinct carrier and all-tablet Native
-  scheduler integration remain deferred. Schema-bound grouped SQL now has a separate direct-input
+  reinterpreting Manifest/CSEG Fragment-v2 transport. A distinct authenticated mutable grouped
+  endpoint now pairs the exact checksummed `CHDMREQ1` applied-head request with `CHDVGRP2` states,
+  binds fresh authority, atomically publishes only complete streams, and retries byte-identical
+  whole attempts under finite policy. Its mutual-TLS/TCP lifecycle and all-tablet Native scheduler
+  integration remain deferred. Schema-bound grouped SQL now has a separate direct-input
   lowerer that emits the exact unique projection, key/aggregate intent, event-time predicate,
   selected-output global order/limit, and typed result schema consumed by this scheduler. Checked
   final expressions, reordered or omitted keys, and their order/limit now run over the globally

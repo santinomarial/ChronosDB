@@ -1,8 +1,10 @@
 # Distributed Mutable Vector Query Transport v1
 
 > **Status: accepted and implemented.** This request frame carries one exact Distributed Mutable
-> Vector Fragment v1. Successful and failure responses reuse the schema-bound Distributed Vector
-> Query Response v2 frame and are decoded against the fragment's exact result schema.
+> Vector Fragment v1. Row-mode successful and failure responses reuse the schema-bound Distributed
+> Vector Query Response v2 frame and are decoded against the fragment's exact result schema.
+> The distinct mutable grouped endpoint pairs this same request with the authority-bound grouped
+> sufficient-state response v2 frame; no request bytes change.
 
 All integers are little-endian. The request is one 80-byte header, one exact mutable-fragment
 payload, and one four-byte complete-frame CRC32C trailer. Its maximum length is 4,344,256 bytes.
@@ -35,6 +37,12 @@ typed result-schema validation, optional leader hints, terminal sequencing, boun
 header/payload/frame CRCs, and no durable-Manifest authority. Mutable versus durable authority is
 therefore distinguished entirely by the request protocol and remains unavailable to the legacy
 request decoder.
+
+For `GROUPED_AGGREGATE` plans, `DistributedMutableVectorGroupedAggregateQueryReceiver` instead
+returns one or more `CHDVGRP2` frames. That endpoint binds exact grouped key/aggregate authority
+from the mutable fragment and requires a complete empty-or-contiguous state stream before exposing
+any response. The pairing does not make `CHDMREQ1` acceptable to the Manifest/CSEG grouped endpoint
+and does not make `CHDVREQ2` acceptable to the mutable worker.
 
 Unknown request versions return `NOT_SUPPORTED`; damaged request bytes return `CORRUPTION`;
 invalid encoder input returns `INVALID_ARGUMENT`; bounded-reader exhaustion returns

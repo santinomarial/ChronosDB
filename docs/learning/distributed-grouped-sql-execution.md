@@ -187,10 +187,12 @@ The packaged Native service currently binds mutable `TabletState` fragments. A d
 grouped worker now reacquires one coherent snapshot/schema/placement/group/barrier context,
 revalidates the exact fragment publication, runs the shared grouping pipeline, and emits the same
 canonical sufficient-state frames as the Manifest/CSEG worker. Its request-local production
-adapter deliberately does not implement the Fragment-v2 grouped transport interface: that carrier
-names a Manifest generation, while the mutable fragment names an exact applied head publication.
-A distinct mutable grouped carrier and scheduler composition remain before Native can choose this
-path. Until then, row-backed grouped execution remains the packaged differential oracle.
+adapter implements only the distinct mutable grouped service interface. The authenticated receiver
+and finite sender pair exact `CHDMREQ1` applied-head requests with authority-agnostic `CHDVGRP2`
+state responses, rebind fresh authority, and publish only a complete canonical stream. They cannot
+enter the Fragment-v2 endpoint because that request names a Manifest generation. Mutual-TLS/TCP and
+all-tablet scheduler composition remain before Native can choose this path. Until then, row-backed
+grouped execution remains the packaged differential oracle.
 
 ## Process qualification boundary
 

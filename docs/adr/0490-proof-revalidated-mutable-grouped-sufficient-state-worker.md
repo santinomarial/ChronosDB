@@ -39,6 +39,11 @@ execution. It deliberately implements no existing grouped transport interface: t
 accepts Fragment-v2 and therefore carries Manifest authority. A future mutable carrier must be
 distinct and versioned before this worker is connected to the all-tablet Native scheduler.
 
+**Retrospective (2026-08-25):** [ADR 0491](0491-distinct-mutable-grouped-sufficient-state-transport.md)
+adds that distinct endpoint by pairing the exact `CHDMREQ1` mutable request with the
+authority-agnostic `CHDVGRP2` response. The worker adapter now implements only the mutable grouped
+service interface; it still cannot be passed to the Fragment-v2 grouped endpoint.
+
 ## Consequences
 
 Current committed head publications can now produce the same multi-key/all-type sufficient state
@@ -94,7 +99,7 @@ worker and Manifest/CSEG grouped lifecycle.
 
 ## Unresolved questions
 
-- The distinct mutable grouped request/response carrier and authenticated retry policy.
+- Mutual-TLS/TCP ownership for the distinct mutable grouped request/response policy.
 - All-tablet scheduler composition and atomic Native selection between row-backed and state paths.
 - Computed pre-group program ownership and partitioned shuffle/skew policy.
 

@@ -2,6 +2,7 @@
 #define CHRONOS_SERVICE_REPLICATED_DISTRIBUTED_QUERY_WORKER_HPP_
 
 #include "chronos/cluster/distributed_grouped_query_transport.hpp"
+#include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_transport.hpp"
 #include "chronos/cluster/distributed_mutable_vector_query_transport.hpp"
 #include "chronos/cluster/distributed_query_transport.hpp"
 #include "chronos/cluster/distributed_vector_aggregate_query_transport_v2.hpp"
@@ -220,9 +221,10 @@ struct ReplicatedDistributedMutableVectorGroupedAggregateQueryWorkerConfig {
 };
 
 // Request-local grouped sufficient-state adapter for one proof-bound mutable TabletState
-// publication. This remains a distinct in-process authority boundary: the current Manifest/CSEG
-// grouped transport accepts Fragment-v2 and must not reinterpret this mutable fragment format.
-class ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker final {
+// publication. It implements only the mutable grouped endpoint: the Manifest/CSEG grouped
+// transport accepts Fragment-v2 and must not reinterpret this mutable fragment format.
+class ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker final
+    : public cluster::DistributedMutableVectorGroupedAggregateQueryWorkerService {
 public:
   ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker() = delete;
   ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker(
@@ -233,14 +235,14 @@ public:
       ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker&&) noexcept = default;
   ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker&
   operator=(ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker&&) noexcept = default;
-  ~ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker() = default;
+  ~ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker() override = default;
 
   [[nodiscard]] static common::Result<ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker>
   create(ReplicatedDistributedMutableVectorGroupedAggregateQueryWorkerConfig config);
   [[nodiscard]] common::Result<query::DistributedVectorGroupedAggregateAuthority>
-  bind_authority(const query::DistributedMutableVectorFragment& fragment);
+  bind_authority(const query::DistributedMutableVectorFragment& fragment) override;
   [[nodiscard]] common::Result<query::DistributedVectorGroupedAggregateWorkerResultV2>
-  execute(const query::DistributedMutableVectorFragment& fragment);
+  execute(const query::DistributedMutableVectorFragment& fragment) override;
 
 private:
   explicit ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker(

@@ -4,8 +4,9 @@
 > receiver, finite sender/retry owner, mutual-TLS session carrier, outbound nonblocking TCP owner,
 > bounded inbound TCP server, production real-CSEG inbound composition, all-tablet outbound
 > scheduling, atomic Native result finalization, and replicated Manifest-backed preparation.
-> Requests reuse the exact Fragment-v2 `CHDVREQ2` carrier. Mutable Native request routing remains a
-> separate worker/storage boundary.
+> Manifest/CSEG requests reuse the exact Fragment-v2 `CHDVREQ2` carrier. The distinct mutable
+> grouped endpoint reuses the exact mutable-fragment `CHDMREQ1` carrier with this same response
+> codec; endpoint types keep the two storage authorities disjoint.
 
 All integers are unsigned little-endian. Reserved bytes are zero. CRC32C detects accidental damage
 and is not authentication. The nested grouped payload retains its own independent checksums.
@@ -18,6 +19,12 @@ additionally admit only a `GROUPED_AGGREGATE` Fragment-v2 plan and bind its exac
 authority from current local schema/snapshot proof. Sharing the request preserves one canonical
 general-vector dispatch; endpoint capability and the distinct response magic prevent row,
 ungrouped-state, and grouped-state response confusion.
+
+The mutable grouped endpoint instead accepts exactly [Distributed Mutable Vector Query Transport
+v1](distributed-mutable-vector-query-transport-v1.md) `CHDMREQ1`, requires grouped mode, and binds
+authority from the exact applied-head proof. It may emit this document's `CHDVGRP2` response because
+the response carries no Manifest generation or mutable snapshot position. This combination is an
+endpoint policy, not a new wire version, and neither request can be decoded as the other.
 
 ## Response
 
@@ -132,7 +139,8 @@ The scheduler validates Native result bounds before acquisition and enters compl
 portable merge, pinned global order/limit, and complete Native batch encoding succeed. Terminal
 failure, deadline, or cancellation retains no physical or Native prefix.
 
-The transport and scheduler still own no process lifecycle, mutable Native worker integration,
-computed pre-group plan splitting/final projection, or shuffle routing. The replicated service
+The Manifest-backed transport and scheduler still own no process lifecycle, mutable Native
+scheduler integration, computed pre-group plan splitting/final projection, or shuffle routing. The
+replicated service
 prepares leader-linearizable or correlated bounded-stale Manifest-backed executions before this
 boundary.
