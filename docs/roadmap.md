@@ -1442,8 +1442,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   canonical remote read-authority protocol and authenticated receiver now return one exact
   quorum-confirmed barrier with its correlated stable-leader observation. Bounded stream ownership
   and authenticated mutual-TLS client/server sessions now carry one exact request. Deadline-bound
-  TCP connect and bounded listener/poll ownership make that exchange process-capable, while finite
-  route acquisition, daemon integration, and all-group attempt fan-out remain before arbitrary
+  TCP connect and bounded listener/poll ownership make that exchange process-capable. Finite
+  address rotation now preserves one immutable target/group/correlation under a capped retry and
+  backoff budget, while daemon integration and all-group attempt fan-out remain before arbitrary
   split-leader process coordination is implemented. Partitions, multi-process real-CSEG scans, and
   sufficient-state multi-key shuffle also remain open; the full phase exit gate is not claimed.
 

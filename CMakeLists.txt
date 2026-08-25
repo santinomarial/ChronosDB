@@ -688,6 +688,7 @@ add_library(
   src/cluster/raft_read_authority_tls_server.cpp
   src/cluster/raft_read_authority_tcp_client.cpp
   src/cluster/raft_read_authority_tcp_server.cpp
+  src/cluster/raft_read_authority_tcp_acquisition.cpp
   src/cluster/raft_observation_tls_client.cpp
   src/cluster/raft_observation_tcp_client.cpp
   src/cluster/raft_observation_tcp_acquisition.cpp
@@ -1448,6 +1449,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/raft_read_authority_tcp_client_header_self_contained.cpp
     tests/cluster/raft_read_authority_tcp_server_header_self_contained.cpp
     tests/cluster/raft_read_authority_tcp_test.cpp
+    tests/cluster/raft_read_authority_tcp_acquisition_header_self_contained.cpp
+    tests/cluster/raft_read_authority_tcp_acquisition_test.cpp
     tests/cluster/raft_observation_tls_client_header_self_contained.cpp
     tests/cluster/raft_observation_tls_client_test.cpp
     tests/cluster/raft_observation_tcp_client_header_self_contained.cpp

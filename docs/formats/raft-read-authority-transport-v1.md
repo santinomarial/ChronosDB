@@ -87,5 +87,7 @@ consume at most one frame per call, and expose any coalesced suffix through exac
 The move-only cursor owns short-write progress. Maintained mutual-TLS client/server sessions
 authenticate both node claims before request dispatch and impose exact handshake/exchange deadlines.
 Maintained TCP endpoints now own exact nonblocking connect completion, a separate connect deadline,
-bounded listener admission, finite accepts per poll, metrics, and TLS-before-descriptor shutdown.
-Finite route retries, daemon integration, and all-group query fan-out remain subsequent consumers.
+bounded listener admission, finite accepts per poll, metrics, and TLS-before-descriptor shutdown. A
+finite retry owner rotates a bounded immutable address snapshot under one capped attempt/backoff
+budget without changing request authority. Daemon integration and all-group query fan-out remain
+subsequent consumers.
