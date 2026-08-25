@@ -1,5 +1,6 @@
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_execution.hpp"
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_client.hpp"
+#include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_execution.hpp"
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_server.hpp"
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tls.hpp"
 #include "support/failing_allocator.hpp"
@@ -340,6 +341,44 @@ TEST(DistributedMutableVectorGroupedAggregateQueryTcpClientAllocationFailureTest
                                   .maximum_response_bytes = 1U << 20U}},
            .connect_timeout = std::chrono::milliseconds{1000}},
           DistributedMutableVectorGroupedAggregateQueryTcpClient::TimePoint::clock::now());
+    });
+    if (!result.has_value()) {
+      saw_failure = true;
+      EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted)
+          << result.error().to_string();
+      continue;
+    }
+    saw_success = true;
+    break;
+  }
+  EXPECT_TRUE(saw_failure);
+  EXPECT_TRUE(saw_success);
+}
+
+TEST(DistributedMutableVectorGroupedAggregateQueryTcpExecutionAllocationFailureTest,
+     ClassifiesRouteAndSchedulerOwnerAllocations) {
+  auto listener = network::TcpListener::bind();
+  auto tls_context = network::TlsClientContext::create(client_tls());
+  ASSERT_TRUE(listener.has_value()) << listener.error().to_string();
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  Authorizer authorizer;
+  Authenticator authenticator;
+  bool saw_failure{};
+  bool saw_success{};
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    SCOPED_TRACE(testing::Message{} << "fail_after=" << fail_after);
+    auto portable = DistributedMutableVectorGroupedAggregateQueryExecution::create(
+        1U, {fragment()}, keys(), aggregates());
+    ASSERT_TRUE(portable.has_value()) << portable.error().to_string();
+    DistributedMutableVectorGroupedAggregateQueryTcpExecutionConfig config{
+        .authenticator = &authenticator,
+        .node_authorizer = &authorizer,
+        .routes = {{.node_id = 2U,
+                    .endpoints = {listener->bound_endpoint()},
+                    .tls_context = &*tls_context}}};
+    auto result = run_failure(fail_after, [&] {
+      return DistributedMutableVectorGroupedAggregateQueryTcpExecution::create(std::move(*portable),
+                                                                               std::move(config));
     });
     if (!result.has_value()) {
       saw_failure = true;

@@ -200,9 +200,12 @@ shuts sessions down before its listener. A heap-stable production owner now comp
 local TabletState worker, receiver, and server in reverse-safe dependency order; binding and
 execution still acquire independent current authority. A distinct portable outbound owner retains
 one exact mutable fragment/sender per tablet, shared decode accounting, complete grouped authority,
-and the all-tablet coordinator without fabricating a Manifest generation. TCP polling and Native
-finalization remain before Native can choose this path. Until then, row-backed grouped execution
-remains the packaged differential oracle.
+and the all-tablet coordinator without fabricating a Manifest generation. A bounded TCP scheduler
+now prevalidates complete immutable routes and nested wire limits, rotates only within each target's
+finite address list, arbitrates retry and query deadlines, cancels all active clients on failure,
+and enables merged physical output only after every mutable tablet closes. Native finalization and
+scheduler publication remain before Native can choose this path. Until then, row-backed grouped
+execution remains the packaged differential oracle.
 
 ## Process qualification boundary
 

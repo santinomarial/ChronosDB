@@ -1451,7 +1451,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   authority independently for binding and execution. A distinct portable outbound owner now owns
   exact mutable fragments, finite senders, shared decode accounting, complete grouped authority,
   and atomic all-tablet coordinator closure without inventing a Manifest generation. TCP polling
-  and Native scheduler integration remain deferred.
+  now belongs to a bounded all-tablet owner that prevalidates complete routes and carrier limits,
+  rotates only within immutable target authority, owns retry/deadline/cancellation policy, preserves
+  cumulative metrics across finite proof-equivalent rebinding, and exposes merged physical rows
+  only after every terminal stream closes. Atomic Native scheduler publication remains deferred.
   Schema-bound grouped SQL now has a separate direct-input
   lowerer that emits the exact unique projection, key/aggregate intent, event-time predicate,
   selected-output global order/limit, and typed result schema consumed by this scheduler. Checked

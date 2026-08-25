@@ -74,9 +74,13 @@ Manifest-pinned execution owner.
 
 ## Unresolved questions
 
-- Bounded all-tablet TCP polling, route rotation, cancellation, and deadline ownership.
 - Atomic Native grouped finalization and scheduler publication.
 - Partitioned shuffle/skew policy and computed pre-group programs.
+
+**Retrospective (2026-08-25):** [ADR 0497](0497-bounded-mutable-grouped-sufficient-state-tcp-scheduling.md)
+adds the bounded all-tablet TCP poll owner, finite address rotation, deadline arbitration,
+cancellation, rebinding, and transport lifecycle metrics without changing the portable owner's
+transport-free contract.
 
 ## References
 
