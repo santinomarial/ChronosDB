@@ -198,9 +198,11 @@ into TLS. The complementary server bounds listener admission and per-poll accept
 descriptor/carrier pair, progresses finite deadlines, exposes saturated lifecycle metrics, and
 shuts sessions down before its listener. A heap-stable production owner now composes the request-
 local TabletState worker, receiver, and server in reverse-safe dependency order; binding and
-execution still acquire independent current authority. All-tablet scheduler composition remains
-before Native can choose this path. Until then, row-backed grouped execution remains the packaged
-differential oracle.
+execution still acquire independent current authority. A distinct portable outbound owner retains
+one exact mutable fragment/sender per tablet, shared decode accounting, complete grouped authority,
+and the all-tablet coordinator without fabricating a Manifest generation. TCP polling and Native
+finalization remain before Native can choose this path. Until then, row-backed grouped execution
+remains the packaged differential oracle.
 
 ## Process qualification boundary
 

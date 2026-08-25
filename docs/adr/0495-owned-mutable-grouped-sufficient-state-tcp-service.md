@@ -38,6 +38,10 @@ the underlying worker, receiver, transport, and server.
 The owner is single-thread-affine and borrows its context provider, authenticator, authorizer, and
 optional hint provider. No synchronization or inter-thread memory-ordering algorithm is introduced.
 
+**Retrospective (2026-08-25):** [ADR 0496](0496-portable-mutable-grouped-sufficient-state-execution.md)
+adds the complementary outbound portable owner for all-tablet mutable grouped senders, authority,
+and atomic coordinator closure. TCP polling and Native finalization remain separate.
+
 ## Affected invariants
 
 - [Invariant 5](../architecture/invariants.md): composition changes no durable or wire bytes.

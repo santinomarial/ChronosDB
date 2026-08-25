@@ -1,3 +1,4 @@
+#include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_execution.hpp"
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_client.hpp"
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_server.hpp"
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tls.hpp"
@@ -184,6 +185,40 @@ TEST(DistributedMutableVectorGroupedAggregateQueryReceiverAllocationFailureTest,
     EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
   }
   EXPECT_TRUE(success);
+}
+
+TEST(DistributedMutableVectorGroupedAggregateQueryExecutionAllocationFailureTest,
+     ClassifiesSenderAuthorityAndCoordinatorConstructionAllocations) {
+  bool saw_failure{};
+  bool saw_success{};
+  for (std::size_t fail_after = 0U; fail_after < 512U; ++fail_after) {
+    SCOPED_TRACE(testing::Message{} << "fail_after=" << fail_after);
+    auto first = fragment();
+    auto second = fragment();
+    second.tablet_id = id<schema::TabletId>(8U);
+    second.raft_group_id = uuid(9U);
+    std::vector fragments{std::move(first), std::move(second)};
+    auto owned_keys = keys();
+    auto owned_aggregates = aggregates();
+    auto result = run_failure(fail_after, [&] {
+      return DistributedMutableVectorGroupedAggregateQueryExecution::create(
+          1U, std::move(fragments), std::move(owned_keys), std::move(owned_aggregates),
+          {.coordinator = {.messages = {.maximum_messages_per_fragment = 2U,
+                                        .maximum_total_messages = 4U},
+                           .maximum_total_encoded_bytes = 1U << 20U},
+           .maximum_decode_memory_bytes = 1U << 20U});
+    });
+    if (!result.has_value()) {
+      saw_failure = true;
+      EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted)
+          << result.error().to_string();
+      continue;
+    }
+    saw_success = true;
+    break;
+  }
+  EXPECT_TRUE(saw_failure);
+  EXPECT_TRUE(saw_success);
 }
 
 TEST(DistributedMutableVectorGroupedAggregateQuerySenderAllocationFailureTest,
