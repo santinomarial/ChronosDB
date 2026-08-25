@@ -31,7 +31,8 @@ namespace {
 
 [[nodiscard]] bool
 valid_limits(const DistributedVectorGroupedAggregateFinalizationLimitsV2& limits) noexcept {
-  return limits.maximum_output_rows <= kMaximumDistributedVectorRowFinalizationRowsV2 &&
+  return query::sort_state_reservation_bytes(limits.sort).has_value() &&
+         limits.maximum_output_rows <= kMaximumDistributedVectorRowFinalizationRowsV2 &&
          limits.maximum_output_batches > 0U &&
          limits.maximum_output_batches <= query::kMaximumDistributedCoordinatorMessages &&
          limits.maximum_output_encoded_bytes > 0U &&
@@ -50,16 +51,16 @@ valid_limits(const DistributedVectorGroupedAggregateFinalizationLimitsV2& limits
 class GroupedExecutionSource final : public query::PhysicalOperator {
 public:
   explicit GroupedExecutionSource(
-      DistributedVectorGroupedAggregateQueryExecutionV2 execution) noexcept
-      : execution_(std::move(execution)) {}
+      DistributedVectorGroupedAggregateQueryExecutionV2& execution) noexcept
+      : execution_(std::addressof(execution)) {}
 
   [[nodiscard]] common::Result<query::PhysicalOperatorStep>
   next(const query::QueryResourceContext&) override {
-    return execution_.next();
+    return execution_->next();
   }
 
 private:
-  DistributedVectorGroupedAggregateQueryExecutionV2 execution_;
+  DistributedVectorGroupedAggregateQueryExecutionV2* execution_;
 };
 
 [[nodiscard]] common::Result<std::vector<std::byte>>
@@ -110,13 +111,21 @@ encode_chunk(const query::VectorChunk& chunk,
 
 } // namespace
 
+common::Status validate_distributed_vector_grouped_aggregate_finalization_limits_v2(
+    const DistributedVectorGroupedAggregateFinalizationLimitsV2& limits) noexcept {
+  return valid_limits(limits) ? common::Status::ok()
+                              : invalid("grouped finalization limits are invalid");
+}
+
 common::Result<DistributedVectorRowsFinalizedResultV2>
 finalize_distributed_vector_grouped_aggregate_v2(
-    DistributedVectorGroupedAggregateQueryExecutionV2&& input,
+    DistributedVectorGroupedAggregateQueryExecutionV2& input,
     const DistributedVectorGroupedAggregateFinalizationLimitsV2 limits) {
   try {
-    if (!valid_limits(limits))
-      return common::make_unexpected(invalid("grouped finalization limits are invalid"));
+    const common::Status limits_status =
+        validate_distributed_vector_grouped_aggregate_finalization_limits_v2(limits);
+    if (!limits_status.is_ok())
+      return common::make_unexpected(limits_status);
     const auto dispatches = input.snapshot().dispatches();
     if (dispatches.empty())
       return common::make_unexpected(invalid("grouped finalization snapshot is empty"));
@@ -184,7 +193,7 @@ finalize_distributed_vector_grouped_aggregate_v2(
     auto pipeline_plan = query::PhysicalPipelinePlan::create(shapes, std::move(stages));
     if (!pipeline_plan.has_value())
       return common::make_unexpected(pipeline_plan.error());
-    std::unique_ptr<query::PhysicalOperator> source{new GroupedExecutionSource{std::move(input)}};
+    std::unique_ptr<query::PhysicalOperator> source{new GroupedExecutionSource{input}};
     auto pipeline = pipeline_plan->instantiate(std::move(source));
     if (!pipeline.has_value())
       return common::make_unexpected(pipeline.error());

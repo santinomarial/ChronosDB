@@ -3,8 +3,8 @@
 > **Status:** accepted and implemented exact response codec, partial-I/O contract, authenticated
 > receiver, finite sender/retry owner, mutual-TLS session carrier, outbound nonblocking TCP owner,
 > bounded inbound TCP server, production real-CSEG inbound composition, and all-tablet outbound
-> scheduling. Requests reuse the exact Fragment-v2 `CHDVREQ2` carrier. Native grouped SQL result
-> finalization remains a separate follow-on boundary.
+> scheduling and atomic Native result finalization. Requests reuse the exact Fragment-v2
+> `CHDVREQ2` carrier. Replicated Native request routing remains a separate follow-on boundary.
 
 All integers are unsigned little-endian. Reserved bytes are zero. CRC32C detects accidental damage
 and is not authentication. The nested grouped payload retains its own independent checksums.
@@ -127,5 +127,9 @@ resource authority with every sender and client. Complete sender results enter t
 physical rows remain unavailable until every tablet and the global merge close. Leader hints remain
 advisory and never alter route or snapshot authority.
 
-The transport and scheduler still own no process lifecycle, Native protocol result packaging,
-computed pre-group plan splitting, or shuffle routing.
+The scheduler validates Native result bounds before acquisition and enters complete only after the
+portable merge, pinned global order/limit, and complete Native batch encoding succeed. Terminal
+failure, deadline, or cancellation retains no physical or Native prefix.
+
+The transport and scheduler still own no process lifecycle, replicated Native request preparation,
+computed pre-group plan splitting/final projection, or shuffle routing.

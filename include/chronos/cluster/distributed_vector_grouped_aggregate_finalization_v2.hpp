@@ -20,13 +20,16 @@ struct DistributedVectorGroupedAggregateFinalizationLimitsV2 {
   network::QueryResultLimits output_batch;
 };
 
-// Consumes one globally closed grouped sufficient-state execution. Exact pinned plan authority and
+[[nodiscard]] common::Status validate_distributed_vector_grouped_aggregate_finalization_limits_v2(
+    const DistributedVectorGroupedAggregateFinalizationLimitsV2& limits) noexcept;
+
+// Drains one globally closed grouped sufficient-state execution. Exact pinned plan authority and
 // raw key/state result shapes are revalidated before the shared physical sort/limit operators run.
 // No Native batch escapes until the complete pipeline succeeds; empty output retains one schema-
 // bearing payload.
 [[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2>
 finalize_distributed_vector_grouped_aggregate_v2(
-    DistributedVectorGroupedAggregateQueryExecutionV2&& input,
+    DistributedVectorGroupedAggregateQueryExecutionV2& input,
     DistributedVectorGroupedAggregateFinalizationLimitsV2 limits = {});
 
 } // namespace chronos::cluster

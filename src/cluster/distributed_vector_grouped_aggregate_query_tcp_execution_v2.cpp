@@ -87,6 +87,25 @@ valid_carrier_limits(const DistributedVectorGroupedAggregateQueryTlsLimitsV2& li
              query::distributed_vector_aggregate_state_format::kMaximumExtremumBytes;
 }
 
+[[nodiscard]] bool valid_finalization_authority(
+    const DistributedVectorGroupedAggregateQueryExecutionV2& execution,
+    const DistributedVectorGroupedAggregateFinalizationLimitsV2& limits) noexcept {
+  const auto& schema = execution.snapshot().result_schema();
+  const auto dispatches = execution.snapshot().dispatches();
+  if (dispatches.empty() || schema.columns.size() > limits.output_batch.maximum_columns)
+    return false;
+  const auto& plan = dispatches.front().plan;
+  if (plan.order_keys.size() > limits.sort.maximum_keys ||
+      (!plan.order_keys.empty() &&
+       (schema.columns.size() > limits.sort.output_limits.maximum_columns ||
+        limits.sort.output_limits.maximum_rows > limits.output_batch.maximum_rows))) {
+    return false;
+  }
+  return std::ranges::all_of(schema.columns, [&](const auto& column) {
+    return column.name.size() <= limits.output_batch.maximum_column_name_bytes;
+  });
+}
+
 } // namespace
 
 class DistributedVectorGroupedAggregateQueryTcpExecutionV2::Impl {
@@ -266,6 +285,11 @@ public:
     const common::Status finished = execution.finish();
     if (!finished.is_ok())
       return fail(finished);
+    auto finalized =
+        finalize_distributed_vector_grouped_aggregate_v2(execution, config.finalization_limits);
+    if (!finalized.has_value())
+      return fail(finalized.error());
+    execution_result.emplace(std::move(*finalized));
     execution_state = DistributedVectorGroupedAggregateQueryTcpExecutionStateV2::kComplete;
     return common::Status::ok();
   }
@@ -276,6 +300,7 @@ public:
   std::vector<pollfd> poll_descriptors;
   std::vector<std::size_t> poll_slot_indexes;
   DistributedVectorGroupedAggregateQueryTcpExecutionMetricsV2 execution_metrics;
+  std::optional<DistributedVectorRowsFinalizedResultV2> execution_result;
   DistributedVectorGroupedAggregateQueryTcpExecutionStateV2 execution_state{
       DistributedVectorGroupedAggregateQueryTcpExecutionStateV2::kRunning};
   common::Status execution_failure{
@@ -306,6 +331,10 @@ DistributedVectorGroupedAggregateQueryTcpExecutionV2::create(
       config.node_authorizer == nullptr || config.routes.empty() ||
       config.routes.size() > 65'536U || !valid_timeout(config.connect_timeout) ||
       !valid_carrier_limits(config.carrier_limits) ||
+      !validate_distributed_vector_grouped_aggregate_finalization_limits_v2(
+           config.finalization_limits)
+           .is_ok() ||
+      !valid_finalization_authority(execution, config.finalization_limits) ||
       execution.key_definitions().size() > config.carrier_limits.payload.maximum_group_keys ||
       execution.aggregate_definitions().size() > config.carrier_limits.payload.maximum_aggregates) {
     return common::make_unexpected(
@@ -486,15 +515,10 @@ DistributedVectorGroupedAggregateQueryTcpExecutionV2::metrics() const noexcept {
                          : DistributedVectorGroupedAggregateQueryTcpExecutionMetricsV2{};
 }
 
-common::Result<query::PhysicalOperatorStep>
-DistributedVectorGroupedAggregateQueryTcpExecutionV2::next() {
-  if (!implementation_ ||
-      implementation_->execution_state !=
-          DistributedVectorGroupedAggregateQueryTcpExecutionStateV2::kComplete) {
-    return common::make_unexpected(
-        invalid("vector grouped aggregate query v2 TCP output is unavailable before completion"));
-  }
-  return implementation_->execution.next();
+const std::optional<DistributedVectorRowsFinalizedResultV2>&
+DistributedVectorGroupedAggregateQueryTcpExecutionV2::result() const noexcept {
+  static const std::optional<DistributedVectorRowsFinalizedResultV2> empty;
+  return implementation_ ? implementation_->execution_result : empty;
 }
 
 const common::Status&

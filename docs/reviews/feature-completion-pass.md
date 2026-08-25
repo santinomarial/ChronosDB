@@ -963,6 +963,13 @@ Focused executions passed:
   unfinished input expose no prefix. Four focused cases pass under ASan/UBSan; the complete cluster
   and allocation-failure suites pass 246 of 246 and 31 of 31. TCP/service composition, computed
   grouped projection, pre-group splitting, and shuffle routing remain.
+- Atomic grouped Native TCP-publication continuation: the all-tablet scheduler now prevalidates
+  finalization bounds before I/O, drains the globally closed grouped stream through pinned order and
+  limit, and enters complete only after retaining every bounded Native batch. The real two-server
+  retry case proves no pre-completion result and exact decoded Native key/count output; invalid
+  finalization bounds, deadline, and cancellation retain no prefix. Four focused cases pass normally
+  and under ASan/UBSan; the complete cluster and allocation-failure suites pass 246 of 246 and 31 of
+  31. Replicated Native preparation/daemon routing, computed splitting, and shuffle remain.
 - Bounded global vector-row finalization continuation: one consuming final pass independently
   validates row-mode plan/schema shape, tablet-stream closure, native descriptors, and exact
   row/message/input/working/output bounds before decoded-state allocation. It stably orders every

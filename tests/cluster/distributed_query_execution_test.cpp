@@ -1117,12 +1117,12 @@ TEST(DistributedVectorGroupedAggregateFinalizationV2Test,
   ASSERT_TRUE(execution->finish().is_ok());
 
   auto finalized = finalize_distributed_vector_grouped_aggregate_v2(
-      std::move(*execution), {.maximum_output_rows = 1U,
-                              .maximum_output_batches = 1U,
-                              .maximum_output_encoded_bytes = std::size_t{1024U} * 1024U,
-                              .sort = {.maximum_rows = 2U,
-                                       .maximum_keys = 1U,
-                                       .maximum_state_bytes = std::size_t{1024U} * 1024U}});
+      *execution, {.maximum_output_rows = 1U,
+                   .maximum_output_batches = 1U,
+                   .maximum_output_encoded_bytes = std::size_t{1024U} * 1024U,
+                   .sort = {.maximum_rows = 2U,
+                            .maximum_keys = 1U,
+                            .maximum_state_bytes = std::size_t{1024U} * 1024U}});
   ASSERT_TRUE(finalized.has_value()) << finalized.error().to_string();
   EXPECT_EQ(finalized->row_count, 1U);
   ASSERT_EQ(finalized->encoded_batches.size(), 1U);
@@ -1156,7 +1156,7 @@ TEST(DistributedVectorGroupedAggregateFinalizationV2Test,
   auto limits_execution = DistributedVectorGroupedAggregateQueryExecutionV2::create(
       std::move(limits_input->vector_grouped_aggregate_snapshot));
   ASSERT_TRUE(limits_execution.has_value());
-  EXPECT_EQ(finalize_distributed_vector_grouped_aggregate_v2(std::move(*limits_execution),
+  EXPECT_EQ(finalize_distributed_vector_grouped_aggregate_v2(*limits_execution,
                                                              {.maximum_output_batches = 0U})
                 .error()
                 .code(),
@@ -1168,9 +1168,7 @@ TEST(DistributedVectorGroupedAggregateFinalizationV2Test,
   auto unfinished_execution = DistributedVectorGroupedAggregateQueryExecutionV2::create(
       std::move(unfinished_input->vector_grouped_aggregate_snapshot));
   ASSERT_TRUE(unfinished_execution.has_value());
-  EXPECT_EQ(finalize_distributed_vector_grouped_aggregate_v2(std::move(*unfinished_execution))
-                .error()
-                .code(),
+  EXPECT_EQ(finalize_distributed_vector_grouped_aggregate_v2(*unfinished_execution).error().code(),
             common::StatusCode::kInvalidArgument);
 }
 
@@ -1245,7 +1243,7 @@ TEST(DistributedVectorGroupedAggregateQueryTcpExecutionV2Test,
        .connect_timeout = std::chrono::milliseconds{1000},
        .execution_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5}});
   ASSERT_TRUE(scheduled.has_value()) << scheduled.error().to_string();
-  EXPECT_EQ(scheduled->next().error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_FALSE(scheduled->result().has_value());
   for (std::size_t iteration = 0U;
        iteration < 4096U &&
        scheduled->state() == DistributedVectorGroupedAggregateQueryTcpExecutionStateV2::kRunning;
@@ -1258,13 +1256,23 @@ TEST(DistributedVectorGroupedAggregateQueryTcpExecutionV2Test,
   ASSERT_EQ(scheduled->state(),
             DistributedVectorGroupedAggregateQueryTcpExecutionStateV2::kComplete)
       << scheduled->failure().to_string();
-  auto output = scheduled->next();
-  ASSERT_TRUE(output.has_value()) << output.error().to_string();
-  ASSERT_EQ(output->kind(), query::PhysicalOperatorStepKind::kChunk);
-  const query::VectorChunk& chunk = output->chunk()->chunk();
-  EXPECT_EQ(std::get<double>(grouped_cell(chunk, 0U).storage()), 1.5);
-  EXPECT_EQ(std::get<std::int64_t>(grouped_cell(chunk, 1U).storage()), 3);
-  EXPECT_EQ(scheduled->next()->kind(), query::PhysicalOperatorStepKind::kEnd);
+  ASSERT_TRUE(scheduled->result().has_value());
+  // Guarded by the completion state and result assertion above.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  ASSERT_EQ(scheduled->result()->encoded_batches.size(), 1U);
+  // Guarded by the result assertion above.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  auto decoded = network::decode_query_result_batch(scheduled->result()->encoded_batches.front());
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  ASSERT_EQ(decoded->row_count(), 1U);
+  const network::QueryResultCell* key = decoded->cell(0U, 0U);
+  const network::QueryResultCell* count = decoded->cell(0U, 1U);
+  ASSERT_NE(key, nullptr);
+  ASSERT_NE(count, nullptr);
+  common::ByteReader key_reader{key->value};
+  common::ByteReader count_reader{count->value};
+  EXPECT_EQ(*key_reader.read_float64_le(), 1.5);
+  EXPECT_EQ(*count_reader.read_i64_le(), 3);
   EXPECT_TRUE(scheduled->poll_once(std::chrono::milliseconds{0}).is_ok());
   EXPECT_EQ(first_worker.bind_calls, 1U);
   EXPECT_EQ(first_worker.execute_calls, 1U);
@@ -1310,6 +1318,23 @@ TEST(DistributedVectorGroupedAggregateQueryTcpExecutionV2Test,
                 .code(),
             common::StatusCode::kInvalidArgument);
 
+  TemporaryDirectory finalization_directory;
+  auto finalization_input = make_input(finalization_directory);
+  ASSERT_TRUE(finalization_input.has_value()) << finalization_input.error().to_string();
+  auto finalization_execution = DistributedVectorGroupedAggregateQueryExecutionV2::create(
+      std::move(finalization_input->vector_grouped_aggregate_snapshot));
+  ASSERT_TRUE(finalization_execution.has_value());
+  EXPECT_EQ(DistributedVectorGroupedAggregateQueryTcpExecutionV2::create(
+                std::move(*finalization_execution),
+                {.source_node_id = 1U,
+                 .authenticator = &authenticator,
+                 .node_authorizer = &authorizer,
+                 .routes = {first_route, second_route},
+                 .finalization_limits = {.maximum_output_batches = 0U}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
   TemporaryDirectory bounded_directory;
   auto bounded_input = make_input(bounded_directory);
   ASSERT_TRUE(bounded_input.has_value()) << bounded_input.error().to_string();
@@ -1347,6 +1372,7 @@ TEST(DistributedVectorGroupedAggregateQueryTcpExecutionV2Test,
             DistributedVectorGroupedAggregateQueryTcpExecutionStateV2::kCancelled);
   EXPECT_EQ(expired->metrics().attempts_started, 0U);
   EXPECT_EQ(expired->metrics().active_attempts, 0U);
+  EXPECT_FALSE(expired->result().has_value());
 
   TemporaryDirectory cancelled_directory;
   auto cancelled_input = make_input(cancelled_directory);
@@ -1368,6 +1394,7 @@ TEST(DistributedVectorGroupedAggregateQueryTcpExecutionV2Test,
   EXPECT_EQ(cancelled->state(),
             DistributedVectorGroupedAggregateQueryTcpExecutionStateV2::kCancelled);
   EXPECT_EQ(cancelled->metrics().active_attempts, 0U);
+  EXPECT_FALSE(cancelled->result().has_value());
   EXPECT_TRUE(listener->close().is_ok());
 }
 
