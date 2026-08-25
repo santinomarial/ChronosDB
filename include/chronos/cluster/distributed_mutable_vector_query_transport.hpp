@@ -16,6 +16,9 @@
 
 namespace chronos::cluster {
 
+inline constexpr std::array<std::byte, 8U> kDistributedMutableVectorQueryRequestMagicV1{
+    std::byte{'C'}, std::byte{'H'}, std::byte{'D'}, std::byte{'M'},
+    std::byte{'R'}, std::byte{'E'}, std::byte{'Q'}, std::byte{'1'}};
 inline constexpr std::size_t kDistributedMutableVectorQueryRequestHeaderSize = 80U;
 inline constexpr std::size_t kDistributedMutableVectorQueryRequestTrailerSize = 4U;
 inline constexpr std::size_t kMaximumDistributedMutableVectorQueryRequestSize =

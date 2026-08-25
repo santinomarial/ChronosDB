@@ -95,3 +95,6 @@ complete authority vector. Daemon listener and Native query integration remain s
 The production service adapter now issues only the requested configured group through the existing
 durable replicated barrier owner on a non-poll thread. Daemon listener and Native query integration
 remain subsequent consumers.
+The implemented shared query-control listener authenticates the client certificate before reading
+the eight-byte application magic and selects this protocol only for exact `CHRRAUQ1`; mutable
+`CHDMREQ1` requests retain their separate reader and all other magic is rejected without dispatch.

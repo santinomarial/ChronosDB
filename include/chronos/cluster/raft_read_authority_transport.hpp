@@ -17,6 +17,9 @@
 
 namespace chronos::cluster {
 
+inline constexpr std::array<std::byte, 8U> kRaftReadAuthorityRequestMagicV1{
+    std::byte{'C'}, std::byte{'H'}, std::byte{'R'}, std::byte{'R'},
+    std::byte{'A'}, std::byte{'U'}, std::byte{'Q'}, std::byte{'1'}};
 inline constexpr std::size_t kRaftReadAuthorityRequestHeaderSize = 80U;
 inline constexpr std::size_t kRaftReadAuthorityRequestSize = 84U;
 inline constexpr std::size_t kRaftReadAuthorityResponseHeaderSize = 128U;

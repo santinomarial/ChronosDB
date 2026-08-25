@@ -17,9 +17,7 @@
 namespace chronos::cluster {
 namespace {
 
-inline constexpr std::array<std::byte, 8U> kRequestMagic{
-    std::byte{'C'}, std::byte{'H'}, std::byte{'D'}, std::byte{'M'},
-    std::byte{'R'}, std::byte{'E'}, std::byte{'Q'}, std::byte{'1'}};
+inline constexpr auto kRequestMagic = kDistributedMutableVectorQueryRequestMagicV1;
 inline constexpr std::uint16_t kMajor = 1U;
 inline constexpr std::uint16_t kMinor = 0U;
 inline constexpr std::size_t kHeaderCrcOffset = 76U;

@@ -50,7 +50,11 @@ both subsets before global ordering, LIMIT, and Native encoding. The barrier res
 stable per-group vector rather than a globally atomic cross-group instant.
 
 The private query listener has its own joined poll thread because worker execution is synchronous
-and must not delay Raft transport polling. The heap-owned query bundle keeps the peer authority,
+and the authenticated shared query-control owner can also issue one remote Raft read authority.
+It authenticates a peer before selecting the request protocol by frozen magic. Authority service
+calls may wait on this thread only because the distinct Raft transport thread continues driving
+their durable and quorum completion; query-control work must not delay Raft transport polling. The
+heap-owned query bundle keeps the peer authority,
 TLS contexts, local worker, listener, and borrowed Native config address-stable. Its release/acquire
 stop and failure flags have the same publication argument as the existing worker threads: stop is
 visible before loop exit, and failure is visible before the main thread reports termination.

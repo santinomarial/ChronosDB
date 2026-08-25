@@ -18,9 +18,7 @@
 namespace chronos::cluster {
 namespace {
 
-constexpr std::array<std::byte, 8U> kRequestMagic{std::byte{'C'}, std::byte{'H'}, std::byte{'R'},
-                                                  std::byte{'R'}, std::byte{'A'}, std::byte{'U'},
-                                                  std::byte{'Q'}, std::byte{'1'}};
+constexpr auto kRequestMagic = kRaftReadAuthorityRequestMagicV1;
 constexpr std::array<std::byte, 8U> kResponseMagic{std::byte{'C'}, std::byte{'H'}, std::byte{'R'},
                                                    std::byte{'R'}, std::byte{'A'}, std::byte{'U'},
                                                    std::byte{'R'}, std::byte{'1'}};

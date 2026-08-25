@@ -1448,7 +1448,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   cancels all siblings on one failure, and withholds the authority vector until the whole attempt
   succeeds. A production adapter now issues only one requested configured group through the durable
   replicated barrier owner while a separate Raft poll thread drives completion. Daemon listener
-  and Native query integration remain before arbitrary split-leader
+  composition can now reuse the one committed private endpoint: a bounded mutual-TLS owner
+  authenticates before selecting mutable-query or read-authority framing by exact frozen magic.
+  Packaged listener replacement and Native query integration remain before arbitrary split-leader
   process coordination is implemented. Partitions, multi-process real-CSEG scans, and
   sufficient-state multi-key shuffle also remain open; the full phase exit gate is not claimed.
 

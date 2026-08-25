@@ -1038,7 +1038,8 @@ were deliberately not run.
   Remote read-authority transport now also has bounded mutual-TLS/TCP owners, finite immutable-route
   retry, and concurrent all-or-nothing group fan-out; the packaged daemon and Native query path do
   not yet consume that authority endpoint. A production service adapter now issues one exact group
-  through the durable replicated barrier owner on a required non-poll thread.
+  through the durable replicated barrier owner on a required non-poll thread. One bounded shared
+  private endpoint can authenticate before routing either existing mutable or authority protocol.
   The packaged daemon now binds the committed local private query endpoint, reuses the immutable
   authenticated peer bundle for inbound/outbound query TLS, polls synchronous workers separately
   from Raft, and extends its three-process gate through remote SELECT before and after tablet-leader

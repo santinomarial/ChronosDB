@@ -26,6 +26,9 @@ requires a previously authenticated peer result, authorizes its principal for th
 node, validates the local target, and only then invokes an embedding-owned worker. The implemented
 mutable mutual-TLS server produces that peer result before reading request bytes; its client also
 authenticates and node-authorizes the server before writing them.
+The implemented shared query-control server also authenticates the client certificate before
+reading the eight-byte application magic, then selects this reader only for exact `CHDMREQ1`.
+`CHRRAUQ1` selects the distinct read-authority reader; unknown magic invokes neither receiver.
 
 Responses use `CHDVRSP2` unchanged because the response already carries query/tablet correlation,
 typed result-schema validation, optional leader hints, terminal sequencing, bounded payloads,
