@@ -95,10 +95,10 @@ grouped_finalization_authority(const DistributedVectorGroupedAggregateQueryExecu
                                       .input_column_count = *input_column_count};
 }
 
-class ShuffleFinalizationInput {
+template <typename Execution> class ShuffleFinalizationInput {
 public:
   ShuffleFinalizationInput(
-      DistributedVectorGroupedAggregateShuffleResultExecution& input,
+      Execution& input,
       const DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2& authority) noexcept
       : input_(input), authority_(authority) {}
 
@@ -121,13 +121,14 @@ public:
   }
 
 private:
-  std::reference_wrapper<DistributedVectorGroupedAggregateShuffleResultExecution> input_;
+  std::reference_wrapper<Execution> input_;
   std::reference_wrapper<const DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2>
       authority_;
 };
 
+template <typename Execution>
 [[nodiscard]] common::Result<GroupedFinalizationAuthority>
-grouped_finalization_authority(const ShuffleFinalizationInput& input) {
+grouped_finalization_authority(const ShuffleFinalizationInput<Execution>& input) {
   return GroupedFinalizationAuthority{.plan = std::addressof(input.authority().plan()),
                                       .result_schema =
                                           std::addressof(input.authority().result_schema()),
@@ -483,7 +484,8 @@ finalize_distributed_vector_grouped_aggregate_shuffle_v2(
     return common::make_unexpected(
         invalid("grouped shuffle finalization authority object differs"));
   }
-  ShuffleFinalizationInput adapted{input, authority};
+  ShuffleFinalizationInput<DistributedVectorGroupedAggregateShuffleResultExecution> adapted{
+      input, authority};
   return finalize_distributed_vector_grouped_aggregate_impl_v2(adapted, nullptr, limits);
 }
 
@@ -497,7 +499,39 @@ finalize_distributed_vector_grouped_aggregate_shuffle_with_projection_v2(
     return common::make_unexpected(
         invalid("grouped shuffle finalization authority object differs"));
   }
-  ShuffleFinalizationInput adapted{input, authority};
+  ShuffleFinalizationInput<DistributedVectorGroupedAggregateShuffleResultExecution> adapted{
+      input, authority};
+  return finalize_distributed_vector_grouped_aggregate_impl_v2(adapted, &projection, limits);
+}
+
+common::Result<DistributedVectorRowsFinalizedResultV2>
+finalize_distributed_vector_grouped_aggregate_shuffle_v2(
+    DistributedVectorGroupedAggregateShuffleCollectedResultExecution& input,
+    const DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2& authority,
+    const DistributedVectorGroupedAggregateFinalizationLimitsV2 limits) {
+  if (input.authority() != std::addressof(authority.shuffle_authority()) ||
+      input.result_schema() != std::addressof(authority.result_schema())) {
+    return common::make_unexpected(
+        invalid("collected grouped shuffle finalization authority object differs"));
+  }
+  ShuffleFinalizationInput<DistributedVectorGroupedAggregateShuffleCollectedResultExecution>
+      adapted{input, authority};
+  return finalize_distributed_vector_grouped_aggregate_impl_v2(adapted, nullptr, limits);
+}
+
+common::Result<DistributedVectorRowsFinalizedResultV2>
+finalize_distributed_vector_grouped_aggregate_shuffle_with_projection_v2(
+    DistributedVectorGroupedAggregateShuffleCollectedResultExecution& input,
+    const DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2& authority,
+    const query::DistributedVectorGroupedAggregateCoordinatorProjection& projection,
+    const DistributedVectorGroupedAggregateFinalizationLimitsV2 limits) {
+  if (input.authority() != std::addressof(authority.shuffle_authority()) ||
+      input.result_schema() != std::addressof(authority.result_schema())) {
+    return common::make_unexpected(
+        invalid("collected grouped shuffle finalization authority object differs"));
+  }
+  ShuffleFinalizationInput<DistributedVectorGroupedAggregateShuffleCollectedResultExecution>
+      adapted{input, authority};
   return finalize_distributed_vector_grouped_aggregate_impl_v2(adapted, &projection, limits);
 }
 

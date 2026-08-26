@@ -3,6 +3,7 @@
 
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_execution.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_query_execution_v2.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_collected_result_execution.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_result_execution.hpp"
 #include "chronos/cluster/distributed_vector_row_finalization_v2.hpp"
 #include "chronos/common/result.hpp"
@@ -107,6 +108,22 @@ finalize_distributed_vector_grouped_aggregate_shuffle_v2(
 [[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2>
 finalize_distributed_vector_grouped_aggregate_shuffle_with_projection_v2(
     DistributedVectorGroupedAggregateShuffleResultExecution& input,
+    const DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2& authority,
+    const query::DistributedVectorGroupedAggregateCoordinatorProjection& projection,
+    DistributedVectorGroupedAggregateFinalizationLimitsV2 limits = {});
+
+// Independent reducer processes return canonical Native batches. This overload drains their
+// partition-ordered, accounted materialization only when it borrows the exact raw schema owned by
+// the fragment-derived finalization authority.
+[[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2>
+finalize_distributed_vector_grouped_aggregate_shuffle_v2(
+    DistributedVectorGroupedAggregateShuffleCollectedResultExecution& input,
+    const DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2& authority,
+    DistributedVectorGroupedAggregateFinalizationLimitsV2 limits = {});
+
+[[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2>
+finalize_distributed_vector_grouped_aggregate_shuffle_with_projection_v2(
+    DistributedVectorGroupedAggregateShuffleCollectedResultExecution& input,
     const DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2& authority,
     const query::DistributedVectorGroupedAggregateCoordinatorProjection& projection,
     DistributedVectorGroupedAggregateFinalizationLimitsV2 limits = {});

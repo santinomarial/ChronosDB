@@ -675,6 +675,7 @@ add_library(
   src/cluster/distributed_vector_aggregate_query_execution_v2.cpp
   src/cluster/distributed_vector_grouped_aggregate_finalization_v2.cpp
   src/cluster/distributed_vector_grouped_aggregate_query_execution_v2.cpp
+  src/cluster/distributed_vector_grouped_aggregate_shuffle_collected_result_execution.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_ack.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_authority.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_destination_execution.cpp
@@ -1444,6 +1445,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/distributed_vector_physical_rows_finalization_v2_test.cpp
     tests/cluster/distributed_vector_aggregate_query_execution_v2_header_self_contained.cpp
     tests/cluster/distributed_vector_grouped_aggregate_query_execution_v2_header_self_contained.cpp
+    tests/cluster/distributed_vector_grouped_aggregate_shuffle_collected_result_execution_header_self_contained.cpp
+    tests/cluster/distributed_vector_grouped_aggregate_shuffle_collected_result_execution_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_ack_header_self_contained.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_ack_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_authority_header_self_contained.cpp
@@ -1644,6 +1647,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/distributed_vector_aggregate_rows_finalization_v2_allocation_failure_test.cpp
     tests/cluster/distributed_vector_physical_rows_finalization_v2_allocation_failure_test.cpp
     tests/cluster/distributed_vector_aggregate_query_transport_v2_allocation_failure_test.cpp
+    tests/cluster/distributed_vector_grouped_aggregate_shuffle_collected_result_execution_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_ack_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_query_transport_v2_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_authority_allocation_failure_test.cpp

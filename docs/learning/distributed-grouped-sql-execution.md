@@ -258,9 +258,23 @@ connected result carrier now drives
 both through nonblocking mutual TLS: the reducer authorizes the coordinator before writing, the
 coordinator authenticates the reducer before application reads, and one-shot result transfer is
 unavailable until the receipt is fully written. TCP ownership, retry, and process lifecycle
-composition remain next. A finite retry owner now retains one immutable partition and reconstructs
+composition remain separate. A finite retry owner now retains one immutable partition and reconstructs
 byte-identical whole-stream attempts after capped backoff; only a validated receipt ends it in
-success.
+success. A deadline-bound TCP client proves nonblocking connect completion before transferring that
+attempt into mutual TLS, while a bounded server caps accepted descriptors, active sessions, and
+per-poll work. The all-remote collector preallocates one slot per authority partition, suppresses
+exact retransmissions, rejects conflicting duplicates, and publishes only complete canonical
+partition order.
+
+Collected Native batches now enter the existing global grouped SQL pipeline through a move-only
+materializer. It reconstructs each stream extent before execution, decodes one nonempty batch at a
+time, reserves its complete physical footprint from a distinct query resource context, and emits
+canonical accounted chunks. Finalization additionally requires the exact raw-schema object owned
+by the fragment-derived plan authority, then reuses the established checked projection, global
+`ORDER BY`, `LIMIT`, and atomic Native encoder. Focused coverage proves two remote reducer
+partitions are globally ordered and limited only after complete collection. One owner that jointly
+schedules result retries, server progress, collection, cancellation, and final publication remains
+separate lifecycle work.
 
 ### Portable sufficient-state execution boundary
 
