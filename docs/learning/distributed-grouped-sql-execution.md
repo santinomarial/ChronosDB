@@ -242,6 +242,12 @@ deadline, and whole-query rebinding authority. With no provider, the direct grou
 remains the default. Selection never silently falls back after worker or shuffle work begins.
 Independent-process result return is still separate.
 
+The first independent-process return boundary is now explicit. `CHDVGRR1` carries one reduced
+partition chunk or canonical empty terminal from the authority destination node to an explicit
+coordinator. Query, partition, hash version, nodes, sequence, raw grouped schema, Native
+descriptors, payload, and complete frame are checked before publication. This is the versioned
+result product; authenticated complete-stream sessions and lifecycle composition still remain.
+
 ### Portable sufficient-state execution boundary
 
 `DistributedVectorGroupedAggregateQueryExecutionV2` now joins the compatible snapshot to the

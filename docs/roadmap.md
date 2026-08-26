@@ -1584,11 +1584,13 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   finalizes Native output; a two-node bidirectional mTLS loopback exercises that composition.
   Mutable worker scheduling now composes with this lifecycle through a one-shot, complete canonical
   source-stream handoff while retaining the existing direct path as the default. Independent-process
-  partition-result transport is still missing. The computed path now has a
-  standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec. Mutable
-  in-memory binding now owns it, proves every source leaf against the exact schema, derives plan and
-  result shapes from its outputs, and executes it locally before grouping. Backward-compatible
-  Mutable Fragment v2 now carries the exact program through existing authenticated request
+  partition-result sessions are still missing. A versioned, checksummed, authority- and raw-schema-
+  bound reduced-partition result frame now defines the cross-process product, including canonical
+  empty terminal, bounded header-first reads, and partial-write ownership. The computed path now
+  has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
+  Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives
+  plan and result shapes from its outputs, and executes it locally before grouping.
+  Backward-compatible Mutable Fragment v2 now carries the exact program through authenticated request
   transport while preserving v1 bytes for fragments without one. Replicated Native SQL can
   now explicitly select the composition through a deployment-owned per-query provider that supplies
   fresh destination/listener/route configuration while service-owned SQL and protocol bounds remain
@@ -1601,8 +1603,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   and aggregate inputs into that owned program, replicated preparation transfers it through every
   exact fragment, and both local and authenticated remote Native execution use the sufficient-state
   path. The complete logical identity rejects mixed programs and computation-changing authority
-  retries. Independent-process shuffle result return and the remaining unsupported SQL vocabulary
-  still prevent making the row-backed oracle fallback-only.
+  retries. Authenticated complete partition-result streams, independent-process lifecycle
+  composition, and the remaining unsupported SQL vocabulary still prevent making the row-backed
+  oracle fallback-only.
   The full phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
