@@ -164,5 +164,58 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTest,
             common::StatusCode::kInvalidArgument);
 }
 
+TEST(DistributedVectorGroupedAggregateShuffleJobControlTest,
+     RoundTripsCorrelatedPrepareAndSealResponsesAndRejectsNoncanonicalEndpoint) {
+  const DistributedVectorGroupedAggregateShuffleJobControlResponse prepared{
+      .action = DistributedVectorGroupedAggregateShuffleJobControlAction::kPrepare,
+      .status_code = common::StatusCode::kOk,
+      .query_id = uuid(1U),
+      .coordinator_node_id = 9U,
+      .target_node_id = 7U,
+      .reducer_shuffle_endpoint = network::Ipv4Endpoint{{127U, 0U, 0U, 1U}, 9123U}};
+  auto encoded =
+      encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1(prepared);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  auto decoded = decode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1_exact(
+      encoded->bytes());
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(*decoded, prepared);
+
+  const DistributedVectorGroupedAggregateShuffleJobControlResponse sealed{
+      .action = DistributedVectorGroupedAggregateShuffleJobControlAction::kSeal,
+      .status_code = common::StatusCode::kOk,
+      .query_id = uuid(1U),
+      .coordinator_node_id = 9U,
+      .target_node_id = 7U};
+  auto encoded_seal =
+      encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1(sealed);
+  ASSERT_TRUE(encoded_seal.has_value()) << encoded_seal.error().to_string();
+  EXPECT_EQ(decode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1_exact(
+                encoded_seal->bytes())
+                .value(),
+            sealed);
+
+  auto failed = prepared;
+  failed.status_code = common::StatusCode::kResourceExhausted;
+  failed.reducer_shuffle_endpoint.reset();
+  EXPECT_TRUE(encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1(failed)
+                  .has_value());
+
+  auto invalid = sealed;
+  invalid.reducer_shuffle_endpoint = network::Ipv4Endpoint{{127U, 0U, 0U, 1U}, 9123U};
+  EXPECT_EQ(encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1(invalid)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  std::vector<std::byte> damaged(encoded->bytes().begin(), encoded->bytes().end());
+  damaged.back() ^= std::byte{1U};
+  EXPECT_EQ(
+      decode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1_exact(damaged)
+          .error()
+          .code(),
+      common::StatusCode::kCorruption);
+}
+
 } // namespace
 } // namespace chronos::cluster

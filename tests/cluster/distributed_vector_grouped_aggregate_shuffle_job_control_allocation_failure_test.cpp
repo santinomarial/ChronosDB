@@ -73,6 +73,19 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlAllocationFailureTest,
   }
   EXPECT_TRUE(saw_failure);
   EXPECT_TRUE(saw_success);
+
+  const DistributedVectorGroupedAggregateShuffleJobControlResponse response{
+      .action = DistributedVectorGroupedAggregateShuffleJobControlAction::kPrepare,
+      .status_code = common::StatusCode::kOk,
+      .query_id = uuid(1U),
+      .coordinator_node_id = 9U,
+      .target_node_id = 7U,
+      .reducer_shuffle_endpoint = network::Ipv4Endpoint{{127U, 0U, 0U, 1U}, 9123U}};
+  auto response_failure = run_failure(0U, [&] {
+    return encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1(response);
+  });
+  ASSERT_FALSE(response_failure.has_value());
+  EXPECT_EQ(response_failure.error().code(), common::StatusCode::kResourceExhausted);
 }
 
 } // namespace

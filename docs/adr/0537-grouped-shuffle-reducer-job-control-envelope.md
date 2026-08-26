@@ -27,13 +27,19 @@ admitted PREPARE; the codec does not maintain process state.
 
 The relative timeout begins after successful admission. Transport delivery and acknowledgment
 still require their own deadline, avoiding either serialized `steady_clock` epochs or a hidden wall-
-clock synchronization assumption. The envelope is request-only: the authenticated carrier and
-correlated response are the next service boundary.
+clock synchronization assumption.
+
+Add the fixed checksummed `CHDVGJR1` response. It echoes the complete request identity and stable
+status code. Only successful PREPARE may publish the reducer's live shuffle-listener endpoint; all
+failure responses and every SEAL response require canonical endpoint absence. This makes listener
+publication an explicit acknowledged boundary without claiming that the codec authenticates or
+drives a connection.
 
 ## Consequences
 
 A reducer daemon can now receive every immutable proof and deployment fact required to configure a
-result-return job without sharing coordinator memory. Existing authority and schema formats remain
+result-return job without sharing coordinator memory, and can return one exactly correlated
+admission result. Existing authority and schema formats remain
 independently reusable and versioned. Exact object identity is re-established after decode by
 owning both values together in the PREPARE variant.
 
@@ -59,8 +65,10 @@ codec success.
 
 Round-trip a complete multi-source authority PREPARE and canonical SEAL. Reject frame damage,
 unknown versions, noncanonical SEAL fields, mismatched raw schemas, and a lower caller timeout.
-Sweep allocation failure through nested encoding and complete decode. Run cluster, allocation-
-failure, sanitizer, formatting, static-analysis, and diff gates.
+Round-trip successful PREPARE, failed PREPARE, and successful SEAL responses; reject response
+damage and illegal endpoint publication. Sweep allocation failure through nested request and fixed
+response encoding plus complete request decode. Run cluster, allocation-failure, sanitizer,
+formatting, static-analysis, and diff gates.
 
 ## Migration or rollback considerations
 
@@ -69,7 +77,7 @@ request format; reducer daemons must then reject remote job setup rather than in
 
 ## Unresolved questions
 
-- Add a correlated authenticated response plus bounded header-first request/response ownership.
+- Add bounded header-first request/response ownership and a mutual-TLS carrier.
 - Package finite job admission, idempotent prepare/seal, progress, cancellation, timeout cleanup,
   shuffle ingress, and result scheduling into the daemon query-control service.
 

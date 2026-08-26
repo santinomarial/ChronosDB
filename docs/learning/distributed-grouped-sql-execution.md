@@ -314,6 +314,11 @@ the wire never serializes a process-local steady-clock epoch. Authentication, co
 finite admission, progress, cancellation, and cleanup remain responsibilities of the packaged job
 service rather than the codec.
 
+The fixed `CHDVGJR1` response echoes action, query, coordinator, target, and stable status. Only a
+successful PREPARE may carry the reducer's live shuffle-listener endpoint; failed admission and all
+SEAL responses have one canonical endpoint-free representation. A future carrier must still prove
+mutual authentication and exact response correlation before source routing begins.
+
 ### Portable sufficient-state execution boundary
 
 `DistributedVectorGroupedAggregateQueryExecutionV2` now joins the compatible snapshot to the

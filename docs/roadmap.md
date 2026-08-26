@@ -1603,8 +1603,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   destination, typed key/aggregate, query, and hash proof needed to install such a reducer job in a
   different process. A versioned checksummed PREPARE/SEAL request now binds that authority to the
   exact raw schema, target reducer/coordinator identities, numeric result route, and a bounded
-  relative execution timeout; authenticated response and daemon job admission remain. The computed
-  path now
+  relative execution timeout. A fixed checksummed response now correlates status and publishes a
+  reducer listener only for successful PREPARE; authenticated partial-I/O transport and daemon job
+  admission remain. The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives
   plan and result shapes from its outputs, and executes it locally before grouping.

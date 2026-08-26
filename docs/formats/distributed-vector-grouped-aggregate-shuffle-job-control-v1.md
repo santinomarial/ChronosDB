@@ -1,7 +1,7 @@
 # Distributed Vector Grouped Aggregate Shuffle Job Control v1
 
-> **Status: accepted and implemented for exact prepare/seal request encoding and bounded exact
-> decoding.** Authentication, request acknowledgment, job admission, and job progress remain
+> **Status: accepted and implemented for exact prepare/seal request and correlated response
+> encoding/decoding.** Authentication, partial-I/O ownership, job admission, and job progress remain
 > enclosing service responsibilities.
 
 `CHDVGJC1` binds a portable grouped-shuffle authority to its exact raw result schema and the
@@ -63,9 +63,24 @@ CRC32C detects accidental damage but does not authenticate a coordinator. An enc
 carrier must authenticate the claimed coordinator, authorize the target node, and return a
 correlated success or failure before a sender treats either action as complete.
 
+## Response
+
+`CHDVGJR1` is a fixed 100-byte correlated response. Its 96-byte header contains magic, version
+1.0, header and total lengths, the echoed action, one stable status code, flags, coordinator and
+target node IDs, query ID, and an optional reducer shuffle IPv4 endpoint. Bytes `[92,96)` hold the
+header CRC32C, and the final four bytes hold the whole-frame CRC32C. All reserved bytes are zero.
+
+Flag bit 0 means the endpoint is present; no other flag is assigned. Exactly one response shape
+may carry an endpoint: successful PREPARE. That endpoint is the live reducer shuffle listener that
+the coordinator may route source streams to. Failed PREPARE, successful or failed SEAL, and every
+other response require zero address/port bytes and a clear endpoint flag. The response echoes the
+exact query/coordinator/target/action tuple, so a carrier must validate correlation before treating
+the status as authoritative.
+
 ## Compatibility
 
 Version 1.0 is the only accepted layout. Writers emit exactly 1.0 and zero every reserved field.
 Unknown versions are unsupported. Malformed and noncanonical wire values are corruption. Caller
 limits and allocation failure are resource exhaustion. Changing action semantics, nested proof
-identity, route identity, or deadline meaning requires a new version.
+identity, route identity, deadline meaning, response status mapping, or endpoint publication
+requires a new version.

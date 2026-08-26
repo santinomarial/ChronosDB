@@ -6,3 +6,5 @@ static_assert(std::is_move_constructible_v<
               chronos::cluster::DistributedVectorGroupedAggregateShuffleJobControlRequest>);
 static_assert(!std::is_copy_constructible_v<
               chronos::cluster::DistributedVectorGroupedAggregateShuffleJobControlRequest>);
+static_assert(std::is_move_constructible_v<
+              chronos::cluster::EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse>);

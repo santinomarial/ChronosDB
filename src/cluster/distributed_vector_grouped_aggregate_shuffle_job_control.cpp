@@ -28,7 +28,12 @@ using namespace distributed_vector_grouped_aggregate_shuffle_job_control_format;
 inline constexpr std::array<std::byte, 8U> kMagic{std::byte{'C'}, std::byte{'H'}, std::byte{'D'},
                                                   std::byte{'V'}, std::byte{'G'}, std::byte{'J'},
                                                   std::byte{'C'}, std::byte{'1'}};
+inline constexpr std::array<std::byte, 8U> kResponseMagic{
+    std::byte{'C'}, std::byte{'H'}, std::byte{'D'}, std::byte{'V'},
+    std::byte{'G'}, std::byte{'J'}, std::byte{'R'}, std::byte{'1'}};
 inline constexpr std::size_t kHeaderCrcOffset = 124U;
+inline constexpr std::size_t kResponseHeaderCrcOffset = 92U;
+inline constexpr std::uint16_t kResponseEndpointFlag = 1U;
 
 [[nodiscard]] common::Status invalid(const char* message) {
   return {common::StatusCode::kInvalidArgument, message};
@@ -163,6 +168,87 @@ decode_action(const std::uint8_t code) {
   return common::make_unexpected(corruption("grouped shuffle reducer-job action is unknown"));
 }
 
+[[nodiscard]] common::Result<std::uint8_t> status_code(const common::StatusCode code) {
+  switch (code) {
+  case common::StatusCode::kOk:
+    return 0U;
+  case common::StatusCode::kCancelled:
+    return 1U;
+  case common::StatusCode::kInvalidArgument:
+    return 2U;
+  case common::StatusCode::kOutOfRange:
+    return 3U;
+  case common::StatusCode::kNotFound:
+    return 4U;
+  case common::StatusCode::kAlreadyExists:
+    return 5U;
+  case common::StatusCode::kCorruption:
+    return 6U;
+  case common::StatusCode::kIoError:
+    return 7U;
+  case common::StatusCode::kResourceExhausted:
+    return 8U;
+  case common::StatusCode::kUnavailable:
+    return 9U;
+  case common::StatusCode::kNotSupported:
+    return 10U;
+  case common::StatusCode::kUnauthenticated:
+    return 11U;
+  case common::StatusCode::kInternal:
+    return 12U;
+  }
+  return common::make_unexpected(invalid("grouped shuffle reducer-job response status is invalid"));
+}
+
+[[nodiscard]] common::Result<common::StatusCode> decode_status(const std::uint8_t code) {
+  switch (code) {
+  case 0U:
+    return common::StatusCode::kOk;
+  case 1U:
+    return common::StatusCode::kCancelled;
+  case 2U:
+    return common::StatusCode::kInvalidArgument;
+  case 3U:
+    return common::StatusCode::kOutOfRange;
+  case 4U:
+    return common::StatusCode::kNotFound;
+  case 5U:
+    return common::StatusCode::kAlreadyExists;
+  case 6U:
+    return common::StatusCode::kCorruption;
+  case 7U:
+    return common::StatusCode::kIoError;
+  case 8U:
+    return common::StatusCode::kResourceExhausted;
+  case 9U:
+    return common::StatusCode::kUnavailable;
+  case 10U:
+    return common::StatusCode::kNotSupported;
+  case 11U:
+    return common::StatusCode::kUnauthenticated;
+  case 12U:
+    return common::StatusCode::kInternal;
+  default:
+    return common::make_unexpected(
+        corruption("grouped shuffle reducer-job response status is unknown"));
+  }
+}
+
+[[nodiscard]] common::Status
+validate_response(const DistributedVectorGroupedAggregateShuffleJobControlResponse& response) {
+  const bool prepare_success =
+      response.action == DistributedVectorGroupedAggregateShuffleJobControlAction::kPrepare &&
+      response.status_code == common::StatusCode::kOk;
+  if (response.query_id.is_nil() || response.coordinator_node_id == 0U ||
+      response.target_node_id == 0U || response.coordinator_node_id == response.target_node_id ||
+      (prepare_success != response.reducer_shuffle_endpoint.has_value()) ||
+      (response.reducer_shuffle_endpoint.has_value() &&
+       !valid_endpoint(*response.reducer_shuffle_endpoint))) {
+    return invalid("grouped shuffle reducer-job response is invalid");
+  }
+  return common::Status::ok();
+}
+
 [[nodiscard]] common::Result<std::vector<std::byte>>
 encode_request_bytes(const DistributedVectorGroupedAggregateShuffleJobControlAction action,
                      const common::Uuid& query_id, const raft::NodeId coordinator_node_id,
@@ -247,6 +333,16 @@ EncodedDistributedVectorGroupedAggregateShuffleJobControlRequest::
 
 common::ByteView
 EncodedDistributedVectorGroupedAggregateShuffleJobControlRequest::bytes() const noexcept {
+  return bytes_;
+}
+
+EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse::
+    EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse(
+        std::vector<std::byte> bytes) noexcept
+    : bytes_(std::move(bytes)) {}
+
+common::ByteView
+EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse::bytes() const noexcept {
   return bytes_;
 }
 
@@ -433,6 +529,158 @@ decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v1_exact
         corruption("grouped shuffle reducer-job prepare value is invalid"));
   }
   return DistributedVectorGroupedAggregateShuffleJobControlRequest{std::move(prepare)};
+}
+
+common::Result<EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse>
+encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1(
+    const DistributedVectorGroupedAggregateShuffleJobControlResponse& response) {
+  const common::Status valid = validate_response(response);
+  if (!valid.is_ok())
+    return common::make_unexpected(valid);
+  const auto action = action_code(response.action);
+  if (!action.has_value())
+    return common::make_unexpected(action.error());
+  const auto status = status_code(response.status_code);
+  if (!status.has_value())
+    return common::make_unexpected(status.error());
+  try {
+    std::vector<std::byte> bytes(kResponseFrameLength);
+    common::ByteWriter writer{bytes};
+    common::Status write = writer.write_exact(kResponseMagic);
+    if (write.is_ok())
+      write = writer.write_u16_le(kMajor);
+    if (write.is_ok())
+      write = writer.write_u16_le(kMinor);
+    if (write.is_ok())
+      write = writer.write_u32_le(kResponseHeaderLength);
+    if (write.is_ok())
+      write = writer.write_u64_le(kResponseFrameLength);
+    if (write.is_ok())
+      write = writer.write_u8(*action);
+    if (write.is_ok())
+      write = writer.write_u8(*status);
+    if (write.is_ok())
+      write = writer.write_u16_le(
+          response.reducer_shuffle_endpoint.has_value() ? kResponseEndpointFlag : 0U);
+    if (write.is_ok())
+      write = writer.zero_fill(4U);
+    if (write.is_ok())
+      write = writer.write_u64_le(response.coordinator_node_id);
+    if (write.is_ok())
+      write = writer.write_u64_le(response.target_node_id);
+    if (write.is_ok())
+      write = writer.write_exact(response.query_id.bytes());
+    const auto endpoint = response.reducer_shuffle_endpoint.value_or(network::Ipv4Endpoint{});
+    if (write.is_ok())
+      write = writer.write_exact(std::as_bytes(std::span{endpoint.address}));
+    if (write.is_ok())
+      write = writer.write_u16_le(endpoint.port);
+    if (write.is_ok())
+      write = writer.zero_fill(22U);
+    if (write.is_ok())
+      write = writer.write_u32_le(
+          common::crc32c(common::ByteView{bytes}.first(kResponseHeaderCrcOffset)));
+    if (write.is_ok())
+      write = writer.write_u32_le(
+          common::crc32c(common::ByteView{bytes}.first(bytes.size() - kTrailerLength)));
+    if (!write.is_ok() || !writer.full())
+      return common::make_unexpected(invalid("grouped shuffle reducer-job response layout failed"));
+    return EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse{std::move(bytes)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("grouped shuffle reducer-job response allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("grouped shuffle reducer-job response exceeds limits"));
+  }
+}
+
+common::Result<DistributedVectorGroupedAggregateShuffleJobControlResponse>
+decode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1_exact(
+    const common::ByteView bytes) {
+  if (bytes.size() != kResponseFrameLength)
+    return common::make_unexpected(
+        corruption("grouped shuffle reducer-job response length is invalid"));
+  if (!std::ranges::equal(bytes.first(kResponseMagic.size()), kResponseMagic))
+    return common::make_unexpected(
+        corruption("grouped shuffle reducer-job response magic is invalid"));
+  common::ByteReader header_crc_reader{bytes.subspan(kResponseHeaderCrcOffset, 4U)};
+  const auto stored_header_crc = header_crc_reader.read_u32_le();
+  if (!stored_header_crc.has_value() ||
+      *stored_header_crc != common::crc32c(bytes.first(kResponseHeaderCrcOffset))) {
+    return common::make_unexpected(
+        corruption("grouped shuffle reducer-job response header checksum differs"));
+  }
+  common::ByteReader trailer{bytes.last(kTrailerLength)};
+  const auto stored_frame_crc = trailer.read_u32_le();
+  if (!stored_frame_crc.has_value() ||
+      *stored_frame_crc != common::crc32c(bytes.first(bytes.size() - kTrailerLength))) {
+    return common::make_unexpected(
+        corruption("grouped shuffle reducer-job response checksum differs"));
+  }
+  common::ByteReader reader{bytes};
+  static_cast<void>(reader.skip(kResponseMagic.size()));
+  const auto major = reader.read_u16_le();
+  const auto minor = reader.read_u16_le();
+  const auto header_length = reader.read_u32_le();
+  const auto frame_length = reader.read_u64_le();
+  const auto action_value = reader.read_u8();
+  const auto status_value = reader.read_u8();
+  const auto flags = reader.read_u16_le();
+  const auto prefix_reserved = reader.read_exact(4U);
+  const auto coordinator_node_id = reader.read_u64_le();
+  const auto target_node_id = reader.read_u64_le();
+  const auto query_id_bytes = reader.read_exact(common::Uuid::kSize);
+  const auto address_bytes = reader.read_exact(4U);
+  const auto port = reader.read_u16_le();
+  const auto reserved = reader.read_exact(22U);
+  static_cast<void>(reader.skip(4U + kTrailerLength));
+  if (!major.has_value() || !minor.has_value() || !header_length.has_value() ||
+      !frame_length.has_value() || !action_value.has_value() || !status_value.has_value() ||
+      !flags.has_value() || !prefix_reserved.has_value() || !coordinator_node_id.has_value() ||
+      !target_node_id.has_value() || !query_id_bytes.has_value() || !address_bytes.has_value() ||
+      !port.has_value() || !reserved.has_value()) {
+    return common::make_unexpected(
+        corruption("grouped shuffle reducer-job response header is truncated"));
+  }
+  if (*major != kMajor || *minor != kMinor)
+    return common::make_unexpected(
+        unsupported("grouped shuffle reducer-job response version is unsupported"));
+  if (*header_length != kResponseHeaderLength || *frame_length != kResponseFrameLength ||
+      (*flags & ~kResponseEndpointFlag) != 0U || !all_zero(*prefix_reserved) ||
+      !all_zero(*reserved)) {
+    return common::make_unexpected(
+        corruption("grouped shuffle reducer-job response header is invalid"));
+  }
+  const auto action = decode_action(*action_value);
+  if (!action.has_value())
+    return common::make_unexpected(action.error());
+  const auto status = decode_status(*status_value);
+  if (!status.has_value())
+    return common::make_unexpected(status.error());
+  common::Uuid::Bytes query_owned{};
+  std::ranges::copy(*query_id_bytes, query_owned.begin());
+  std::array<std::uint8_t, 4U> address{};
+  for (std::size_t index = 0U; index < address.size(); ++index)
+    address[index] = std::to_integer<std::uint8_t>((*address_bytes)[index]);
+  const bool has_endpoint = (*flags & kResponseEndpointFlag) != 0U;
+  if (!has_endpoint && (!all_zero(*address_bytes) || *port != 0U))
+    return common::make_unexpected(
+        corruption("grouped shuffle reducer-job response endpoint is noncanonical"));
+  DistributedVectorGroupedAggregateShuffleJobControlResponse response{
+      .action = *action,
+      .status_code = *status,
+      .query_id = common::Uuid{query_owned},
+      .coordinator_node_id = *coordinator_node_id,
+      .target_node_id = *target_node_id,
+      .reducer_shuffle_endpoint = has_endpoint
+                                      ? std::optional<network::Ipv4Endpoint>{network::Ipv4Endpoint{
+                                            .address = address, .port = *port}}
+                                      : std::nullopt};
+  if (!validate_response(response).is_ok())
+    return common::make_unexpected(
+        corruption("grouped shuffle reducer-job response value is invalid"));
+  return response;
 }
 
 } // namespace chronos::cluster

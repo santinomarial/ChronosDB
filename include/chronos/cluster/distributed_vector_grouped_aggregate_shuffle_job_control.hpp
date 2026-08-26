@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <variant>
 #include <vector>
 
@@ -25,6 +26,8 @@ inline constexpr std::size_t kMaximumFrameLength =
     distributed_vector_grouped_aggregate_shuffle_authority_format::kMaximumFrameLength +
     query::distributed_vector_result_schema_format::kMaximumFrameLength + kTrailerLength;
 inline constexpr std::chrono::milliseconds kMaximumExecutionTimeout{86'400'000};
+inline constexpr std::size_t kResponseHeaderLength = 96U;
+inline constexpr std::size_t kResponseFrameLength = kResponseHeaderLength + kTrailerLength;
 } // namespace distributed_vector_grouped_aggregate_shuffle_job_control_format
 
 enum class DistributedVectorGroupedAggregateShuffleJobControlAction : std::uint8_t {
@@ -53,6 +56,20 @@ struct DistributedVectorGroupedAggregateShuffleJobSeal {
 using DistributedVectorGroupedAggregateShuffleJobControlRequest =
     std::variant<DistributedVectorGroupedAggregateShuffleJobPrepare,
                  DistributedVectorGroupedAggregateShuffleJobSeal>;
+
+struct DistributedVectorGroupedAggregateShuffleJobControlResponse {
+  DistributedVectorGroupedAggregateShuffleJobControlAction action{
+      DistributedVectorGroupedAggregateShuffleJobControlAction::kPrepare};
+  common::StatusCode status_code{common::StatusCode::kInternal};
+  common::Uuid query_id;
+  raft::NodeId coordinator_node_id{};
+  raft::NodeId target_node_id{};
+  std::optional<network::Ipv4Endpoint> reducer_shuffle_endpoint;
+
+  friend bool
+  operator==(const DistributedVectorGroupedAggregateShuffleJobControlResponse&,
+             const DistributedVectorGroupedAggregateShuffleJobControlResponse&) = default;
+};
 
 struct DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits {
   std::size_t maximum_frame_length{
@@ -90,6 +107,30 @@ private:
       const DistributedVectorGroupedAggregateShuffleJobSeal& request);
 };
 
+class EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse {
+public:
+  EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse() = delete;
+  EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse(
+      const EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse&) = delete;
+  EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse&
+  operator=(const EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse&) = delete;
+  EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse(
+      EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse&&) noexcept = default;
+  EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse&
+  operator=(EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse&&) noexcept = default;
+
+  [[nodiscard]] common::ByteView bytes() const noexcept;
+
+private:
+  explicit EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse(
+      std::vector<std::byte> bytes) noexcept;
+  std::vector<std::byte> bytes_;
+
+  friend common::Result<EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse>
+  encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1(
+      const DistributedVectorGroupedAggregateShuffleJobControlResponse& response);
+};
+
 [[nodiscard]] common::Result<EncodedDistributedVectorGroupedAggregateShuffleJobControlRequest>
 encode_distributed_vector_grouped_aggregate_shuffle_job_prepare_v1(
     const DistributedVectorGroupedAggregateShuffleJobPrepare& request);
@@ -102,6 +143,14 @@ encode_distributed_vector_grouped_aggregate_shuffle_job_seal_v1(
 decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v1_exact(
     common::ByteView bytes,
     DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits limits = {});
+
+[[nodiscard]] common::Result<EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse>
+encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1(
+    const DistributedVectorGroupedAggregateShuffleJobControlResponse& response);
+
+[[nodiscard]] common::Result<DistributedVectorGroupedAggregateShuffleJobControlResponse>
+decode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1_exact(
+    common::ByteView bytes);
 
 } // namespace chronos::cluster
 
