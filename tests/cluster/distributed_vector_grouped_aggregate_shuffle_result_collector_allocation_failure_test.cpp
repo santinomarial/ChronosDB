@@ -76,12 +76,16 @@ TEST(DistributedVectorGroupedAggregateShuffleResultCollectorAllocationFailureTes
   bool saw_accept_failure{};
   for (std::size_t fail_after = 0U; fail_after < 64U; ++fail_after) {
     auto stream = complete(authority, schema, type);
+    const auto encoded_bytes = stream.encoded_bytes;
     const common::Status accepted =
-        run_failure(fail_after, [&] { return collector.accept_stream(std::move(stream)); });
+        run_failure(fail_after, [&] { return collector.accept_stream_preserving(stream); });
     if (!accepted.is_ok()) {
       saw_accept_failure = true;
       EXPECT_EQ(accepted.code(), common::StatusCode::kResourceExhausted);
       EXPECT_EQ(collector.metrics().accepted_partitions, 0U);
+      ASSERT_EQ(stream.encoded_result_batches.size(), 1U);
+      EXPECT_EQ(stream.encoded_bytes, encoded_bytes);
+      EXPECT_EQ(stream.partition_id, 0U);
       continue;
     }
     break;

@@ -87,12 +87,15 @@ TEST(DistributedVectorGroupedAggregateShuffleCollectedResultExecutionAllocationF
   for (std::size_t fail_after = 0U; fail_after < 64U; ++fail_after) {
     auto input = streams(value);
     auto created = run_failure(fail_after, [&] {
-      return DistributedVectorGroupedAggregateShuffleCollectedResultExecution::create(
-          value.authority, value.schema, std::move(input));
+      return DistributedVectorGroupedAggregateShuffleCollectedResultExecution::create_preserving(
+          value.authority, value.schema, input);
     });
     if (!created.has_value()) {
       saw_create_failure = true;
       EXPECT_EQ(created.error().code(), common::StatusCode::kResourceExhausted);
+      ASSERT_EQ(input.size(), 1U);
+      ASSERT_EQ(input.front().encoded_result_batches.size(), 1U);
+      EXPECT_GT(input.front().encoded_bytes, 0U);
       continue;
     }
     execution.emplace(std::move(*created));

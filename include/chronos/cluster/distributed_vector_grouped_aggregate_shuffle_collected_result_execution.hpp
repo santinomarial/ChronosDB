@@ -36,6 +36,10 @@ struct DistributedVectorGroupedAggregateShuffleCollectedResultExecutionMetrics {
   std::size_t decoded_batch_bytes{};
 };
 
+[[nodiscard]] common::Status
+validate_distributed_vector_grouped_aggregate_shuffle_collected_result_execution_limits(
+    const DistributedVectorGroupedAggregateShuffleCollectedResultExecutionLimits& limits) noexcept;
+
 // Owns a complete canonical partition-ordered result collection and materializes each Native batch
 // into one accounted vector chunk. Authority and raw schema are borrowed and outlive this
 // single-thread-affine execution; returned chunks may retain its shared query-memory authority.
@@ -58,6 +62,15 @@ public:
          const query::DistributedVectorResultSchema& result_schema,
          std::vector<DistributedVectorGroupedAggregateShuffleCompleteResultStream> streams,
          DistributedVectorGroupedAggregateShuffleCollectedResultExecutionLimits limits = {});
+  // Performs every fallible validation/allocation before moving streams. Failure leaves the
+  // caller's complete partition vector intact for a local retry after network acknowledgment.
+  [[nodiscard]] static common::Result<
+      DistributedVectorGroupedAggregateShuffleCollectedResultExecution>
+  create_preserving(
+      const DistributedVectorGroupedAggregateShuffleAuthority& authority,
+      const query::DistributedVectorResultSchema& result_schema,
+      std::vector<DistributedVectorGroupedAggregateShuffleCompleteResultStream>& streams,
+      DistributedVectorGroupedAggregateShuffleCollectedResultExecutionLimits limits = {});
 
   [[nodiscard]] common::Result<query::PhysicalOperatorStep> next();
   [[nodiscard]] std::span<const query::VectorGroupKeyDefinition> key_definitions() const noexcept;

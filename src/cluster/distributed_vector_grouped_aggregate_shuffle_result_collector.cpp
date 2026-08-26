@@ -85,6 +85,11 @@ DistributedVectorGroupedAggregateShuffleResultCollector::create(
 
 common::Status DistributedVectorGroupedAggregateShuffleResultCollector::accept_stream(
     DistributedVectorGroupedAggregateShuffleCompleteResultStream stream) {
+  return accept_stream_preserving(stream);
+}
+
+common::Status DistributedVectorGroupedAggregateShuffleResultCollector::accept_stream_preserving(
+    DistributedVectorGroupedAggregateShuffleCompleteResultStream& stream) {
   if (state_ == DistributedVectorGroupedAggregateShuffleResultCollectorState::kTaken)
     return invalid("grouped shuffle result collector has been taken");
   if (stream.query_id != authority_.get().query_id() ||
@@ -158,6 +163,11 @@ DistributedVectorGroupedAggregateShuffleResultCollector::state() const noexcept 
 
 bool DistributedVectorGroupedAggregateShuffleResultCollector::ready() const noexcept {
   return state_ == DistributedVectorGroupedAggregateShuffleResultCollectorState::kComplete;
+}
+
+bool DistributedVectorGroupedAggregateShuffleResultCollector::contains_partition(
+    const std::uint32_t partition_id) const noexcept {
+  return partition_id < streams_.size() && streams_[partition_id].has_value();
 }
 
 raft::NodeId

@@ -276,9 +276,18 @@ time, reserves its complete physical footprint from a distinct query resource co
 canonical accounted chunks. Finalization additionally requires the exact raw-schema object owned
 by the fragment-derived plan authority, then reuses the established checked projection, global
 `ORDER BY`, `LIMIT`, and atomic Native encoder. Focused coverage proves two remote reducer
-partitions are globally ordered and limited only after complete collection. One owner that jointly
-schedules result retries, server progress, collection, cancellation, and final publication remains
-separate lifecycle work.
+partitions are globally ordered and limited only after complete collection.
+
+The coordinator-side result lifecycle now composes the bounded listener, idempotent collector,
+accounted materializer, deadline/cancellation policy, and atomic finalizer. Its critical ownership
+rule is that a stream acknowledged over the network first moves into a pending slot; allocation
+failure cannot destroy that slot. Collector admission and materializer construction move caller
+bytes only after all fallible work succeeds, so local exhaustion is retryable without asking a
+receipt-proven reducer to resend. Exact duplicates remain no-ops. Once all authority partitions are
+present, the listener closes and the proof-bound global pipeline publishes one take-once Native
+result. This owner is process-memory recovery, not durable query recovery: a coordinator crash
+still requires a new query attempt. Reducer scheduling remains process-local to each reducer, and
+real distinct-process qualification is the next deployment gate.
 
 ### Portable sufficient-state execution boundary
 

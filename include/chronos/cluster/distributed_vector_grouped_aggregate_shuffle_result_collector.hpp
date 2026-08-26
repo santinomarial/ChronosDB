@@ -59,12 +59,18 @@ public:
 
   [[nodiscard]] common::Status
   accept_stream(DistributedVectorGroupedAggregateShuffleCompleteResultStream stream);
+  // Validates by reference and moves only on first-partition success. Every failure and exact
+  // duplicate leaves the caller's stream intact, permitting retry after an acknowledged server
+  // handoff encounters local resource exhaustion.
+  [[nodiscard]] common::Status
+  accept_stream_preserving(DistributedVectorGroupedAggregateShuffleCompleteResultStream& stream);
   [[nodiscard]] common::Result<
       std::vector<DistributedVectorGroupedAggregateShuffleCompleteResultStream>>
   take_complete_streams();
 
   [[nodiscard]] DistributedVectorGroupedAggregateShuffleResultCollectorState state() const noexcept;
   [[nodiscard]] bool ready() const noexcept;
+  [[nodiscard]] bool contains_partition(std::uint32_t partition_id) const noexcept;
   [[nodiscard]] raft::NodeId coordinator_node_id() const noexcept;
   [[nodiscard]] DistributedVectorGroupedAggregateShuffleResultCollectorMetrics
   metrics() const noexcept;

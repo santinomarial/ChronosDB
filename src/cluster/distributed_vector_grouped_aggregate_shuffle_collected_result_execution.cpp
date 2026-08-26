@@ -285,15 +285,26 @@ void store_u32(std::vector<std::byte>& bytes, const std::size_t offset,
 
 } // namespace
 
+common::Status
+validate_distributed_vector_grouped_aggregate_shuffle_collected_result_execution_limits(
+    const DistributedVectorGroupedAggregateShuffleCollectedResultExecutionLimits& limits) noexcept {
+  return valid_limits(limits)
+             ? common::Status::ok()
+             : invalid("collected grouped shuffle result execution limits are invalid");
+}
+
 class DistributedVectorGroupedAggregateShuffleCollectedResultExecution::Impl {
 public:
   Impl(const DistributedVectorGroupedAggregateShuffleAuthority& authority,
        const query::DistributedVectorResultSchema& result_schema,
        query::QueryResourceContext resources,
-       std::vector<DistributedVectorGroupedAggregateShuffleCompleteResultStream> streams,
        const DistributedVectorGroupedAggregateShuffleCollectedResultExecutionLimits limits)
       : authority_(authority), result_schema_(result_schema), resources_(std::move(resources)),
-        streams_(std::move(streams)), limits_(limits) {
+        limits_(limits) {}
+
+  void install_streams(
+      std::vector<DistributedVectorGroupedAggregateShuffleCompleteResultStream>& streams) noexcept {
+    streams_ = std::move(streams);
     metrics_.total_partitions = streams_.size();
   }
 
@@ -340,6 +351,15 @@ DistributedVectorGroupedAggregateShuffleCollectedResultExecution::create(
     const query::DistributedVectorResultSchema& result_schema,
     std::vector<DistributedVectorGroupedAggregateShuffleCompleteResultStream> streams,
     const DistributedVectorGroupedAggregateShuffleCollectedResultExecutionLimits limits) {
+  return create_preserving(authority, result_schema, streams, limits);
+}
+
+common::Result<DistributedVectorGroupedAggregateShuffleCollectedResultExecution>
+DistributedVectorGroupedAggregateShuffleCollectedResultExecution::create_preserving(
+    const DistributedVectorGroupedAggregateShuffleAuthority& authority,
+    const query::DistributedVectorResultSchema& result_schema,
+    std::vector<DistributedVectorGroupedAggregateShuffleCompleteResultStream>& streams,
+    const DistributedVectorGroupedAggregateShuffleCollectedResultExecutionLimits limits) {
   if (!valid_limits(limits) || streams.size() != authority.partition_count() || streams.empty() ||
       !query::validate_distributed_vector_result_schema_value(result_schema).is_ok() ||
       !raw_schema_matches(authority, result_schema)) {
@@ -372,8 +392,11 @@ DistributedVectorGroupedAggregateShuffleCollectedResultExecution::create(
   if (!resources.has_value())
     return common::make_unexpected(resources.error());
   try {
-    return DistributedVectorGroupedAggregateShuffleCollectedResultExecution{std::make_unique<Impl>(
-        authority, result_schema, std::move(*resources), std::move(streams), limits)};
+    auto implementation =
+        std::make_unique<Impl>(authority, result_schema, std::move(*resources), limits);
+    implementation->install_streams(streams);
+    return DistributedVectorGroupedAggregateShuffleCollectedResultExecution{
+        std::move(implementation)};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("collected grouped shuffle result allocation failed"));
   }
