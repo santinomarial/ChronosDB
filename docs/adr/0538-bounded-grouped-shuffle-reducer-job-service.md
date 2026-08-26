@@ -81,7 +81,7 @@ and listener publication ordering.
 
 ## Unresolved questions
 
-- Add shared-listener and daemon ownership around the implemented mutual-TLS control sessions.
+- Add packaged daemon ownership around the implemented shared-listener control sessions.
 - Dispatch the protocol from the shared query-control endpoint and own the service in `chronosd`.
 - Qualify multi-daemon source execution, abrupt coordinator/reducer loss, skew, and whole-query
   replacement with production route discovery.

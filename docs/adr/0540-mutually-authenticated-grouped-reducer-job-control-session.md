@@ -76,8 +76,10 @@ unauthenticated control.
 
 ## Unresolved questions
 
-- Add bounded multi-connection ownership and dispatch under the committed shared query endpoint.
-- Package the reducer-job service and control sessions in `chronosd`.
+- Package the implemented shared endpoint, reducer-job service, and result routes in `chronosd`.
+
+[ADR 0541](0541-shared-grouped-reducer-job-control-endpoint.md) now owns bounded multi-connection
+dispatch and job progress under the committed query endpoint.
 
 ## References
 

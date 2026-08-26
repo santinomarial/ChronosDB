@@ -3,7 +3,8 @@
 > **Status: accepted and implemented for exact prepare/seal request and correlated response
 > encoding/decoding.** Bounded header-first reads and move-only partial writes are implemented.
 > A mutually authenticated, deadline-bound, exactly correlated standalone exchange is implemented.
-> Shared daemon dispatch remains an enclosing transport responsibility; bounded process-local job
+> The committed shared query endpoint dispatches the protocol when a job service is installed.
+> Packaged daemon ownership remains an enclosing responsibility; bounded process-local job
 > admission and progress are implemented.
 
 `CHDVGJC1` binds a portable grouped-shuffle authority to its exact raw result schema and the

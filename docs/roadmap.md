@@ -1610,8 +1610,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   request reads, fixed response reads, exact consumed-byte reporting, and move-only partial writes
   now own control stream fragmentation. One nonblocking mutual-TLS session now authenticates both
   peers, authorizes the reducer identity, bounds handshake/exchange time, and exact-correlates the
-  response before endpoint publication. Shared-listener and packaged daemon ownership remain. The
-  computed path now
+  response before endpoint publication. The committed query-control listener now dispatches that
+  job magic, bounds connections, reports distinct completion, and polls installed jobs. Packaged
+  daemon and result-route ownership remain. The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives
   plan and result shapes from its outputs, and executes it locally before grouping.

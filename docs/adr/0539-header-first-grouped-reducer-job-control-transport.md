@@ -70,11 +70,12 @@ socket carrier may remain if it depends on these readers or cursors.
 
 ## Unresolved questions
 
-- Add bounded shared-listener ownership around the implemented exact mutual-TLS exchange.
-- Dispatch authenticated reducer-job control through the shared query-control endpoint.
+- Add packaged daemon ownership around the implemented shared-listener exchange.
 
 [ADR 0540](0540-mutually-authenticated-grouped-reducer-job-control-session.md) now owns mutual
 authentication, target-node authorization, exact response correlation, and session deadlines.
+[ADR 0541](0541-shared-grouped-reducer-job-control-endpoint.md) dispatches those requests through the
+committed private endpoint and retains bounded connection/job polling ownership.
 
 ## References
 

@@ -3,6 +3,8 @@
 
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tls.hpp"
 #include "chronos/cluster/distributed_mutable_vector_query_tls.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_transport.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_service.hpp"
 #include "chronos/cluster/raft_read_authority_tls_server.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/network/security.hpp"
@@ -29,6 +31,7 @@ struct DistributedMutableQueryControlTlsServerLimits {
       kDefaultDistributedVectorGroupedAggregateQueryV2DecodeMemoryBytes};
   query::DistributedVectorGroupedAggregateExchangeDecodeLimits mutable_grouped_payload;
   RaftReadAuthorityTransportLimits read_authority_transport;
+  DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits grouped_shuffle_job_control;
 };
 
 struct DistributedMutableQueryControlTlsServerConfig {
@@ -36,6 +39,7 @@ struct DistributedMutableQueryControlTlsServerConfig {
   DistributedMutableVectorQueryReceiver* mutable_receiver{};
   DistributedMutableVectorGroupedAggregateQueryReceiver* mutable_grouped_receiver{};
   RaftReadAuthorityReceiver* read_authority_receiver{};
+  DistributedVectorGroupedAggregateShuffleJobService* grouped_shuffle_job_service{};
   std::array<std::uint8_t, 4U> peer_ipv4_address{};
   DistributedMutableQueryControlTlsServerLimits limits;
 };
@@ -45,6 +49,7 @@ enum class DistributedMutableQueryControlProtocol : std::uint8_t {
   kMutableVectorQuery = 1,
   kRaftReadAuthority = 2,
   kMutableVectorGroupedAggregateQuery = 3,
+  kGroupedShuffleJobControl = 4,
 };
 
 enum class DistributedMutableQueryControlTlsServerState : std::uint8_t {
@@ -62,10 +67,10 @@ struct DistributedMutableQueryControlTlsInterest {
 };
 
 // Authenticates before reading the exact application magic, then serves one mutable row,
-// mutable grouped sufficient-state, or Raft read-authority request on the shared private
-// query-control TLS endpoint. The two mutable requests share CHDMREQ1 and are distinguished only
-// after exact request decoding by the bound plan mode. One event-loop thread serializes calls; all
-// authentication and receiver dependencies are borrowed.
+// mutable grouped sufficient-state, Raft read-authority, or grouped reducer-job request on the
+// shared private query-control TLS endpoint. The two mutable requests share CHDMREQ1 and are
+// distinguished only after exact request decoding by the bound plan mode. One event-loop thread
+// serializes calls; all authentication, receiver, and job-service dependencies are borrowed.
 class DistributedMutableQueryControlTlsServer {
 public:
   using TimePoint = std::chrono::steady_clock::time_point;

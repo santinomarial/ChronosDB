@@ -63,7 +63,10 @@ inline constexpr std::size_t kScratchSize = std::size_t{16U} * 1024U;
              query::distributed_vector_aggregate_state_format::kMaximumFrameLength &&
          limits.mutable_grouped_payload.state.maximum_variable_extremum_bytes > 0U &&
          limits.mutable_grouped_payload.state.maximum_variable_extremum_bytes <=
-             query::distributed_vector_aggregate_state_format::kMaximumExtremumBytes;
+             query::distributed_vector_aggregate_state_format::kMaximumExtremumBytes &&
+         validate_distributed_vector_grouped_aggregate_shuffle_job_control_decode_limits(
+             limits.grouped_shuffle_job_control)
+             .is_ok();
 }
 
 [[nodiscard]] DistributedMutableQueryControlTlsServer::TimePoint
@@ -82,9 +85,11 @@ deadline_after(const DistributedMutableQueryControlTlsServer::TimePoint now,
 class DistributedMutableQueryControlTlsServer::Impl {
 public:
   Impl(network::TlsSocket socket, DistributedMutableQueryControlTlsServerConfig config,
-       const TimePoint now) noexcept
+       DistributedVectorGroupedAggregateShuffleJobControlRequestReader job_reader,
+       const TimePoint now)
       : socket_(std::move(socket)), config_(config),
-        deadline_(deadline_after(now, config.limits.handshake_timeout)) {}
+        deadline_(deadline_after(now, config.limits.handshake_timeout)),
+        job_reader_(std::move(job_reader)) {}
 
   [[nodiscard]] common::Status fail(common::Status failure) {
     if (state_ != DistributedMutableQueryControlTlsServerState::kFailed) {
@@ -94,6 +99,7 @@ public:
       mutable_writers_.clear();
       mutable_grouped_writers_.clear();
       authority_writer_.reset();
+      job_writer_.reset();
     }
     return failure_;
   }
@@ -119,7 +125,7 @@ public:
     state_ = DistributedMutableQueryControlTlsServerState::kReadingProtocol;
     interest_ = {.want_read = true};
     deadline_ = deadline_after(now, config_.limits.exchange_timeout);
-    return read_protocol(false, false);
+    return read_protocol(false, false, now);
   }
 
   [[nodiscard]] common::Status handshake(const bool readable, const bool writable,
@@ -143,7 +149,8 @@ public:
     return authenticate(now);
   }
 
-  [[nodiscard]] common::Status read_protocol(const bool readable, const bool writable) {
+  [[nodiscard]] common::Status read_protocol(const bool readable, const bool writable,
+                                             const TimePoint now) {
     if ((!interest_.want_read || (!readable && socket_.pending_plaintext_bytes() == 0U)) &&
         (!interest_.want_write || !writable)) {
       return common::Status::ok();
@@ -187,13 +194,24 @@ public:
       if (consumed->consumed_bytes != magic.size() || consumed->request.has_value())
         return fail(status(common::StatusCode::kCorruption,
                            "read-authority query-control magic prefix is invalid"));
+    } else if (config_.grouped_shuffle_job_service != nullptr &&
+               std::ranges::equal(magic,
+                                  distributed_vector_grouped_aggregate_shuffle_job_control_format::
+                                      kRequestMagic)) {
+      protocol_ = DistributedMutableQueryControlProtocol::kGroupedShuffleJobControl;
+      auto consumed = job_reader_.consume(magic);
+      if (!consumed.has_value())
+        return fail(consumed.error());
+      if (consumed->consumed_bytes != magic.size() || consumed->request.has_value())
+        return fail(status(common::StatusCode::kCorruption,
+                           "grouped shuffle job-control magic prefix is invalid"));
     } else {
       return fail(status(common::StatusCode::kNotSupported,
                          "query-control application protocol is unsupported"));
     }
     state_ = DistributedMutableQueryControlTlsServerState::kReadingRequest;
     interest_ = {.want_read = true};
-    return read_request(false, false);
+    return read_request(false, false, now);
   }
 
   [[nodiscard]] common::Status
@@ -396,7 +414,39 @@ public:
     return common::Status::ok();
   }
 
-  [[nodiscard]] common::Status read_request(const bool readable, const bool writable) {
+  [[nodiscard]] common::Status accept_grouped_shuffle_job_request(
+      DistributedVectorGroupedAggregateShuffleJobControlRequest request, const TimePoint now) {
+    const auto* authenticated =
+        authenticated_peer_.transform([](const auto& value) { return &value; }).value_or(nullptr);
+    if (authenticated == nullptr)
+      return fail(
+          status(common::StatusCode::kInternal, "query-control authenticated peer is unavailable"));
+    try {
+      auto response =
+          config_.grouped_shuffle_job_service->receive(std::move(request), *authenticated, now);
+      if (!response.has_value())
+        return fail(response.error());
+      auto encoded =
+          encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1(*response);
+      if (!encoded.has_value())
+        return fail(encoded.error());
+      job_writer_.emplace(
+          DistributedVectorGroupedAggregateShuffleJobControlResponseWriteCursor::create(
+              std::move(*encoded)));
+      state_ = DistributedMutableQueryControlTlsServerState::kWritingResponse;
+      interest_ = {.want_write = true};
+      return common::Status::ok();
+    } catch (const std::bad_alloc&) {
+      return fail(status(common::StatusCode::kResourceExhausted,
+                         "query-control grouped shuffle job allocation failed"));
+    } catch (...) {
+      return fail(
+          status(common::StatusCode::kInternal, "query-control grouped shuffle job service threw"));
+    }
+  }
+
+  [[nodiscard]] common::Status read_request(const bool readable, const bool writable,
+                                            const TimePoint now) {
     if ((!interest_.want_read || (!readable && socket_.pending_plaintext_bytes() == 0U)) &&
         (!interest_.want_write || !writable)) {
       return common::Status::ok();
@@ -441,6 +491,15 @@ public:
         return accept_authority_request(
             step->request.value()); // NOLINT(bugprone-unchecked-optional-access)
       }
+    } else if (protocol_ == DistributedMutableQueryControlProtocol::kGroupedShuffleJobControl) {
+      auto step = job_reader_.consume(received);
+      if (!step.has_value())
+        return fail(step.error());
+      if (step->consumed_bytes != received.size())
+        return fail(status(common::StatusCode::kCorruption,
+                           "query-control grouped shuffle job request has a coalesced suffix"));
+      if (step->request.has_value())
+        return accept_grouped_shuffle_job_request(std::move(*step->request), now);
     } else {
       return fail(
           status(common::StatusCode::kInternal, "query-control request protocol is unavailable"));
@@ -467,6 +526,9 @@ public:
     } else if (protocol_ == DistributedMutableQueryControlProtocol::kRaftReadAuthority &&
                authority_writer_.has_value()) {
       pending = authority_writer_->pending_write();
+    } else if (protocol_ == DistributedMutableQueryControlProtocol::kGroupedShuffleJobControl &&
+               job_writer_.has_value()) {
+      pending = job_writer_->pending_write();
     } else {
       return fail(
           status(common::StatusCode::kInternal, "query-control response writer is unavailable"));
@@ -506,12 +568,17 @@ public:
       if (writer.complete())
         ++mutable_grouped_writer_index_;
       complete = mutable_grouped_writer_index_ == mutable_grouped_writers_.size();
-    } else {
+    } else if (protocol_ == DistributedMutableQueryControlProtocol::kRaftReadAuthority) {
       const common::Status consumed =
           authority_writer_->consume_written(progress->bytes_transferred);
       if (!consumed.is_ok())
         return fail(consumed);
       complete = authority_writer_->complete();
+    } else {
+      const common::Status consumed = job_writer_->consume_written(progress->bytes_transferred);
+      if (!consumed.is_ok())
+        return fail(consumed);
+      complete = job_writer_->complete();
     }
     if (complete) {
       state_ = DistributedMutableQueryControlTlsServerState::kComplete;
@@ -535,12 +602,14 @@ public:
   std::size_t protocol_bytes_{};
   DistributedMutableVectorQueryRequestReader mutable_reader_;
   RaftReadAuthorityRequestReader authority_reader_;
+  DistributedVectorGroupedAggregateShuffleJobControlRequestReader job_reader_;
   std::array<std::byte, kScratchSize> request_scratch_{};
   std::vector<DistributedVectorQueryFrameV2WriteCursor> mutable_writers_;
   std::size_t mutable_writer_index_{};
   std::vector<DistributedVectorGroupedAggregateQueryResponseV2WriteCursor> mutable_grouped_writers_;
   std::size_t mutable_grouped_writer_index_{};
   std::optional<RaftReadAuthorityFrameWriteCursor> authority_writer_;
+  std::optional<DistributedVectorGroupedAggregateShuffleJobControlResponseWriteCursor> job_writer_;
   common::Status failure_{common::StatusCode::kInternal, "query-control TLS server has not failed"};
 };
 
@@ -567,9 +636,13 @@ DistributedMutableQueryControlTlsServer::create(
       RaftReadAuthorityResponseReader::create(config.limits.read_authority_transport);
   if (!authority_limits.has_value())
     return common::make_unexpected(authority_limits.error());
+  auto job_reader = DistributedVectorGroupedAggregateShuffleJobControlRequestReader::create(
+      config.limits.grouped_shuffle_job_control);
+  if (!job_reader.has_value())
+    return common::make_unexpected(job_reader.error());
   try {
     return DistributedMutableQueryControlTlsServer{
-        std::make_unique<Impl>(std::move(socket), config, now)};
+        std::make_unique<Impl>(std::move(socket), config, std::move(*job_reader), now)};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
                                           "query-control TLS server allocation failed"));
@@ -596,9 +669,9 @@ common::Status DistributedMutableQueryControlTlsServer::on_ready(const bool read
   if (impl.state_ == DistributedMutableQueryControlTlsServerState::kHandshaking)
     return impl.handshake(readable, writable, now);
   if (impl.state_ == DistributedMutableQueryControlTlsServerState::kReadingProtocol)
-    return impl.read_protocol(readable, writable);
+    return impl.read_protocol(readable, writable, now);
   if (impl.state_ == DistributedMutableQueryControlTlsServerState::kReadingRequest)
-    return impl.read_request(readable, writable);
+    return impl.read_request(readable, writable, now);
   return impl.write_response(readable, writable);
 }
 

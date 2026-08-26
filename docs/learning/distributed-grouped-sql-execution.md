@@ -333,8 +333,9 @@ authority sources close. It then shuts ingress, drains and Native-encodes every 
 partition, and constructs the complete result retry scheduler before acknowledging success.
 Receipt-proven result completion, cancellation, and the relative job deadline are polled by the
 same thread. Terminal jobs remain idempotently addressable only until that deadline, after which
-cleanup releases bounded admission capacity. Shared endpoint and daemon ownership remain the next
-boundary.
+cleanup releases bounded admission capacity. The committed query-control endpoint now dispatches
+the job magic after mutual authentication and polls installed jobs alongside its bounded
+connections. Packaged daemon and result-route ownership remain the next boundary.
 
 ### Portable sufficient-state execution boundary
 

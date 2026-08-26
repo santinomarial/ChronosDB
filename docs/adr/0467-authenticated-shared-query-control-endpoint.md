@@ -94,3 +94,7 @@ compatible throughout.
 - [Distributed Mutable Vector Query Transport v1](../formats/distributed-mutable-vector-query-transport-v1.md)
 - [Raft Read Authority Transport v1](../formats/raft-read-authority-transport-v1.md)
 - [Committed daemon mutable query plane](0445-committed-daemon-mutable-query-plane.md)
+
+**Retrospective (2026-08-26):**
+[ADR 0541](0541-shared-grouped-reducer-job-control-endpoint.md) adds authenticated `CHDVGJC1`
+reducer-job dispatch and bounded job-service polling under the same committed endpoint.

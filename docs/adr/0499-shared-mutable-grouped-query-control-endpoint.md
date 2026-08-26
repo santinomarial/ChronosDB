@@ -98,3 +98,7 @@ available for focused testing.
 **Retrospective (2026-08-25):**
 [ADR 0500](0500-packaged-mutable-grouped-native-execution.md) selects this endpoint from replicated
 Native direct grouped SQL and adds the matching in-process worker path for self-led fragments.
+
+**Retrospective (2026-08-26):**
+[ADR 0541](0541-shared-grouped-reducer-job-control-endpoint.md) adds the distinct `CHDVGJC1` reducer-
+job protocol without changing `CHDMREQ1` row/grouped plan-mode dispatch.

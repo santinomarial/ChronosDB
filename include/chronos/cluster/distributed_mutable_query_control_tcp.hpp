@@ -20,6 +20,7 @@ struct DistributedMutableQueryControlTcpServerConfig {
   DistributedMutableVectorQueryReceiver* mutable_receiver{};
   DistributedMutableVectorGroupedAggregateQueryReceiver* mutable_grouped_receiver{};
   RaftReadAuthorityReceiver* read_authority_receiver{};
+  DistributedVectorGroupedAggregateShuffleJobService* grouped_shuffle_job_service{};
   DistributedMutableQueryControlTlsServerLimits carrier_limits;
   std::size_t maximum_connections{1024U};
   std::size_t maximum_accepts_per_poll{32U};
@@ -32,6 +33,7 @@ struct DistributedMutableQueryControlTcpServerMetrics {
   std::uint64_t completed_mutable_queries{};
   std::uint64_t completed_mutable_grouped_queries{};
   std::uint64_t completed_read_authorities{};
+  std::uint64_t completed_grouped_shuffle_job_controls{};
   std::uint64_t failed_connections{};
   std::size_t active_connections{};
 };

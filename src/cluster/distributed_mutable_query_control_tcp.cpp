@@ -54,6 +54,8 @@ public:
         increment_saturated(server_metrics.completed_mutable_grouped_queries);
       else if (protocol == DistributedMutableQueryControlProtocol::kRaftReadAuthority)
         increment_saturated(server_metrics.completed_read_authorities);
+      else if (protocol == DistributedMutableQueryControlProtocol::kGroupedShuffleJobControl)
+        increment_saturated(server_metrics.completed_grouped_shuffle_job_controls);
       else
         increment_saturated(server_metrics.failed_connections);
     } else {
@@ -100,6 +102,7 @@ public:
            .mutable_receiver = config.mutable_receiver,
            .mutable_grouped_receiver = config.mutable_grouped_receiver,
            .read_authority_receiver = config.read_authority_receiver,
+           .grouped_shuffle_job_service = config.grouped_shuffle_job_service,
            .peer_ipv4_address = peer->address,
            .limits = config.carrier_limits},
           now);
@@ -212,7 +215,10 @@ DistributedMutableQueryControlTcpServer::poll_once(const std::chrono::millisecon
   }
   if (ready > 0 && (impl.poll_descriptors[0].revents & POLLIN) != 0)
     impl.accept_ready(now);
-  return common::Status::ok();
+  return impl.config.grouped_shuffle_job_service == nullptr
+             ? common::Status::ok()
+             : impl.config.grouped_shuffle_job_service->poll_once(std::chrono::milliseconds{0},
+                                                                  now);
 }
 
 common::Status DistributedMutableQueryControlTcpServer::shutdown() {

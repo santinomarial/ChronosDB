@@ -1,6 +1,7 @@
 #include "chronos/cluster/distributed_mutable_query_control_tcp.hpp"
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_client.hpp"
 #include "chronos/cluster/distributed_mutable_vector_query_tcp.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_tls.hpp"
 #include "chronos/cluster/raft_read_authority_tcp_client.hpp"
 
 #include <chrono>
@@ -104,6 +105,23 @@ template <typename Id> [[nodiscard]] Id id(const std::uint8_t seed) {
                       .applied_index = 10U,
                       .voters = {1U, 2U, 3U},
                       .committed_voters = {1U, 2U, 3U}}};
+}
+
+[[nodiscard]] DistributedVectorGroupedAggregateShuffleJobPrepare job_prepare() {
+  return {.coordinator_node_id = 1U,
+          .target_node_id = 2U,
+          .coordinator_result_endpoint = {{127U, 0U, 0U, 1U}, 8137U},
+          .execution_timeout = std::chrono::milliseconds{30'000},
+          .authority = DistributedVectorGroupedAggregateShuffleAuthority::create(
+                           uuid(31U), {{id<schema::TabletId>(32U), 2U}}, {{0U, 2U}},
+                           {{0U, string_type(), false}},
+                           {{query::VectorAggregateOperation::kCountStar, std::nullopt}})
+                           .value(),
+          .result_schema = {
+              .columns = {{"region", string_type(), false},
+                          {"count",
+                           schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
+                           false}}}};
 }
 
 class Authenticator final : public network::ConnectionAuthenticator {
@@ -287,10 +305,55 @@ mutable_grouped_client(const network::Ipv4Endpoint endpoint,
       .value();
 }
 
+struct JobControlClientOwner {
+  network::TcpSocket socket;
+  DistributedVectorGroupedAggregateShuffleJobControlTlsClient carrier;
+};
+
+[[nodiscard]] JobControlClientOwner
+job_control_client(const network::Ipv4Endpoint endpoint,
+                   const network::TlsClientContext& client_context, Authenticator& authenticator,
+                   Authorizer& authorizer) {
+  auto socket = network::TcpSocket::begin_connect(endpoint).value();
+  for (std::size_t iteration = 0U;
+       iteration < 1024U && socket.connect_state() == network::TcpConnectState::kInProgress;
+       ++iteration) {
+    pollfd descriptor{.fd = socket.descriptor(), .events = POLLOUT};
+    EXPECT_GE(::poll(&descriptor, 1U, 1), 0);
+    if ((descriptor.revents & (POLLOUT | POLLERR | POLLHUP)) != 0)
+      EXPECT_TRUE(socket.finish_connect().has_value());
+  }
+  EXPECT_EQ(socket.connect_state(), network::TcpConnectState::kConnected);
+  auto tls = network::TlsSocket::connect(client_context, socket.descriptor()).value();
+  auto carrier =
+      DistributedVectorGroupedAggregateShuffleJobControlTlsClient::create(
+          std::move(tls),
+          {.authenticator = &authenticator,
+           .node_authorizer = &authorizer,
+           .peer_ipv4_address = endpoint.address,
+           .request = DistributedVectorGroupedAggregateShuffleJobControlRequest{job_prepare()},
+           .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                      .exchange_timeout = std::chrono::milliseconds{1000}}},
+          std::chrono::steady_clock::now())
+          .value();
+  return {.socket = std::move(socket), .carrier = std::move(carrier)};
+}
+
 TEST(DistributedMutableQueryControlTcpTest, RoutesAllProtocolsAfterOneAuthenticatedTlsBoundary) {
   Authorizer authorizer;
   ReceiverOwner receiver_owner{authorizer};
   Authenticator client_authenticator{91U};
+  auto client_context = network::TlsClientContext::create(client_tls());
+  ASSERT_TRUE(client_context.has_value());
+  Authenticator server_authenticator{92U};
+  auto job_service = DistributedVectorGroupedAggregateShuffleJobService::create(
+                         {.local_node_id = 2U,
+                          .shuffle_tls = server_tls(),
+                          .shuffle_authenticator = &client_authenticator,
+                          .result_authenticator = &server_authenticator,
+                          .node_authorizer = &authorizer,
+                          .result_tls_context = &*client_context})
+                         .value();
   auto server = DistributedMutableQueryControlTcpServer::start(
       {.listener = {},
        .tls = server_tls(),
@@ -298,13 +361,11 @@ TEST(DistributedMutableQueryControlTcpTest, RoutesAllProtocolsAfterOneAuthentica
        .mutable_receiver = &receiver_owner.mutable_receiver,
        .mutable_grouped_receiver = &receiver_owner.mutable_grouped_receiver,
        .read_authority_receiver = &receiver_owner.authority_receiver,
+       .grouped_shuffle_job_service = &job_service,
        .carrier_limits = limits(),
        .maximum_connections = 8U,
        .maximum_accepts_per_poll = 8U});
   ASSERT_TRUE(server.has_value()) << server.error().to_string();
-  auto client_context = network::TlsClientContext::create(client_tls());
-  ASSERT_TRUE(client_context.has_value());
-  Authenticator server_authenticator{92U};
 
   auto mutable_query =
       mutable_client(server->bound_endpoint(), *client_context, server_authenticator, authorizer);
@@ -383,14 +444,43 @@ TEST(DistributedMutableQueryControlTcpTest, RoutesAllProtocolsAfterOneAuthentica
   ASSERT_TRUE(read_authority->result().has_value());
   EXPECT_EQ(*read_authority->result(), authority());
   EXPECT_EQ(receiver_owner.authority_service.calls, 1U);
-  EXPECT_EQ(client_authenticator.calls, 3U);
+
+  auto job_control = job_control_client(server->bound_endpoint(), *client_context,
+                                        server_authenticator, authorizer);
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       job_control.carrier.state() !=
+           DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kComplete;
+       ++iteration) {
+    const auto interest = job_control.carrier.interest();
+    pollfd descriptor{.fd = job_control.socket.descriptor(),
+                      .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
+                                                   (interest.want_write ? POLLOUT : 0))};
+    ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
+    const auto progress = job_control.carrier.on_ready((descriptor.revents & POLLIN) != 0,
+                                                       (descriptor.revents & POLLOUT) != 0,
+                                                       std::chrono::steady_clock::now());
+    ASSERT_TRUE(progress.is_ok()) << progress.to_string();
+    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(job_control.carrier.state(),
+            DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kComplete)
+      << job_control.carrier.failure().to_string();
+  auto prepared = job_control.carrier.result();
+  ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
+  EXPECT_EQ(prepared->status_code, common::StatusCode::kOk);
+  EXPECT_EQ(prepared->query_id, uuid(31U));
+  EXPECT_EQ(job_service.metrics().active_jobs, 1U);
+
+  EXPECT_EQ(client_authenticator.calls, 4U);
   EXPECT_TRUE(client_authenticator.saw_fingerprint);
   EXPECT_TRUE(server_authenticator.saw_fingerprint);
   const auto metrics = server->metrics();
-  EXPECT_EQ(metrics.accepted_connections, 3U);
+  EXPECT_EQ(metrics.accepted_connections, 4U);
   EXPECT_EQ(metrics.completed_mutable_queries, 1U);
   EXPECT_EQ(metrics.completed_mutable_grouped_queries, 1U);
   EXPECT_EQ(metrics.completed_read_authorities, 1U);
+  EXPECT_EQ(metrics.completed_grouped_shuffle_job_controls, 1U);
   EXPECT_EQ(metrics.failed_connections, 0U);
   EXPECT_EQ(metrics.active_connections, 0U);
 }
