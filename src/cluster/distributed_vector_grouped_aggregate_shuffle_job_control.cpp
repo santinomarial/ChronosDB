@@ -25,12 +25,6 @@ namespace {
 
 using namespace distributed_vector_grouped_aggregate_shuffle_job_control_format;
 
-inline constexpr std::array<std::byte, 8U> kMagic{std::byte{'C'}, std::byte{'H'}, std::byte{'D'},
-                                                  std::byte{'V'}, std::byte{'G'}, std::byte{'J'},
-                                                  std::byte{'C'}, std::byte{'1'}};
-inline constexpr std::array<std::byte, 8U> kResponseMagic{
-    std::byte{'C'}, std::byte{'H'}, std::byte{'D'}, std::byte{'V'},
-    std::byte{'G'}, std::byte{'J'}, std::byte{'R'}, std::byte{'1'}};
 inline constexpr std::size_t kHeaderCrcOffset = 124U;
 inline constexpr std::size_t kResponseHeaderCrcOffset = 92U;
 inline constexpr std::uint16_t kResponseEndpointFlag = 1U;
@@ -267,7 +261,7 @@ encode_request_bytes(const DistributedVectorGroupedAggregateShuffleJobControlAct
   try {
     std::vector<std::byte> bytes(*frame_length);
     common::ByteWriter writer{bytes};
-    common::Status write = writer.write_exact(kMagic);
+    common::Status write = writer.write_exact(kRequestMagic);
     if (write.is_ok())
       write = writer.write_u16_le(kMajor);
     if (write.is_ok())
@@ -325,6 +319,12 @@ encode_request_bytes(const DistributedVectorGroupedAggregateShuffleJobControlAct
 }
 
 } // namespace
+
+common::Status validate_distributed_vector_grouped_aggregate_shuffle_job_control_decode_limits(
+    const DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits& limits) noexcept {
+  return valid_limits(limits) ? common::Status::ok()
+                              : invalid("grouped shuffle reducer-job decode limits are invalid");
+}
 
 EncodedDistributedVectorGroupedAggregateShuffleJobControlRequest::
     EncodedDistributedVectorGroupedAggregateShuffleJobControlRequest(
@@ -392,16 +392,16 @@ decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v1_exact
       query::distributed_vector_result_schema_format::kHeaderLength +
       query::distributed_vector_result_schema_format::kDescriptorFixedLength + 1U +
       query::distributed_vector_result_schema_format::kTrailerLength + kTrailerLength;
-  if (!valid_limits(limits)) {
-    return common::make_unexpected(
-        invalid("grouped shuffle reducer-job decode limits are invalid"));
-  }
+  const common::Status valid_decode_limits =
+      validate_distributed_vector_grouped_aggregate_shuffle_job_control_decode_limits(limits);
+  if (!valid_decode_limits.is_ok())
+    return common::make_unexpected(valid_decode_limits);
   if (bytes.size() < kHeaderLength + kTrailerLength || bytes.size() > kMaximumFrameLength)
     return common::make_unexpected(
         corruption("grouped shuffle reducer-job frame length is invalid"));
   if (bytes.size() > limits.maximum_frame_length)
     return common::make_unexpected(exhausted("grouped shuffle reducer-job exceeds caller limit"));
-  if (!std::ranges::equal(bytes.first(kMagic.size()), kMagic))
+  if (!std::ranges::equal(bytes.first(kRequestMagic.size()), kRequestMagic))
     return common::make_unexpected(corruption("grouped shuffle reducer-job magic is invalid"));
   common::ByteReader header_crc_reader{bytes.subspan(kHeaderCrcOffset, 4U)};
   const auto stored_header_crc = header_crc_reader.read_u32_le();
@@ -411,7 +411,7 @@ decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v1_exact
         corruption("grouped shuffle reducer-job header checksum differs"));
   }
   common::ByteReader reader{bytes};
-  static_cast<void>(reader.skip(kMagic.size()));
+  static_cast<void>(reader.skip(kRequestMagic.size()));
   const auto major = reader.read_u16_le();
   const auto minor = reader.read_u16_le();
   const auto header_length = reader.read_u32_le();

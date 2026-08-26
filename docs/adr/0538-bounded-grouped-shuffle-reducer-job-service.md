@@ -81,7 +81,7 @@ and listener publication ordering.
 
 ## Unresolved questions
 
-- Add bounded request/response readers, cursors, and mutual-TLS control sessions.
+- Add mutual-TLS control sessions around the implemented bounded readers and cursors.
 - Dispatch the protocol from the shared query-control endpoint and own the service in `chronosd`.
 - Qualify multi-daemon source execution, abrupt coordinator/reducer loss, skew, and whole-query
   replacement with production route discovery.

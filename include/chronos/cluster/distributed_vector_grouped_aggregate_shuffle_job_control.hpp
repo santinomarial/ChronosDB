@@ -7,6 +7,7 @@
 #include "chronos/network/tcp_socket.hpp"
 #include "chronos/query/distributed_vector_result_schema.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -17,6 +18,12 @@
 namespace chronos::cluster {
 
 namespace distributed_vector_grouped_aggregate_shuffle_job_control_format {
+inline constexpr std::array<std::byte, 8U> kRequestMagic{
+    std::byte{'C'}, std::byte{'H'}, std::byte{'D'}, std::byte{'V'},
+    std::byte{'G'}, std::byte{'J'}, std::byte{'C'}, std::byte{'1'}};
+inline constexpr std::array<std::byte, 8U> kResponseMagic{
+    std::byte{'C'}, std::byte{'H'}, std::byte{'D'}, std::byte{'V'},
+    std::byte{'G'}, std::byte{'J'}, std::byte{'R'}, std::byte{'1'}};
 inline constexpr std::uint16_t kMajor = 1U;
 inline constexpr std::uint16_t kMinor = 0U;
 inline constexpr std::size_t kHeaderLength = 128U;
@@ -79,6 +86,10 @@ struct DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits {
   DistributedVectorGroupedAggregateShuffleAuthorityDecodeLimits authority;
   query::DistributedVectorResultSchemaDecodeLimits result_schema;
 };
+
+[[nodiscard]] common::Status
+validate_distributed_vector_grouped_aggregate_shuffle_job_control_decode_limits(
+    const DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits& limits) noexcept;
 
 class EncodedDistributedVectorGroupedAggregateShuffleJobControlRequest {
 public:

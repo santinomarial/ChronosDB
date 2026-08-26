@@ -1606,8 +1606,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   relative execution timeout. A fixed checksummed response now correlates status and publishes a
   reducer listener only for successful PREPARE. A bounded reducer-job service now owns idempotent
   admission, stable proof lifetimes, local/remote ingress, seal gating, Native partition encoding,
-  finite result retry, receipt completion, cancellation, and deadline cleanup. Authenticated
-  partial-I/O control transport and packaged daemon ownership remain. The computed path now
+  finite result retry, receipt completion, cancellation, and deadline cleanup. Header-first bounded
+  request reads, fixed response reads, exact consumed-byte reporting, and move-only partial writes
+  now own control stream fragmentation. Mutual-TLS control sessions and packaged daemon ownership
+  remain. The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives
   plan and result shapes from its outputs, and executes it locally before grouping.

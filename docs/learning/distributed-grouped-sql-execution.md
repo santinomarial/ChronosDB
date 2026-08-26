@@ -310,14 +310,19 @@ The `CHDVGJC1` reducer-job request now binds that proof to its exact raw grouped
 explicit coordinator and target reducer identities, numeric coordinator result endpoint, and
 relative execution timeout. PREPARE owns and revalidates both nested values; SEAL is a canonical
 identity-only action for an already admitted job. The timeout begins at successful admission, so
-the wire never serializes a process-local steady-clock epoch. Authentication, correlated response,
-finite admission, progress, cancellation, and cleanup remain responsibilities of the packaged job
-service rather than the codec.
+the wire never serializes a process-local steady-clock epoch. Authentication remains an enclosing
+carrier responsibility; correlation, finite admission, progress, cancellation, and cleanup are
+owned above the codec.
 
 The fixed `CHDVGJR1` response echoes action, query, coordinator, target, and stable status. Only a
 successful PREPARE may carry the reducer's live shuffle-listener endpoint; failed admission and all
 SEAL responses have one canonical endpoint-free representation. A future carrier must still prove
 mutual authentication and exact response correlation before source routing begins.
+
+The request stream reader retains the fixed checksummed header inline and allocates exactly the
+declared request only after hard and deployment bounds pass. The fixed response reader remains
+allocation-free. Both expose exact consumed bytes so a one-exchange carrier can reject coalesced
+suffixes, while move-only cursors own every unwritten request or response byte.
 
 The bounded reducer-job service now owns the process-local lifecycle behind those messages. It
 places each decoded PREPARE on stable storage before starting destination reducers, publishes only
@@ -327,7 +332,7 @@ authority sources close. It then shuts ingress, drains and Native-encodes every 
 partition, and constructs the complete result retry scheduler before acknowledging success.
 Receipt-proven result completion, cancellation, and the relative job deadline are polled by the
 same thread. Terminal jobs remain idempotently addressable only until that deadline, after which
-cleanup releases bounded admission capacity. The initial authenticated control carrier and daemon
+cleanup releases bounded admission capacity. The authenticated control session and daemon
 ownership remain the next boundary.
 
 ### Portable sufficient-state execution boundary

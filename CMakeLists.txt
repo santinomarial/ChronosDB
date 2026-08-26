@@ -680,6 +680,7 @@ add_library(
   src/cluster/distributed_vector_grouped_aggregate_shuffle_authority.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_authority_codec.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_job_control.cpp
+  src/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_transport.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_job_service.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_destination_execution.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_reducer.cpp
@@ -1460,6 +1461,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_authority_codec_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_header_self_contained.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_test.cpp
+    tests/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_transport_header_self_contained.cpp
+    tests/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_transport_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_job_service_header_self_contained.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_job_service_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_destination_execution_header_self_contained.cpp
@@ -1668,6 +1671,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_authority_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_authority_codec_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_allocation_failure_test.cpp
+    tests/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_transport_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_job_service_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_destination_execution_allocation_failure_test.cpp
     tests/cluster/distributed_vector_grouped_aggregate_shuffle_reducer_allocation_failure_test.cpp

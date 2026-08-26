@@ -1,8 +1,9 @@
 # Distributed Vector Grouped Aggregate Shuffle Job Control v1
 
 > **Status: accepted and implemented for exact prepare/seal request and correlated response
-> encoding/decoding.** Authentication, partial-I/O ownership, and daemon dispatch remain enclosing
-> transport responsibilities; bounded process-local job admission and progress are implemented.
+> encoding/decoding.** Bounded header-first reads and move-only partial writes are implemented.
+> Authentication and daemon dispatch remain enclosing transport responsibilities; bounded
+> process-local job admission and progress are implemented.
 
 `CHDVGJC1` binds a portable grouped-shuffle authority to its exact raw result schema and the
 coordinator result route needed by one remote reducer daemon. It has two actions. `PREPARE`
