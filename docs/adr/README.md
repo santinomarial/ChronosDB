@@ -565,3 +565,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0528](0528-finite-immutable-grouped-shuffle-result-retry.md) | Finite immutable grouped shuffle result retry | accepted |
 | [0529](0529-deadline-bound-grouped-shuffle-result-tcp-client.md) | Deadline-bound grouped shuffle result TCP client | accepted |
 | [0530](0530-bounded-grouped-shuffle-result-tcp-server.md) | Bounded grouped shuffle result TCP server | accepted |
+| [0531](0531-idempotent-grouped-shuffle-result-collector.md) | Idempotent grouped shuffle result collector | accepted |
