@@ -299,6 +299,13 @@ process set must retry the query. This proves address-space independence and the
 process-loss boundary. Production `chronosd` role configuration, route discovery, and shared
 service polling remain separate.
 
+Reducer-job setup no longer needs to invent an in-memory authority transfer. The versioned
+`CHDVGSA1` product carries the complete plan-order source set, canonical destinations, typed keys,
+typed aggregate inputs, query identity, and hash version with header and whole-frame integrity.
+Decoding applies hard and deployment bounds before rebuilding the same validated immutable
+authority. It deliberately excludes result schema, routes, deadlines, and credentials: the next
+control envelope must bind those deployment facts to this reusable proof.
+
 ### Portable sufficient-state execution boundary
 
 `DistributedVectorGroupedAggregateQueryExecutionV2` now joins the compatible snapshot to the

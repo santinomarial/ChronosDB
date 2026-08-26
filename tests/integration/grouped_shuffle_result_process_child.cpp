@@ -1,3 +1,4 @@
+#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_authority_codec.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_result_coordinator_execution.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_result_tcp_execution.hpp"
 
@@ -90,11 +91,19 @@ struct Proofs {
 
   std::vector<query::DistributedMutableVectorFragment> fragments{fragment(2U, 3U),
                                                                  fragment(3U, 4U)};
-  cluster::DistributedVectorGroupedAggregateShuffleAuthority authority{
-      *cluster::DistributedVectorGroupedAggregateShuffleAuthority::create_from_mutable_fragments(
-          fragments, std::array{query::VectorGroupKeyDefinition{0U, string_type(), false}},
-          std::array{query::VectorAggregateDefinition{query::VectorAggregateOperation::kCountStar,
-                                                      std::nullopt}})};
+  cluster::DistributedVectorGroupedAggregateShuffleAuthority authority{[&] {
+    auto derived =
+        cluster::DistributedVectorGroupedAggregateShuffleAuthority::create_from_mutable_fragments(
+            fragments, std::array{query::VectorGroupKeyDefinition{0U, string_type(), false}},
+            std::array{query::VectorAggregateDefinition{query::VectorAggregateOperation::kCountStar,
+                                                        std::nullopt}})
+            .value();
+    auto encoded =
+        cluster::encode_distributed_vector_grouped_aggregate_shuffle_authority(derived).value();
+    return cluster::decode_distributed_vector_grouped_aggregate_shuffle_authority_exact(
+               encoded.bytes())
+        .value();
+  }()};
   cluster::DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2 finalization{
       *cluster::DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2::create(authority,
                                                                                         fragments)};

@@ -1599,7 +1599,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   reducer processes and one coordinator process, proves refused-address rotation and receipt
   success, kills a required stalled reducer, withholds partial output, and then succeeds only
   through a fresh whole-query process set. Packaged daemon role ownership and route discovery
-  remain. The computed path now
+  remain. A versioned checksummed bounded authority product now carries the complete source,
+  destination, typed key/aggregate, query, and hash proof needed to install such a reducer job in a
+  different process; the authenticated prepare/seal control envelope remains. The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives
   plan and result shapes from its outputs, and executes it locally before grouping.

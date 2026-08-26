@@ -126,6 +126,9 @@ existence of a design document alone is not implementation evidence.
   carrier binding one canonical grouped-state message to exact immutable source node/tablet,
   destination node/partition, query, partition-count, and hash-version authority, with header-first
   bounded partial-I/O ownership and destination-side canonical route revalidation.
+- [Distributed Vector Grouped Aggregate Shuffle Authority
+  v1](formats/distributed-vector-grouped-aggregate-shuffle-authority-v1.md): complete checksummed
+  source, destination, typed key/aggregate, query, and hash proof for cross-process job setup.
 - [Distributed Vector Grouped Aggregate Shuffle Acknowledgment
   v1](formats/distributed-vector-grouped-aggregate-shuffle-ack-v1.md): fixed checksummed reverse-
   route success receipt binding exact immutable edge authority and accepted stream frame/byte
