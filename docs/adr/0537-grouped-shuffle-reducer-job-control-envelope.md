@@ -44,9 +44,9 @@ independently reusable and versioned. Exact object identity is re-established af
 owning both values together in the PREPARE variant.
 
 Encode and decode allocate only owned frame/nested values and classify injected allocation failure
-as resource exhaustion. SEAL is compact and canonical, while idempotency, admission limits,
-progress, cancellation, cleanup, and acknowledgment remain explicit service work rather than fake
-codec success.
+as resource exhaustion. SEAL is compact and canonical. Idempotency, admission limits, progress,
+cancellation, cleanup, and acknowledgment remain explicit service work outside the codec; ADR 0538
+implements that process-local owner.
 
 ## Affected invariants
 
@@ -78,8 +78,10 @@ request format; reducer daemons must then reject remote job setup rather than in
 ## Unresolved questions
 
 - Add bounded header-first request/response ownership and a mutual-TLS carrier.
-- Package finite job admission, idempotent prepare/seal, progress, cancellation, timeout cleanup,
-  shuffle ingress, and result scheduling into the daemon query-control service.
+- Dispatch the control protocol from the shared daemon query-control endpoint.
+
+[ADR 0538](0538-bounded-grouped-shuffle-reducer-job-service.md) now owns finite job admission,
+idempotent PREPARE/SEAL, ingress progress, cancellation, timeout cleanup, and result scheduling.
 
 ## References
 

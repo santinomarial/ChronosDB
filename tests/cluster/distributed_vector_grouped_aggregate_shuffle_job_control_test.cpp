@@ -181,6 +181,12 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTest,
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   EXPECT_EQ(*decoded, prepared);
 
+  auto local_only_prepared = prepared;
+  local_only_prepared.reducer_shuffle_endpoint.reset();
+  EXPECT_TRUE(encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1(
+                  local_only_prepared)
+                  .has_value());
+
   const DistributedVectorGroupedAggregateShuffleJobControlResponse sealed{
       .action = DistributedVectorGroupedAggregateShuffleJobControlAction::kSeal,
       .status_code = common::StatusCode::kOk,

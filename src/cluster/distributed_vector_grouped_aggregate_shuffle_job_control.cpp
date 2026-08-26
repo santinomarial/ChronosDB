@@ -241,7 +241,7 @@ validate_response(const DistributedVectorGroupedAggregateShuffleJobControlRespon
       response.status_code == common::StatusCode::kOk;
   if (response.query_id.is_nil() || response.coordinator_node_id == 0U ||
       response.target_node_id == 0U || response.coordinator_node_id == response.target_node_id ||
-      (prepare_success != response.reducer_shuffle_endpoint.has_value()) ||
+      (!prepare_success && response.reducer_shuffle_endpoint.has_value()) ||
       (response.reducer_shuffle_endpoint.has_value() &&
        !valid_endpoint(*response.reducer_shuffle_endpoint))) {
     return invalid("grouped shuffle reducer-job response is invalid");

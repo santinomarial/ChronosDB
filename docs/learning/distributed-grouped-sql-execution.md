@@ -319,6 +319,17 @@ successful PREPARE may carry the reducer's live shuffle-listener endpoint; faile
 SEAL responses have one canonical endpoint-free representation. A future carrier must still prove
 mutual authentication and exact response correlation before source routing begins.
 
+The bounded reducer-job service now owns the process-local lifecycle behind those messages. It
+places each decoded PREPARE on stable storage before starting destination reducers, publishes only
+a successfully opened shuffle listener, exact-compares duplicate configuration, and accepts local
+worker streams alongside authenticated remote streams. SEAL returns `UNAVAILABLE` until all
+authority sources close. It then shuts ingress, drains and Native-encodes every locally assigned
+partition, and constructs the complete result retry scheduler before acknowledging success.
+Receipt-proven result completion, cancellation, and the relative job deadline are polled by the
+same thread. Terminal jobs remain idempotently addressable only until that deadline, after which
+cleanup releases bounded admission capacity. The initial authenticated control carrier and daemon
+ownership remain the next boundary.
+
 ### Portable sufficient-state execution boundary
 
 `DistributedVectorGroupedAggregateQueryExecutionV2` now joins the compatible snapshot to the
