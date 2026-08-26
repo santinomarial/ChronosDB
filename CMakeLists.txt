@@ -1748,6 +1748,41 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_static_analysis(chronos_feature_smoke_tests)
   gtest_discover_tests(chronos_feature_smoke_tests DISCOVERY_TIMEOUT 30)
 
+  if(UNIX)
+    add_executable(
+      grouped_shuffle_result_process_child
+      tests/integration/grouped_shuffle_result_process_child.cpp
+    )
+    set_target_properties(grouped_shuffle_result_process_child PROPERTIES CXX_EXTENSIONS OFF)
+    target_compile_features(grouped_shuffle_result_process_child PRIVATE cxx_std_23)
+    target_compile_definitions(
+      grouped_shuffle_result_process_child
+      PRIVATE CHRONOS_TEST_TLS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network/tls"
+    )
+    target_link_libraries(grouped_shuffle_result_process_child PRIVATE chronos::cluster)
+    chronos_set_project_warnings(grouped_shuffle_result_process_child)
+    chronos_enable_sanitizers(grouped_shuffle_result_process_child)
+    chronos_enable_static_analysis(grouped_shuffle_result_process_child)
+
+    add_executable(
+      grouped_shuffle_result_process_tests
+      tests/integration/grouped_shuffle_result_process_test.cpp
+    )
+    set_target_properties(grouped_shuffle_result_process_tests PROPERTIES CXX_EXTENSIONS OFF)
+    target_compile_features(grouped_shuffle_result_process_tests PRIVATE cxx_std_23)
+    target_compile_definitions(
+      grouped_shuffle_result_process_tests
+      PRIVATE
+        GROUPED_SHUFFLE_RESULT_PROCESS_CHILD_PATH="$<TARGET_FILE:grouped_shuffle_result_process_child>"
+    )
+    target_link_libraries(grouped_shuffle_result_process_tests PRIVATE GTest::gtest_main)
+    add_dependencies(grouped_shuffle_result_process_tests grouped_shuffle_result_process_child)
+    chronos_set_project_warnings(grouped_shuffle_result_process_tests)
+    chronos_enable_sanitizers(grouped_shuffle_result_process_tests)
+    chronos_enable_static_analysis(grouped_shuffle_result_process_tests)
+    gtest_discover_tests(grouped_shuffle_result_process_tests DISCOVERY_TIMEOUT 30)
+  endif()
+
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_executable(
       chronosd_entropy_failure_test_child

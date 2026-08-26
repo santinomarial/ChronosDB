@@ -569,3 +569,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0532](0532-accounted-independent-grouped-result-finalization.md) | Accounted independent grouped result finalization | accepted |
 | [0533](0533-deadline-bound-grouped-result-retry-scheduling.md) | Deadline-bound grouped result retry scheduling | accepted |
 | [0534](0534-atomic-grouped-result-coordinator-lifecycle.md) | Atomic grouped result coordinator lifecycle | accepted |
+| [0535](0535-independent-grouped-result-process-qualification.md) | Independent grouped result process qualification | accepted |

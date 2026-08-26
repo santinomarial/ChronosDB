@@ -287,7 +287,17 @@ receipt-proven reducer to resend. Exact duplicates remain no-ops. Once all autho
 present, the listener closes and the proof-bound global pipeline publishes one take-once Native
 result. This owner is process-memory recovery, not durable query recovery: a coordinator crash
 still requires a new query attempt. Reducer scheduling remains process-local to each reducer, and
-real distinct-process qualification is the next deployment gate.
+packaged distinct-process qualification is the next deployment gate.
+
+A standalone Unix qualification now crosses that boundary without pretending to be daemon
+packaging. One coordinator executable and two reducer executables independently reconstruct the
+same fragment proof, then exchange partition results through real TCP and mutual TLS. One reducer
+rotates away from a refused address before receipt success; the coordinator still exposes only the
+globally ordered and limited row. A required reducer killed before publication leaves the
+coordinator with incomplete coverage, so its deadline cancels without output and a completely new
+process set must retry the query. This proves address-space independence and the intended
+process-loss boundary. Production `chronosd` role configuration, route discovery, and shared
+service polling remain separate.
 
 ### Portable sufficient-state execution boundary
 
@@ -397,6 +407,7 @@ timeouts make both groups choose the same leader for this deterministic qualific
 That evidence does not prove arbitrary split-leader process coordination because it deliberately
 elects one common leader. The Native coordinator now combines local and authenticated remote
 per-group authority in focused in-process coverage, but Linux multi-daemon split-leader
-qualification remains separate. Multi-process real-CSEG scans and a destination-routed multi-key/
-all-type sufficient-state shuffle also remain separate gates; only its canonical source-side
-partition split is implemented.
+qualification remains separate. The standalone result-return process gate now qualifies distinct
+reducer/coordinator address spaces, finite route retry, missing-reducer cancellation, and a fresh
+whole-query retry, but not packaged daemon ownership. Multi-process real-CSEG scans and a packaged
+destination-routed multi-key/all-type sufficient-state shuffle also remain separate gates.
