@@ -1583,8 +1583,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   receipt scheduling, seals only after complete closure, gathers in authority order, and atomically
   finalizes Native output; a two-node bidirectional mTLS loopback exercises that composition.
   Mutable worker scheduling now composes with this lifecycle through a one-shot, complete canonical
-  source-stream handoff while retaining the existing direct path as the default. Computed pre-group
-  plan splitting and cross-process result transport are still missing. The computed path now has a
+  source-stream handoff while retaining the existing direct path as the default. Independent-process
+  partition-result transport is still missing. The computed path now has a
   standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec. Mutable
   in-memory binding now owns it, proves every source leaf against the exact schema, derives plan and
   result shapes from its outputs, and executes it locally before grouping. Backward-compatible
@@ -1597,9 +1597,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   projection/order/limit are now
   integrated. The one committed private query-control endpoint now dispatches exact decoded mutable
   plans to row or grouped receivers and retains distinct bounded response codecs, so remote grouped
-  work no longer requires an unadvertised second listener. Computed pre-group lowering and
-  independent-process result return still block making the
-  row-backed oracle fallback-only.
+  work no longer requires an unadvertised second listener. Bound SQL now splits computed group keys
+  and aggregate inputs into that owned program, replicated preparation transfers it through every
+  exact fragment, and both local and authenticated remote Native execution use the sufficient-state
+  path. The complete logical identity rejects mixed programs and computation-changing authority
+  retries. Independent-process shuffle result return and the remaining unsupported SQL vocabulary
+  still prevent making the row-backed oracle fallback-only.
   The full phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.

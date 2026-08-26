@@ -557,3 +557,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0520](0520-versioned-owned-pre-group-vector-program.md) | Versioned owned pre-group vector program | accepted |
 | [0521](0521-proof-bound-local-mutable-pre-group-execution.md) | Proof-bound local mutable pre-group execution | accepted |
 | [0522](0522-backward-compatible-mutable-pre-group-fragments.md) | Backward-compatible mutable pre-group fragments | accepted |
+| [0523](0523-owned-computed-grouped-sql-lowering.md) | Owned computed grouped SQL lowering | accepted |

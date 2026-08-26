@@ -55,6 +55,7 @@ struct ReplicatedMutableVectorQueryBinding {
   std::span<const std::uint32_t> destination_column_ordinals;
   std::optional<cseg::EventTimePredicate> event_time_predicate;
   std::reference_wrapper<const query::DistributedVectorResultSchema> result_schema;
+  const query::DistributedVectorPreGroupProgram* pre_group_program{};
 };
 
 struct ReplicatedRoutedMutableVectorQuery {
@@ -68,6 +69,9 @@ struct ReplicatedMutableVectorRowsSqlBinding {
   // Canonical unique group order. Extra metadata authority is ignored; every committed table
   // tablet must have one exact current-leader barrier/observation pair.
   std::span<const query::DistributedVectorGroupReadAuthority> group_authorities;
+  // Non-null only when grouped sufficient-state preparation reuses this exact fragment owner.
+  // Rows intent remains incompatible with a pre-group program and fails closed in binding.
+  const query::DistributedVectorPreGroupProgram* pre_group_program{};
 };
 
 struct ReplicatedMutableVectorGroupedAggregateSqlBinding {

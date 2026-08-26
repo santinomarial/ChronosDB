@@ -18,12 +18,13 @@ result, synchronously borrows the immutable physical plan, owns the output schem
 same all-or-none Native batch product used by distributed row finalization.
 
 `lower_bound_sql_select_to_distributed_vector_grouped_aggregate()` is the distinct scalable-path
-entry point for direct pre-group SQL. It owns the unique source projection, remapped direct group
-keys and aggregate inputs, exact event-time range, and the raw key/aggregate schema consumed by the
-grouped sufficient-state scheduler. For non-identity SELECT lists it also owns checked final
-expressions, the client schema, and projected global ordering and limit. It deliberately returns
-`NOT_SUPPORTED` for computed group keys, computed aggregate inputs, non-event-time predicates, and
-hidden order expressions so the caller can select the row-backed plan explicitly.
+entry point. It owns the unique source dependency projection, exact event-time range, and raw
+key/aggregate schema consumed by the grouped sufficient-state scheduler. Direct keys and aggregate
+inputs keep the original compact plan. If any input is computed, the lowerer additionally owns an
+ordered, versioned pre-group `VectorExpression` program and makes grouped-plan input ordinals name
+that program's outputs. For non-identity SELECT lists it owns checked final expressions, the client
+schema, and projected global ordering and limit. Non-event-time predicates and hidden order
+expressions still return `NOT_SUPPORTED` so the caller can select the row-backed plan explicitly.
 
 ## Execution sequence
 
@@ -47,6 +48,12 @@ bound grouped SELECT
 Workers retain exact snapshot, placement, group, barrier, schema, and projection checks. They do not
 apply GROUP BY, ORDER BY, or LIMIT. The coordinator therefore sees every selected row exactly once
 before global aggregation.
+
+The sufficient-state path instead validates every pre-group input leaf against the exact worker
+schema, evaluates the owned outputs after event-time filtering, and groups those output vectors.
+Fragments with no program retain v1 bytes. Computed fragments nest the checksummed program in
+Mutable Fragment v2, and the complete logical identity prevents tablets or authority rebindings
+from changing it.
 
 ## Native-row to vector conversion
 
@@ -114,8 +121,9 @@ second binding oracle. The replicated SQL constructor derives every committed ta
 one catalog, Manifest epoch, and single acquired authority vector; it rejects missing/extra
 Manifest tablets and transfers the complete owned contract into the scheduler. Computed final
 expressions now run over the globally merged raw key/aggregate vector through the shared checked
-projection, sort, and limit stages. Computed pre-group expressions still need an owned worker-plan
-split. Canonical bounded source-side partition splitting, complete node-bound destination authority,
+projection, sort, and limit stages. Computed group keys and aggregate inputs now lower into the
+owned program, cross authenticated transport, and execute before tablet-local grouping. Canonical
+bounded source-side partition splitting, complete node-bound destination authority,
 and an exact checksummed per-message remote carrier now exist. An atomic complete-stream owner also
 authorizes the already authenticated source principal, locks one remote edge, proves terminal
 closure, and withholds every decoded group until full success. A fixed checksummed reverse-route
@@ -217,9 +225,8 @@ context before the established checked projection, ORDER BY, LIMIT, and atomic N
 One heap-stable post-worker lifecycle now owns that whole chain. It exact-validates source and
 destination coverage, starts every reducer/listener before transport, delivers local edges,
 receipt-schedules all remote edges, keeps ingress live until closure proof, seals, gathers, and
-atomically finalizes Native output. Cancellation tears down both sides. At this boundary worker
-execution, Native SQL selection, computed pre-group programs, and independent-process result return
-remain separate work.
+atomically finalizes Native output. Cancellation tears down both sides. At this boundary
+independent-process partition-result return remains separate work.
 
 The mutable grouped worker scheduler can now publish complete canonical tablet streams instead of
 draining them through its direct coordinator. A second stable owner derives shuffle authority from

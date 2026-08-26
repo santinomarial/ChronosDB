@@ -40,6 +40,7 @@ struct ValidatedLogicalIdentity {
         .event_time_predicate = first.event_time_predicate,
         .plan = first.plan,
         .result_schema = first.result_schema,
+        .pre_group_program = first.pre_group_program,
         .tablets = {}};
     std::map<schema::TabletId, std::size_t> indexes;
     identity.tablets.reserve(fragments.size());
@@ -54,6 +55,7 @@ struct ValidatedLogicalIdentity {
           fragment.destination_schema_id != identity.destination_schema_id ||
           fragment.read_policy != identity.read_policy || fragment.plan != identity.plan ||
           fragment.result_schema != identity.result_schema ||
+          fragment.pre_group_program != identity.pre_group_program ||
           fragment.destination_column_ordinals != identity.destination_column_ordinals ||
           fragment.event_time_predicate != identity.event_time_predicate ||
           !indexes.emplace(fragment.tablet_id, index).second) {

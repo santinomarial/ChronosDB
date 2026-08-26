@@ -1,4 +1,5 @@
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_execution.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_finalization_v2.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -31,6 +32,11 @@ template <typename Id> [[nodiscard]] Id id(const std::uint8_t seed) {
 
 [[nodiscard]] std::vector<query::VectorAggregateDefinition> aggregates() {
   return {{.operation = query::VectorAggregateOperation::kCountStar, .input = std::nullopt}};
+}
+
+[[nodiscard]] std::vector<query::VectorAggregateDefinition> computed_aggregates() {
+  return {{.operation = query::VectorAggregateOperation::kCount,
+           .input = query::VectorAggregateInput{1U, string_type(), false}}};
 }
 
 [[nodiscard]] query::DistributedMutableVectorFragment fragment(const std::uint8_t tablet_seed,
@@ -81,6 +87,57 @@ response(const query::DistributedMutableVectorFragment& fragment, const std::siz
                .empty = false},
               std::move(key_values),
               std::move(states)}};
+}
+
+TEST(DistributedMutableVectorGroupedAggregateQueryExecutionTest,
+     FinalizesAggregateInputProducedBeyondRawProjectionWidth) {
+  auto computed = fragment(4U, 11U);
+  std::vector<query::VectorExpressionInstruction> group_instructions{
+      query::VectorInputExpression{0U, string_type(), false}};
+  std::vector<query::VectorExpressionInstruction> aggregate_instructions{
+      query::VectorInputExpression{0U, string_type(), false},
+      query::VectorUnaryExpression{query::VectorUnaryOperation::kLowerAscii, 0U}};
+  computed.pre_group_program = query::DistributedVectorPreGroupProgram{
+      .outputs = {query::VectorExpression::create(std::move(group_instructions)).value(),
+                  query::VectorExpression::create(std::move(aggregate_instructions)).value()}};
+  computed.plan.aggregates = {
+      {.operation = query::VectorAggregateOperation::kCount, .input_index = 1U}};
+  const auto admitted = computed;
+  auto execution = DistributedMutableVectorGroupedAggregateQueryExecution::create(
+      1U, {computed}, keys(), computed_aggregates());
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+  ASSERT_TRUE(execution->begin_attempt(admitted.tablet_id, {}).has_value());
+
+  auto definitions = computed_aggregates();
+  auto state = query::MergeableVectorAggregateState::create(definitions.front()).value();
+  std::vector<query::ScalarValue> key_values;
+  key_values.push_back(query::ScalarValue::text(string_type(), "east").value());
+  std::vector<query::MergeableVectorAggregateState> states;
+  states.push_back(std::move(state));
+  const DistributedVectorGroupedAggregateQueryResponseV2 computed_response{
+      .source_node_id = admitted.serving_node,
+      .target_node_id = 1U,
+      .query_id = admitted.query_id,
+      .tablet_id = admitted.tablet_id,
+      .status_code = common::StatusCode::kOk,
+      .payload =
+          query::DistributedVectorGroupedAggregateExchangeMessage{{.query_id = admitted.query_id,
+                                                                   .tablet_id = admitted.tablet_id,
+                                                                   .sequence = 1U,
+                                                                   .group_ordinal = 0U,
+                                                                   .group_count = 1U,
+                                                                   .terminal = true,
+                                                                   .empty = false},
+                                                                  std::move(key_values),
+                                                                  std::move(states)}};
+  ASSERT_TRUE(
+      execution
+          ->accept_responses(admitted.tablet_id, std::span{&computed_response, std::size_t{1U}}, {})
+          .is_ok());
+  ASSERT_TRUE(execution->finish().is_ok());
+  auto finalized = finalize_distributed_mutable_vector_grouped_aggregate_v2(*execution);
+  ASSERT_TRUE(finalized.has_value()) << finalized.error().to_string();
+  EXPECT_EQ(finalized->row_count, 1U);
 }
 
 TEST(DistributedMutableVectorGroupedAggregateQueryExecutionTest,

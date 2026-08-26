@@ -46,6 +46,18 @@ template <typename Id> [[nodiscard]] Id id(const std::uint8_t seed) {
           .result_schema = result_schema()};
 }
 
+[[nodiscard]] query::DistributedVectorPreGroupProgram
+pre_group_program(const std::size_t source_ordinal) {
+  std::vector<query::VectorExpressionInstruction> instructions;
+  instructions.emplace_back(query::VectorInputExpression{
+      .input_column_ordinal = source_ordinal,
+      .type = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
+      .nullable = false});
+  std::vector<query::VectorExpression> outputs;
+  outputs.push_back(query::VectorExpression::create(std::move(instructions)).value());
+  return {.outputs = std::move(outputs)};
+}
+
 [[nodiscard]] std::vector<std::byte> zero_row_batch() {
   const auto schema_value = result_schema();
   const std::array columns{network::QueryResultColumn{schema_value.columns[0].name,
@@ -125,6 +137,19 @@ TEST(DistributedMutableVectorQueryExecutionTest,
   EXPECT_NE(*fresh_identity, *identity);
   fresh[1].plan.limit = 3U;
   EXPECT_EQ(distributed_mutable_vector_query_logical_identity(fresh).error().code(),
+            common::StatusCode::kInvalidArgument);
+
+  for (query::DistributedMutableVectorFragment& value : initial) {
+    value.plan = {.mode = query::DistributedVectorPlanMode::kGroupedAggregate,
+                  .group_key_input_indices = {0U}};
+    value.pre_group_program = pre_group_program(0U);
+  }
+  identity = distributed_mutable_vector_query_logical_identity(initial);
+  ASSERT_TRUE(identity.has_value()) << identity.error().to_string();
+  ASSERT_TRUE(identity->pre_group_program.has_value());
+  auto mixed_program = initial;
+  mixed_program[1].pre_group_program = pre_group_program(1U);
+  EXPECT_EQ(distributed_mutable_vector_query_logical_identity(mixed_program).error().code(),
             common::StatusCode::kInvalidArgument);
 }
 

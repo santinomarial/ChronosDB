@@ -49,6 +49,7 @@ struct DistributedMutableVectorQueryLogicalIdentity {
   std::optional<cseg::EventTimePredicate> event_time_predicate;
   query::DistributedVectorPlanIntent plan;
   query::DistributedVectorResultSchema result_schema;
+  std::optional<query::DistributedVectorPreGroupProgram> pre_group_program;
   std::vector<DistributedMutableVectorQueryLogicalTablet> tablets;
 
   friend bool operator==(const DistributedMutableVectorQueryLogicalIdentity&,

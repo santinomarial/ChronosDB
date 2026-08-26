@@ -573,6 +573,7 @@ TEST(DistributedSqlLoweringTest, LowersDirectGroupedSufficientStateIntent) {
                                        .direction = PhysicalSortDirection::kAscending,
                                        .null_placement = ScalarNullPlacement::kFirst}));
   EXPECT_EQ(lowered->intent.limit, 3U);
+  EXPECT_FALSE(lowered->pre_group_program.has_value());
   EXPECT_FALSE(lowered->coordinator_projection.has_value());
   ASSERT_EQ(lowered->result_schema.columns.size(), 5U);
   EXPECT_EQ(lowered->result_schema.columns[0].name, "category");
@@ -622,10 +623,65 @@ TEST(DistributedSqlLoweringTest, SplitsRawGroupedStateFromCheckedFinalProjection
   EXPECT_EQ(projection.limit, 3U);
 }
 
-TEST(DistributedSqlLoweringTest, RejectsNonDirectGroupedSufficientStateSemanticsAndBounds) {
+TEST(DistributedSqlLoweringTest, LowersComputedGroupedSufficientStatePrograms) {
+  auto grouped_key = lower_bound_sql_select_to_distributed_vector_grouped_aggregate(
+      bind("SELECT value % 3 AS bucket, count(*) AS rows FROM metrics GROUP BY value % 3"));
+  ASSERT_TRUE(grouped_key.has_value()) << grouped_key.error().status().to_string();
+  EXPECT_EQ(grouped_key->destination_column_ordinals, (std::vector<std::uint32_t>{2U}));
+  ASSERT_TRUE(grouped_key->pre_group_program.has_value());
+  ASSERT_EQ(grouped_key->pre_group_program->outputs.size(), 1U);
+  const VectorExpression& key = grouped_key->pre_group_program->outputs.front();
+  ASSERT_EQ(key.instructions().size(), 3U);
+  EXPECT_EQ(std::get<VectorInputExpression>(key.instructions()[0]).input_column_ordinal, 2U);
+  EXPECT_TRUE(std::holds_alternative<VectorConstantExpression>(key.instructions()[1]));
+  EXPECT_EQ(std::get<VectorBinaryExpression>(key.instructions()[2]).operation,
+            VectorBinaryOperation::kRemainder);
+  EXPECT_EQ(grouped_key->intent.group_key_input_indices, (std::vector<std::uint32_t>{0U}));
+  ASSERT_EQ(grouped_key->intent.aggregates.size(), 1U);
+  EXPECT_EQ(grouped_key->intent.aggregates[0].operation, VectorAggregateOperation::kCountStar);
+  EXPECT_FALSE(grouped_key->intent.aggregates[0].input_index.has_value());
+  EXPECT_FALSE(grouped_key->coordinator_projection.has_value());
+  ASSERT_EQ(grouped_key->result_schema.columns.size(), 2U);
+  EXPECT_EQ(grouped_key->result_schema.columns[0].name, "bucket");
+  EXPECT_EQ(grouped_key->result_schema.columns[1].name, "rows");
+
+  auto aggregate_input = lower_bound_sql_select_to_distributed_vector_grouped_aggregate(
+      bind("SELECT label AS category, sum(value + 1) AS total FROM metrics GROUP BY label"));
+  ASSERT_TRUE(aggregate_input.has_value()) << aggregate_input.error().status().to_string();
+  EXPECT_EQ(aggregate_input->destination_column_ordinals, (std::vector<std::uint32_t>{1U, 2U}));
+  ASSERT_TRUE(aggregate_input->pre_group_program.has_value());
+  ASSERT_EQ(aggregate_input->pre_group_program->outputs.size(), 2U);
+  EXPECT_EQ(std::get<VectorInputExpression>(
+                aggregate_input->pre_group_program->outputs[0].instructions()[0])
+                .input_column_ordinal,
+            1U);
+  const VectorExpression& input = aggregate_input->pre_group_program->outputs[1];
+  ASSERT_EQ(input.instructions().size(), 3U);
+  EXPECT_EQ(std::get<VectorInputExpression>(input.instructions()[0]).input_column_ordinal, 2U);
+  EXPECT_EQ(std::get<VectorBinaryExpression>(input.instructions()[2]).operation,
+            VectorBinaryOperation::kAdd);
+  EXPECT_EQ(aggregate_input->intent.group_key_input_indices, (std::vector<std::uint32_t>{0U}));
+  ASSERT_EQ(aggregate_input->intent.aggregates.size(), 1U);
+  EXPECT_EQ(aggregate_input->intent.aggregates[0].input_index, 1U);
+  EXPECT_FALSE(aggregate_input->coordinator_projection.has_value());
+
+  auto computed_final = lower_bound_sql_select_to_distributed_vector_grouped_aggregate(
+      bind("SELECT (value % 3) + 1 AS shifted, count(*) AS rows FROM metrics "
+           "GROUP BY value % 3"));
+  ASSERT_TRUE(computed_final.has_value()) << computed_final.error().status().to_string();
+  ASSERT_TRUE(computed_final->pre_group_program.has_value());
+  ASSERT_EQ(computed_final->pre_group_program->outputs.size(), 1U);
+  ASSERT_TRUE(computed_final->coordinator_projection.has_value());
+  ASSERT_EQ(computed_final->coordinator_projection->outputs.size(), 2U);
+  const VectorExpression& shifted = computed_final->coordinator_projection->outputs[0];
+  ASSERT_EQ(shifted.instructions().size(), 3U);
+  EXPECT_EQ(std::get<VectorInputExpression>(shifted.instructions()[0]).input_column_ordinal, 0U);
+  EXPECT_EQ(std::get<VectorBinaryExpression>(shifted.instructions()[2]).operation,
+            VectorBinaryOperation::kAdd);
+}
+
+TEST(DistributedSqlLoweringTest, RejectsUnsupportedGroupedSemanticsAndBounds) {
   const std::vector<std::string_view> statements{
-      "SELECT value % 3 AS bucket, count(*) FROM metrics GROUP BY value % 3",
-      "SELECT label, sum(value + 1) FROM metrics GROUP BY label",
       "SELECT label, count(*) FROM metrics WHERE value > 0 GROUP BY label",
       "SELECT label, count(*) FROM metrics GROUP BY label ORDER BY max(value)"};
   for (const std::string_view statement : statements) {

@@ -50,25 +50,32 @@ template <typename Id> [[nodiscard]] Id id(const std::uint8_t seed) {
 
 [[nodiscard]] query::DistributedMutableVectorFragment fragment() {
   const auto int64 = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
-  return {
-      .query_id = uuid(1U),
-      .database_id = id<manifest::DatabaseId>(8U),
-      .table_id = id<schema::TableId>(9U),
-      .tablet_id = tablet(),
-      .destination_schema_id = id<schema::SchemaId>(10U),
-      .raft_group_id = uuid(11U),
-      .serving_node = 2U,
-      .applied_position = 10U,
-      .observed_leader_commit_position = 10U,
-      .placement_epoch = 3U,
-      .read_policy = {.consistency = query::DistributedReadConsistency::kLeaderLinearizable},
-      .linearizable_barrier = raft::ReadBarrier{2U, 3U, 10U},
-      .destination_column_ordinals = {0U},
-      .plan = {.mode = query::DistributedVectorPlanMode::kGroupedAggregate,
-               .group_key_input_indices = {0U},
-               .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}},
-               .limit = 1U},
-      .result_schema = {.columns = {{"region", string_type(), false}, {"count", int64, false}}}};
+  std::vector<query::VectorExpressionInstruction> first_output{
+      query::VectorInputExpression{0U, string_type(), false}};
+  std::vector<query::VectorExpressionInstruction> second_output{
+      query::VectorInputExpression{0U, string_type(), false},
+      query::VectorUnaryExpression{query::VectorUnaryOperation::kLowerAscii, 0U}};
+  return {.query_id = uuid(1U),
+          .database_id = id<manifest::DatabaseId>(8U),
+          .table_id = id<schema::TableId>(9U),
+          .tablet_id = tablet(),
+          .destination_schema_id = id<schema::SchemaId>(10U),
+          .raft_group_id = uuid(11U),
+          .serving_node = 2U,
+          .applied_position = 10U,
+          .observed_leader_commit_position = 10U,
+          .placement_epoch = 3U,
+          .read_policy = {.consistency = query::DistributedReadConsistency::kLeaderLinearizable},
+          .linearizable_barrier = raft::ReadBarrier{2U, 3U, 10U},
+          .destination_column_ordinals = {0U},
+          .plan = {.mode = query::DistributedVectorPlanMode::kGroupedAggregate,
+                   .group_key_input_indices = {0U},
+                   .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}},
+                   .limit = 1U},
+          .result_schema = {.columns = {{"region", string_type(), false}, {"count", int64, false}}},
+          .pre_group_program = query::DistributedVectorPreGroupProgram{
+              .outputs = {query::VectorExpression::create(std::move(first_output)).value(),
+                          query::VectorExpression::create(std::move(second_output)).value()}}};
 }
 
 [[nodiscard]] std::string label_for_partition(const std::uint32_t partition) {
@@ -173,6 +180,7 @@ TEST(DistributedVectorGroupedAggregateShuffleResultExecutionTest,
   auto finalization_authority =
       DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2::create(*expected, fragments);
   ASSERT_TRUE(finalization_authority.has_value()) << finalization_authority.error().to_string();
+  EXPECT_EQ(finalization_authority->input_column_count(), 2U);
   auto resources = query::QueryResourceContext::create(16U << 20U).value();
   auto destination = complete_destination(*expected, resources);
   ASSERT_TRUE(destination.has_value()) << destination.error().to_string();

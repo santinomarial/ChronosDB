@@ -4,6 +4,7 @@
 #include "chronos/cseg/pruning.hpp"
 #include "chronos/query/binder.hpp"
 #include "chronos/query/distributed_vector_plan.hpp"
+#include "chronos/query/distributed_vector_pre_group_program.hpp"
 #include "chronos/query/distributed_vector_result_schema.hpp"
 #include "chronos/query/physical_lowering.hpp"
 #include "chronos/query/vector_expression.hpp"
@@ -198,12 +199,12 @@ struct DistributedVectorGroupedSqlPlan {
 lower_bound_sql_select_to_distributed_vector_grouped(
     const BoundSqlSelect& select, DistributedVectorGroupedSqlLoweringLimits limits = {});
 
-// Sufficient-state GROUP BY intent for later authority binding. Group keys and aggregate inputs
-// remain direct source columns. Workers return raw keys followed by aggregate values. A checked
-// coordinator projection owns computed, reordered, or omitted final outputs and their global
-// selected-output ORDER BY/LIMIT. WHERE may contain only an exact event-time range. Computed
-// pre-group keys/aggregate inputs and hidden order expressions fail closed so callers may
-// deliberately use the row-backed grouped plan instead.
+// Sufficient-state GROUP BY intent for later authority binding. Direct plans consume the projected
+// source columns. Computed group keys or aggregate inputs own a checked pre-group program whose
+// output shapes are consumed by the grouped intent. Workers return raw keys followed by aggregate
+// values. A checked coordinator projection owns computed, reordered, or omitted final outputs and
+// their global selected-output ORDER BY/LIMIT. WHERE may contain only an exact event-time range;
+// hidden order expressions fail closed so callers may deliberately use the row-backed grouped plan.
 struct DistributedVectorGroupedAggregateSqlPlan {
   schema::TableId table_id;
   schema::SchemaId destination_schema_id;
@@ -212,6 +213,7 @@ struct DistributedVectorGroupedAggregateSqlPlan {
   DistributedVectorPlanIntent intent;
   // Raw grouped sufficient-state schema consumed by finalization.
   DistributedVectorResultSchema result_schema;
+  std::optional<DistributedVectorPreGroupProgram> pre_group_program;
   std::optional<DistributedVectorGroupedAggregateCoordinatorProjection> coordinator_projection;
 
   friend bool operator==(const DistributedVectorGroupedAggregateSqlPlan&,

@@ -1105,11 +1105,10 @@ were deliberately not run.
   lowering and mixed WAL/Raft-source composition remain incomplete.
 - Distributed Native execution covers bounded row-backed multi-key/all-type grouping, global
   ordering and LIMIT in addition to row and global aggregate plans. The scalable sufficient-state
-  path now feeds direct-input grouped plans from proof-revalidated real-CSEG workers through
-  authenticated finite TCP scheduling and globally merges complete all-tablet state streams, but it
-  does not yet package that output through the final Native grouped SQL boundary. Computed pre-group
-  plans, arbitrary relational plans, shuffle/skew handling, and fragment-level durable retries
-  remain absent.
+  path feeds direct and checked computed pre-group plans from proof-revalidated workers through
+  authenticated finite TCP scheduling, globally merges complete all-tablet state streams, and
+  packages final projection/order/limit through Native SQL. Arbitrary relational plans,
+  independent-process shuffle result return, and fragment-level durable retries remain absent.
 - Movement now composes deterministic actions with joint Raft membership and durable checkpoints;
   automatic placement-driven orchestration remains external.
 - Cold upload independently performs exact schema/source-bound CSEG validation before remote

@@ -58,6 +58,16 @@ struct GroupedFinalizationAuthority {
   std::uint32_t input_column_count{};
 };
 
+[[nodiscard]] common::Result<std::uint32_t>
+mutable_logical_input_column_count(const DistributedMutableVectorQueryLogicalIdentity& identity) {
+  const std::size_t input_column_count = identity.pre_group_program.has_value()
+                                             ? identity.pre_group_program->outputs.size()
+                                             : identity.destination_column_ordinals.size();
+  if (input_column_count > std::numeric_limits<std::uint32_t>::max())
+    return common::make_unexpected(exhausted("grouped finalization input width exceeds protocol"));
+  return static_cast<std::uint32_t>(input_column_count);
+}
+
 [[nodiscard]] common::Result<GroupedFinalizationAuthority>
 grouped_finalization_authority(const DistributedVectorGroupedAggregateQueryExecutionV2& input) {
   const auto dispatches = input.snapshot().dispatches();
@@ -77,13 +87,12 @@ grouped_finalization_authority(const DistributedVectorGroupedAggregateQueryExecu
 [[nodiscard]] common::Result<GroupedFinalizationAuthority> grouped_finalization_authority(
     const DistributedMutableVectorGroupedAggregateQueryExecution& input) {
   const auto& identity = input.logical_identity();
-  if (identity.destination_column_ordinals.size() > std::numeric_limits<std::uint32_t>::max()) {
-    return common::make_unexpected(exhausted("grouped finalization input width exceeds protocol"));
-  }
+  auto input_column_count = mutable_logical_input_column_count(identity);
+  if (!input_column_count.has_value())
+    return common::make_unexpected(input_column_count.error());
   return GroupedFinalizationAuthority{.plan = std::addressof(input.plan()),
                                       .result_schema = std::addressof(input.result_schema()),
-                                      .input_column_count = static_cast<std::uint32_t>(
-                                          identity.destination_column_ordinals.size())};
+                                      .input_column_count = *input_column_count};
 }
 
 class ShuffleFinalizationInput {
@@ -202,9 +211,9 @@ DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2::create(
   auto identity = distributed_mutable_vector_query_logical_identity(fragments);
   if (!identity.has_value())
     return common::make_unexpected(identity.error());
-  if (identity->destination_column_ordinals.size() > std::numeric_limits<std::uint32_t>::max()) {
-    return common::make_unexpected(exhausted("shuffle finalization input width exceeds protocol"));
-  }
+  auto input_column_count = mutable_logical_input_column_count(*identity);
+  if (!input_column_count.has_value())
+    return common::make_unexpected(input_column_count.error());
   auto derived = DistributedVectorGroupedAggregateShuffleAuthority::create_from_mutable_fragments(
       fragments, authority.key_definitions(), authority.aggregate_definitions());
   if (!derived.has_value())
@@ -217,8 +226,7 @@ DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2::create(
         invalid("shuffle finalization fragments do not derive the exact authority"));
   }
   return DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2{
-      authority, std::move(*identity),
-      static_cast<std::uint32_t>(fragments.front().destination_column_ordinals.size())};
+      authority, std::move(*identity), *input_column_count};
 }
 
 const DistributedVectorGroupedAggregateShuffleAuthority&

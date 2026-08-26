@@ -591,7 +591,8 @@ ReplicatedQuerySnapshot::bind_linearizable_mutable_vector_fragments(
            .placement = std::cref(*placement),
            .destination_column_ordinals = binding.destination_column_ordinals,
            .event_time_predicate = binding.event_time_predicate,
-           .result_schema = binding.result_schema});
+           .result_schema = binding.result_schema,
+           .pre_group_program = binding.pre_group_program});
       if (!fragment.has_value())
         return common::make_unexpected(fragment.error());
       fragments.push_back(std::move(*fragment));
@@ -694,7 +695,8 @@ ReplicatedQuerySnapshot::prepare_linearizable_mutable_vector_rows_query(
          .group_authorities = binding.group_authorities,
          .destination_column_ordinals = sql_plan.destination_column_ordinals,
          .event_time_predicate = sql_plan.event_time_predicate,
-         .result_schema = std::cref(sql_plan.result_schema)},
+         .result_schema = std::cref(sql_plan.result_schema),
+         .pre_group_program = binding.pre_group_program},
         tls_contexts, limits);
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("mutable SQL query preparation allocation failed"));
@@ -722,18 +724,26 @@ ReplicatedQuerySnapshot::prepare_linearizable_mutable_vector_grouped_aggregate_q
     return common::make_unexpected(unavailable("mutable grouped SQL schema publication differs"));
 
   try {
-    std::vector<query::PhysicalColumnShape> projected;
-    projected.reserve(sql_plan.destination_column_ordinals.size());
-    for (const std::uint32_t ordinal : sql_plan.destination_column_ordinals) {
-      if (ordinal >= current->columns().size()) {
-        return common::make_unexpected(
-            invalid("mutable grouped SQL projection ordinal is out of range"));
+    std::vector<query::PhysicalColumnShape> grouped_inputs;
+    if (sql_plan.pre_group_program.has_value()) {
+      grouped_inputs.reserve(sql_plan.pre_group_program->outputs.size());
+      for (const query::VectorExpression& expression : sql_plan.pre_group_program->outputs) {
+        grouped_inputs.push_back(
+            {expression.result_shape().type, expression.result_shape().nullable});
       }
-      const schema::ColumnDefinition& column = current->columns()[ordinal];
-      projected.push_back({column.type(), column.nullable()});
+    } else {
+      grouped_inputs.reserve(sql_plan.destination_column_ordinals.size());
+      for (const std::uint32_t ordinal : sql_plan.destination_column_ordinals) {
+        if (ordinal >= current->columns().size()) {
+          return common::make_unexpected(
+              invalid("mutable grouped SQL projection ordinal is out of range"));
+        }
+        const schema::ColumnDefinition& column = current->columns()[ordinal];
+        grouped_inputs.push_back({column.type(), column.nullable()});
+      }
     }
     auto authority = query::bind_distributed_vector_grouped_aggregate_authority(
-        sql_plan.intent, projected, sql_plan.result_schema);
+        sql_plan.intent, grouped_inputs, sql_plan.result_schema);
     if (!authority.has_value())
       return common::make_unexpected(authority.error());
 
@@ -748,7 +758,10 @@ ReplicatedQuerySnapshot::prepare_linearizable_mutable_vector_grouped_aggregate_q
     auto routed = prepare_linearizable_mutable_vector_rows_query(
         {.query_id = binding.query_id,
          .sql_plan = std::cref(fragment_plan),
-         .group_authorities = binding.group_authorities},
+         .group_authorities = binding.group_authorities,
+         .pre_group_program = sql_plan.pre_group_program.has_value()
+                                  ? std::addressof(*sql_plan.pre_group_program)
+                                  : nullptr},
         tls_contexts, limits);
     if (!routed.has_value())
       return common::make_unexpected(routed.error());
