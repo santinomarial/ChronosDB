@@ -339,7 +339,9 @@ connections. The replicated service package owns that optional reducer service b
 listener, requires one shared peer authority, and joins every authorized coordinator node to its
 exact borrowed TLS client context before admission. `chronosd` installs those stable routes from
 the same canonical peer set used by distributed queries. Coordinator-side PREPARE/SEAL lifecycle
-composition and complete multi-daemon qualification remain the next boundary.
+now has a validation-before-connect, deadline-bound single-attempt TCP/mTLS client with exact
+response correlation. Finite reducer-set orchestration, whole-query cancellation, and complete
+multi-daemon qualification remain the next boundary.
 
 ### Portable sufficient-state execution boundary
 

@@ -1614,8 +1614,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   job magic, bounds connections, reports distinct completion, and polls installed jobs. The
   replicated service package now owns the optional reducer service in teardown-safe order, selects
   result-return TLS identity from a canonical coordinator-node map, and `chronosd` installs it from
-  the same committed peer authority. Coordinator-side PREPARE/SEAL lifecycle composition and full
-  multi-daemon qualification remain. The computed path now
+  the same committed peer authority. Coordinator job control now also owns validation-before-
+  connect, a finite TCP acquisition deadline, TLS-before-descriptor teardown, and one exactly
+  correlated PREPARE or SEAL attempt. Finite reducer-set orchestration and full multi-daemon
+  qualification remain. The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives
   plan and result shapes from its outputs, and executes it locally before grouping.

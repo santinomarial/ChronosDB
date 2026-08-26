@@ -1,7 +1,7 @@
 #include "chronos/cluster/distributed_mutable_query_control_tcp.hpp"
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_client.hpp"
 #include "chronos/cluster/distributed_mutable_vector_query_tcp.hpp"
-#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_tls.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_tcp_client.hpp"
 #include "chronos/cluster/raft_read_authority_tcp_client.hpp"
 
 #include <array>
@@ -306,38 +306,24 @@ mutable_grouped_client(const network::Ipv4Endpoint endpoint,
       .value();
 }
 
-struct JobControlClientOwner {
-  network::TcpSocket socket;
-  DistributedVectorGroupedAggregateShuffleJobControlTlsClient carrier;
-};
-
-[[nodiscard]] JobControlClientOwner
+[[nodiscard]] DistributedVectorGroupedAggregateShuffleJobControlTcpClient
 job_control_client(const network::Ipv4Endpoint endpoint,
                    const network::TlsClientContext& client_context, Authenticator& authenticator,
                    Authorizer& authorizer) {
-  auto socket = network::TcpSocket::begin_connect(endpoint).value();
-  for (std::size_t iteration = 0U;
-       iteration < 1024U && socket.connect_state() == network::TcpConnectState::kInProgress;
-       ++iteration) {
-    pollfd descriptor{.fd = socket.descriptor(), .events = POLLOUT};
-    EXPECT_GE(::poll(&descriptor, 1U, 1), 0);
-    if ((descriptor.revents & (POLLOUT | POLLERR | POLLHUP)) != 0)
-      EXPECT_TRUE(socket.finish_connect().has_value());
-  }
-  EXPECT_EQ(socket.connect_state(), network::TcpConnectState::kConnected);
-  auto tls = network::TlsSocket::connect(client_context, socket.descriptor()).value();
-  auto carrier =
-      DistributedVectorGroupedAggregateShuffleJobControlTlsClient::create(
-          std::move(tls),
-          {.authenticator = &authenticator,
-           .node_authorizer = &authorizer,
-           .peer_ipv4_address = endpoint.address,
-           .request = DistributedVectorGroupedAggregateShuffleJobControlRequest{job_prepare()},
-           .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
-                      .exchange_timeout = std::chrono::milliseconds{1000}}},
-          std::chrono::steady_clock::now())
-          .value();
-  return {.socket = std::move(socket), .carrier = std::move(carrier)};
+  return DistributedVectorGroupedAggregateShuffleJobControlTcpClient::begin(
+             {.remote_endpoint = endpoint,
+              .tls_context = &client_context,
+              .carrier = {.authenticator = &authenticator,
+                          .node_authorizer = &authorizer,
+                          .peer_ipv4_address = endpoint.address,
+                          .request =
+                              DistributedVectorGroupedAggregateShuffleJobControlRequest{
+                                  job_prepare()},
+                          .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                                     .exchange_timeout = std::chrono::milliseconds{1000}}},
+              .connect_timeout = std::chrono::milliseconds{1000}},
+             std::chrono::steady_clock::now())
+      .value();
 }
 
 TEST(DistributedMutableQueryControlTcpTest, RoutesAllProtocolsAfterOneAuthenticatedTlsBoundary) {
@@ -451,24 +437,24 @@ TEST(DistributedMutableQueryControlTcpTest, RoutesAllProtocolsAfterOneAuthentica
                                         server_authenticator, authorizer);
   for (std::size_t iteration = 0U;
        iteration < 4096U &&
-       job_control.carrier.state() !=
-           DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kComplete;
+       job_control.state() !=
+           DistributedVectorGroupedAggregateShuffleJobControlTcpClientState::kComplete;
        ++iteration) {
-    const auto interest = job_control.carrier.interest();
-    pollfd descriptor{.fd = job_control.socket.descriptor(),
+    const auto interest = job_control.interest();
+    pollfd descriptor{.fd = job_control.descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
                                                    (interest.want_write ? POLLOUT : 0))};
     ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
-    const auto progress = job_control.carrier.on_ready((descriptor.revents & POLLIN) != 0,
-                                                       (descriptor.revents & POLLOUT) != 0,
-                                                       std::chrono::steady_clock::now());
+    const auto progress =
+        job_control.on_ready((descriptor.revents & POLLIN) != 0,
+                             (descriptor.revents & POLLOUT) != 0, std::chrono::steady_clock::now());
     ASSERT_TRUE(progress.is_ok()) << progress.to_string();
     ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{1}).is_ok());
   }
-  ASSERT_EQ(job_control.carrier.state(),
-            DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kComplete)
-      << job_control.carrier.failure().to_string();
-  auto prepared = job_control.carrier.result();
+  ASSERT_EQ(job_control.state(),
+            DistributedVectorGroupedAggregateShuffleJobControlTcpClientState::kComplete)
+      << job_control.failure().to_string();
+  auto prepared = job_control.result();
   ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
   EXPECT_EQ(prepared->status_code, common::StatusCode::kOk);
   EXPECT_EQ(prepared->query_id, uuid(31U));

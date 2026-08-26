@@ -1,4 +1,4 @@
-#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_tls.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_tcp_client.hpp"
 #include "support/failing_allocator.hpp"
 
 #include <array>
@@ -113,6 +113,26 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTlsAllocationFailureTest,
   failure.disable();
   ASSERT_FALSE(server.has_value());
   EXPECT_EQ(server.error().code(), common::StatusCode::kResourceExhausted);
+}
+
+TEST(DistributedVectorGroupedAggregateShuffleJobControlTlsAllocationFailureTest,
+     ClassifiesTcpPreconnectRequestAllocation) {
+  Authenticator authenticator;
+  Authorizer authorizer;
+  auto context = network::TlsClientContext::create(client_tls()).value();
+  DistributedVectorGroupedAggregateShuffleJobControlRequest request{prepare()};
+  ::chronos::test::ScopedAllocationFailure failure{0U};
+  auto client = DistributedVectorGroupedAggregateShuffleJobControlTcpClient::begin(
+      {.remote_endpoint = {{127U, 0U, 0U, 1U}, 9U},
+       .tls_context = &context,
+       .carrier = {.authenticator = &authenticator,
+                   .node_authorizer = &authorizer,
+                   .peer_ipv4_address = {127U, 0U, 0U, 1U},
+                   .request = std::move(request)}},
+      {});
+  failure.disable();
+  ASSERT_FALSE(client.has_value());
+  EXPECT_EQ(client.error().code(), common::StatusCode::kResourceExhausted);
 }
 
 } // namespace

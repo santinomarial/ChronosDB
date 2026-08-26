@@ -44,6 +44,12 @@ The session deliberately does not connect, listen, admit multiple sockets, multi
 query-control endpoint, or poll reducer jobs. Shared endpoint ownership and packaged daemon
 composition remain separate.
 
+A coordinator-side composite now validates the complete request, deployment limits, numeric route,
+timeouts, TLS context, authenticator, and authorizer before opening one nonblocking TCP socket. It
+owns the connect deadline and `SO_ERROR` completion, then transfers the descriptor to this TLS
+session while retaining teardown order. This is a single-attempt building block; reducer-set
+PREPARE/SEAL scheduling and retry policy remain above it.
+
 ## Affected invariants
 
 - [Invariant 6](../architecture/invariants.md): response publication requires exact request action,
@@ -76,7 +82,8 @@ unauthenticated control.
 
 ## Unresolved questions
 
-- Package the implemented shared endpoint, reducer-job service, and result routes in `chronosd`.
+- Compose finite reducer-set PREPARE/SEAL scheduling and whole-query cancellation above the
+  single-attempt TCP client.
 
 [ADR 0541](0541-shared-grouped-reducer-job-control-endpoint.md) now owns bounded multi-connection
 dispatch and job progress under the committed query endpoint.
