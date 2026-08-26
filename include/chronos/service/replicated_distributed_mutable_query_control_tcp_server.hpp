@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstddef>
 #include <memory>
+#include <optional>
 
 namespace chronos::service {
 
@@ -23,6 +24,8 @@ struct ReplicatedDistributedMutableQueryControlTcpServerConfig {
   network::ConnectionAuthenticator* authenticator{};
   const cluster::ClusterNodePrincipalAuthorizer* node_authorizer{};
   const cluster::DistributedQueryLeaderHintProvider* leader_hint_provider{};
+  std::optional<cluster::DistributedVectorGroupedAggregateShuffleJobServiceConfig>
+      grouped_shuffle_jobs;
   cluster::DistributedMutableQueryControlTlsServerLimits carrier_limits;
   std::size_t maximum_connections{1024U};
   std::size_t maximum_accepts_per_poll{32U};
@@ -30,9 +33,10 @@ struct ReplicatedDistributedMutableQueryControlTcpServerConfig {
 
 // Owns the production inbound mutable query-control stack in dependency order: request-local row
 // and grouped sufficient-state TabletState workers, per-group replicated read-authority service,
-// authenticated receivers, then the shared bounded TCP/mTLS server. One non-Raft-poll thread owns
-// polling and shutdown. Borrowed database, read-barrier, authentication, authorization, and
-// optional hint providers must outlive this owner.
+// authenticated receivers, an optional grouped-shuffle reducer-job service, then the shared
+// bounded TCP/mTLS server. One non-Raft-poll thread owns polling and shutdown. Borrowed database,
+// read-barrier, authentication, authorization, TLS-route, and optional hint providers must outlive
+// this owner.
 class ReplicatedDistributedMutableQueryControlTcpServer {
 public:
   ReplicatedDistributedMutableQueryControlTcpServer() = delete;

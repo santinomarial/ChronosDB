@@ -4,6 +4,7 @@
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_tls.hpp"
 #include "chronos/cluster/raft_read_authority_tcp_client.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -345,6 +346,7 @@ TEST(DistributedMutableQueryControlTcpTest, RoutesAllProtocolsAfterOneAuthentica
   Authenticator client_authenticator{91U};
   auto client_context = network::TlsClientContext::create(client_tls());
   ASSERT_TRUE(client_context.has_value());
+  const std::array result_contexts{DistributedQueryNodeTlsContext{1U, &*client_context}};
   Authenticator server_authenticator{92U};
   auto job_service = DistributedVectorGroupedAggregateShuffleJobService::create(
                          {.local_node_id = 2U,
@@ -352,7 +354,7 @@ TEST(DistributedMutableQueryControlTcpTest, RoutesAllProtocolsAfterOneAuthentica
                           .shuffle_authenticator = &client_authenticator,
                           .result_authenticator = &server_authenticator,
                           .node_authorizer = &authorizer,
-                          .result_tls_context = &*client_context})
+                          .result_tls_contexts = result_contexts})
                          .value();
   auto server = DistributedMutableQueryControlTcpServer::start(
       {.listener = {},

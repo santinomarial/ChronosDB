@@ -32,6 +32,8 @@ public:
   std::optional<cluster::DistributedMutableVectorGroupedAggregateQueryReceiver>
       mutable_grouped_receiver;
   std::optional<cluster::RaftReadAuthorityReceiver> authority_receiver;
+  std::optional<cluster::DistributedVectorGroupedAggregateShuffleJobService>
+      grouped_shuffle_job_service;
   std::optional<cluster::DistributedMutableQueryControlTcpServer> server;
 
   [[nodiscard]] cluster::DistributedMutableQueryControlTcpServer* active_server() noexcept {
@@ -72,6 +74,15 @@ ReplicatedDistributedMutableQueryControlTcpServer::start(
     return common::make_unexpected(common::Status{
         common::StatusCode::kInvalidArgument,
         "replicated mutable query-control TCP server authority configuration is invalid"});
+  }
+  if (config.grouped_shuffle_jobs.has_value() &&
+      (config.grouped_shuffle_jobs->local_node_id != config.worker.local_node_id ||
+       config.grouped_shuffle_jobs->shuffle_authenticator != config.authenticator ||
+       config.grouped_shuffle_jobs->result_authenticator != config.authenticator ||
+       config.grouped_shuffle_jobs->node_authorizer != config.node_authorizer)) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kInvalidArgument,
+        "replicated mutable query-control grouped-shuffle authority configuration is invalid"});
   }
   auto worker = ReplicatedDistributedMutableVectorQueryWorker::create(config.worker);
   if (!worker.has_value())
@@ -123,6 +134,15 @@ ReplicatedDistributedMutableQueryControlTcpServer::start(
         implementation->mutable_grouped_receiver.emplace(*mutable_grouped_receiver);
     auto& installed_authority_receiver =
         implementation->authority_receiver.emplace(*authority_receiver);
+    cluster::DistributedVectorGroupedAggregateShuffleJobService* grouped_shuffle_job_service{};
+    if (config.grouped_shuffle_jobs.has_value()) {
+      auto service = cluster::DistributedVectorGroupedAggregateShuffleJobService::create(
+          std::move(*config.grouped_shuffle_jobs));
+      if (!service.has_value())
+        return common::make_unexpected(service.error());
+      grouped_shuffle_job_service =
+          std::addressof(implementation->grouped_shuffle_job_service.emplace(std::move(*service)));
+    }
     auto server = cluster::DistributedMutableQueryControlTcpServer::start(
         {.listener = config.listener,
          .tls = std::move(config.tls),
@@ -130,6 +150,7 @@ ReplicatedDistributedMutableQueryControlTcpServer::start(
          .mutable_receiver = std::addressof(installed_mutable_receiver),
          .mutable_grouped_receiver = std::addressof(installed_mutable_grouped_receiver),
          .read_authority_receiver = std::addressof(installed_authority_receiver),
+         .grouped_shuffle_job_service = grouped_shuffle_job_service,
          .carrier_limits = config.carrier_limits,
          .maximum_connections = config.maximum_connections,
          .maximum_accepts_per_poll = config.maximum_accepts_per_poll});

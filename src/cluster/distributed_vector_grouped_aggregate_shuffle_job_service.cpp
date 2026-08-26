@@ -168,10 +168,13 @@ class DistributedVectorGroupedAggregateShuffleJobService::Impl {
 public:
   struct Job {
     explicit Job(DistributedVectorGroupedAggregateShuffleJobPrepare owned_prepare,
+                 const network::TlsClientContext* result_context,
                  const std::chrono::steady_clock::time_point owned_deadline) noexcept
-        : prepare(std::move(owned_prepare)), deadline(owned_deadline) {}
+        : prepare(std::move(owned_prepare)), result_tls_context(result_context),
+          deadline(owned_deadline) {}
 
     DistributedVectorGroupedAggregateShuffleJobPrepare prepare;
+    const network::TlsClientContext* result_tls_context{};
     DistributedVectorGroupedAggregateShuffleDestinationExecution destination;
     std::optional<DistributedVectorGroupedAggregateShuffleResultTcpExecution> result_sender;
     std::chrono::steady_clock::time_point deadline;
@@ -278,7 +281,7 @@ public:
            .node_authorizer = config.node_authorizer,
            .routes = {{.node_id = job.prepare.coordinator_node_id,
                        .endpoints = {job.prepare.coordinator_result_endpoint},
-                       .tls_context = config.result_tls_context}},
+                       .tls_context = job.result_tls_context}},
            .carrier_limits = config.result_carrier_limits,
            .connect_timeout = config.result_connect_timeout,
            .execution_deadline = job.deadline});
@@ -319,7 +322,16 @@ DistributedVectorGroupedAggregateShuffleJobService::create(
     DistributedVectorGroupedAggregateShuffleJobServiceConfig config) {
   if (config.local_node_id == 0U || config.shuffle_listener.bind_endpoint.port != 0U ||
       config.shuffle_authenticator == nullptr || config.result_authenticator == nullptr ||
-      config.node_authorizer == nullptr || config.result_tls_context == nullptr ||
+      config.node_authorizer == nullptr || config.result_tls_contexts.empty() ||
+      !std::ranges::is_sorted(config.result_tls_contexts, {},
+                              &DistributedQueryNodeTlsContext::node_id) ||
+      std::ranges::adjacent_find(config.result_tls_contexts, {},
+                                 &DistributedQueryNodeTlsContext::node_id) !=
+          config.result_tls_contexts.end() ||
+      std::ranges::any_of(config.result_tls_contexts,
+                          [](const auto& context) {
+                            return context.node_id == 0U || context.tls_context == nullptr;
+                          }) ||
       config.maximum_jobs == 0U || config.maximum_jobs > 4096U ||
       config.maximum_job_query_memory_bytes == 0U ||
       config.maximum_job_query_memory_bytes >
@@ -388,11 +400,20 @@ DistributedVectorGroupedAggregateShuffleJobService::receive(
       return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kPrepare,
                             common::StatusCode::kResourceExhausted, query_id,
                             prepare->coordinator_node_id, prepare->target_node_id);
+    const auto result_context =
+        std::ranges::lower_bound(impl.config.result_tls_contexts, prepare->coordinator_node_id, {},
+                                 &DistributedQueryNodeTlsContext::node_id);
+    if (result_context == impl.config.result_tls_contexts.end() ||
+        result_context->node_id != prepare->coordinator_node_id) {
+      return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kPrepare,
+                            common::StatusCode::kNotFound, query_id, prepare->coordinator_node_id,
+                            prepare->target_node_id);
+    }
     const auto execution_timeout = prepare->execution_timeout;
     const raft::NodeId coordinator_node_id = prepare->coordinator_node_id;
     const raft::NodeId target_node_id = prepare->target_node_id;
     try {
-      auto job = std::make_unique<Impl::Job>(std::move(*prepare),
+      auto job = std::make_unique<Impl::Job>(std::move(*prepare), result_context->tls_context,
                                              saturating_deadline(now, execution_timeout));
       auto resources =
           query::QueryResourceContext::create(impl.config.maximum_job_query_memory_bytes);

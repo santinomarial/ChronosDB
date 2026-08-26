@@ -1,6 +1,7 @@
 #include "chronos/cluster/raft_read_authority_tcp_client.hpp"
 #include "chronos/service/replicated_distributed_mutable_query_control_tcp_server.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -112,6 +113,9 @@ TEST(ReplicatedDistributedMutableQueryControlTcpServerTest,
   UnusedContextProvider provider;
   NodeAuthorizer authorizer;
   Authenticator client_authenticator{91U};
+  auto client_context = network::TlsClientContext::create(client_tls());
+  ASSERT_TRUE(client_context.has_value()) << client_context.error().to_string();
+  const std::array result_contexts{cluster::DistributedQueryNodeTlsContext{1U, &*client_context}};
   auto server = ReplicatedDistributedMutableQueryControlTcpServer::start(
       {.worker = {.local_node_id = 2U, .context_provider = &provider},
        .read_barrier = &*barrier,
@@ -119,6 +123,14 @@ TEST(ReplicatedDistributedMutableQueryControlTcpServerTest,
        .tls = server_tls(),
        .authenticator = &client_authenticator,
        .node_authorizer = &authorizer,
+       .grouped_shuffle_jobs =
+           cluster::DistributedVectorGroupedAggregateShuffleJobServiceConfig{
+               .local_node_id = 2U,
+               .shuffle_tls = server_tls(),
+               .shuffle_authenticator = &client_authenticator,
+               .result_authenticator = &client_authenticator,
+               .node_authorizer = &authorizer,
+               .result_tls_contexts = result_contexts},
        .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
                           .exchange_timeout = std::chrono::milliseconds{1000},
                           .maximum_mutable_response_frames = 2U,
@@ -128,8 +140,6 @@ TEST(ReplicatedDistributedMutableQueryControlTcpServerTest,
   if (!server.has_value() && server.error().code() == common::StatusCode::kIoError)
     GTEST_SKIP() << "workspace does not permit loopback listener creation";
   ASSERT_TRUE(server.has_value()) << server.error().to_string();
-  auto client_context = network::TlsClientContext::create(client_tls());
-  ASSERT_TRUE(client_context.has_value()) << client_context.error().to_string();
   Authenticator server_authenticator{92U};
   auto client = cluster::RaftReadAuthorityTcpClient::begin(
       {.remote_endpoint = server->bound_endpoint(),

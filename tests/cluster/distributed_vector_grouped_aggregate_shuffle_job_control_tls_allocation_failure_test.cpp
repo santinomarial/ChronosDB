@@ -1,6 +1,7 @@
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_tls.hpp"
 #include "support/failing_allocator.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -98,12 +99,13 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTlsAllocationFailureTest,
   Authenticator authenticator;
   Authorizer authorizer;
   auto context = network::TlsClientContext::create(client_tls()).value();
+  const std::array contexts{DistributedQueryNodeTlsContext{9U, &context}};
   auto service = DistributedVectorGroupedAggregateShuffleJobService::create(
                      {.local_node_id = 3U,
                       .shuffle_authenticator = &authenticator,
                       .result_authenticator = &authenticator,
                       .node_authorizer = &authorizer,
-                      .result_tls_context = &context})
+                      .result_tls_contexts = contexts})
                      .value();
   ::chronos::test::ScopedAllocationFailure failure{0U};
   auto server = DistributedVectorGroupedAggregateShuffleJobControlTlsServer::create(

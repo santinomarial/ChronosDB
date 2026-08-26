@@ -3,6 +3,7 @@
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_source_plan.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_execution.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -151,6 +152,7 @@ TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
   Authorizer authorizer;
   auto shuffle_client_context = network::TlsClientContext::create(client_tls()).value();
   auto result_client_context = network::TlsClientContext::create(client_tls()).value();
+  const std::array result_contexts{DistributedQueryNodeTlsContext{9U, &result_client_context}};
   auto result_server = DistributedVectorGroupedAggregateShuffleResultTcpServer::start(
                            {.listener = {},
                             .tls = server_tls(),
@@ -171,7 +173,7 @@ TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
            .shuffle_authenticator = &shuffle_server_authenticator,
            .result_authenticator = &result_client_authenticator,
            .node_authorizer = &authorizer,
-           .result_tls_context = &result_client_context,
+           .result_tls_contexts = result_contexts,
            .shuffle_carrier_limits = shuffle_limits(),
            .result_retry_limits = {.retry = {.maximum_attempts = 4U,
                                              .initial_backoff = std::chrono::milliseconds{1},
@@ -280,6 +282,28 @@ TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
   EXPECT_EQ(duplicate_seal->status_code, common::StatusCode::kOk);
   EXPECT_EQ(service.metrics().duplicate_prepares, 1U);
   EXPECT_EQ(service.metrics().conflicting_prepares, 1U);
+}
+
+TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
+     RejectsPrepareWhenCoordinatorHasNoResultTlsRoute) {
+  Authenticator authenticator{93U};
+  Authorizer authorizer;
+  auto result_context = network::TlsClientContext::create(client_tls()).value();
+  const std::array result_contexts{DistributedQueryNodeTlsContext{8U, &result_context}};
+  auto service = DistributedVectorGroupedAggregateShuffleJobService::create(
+                     {.local_node_id = 3U,
+                      .shuffle_authenticator = &authenticator,
+                      .result_authenticator = &authenticator,
+                      .node_authorizer = &authorizer,
+                      .result_tls_contexts = result_contexts})
+                     .value();
+  const network::PeerAuthenticationResult peer{.authorized = true, .principal_id = 93U};
+  auto response =
+      service.receive(DistributedVectorGroupedAggregateShuffleJobControlRequest{prepare({})}, peer,
+                      std::chrono::steady_clock::now());
+  ASSERT_TRUE(response.has_value()) << response.error().to_string();
+  EXPECT_EQ(response->status_code, common::StatusCode::kNotFound);
+  EXPECT_EQ(service.metrics().active_jobs, 0U);
 }
 
 } // namespace

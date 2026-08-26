@@ -787,7 +787,16 @@ configure_distributed_mutable_query(
          .listener = {.bind_endpoint = *local_query_endpoint},
          .tls = {.pem_credentials = credentials},
          .authenticator = &installed_authority,
-         .node_authorizer = &installed_authority});
+         .node_authorizer = &installed_authority,
+         .grouped_shuffle_jobs =
+             chronos::cluster::DistributedVectorGroupedAggregateShuffleJobServiceConfig{
+                 .local_node_id = local_node_id,
+                 .shuffle_listener = {},
+                 .shuffle_tls = {.pem_credentials = credentials},
+                 .shuffle_authenticator = &installed_authority,
+                 .result_authenticator = &installed_authority,
+                 .node_authorizer = &installed_authority,
+                 .result_tls_contexts = owner->tls_contexts}});
     if (!server.has_value())
       return chronos::common::make_unexpected(server.error());
     owner->server.emplace(std::move(*server));

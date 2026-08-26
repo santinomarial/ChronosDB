@@ -1,6 +1,7 @@
 #ifndef CHRONOS_CLUSTER_DISTRIBUTED_VECTOR_GROUPED_AGGREGATE_SHUFFLE_JOB_SERVICE_HPP_
 #define CHRONOS_CLUSTER_DISTRIBUTED_VECTOR_GROUPED_AGGREGATE_SHUFFLE_JOB_SERVICE_HPP_
 
+#include "chronos/cluster/distributed_query_tcp_execution.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_destination_execution.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_control.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_result_tcp_execution.hpp"
@@ -13,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 
 namespace chronos::cluster {
 
@@ -26,7 +28,7 @@ struct DistributedVectorGroupedAggregateShuffleJobServiceConfig {
   network::ConnectionAuthenticator* shuffle_authenticator{};
   network::ConnectionAuthenticator* result_authenticator{};
   const ClusterNodePrincipalAuthorizer* node_authorizer{};
-  const network::TlsClientContext* result_tls_context{};
+  std::span<const DistributedQueryNodeTlsContext> result_tls_contexts;
   DistributedVectorGroupedAggregateShuffleTlsLimits shuffle_carrier_limits;
   DistributedVectorGroupedAggregateShuffleReducerLimits reducer_limits;
   DistributedVectorGroupedAggregateShuffleResultRetryLimits result_retry_limits;

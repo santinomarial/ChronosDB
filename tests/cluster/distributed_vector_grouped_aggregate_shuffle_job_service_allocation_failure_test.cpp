@@ -1,6 +1,7 @@
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_service.hpp"
 #include "support/failing_allocator.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -71,13 +72,14 @@ TEST(DistributedVectorGroupedAggregateShuffleJobServiceAllocationFailureTest,
   Authenticator authenticator;
   Authorizer authorizer;
   auto context = network::TlsClientContext::create(client_tls()).value();
+  const std::array contexts{DistributedQueryNodeTlsContext{9U, &context}};
   ::chronos::test::ScopedAllocationFailure failure{0U};
   auto service = DistributedVectorGroupedAggregateShuffleJobService::create(
       {.local_node_id = 3U,
        .shuffle_authenticator = &authenticator,
        .result_authenticator = &authenticator,
        .node_authorizer = &authorizer,
-       .result_tls_context = &context});
+       .result_tls_contexts = contexts});
   failure.disable();
   ASSERT_FALSE(service.has_value());
   EXPECT_EQ(service.error().code(), common::StatusCode::kResourceExhausted);
@@ -88,13 +90,14 @@ TEST(DistributedVectorGroupedAggregateShuffleJobServiceAllocationFailureTest,
   Authenticator authenticator;
   Authorizer authorizer;
   auto context = network::TlsClientContext::create(client_tls()).value();
+  const std::array contexts{DistributedQueryNodeTlsContext{9U, &context}};
   auto service = DistributedVectorGroupedAggregateShuffleJobService::create(
                      {.local_node_id = 3U,
                       .shuffle_tls = server_tls(),
                       .shuffle_authenticator = &authenticator,
                       .result_authenticator = &authenticator,
                       .node_authorizer = &authorizer,
-                      .result_tls_context = &context})
+                      .result_tls_contexts = contexts})
                      .value();
   DistributedVectorGroupedAggregateShuffleJobControlRequest request{prepare()};
   const network::PeerAuthenticationResult peer{.authorized = true, .principal_id = 1U};

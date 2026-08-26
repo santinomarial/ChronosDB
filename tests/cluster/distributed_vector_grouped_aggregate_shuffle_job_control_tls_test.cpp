@@ -163,13 +163,14 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTlsTest,
   Authorizer authorizer;
   auto server_context = network::TlsServerContext::create(server_tls()).value();
   auto client_context = network::TlsClientContext::create(client_tls()).value();
+  const std::array contexts{DistributedQueryNodeTlsContext{9U, &client_context}};
   auto service = DistributedVectorGroupedAggregateShuffleJobService::create(
                      {.local_node_id = 3U,
                       .shuffle_tls = server_tls(),
                       .shuffle_authenticator = &client_authenticator,
                       .result_authenticator = &server_authenticator,
                       .node_authorizer = &authorizer,
-                      .result_tls_context = &client_context})
+                      .result_tls_contexts = contexts})
                      .value();
 
   auto prepared =
@@ -204,13 +205,14 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTlsTest,
   Authorizer authorizer;
   auto server_context = network::TlsServerContext::create(server_tls()).value();
   auto client_context = network::TlsClientContext::create(client_tls()).value();
+  const std::array contexts{DistributedQueryNodeTlsContext{9U, &client_context}};
   auto service = DistributedVectorGroupedAggregateShuffleJobService::create(
                      {.local_node_id = 3U,
                       .shuffle_tls = server_tls(),
                       .shuffle_authenticator = &client_authenticator,
                       .result_authenticator = &server_authenticator,
                       .node_authorizer = &authorizer,
-                      .result_tls_context = &client_context})
+                      .result_tls_contexts = contexts})
                      .value();
   auto denied =
       exchange(DistributedVectorGroupedAggregateShuffleJobControlRequest{prepare()}, service,
