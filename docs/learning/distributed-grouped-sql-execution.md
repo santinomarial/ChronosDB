@@ -303,8 +303,16 @@ Reducer-job setup no longer needs to invent an in-memory authority transfer. The
 `CHDVGSA1` product carries the complete plan-order source set, canonical destinations, typed keys,
 typed aggregate inputs, query identity, and hash version with header and whole-frame integrity.
 Decoding applies hard and deployment bounds before rebuilding the same validated immutable
-authority. It deliberately excludes result schema, routes, deadlines, and credentials: the next
-control envelope must bind those deployment facts to this reusable proof.
+authority. It deliberately excludes result schema, routes, deadlines, and credentials so the proof
+remains reusable.
+
+The `CHDVGJC1` reducer-job request now binds that proof to its exact raw grouped result schema,
+explicit coordinator and target reducer identities, numeric coordinator result endpoint, and
+relative execution timeout. PREPARE owns and revalidates both nested values; SEAL is a canonical
+identity-only action for an already admitted job. The timeout begins at successful admission, so
+the wire never serializes a process-local steady-clock epoch. Authentication, correlated response,
+finite admission, progress, cancellation, and cleanup remain responsibilities of the packaged job
+service rather than the codec.
 
 ### Portable sufficient-state execution boundary
 

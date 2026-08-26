@@ -1601,7 +1601,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   through a fresh whole-query process set. Packaged daemon role ownership and route discovery
   remain. A versioned checksummed bounded authority product now carries the complete source,
   destination, typed key/aggregate, query, and hash proof needed to install such a reducer job in a
-  different process; the authenticated prepare/seal control envelope remains. The computed path now
+  different process. A versioned checksummed PREPARE/SEAL request now binds that authority to the
+  exact raw schema, target reducer/coordinator identities, numeric result route, and a bounded
+  relative execution timeout; authenticated response and daemon job admission remain. The computed
+  path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives
   plan and result shapes from its outputs, and executes it locally before grouping.

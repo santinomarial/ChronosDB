@@ -1,7 +1,8 @@
 # Distributed Vector Grouped Aggregate Shuffle Authority v1
 
-> **Status: accepted and implemented for exact encoding and bounded exact decoding.** A reducer-job
-> control envelope and authenticated carrier remain enclosing responsibilities.
+> **Status: accepted and implemented for exact encoding and bounded exact decoding.** The
+> implemented reducer-job control envelope carries these bytes; its authenticated carrier remains
+> an enclosing responsibility.
 
 `CHDVGSA1` carries the complete immutable authority needed to reconstruct one grouped-shuffle job
 in another process. It contains query identity, hash version, plan-order source tablets and nodes,

@@ -64,10 +64,11 @@ product; reducer jobs must remain unavailable rather than infer authority from p
 
 ## Unresolved questions
 
-- Define the authenticated reducer-job prepare/seal envelope that nests authority and exact raw
-  result schema bytes plus coordinator result routing.
 - Package bounded reducer-job admission, progress, cancellation, and cleanup in the daemon query
   control service.
+
+[ADR 0537](0537-grouped-shuffle-reducer-job-control-envelope.md) now defines and implements the
+versioned PREPARE/SEAL request envelope around this reusable authority.
 
 ## References
 

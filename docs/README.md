@@ -129,6 +129,10 @@ existence of a design document alone is not implementation evidence.
 - [Distributed Vector Grouped Aggregate Shuffle Authority
   v1](formats/distributed-vector-grouped-aggregate-shuffle-authority-v1.md): complete checksummed
   source, destination, typed key/aggregate, query, and hash proof for cross-process job setup.
+- [Distributed Vector Grouped Aggregate Shuffle Job Control
+  v1](formats/distributed-vector-grouped-aggregate-shuffle-job-control-v1.md): canonical PREPARE and
+  SEAL requests binding portable authority, raw result schema, reducer/coordinator identities,
+  numeric result route, and a bounded relative execution timeout.
 - [Distributed Vector Grouped Aggregate Shuffle Acknowledgment
   v1](formats/distributed-vector-grouped-aggregate-shuffle-ack-v1.md): fixed checksummed reverse-
   route success receipt binding exact immutable edge authority and accepted stream frame/byte
