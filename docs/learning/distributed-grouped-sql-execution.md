@@ -258,7 +258,9 @@ connected result carrier now drives
 both through nonblocking mutual TLS: the reducer authorizes the coordinator before writing, the
 coordinator authenticates the reducer before application reads, and one-shot result transfer is
 unavailable until the receipt is fully written. TCP ownership, retry, and process lifecycle
-composition remain next.
+composition remain next. A finite retry owner now retains one immutable partition and reconstructs
+byte-identical whole-stream attempts after capped backoff; only a validated receipt ends it in
+success.
 
 ### Portable sufficient-state execution boundary
 

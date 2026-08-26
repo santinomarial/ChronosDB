@@ -1592,8 +1592,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   checksummed reverse-route success receipt binds the same authority, raw schema, and exact accepted
   extent. An already-connected nonblocking mutual-TLS carrier authenticates and node-authorizes both
   reducer and coordinator, owns partial I/O and deadlines, and publishes only after the receipt is
-  fully written. TCP connection/admission, retry/deduplication, and all-partition remote lifecycle
-  composition remain. The computed path now
+  fully written. A finite retry owner reconstructs byte-identical whole-partition attempts under
+  capped backoff and accepts only that receipt as success. TCP connection/admission,
+  coordinator-side deduplication, and all-partition remote lifecycle composition remain. The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives
   plan and result shapes from its outputs, and executes it locally before grouping.
@@ -1610,7 +1611,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   and aggregate inputs into that owned program, replicated preparation transfers it through every
   exact fragment, and both local and authenticated remote Native execution use the sufficient-state
   path. The complete logical identity rejects mixed programs and computation-changing authority
-  retries. TCP-owned result sessions, independent-process lifecycle composition, and the remaining
+  retries. TCP-owned result sessions, duplicate collection, independent-process lifecycle
+  composition, and the remaining
   unsupported SQL vocabulary still prevent making the row-backed oracle fallback-only.
   The full phase exit gate is not claimed.
 
