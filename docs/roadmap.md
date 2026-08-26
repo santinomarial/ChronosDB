@@ -1585,8 +1585,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   Mutable worker scheduling now composes with this lifecycle through a one-shot, complete canonical
   source-stream handoff while retaining the existing direct path as the default. Computed pre-group
   plan splitting and cross-process result transport are still missing. The computed path now has a
-  standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec, but no
-  mutable fragment embeds or executes it yet. Replicated Native SQL can
+  standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec. Mutable
+  in-memory binding now owns it, proves every source leaf against the exact schema, derives plan and
+  result shapes from its outputs, and executes it locally before grouping; v1 transport rejects the
+  program until a new fragment version carries it. Replicated Native SQL can
   now explicitly select the composition through a deployment-owned per-query provider that supplies
   fresh destination/listener/route configuration while service-owned SQL and protocol bounds remain
   authoritative;

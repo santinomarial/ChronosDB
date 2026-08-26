@@ -555,3 +555,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0518](0518-worker-to-shuffle-grouped-execution.md) | Worker-to-shuffle grouped execution | accepted |
 | [0519](0519-explicit-native-grouped-shuffle-selection.md) | Explicit Native grouped-shuffle selection | accepted |
 | [0520](0520-versioned-owned-pre-group-vector-program.md) | Versioned owned pre-group vector program | accepted |
+| [0521](0521-proof-bound-local-mutable-pre-group-execution.md) | Proof-bound local mutable pre-group execution | accepted |

@@ -6,6 +6,7 @@
 #include "chronos/ingest/tablet_state.hpp"
 #include "chronos/manifest/types.hpp"
 #include "chronos/query/distributed_vector_fragment.hpp"
+#include "chronos/query/distributed_vector_pre_group_program.hpp"
 #include "chronos/query/distributed_vector_result_schema.hpp"
 #include "chronos/raft/metadata.hpp"
 #include "chronos/schema/schema_lineage.hpp"
@@ -50,6 +51,7 @@ struct DistributedMutableVectorFragment {
   std::optional<cseg::EventTimePredicate> event_time_predicate;
   DistributedVectorPlanIntent plan;
   DistributedVectorResultSchema result_schema;
+  std::optional<DistributedVectorPreGroupProgram> pre_group_program;
 
   friend bool operator==(const DistributedMutableVectorFragment&,
                          const DistributedMutableVectorFragment&) = default;
@@ -66,6 +68,7 @@ struct DistributedMutableVectorFragmentBinding {
   std::span<const std::uint32_t> destination_column_ordinals;
   std::optional<cseg::EventTimePredicate> event_time_predicate;
   std::reference_wrapper<const DistributedVectorResultSchema> result_schema;
+  const DistributedVectorPreGroupProgram* pre_group_program{};
 };
 
 struct DistributedMutableVectorFragmentDecodeLimits {

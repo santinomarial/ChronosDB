@@ -1134,14 +1134,41 @@ validate_mutable_vector_grouped_aggregate_worker_binding(
 
   try {
     std::vector<PhysicalColumnShape> projected_inputs;
-    projected_inputs.reserve(fragment.destination_column_ordinals.size());
-    for (const std::uint32_t ordinal : fragment.destination_column_ordinals) {
-      if (ordinal >= schema_value->columns().size()) {
-        return common::make_unexpected(
-            invalid("mutable vector grouped aggregate projection is out of bounds"));
+    std::size_t pre_group_configuration_bytes = 0U;
+    if (fragment.pre_group_program.has_value()) {
+      projected_inputs.reserve(fragment.pre_group_program->outputs.size());
+      for (const VectorExpression& expression : fragment.pre_group_program->outputs) {
+        for (const VectorExpressionInstruction& instruction : expression.instructions()) {
+          const auto* input = std::get_if<VectorInputExpression>(&instruction);
+          if (input == nullptr)
+            continue;
+          if (input->input_column_ordinal >= schema_value->columns().size())
+            return common::make_unexpected(
+                invalid("mutable pre-group source ordinal is out of bounds"));
+          const schema::ColumnDefinition& column =
+              schema_value->columns()[input->input_column_ordinal];
+          if (input->type != column.type() || input->nullable != column.nullable())
+            return common::make_unexpected(
+                unavailable("mutable pre-group source shape differs from local schema"));
+        }
+        const auto next = common::checked_add(pre_group_configuration_bytes,
+                                              expression.retained_configuration_bytes());
+        if (!next.has_value())
+          return common::make_unexpected(
+              exhausted("mutable pre-group configuration size overflowed"));
+        pre_group_configuration_bytes = *next;
+        projected_inputs.push_back(
+            {expression.result_shape().type, expression.result_shape().nullable});
       }
-      const schema::ColumnDefinition& column = schema_value->columns()[ordinal];
-      projected_inputs.push_back({column.type(), column.nullable()});
+    } else {
+      projected_inputs.reserve(fragment.destination_column_ordinals.size());
+      for (const std::uint32_t ordinal : fragment.destination_column_ordinals) {
+        if (ordinal >= schema_value->columns().size())
+          return common::make_unexpected(
+              invalid("mutable vector grouped aggregate projection is out of bounds"));
+        const schema::ColumnDefinition& column = schema_value->columns()[ordinal];
+        projected_inputs.push_back({column.type(), column.nullable()});
+      }
     }
     auto grouped = bind_distributed_vector_grouped_aggregate_authority(
         fragment.plan, projected_inputs, fragment.result_schema);
@@ -1160,8 +1187,11 @@ validate_mutable_vector_grouped_aggregate_worker_binding(
     const auto first = projected_bytes.has_value() && key_bytes.has_value()
                            ? common::checked_add(*projected_bytes, *key_bytes)
                            : std::nullopt;
-    const auto retained = first.has_value() && aggregate_bytes.has_value()
-                              ? common::checked_add(*first, *aggregate_bytes)
+    const auto second = first.has_value() && aggregate_bytes.has_value()
+                            ? common::checked_add(*first, *aggregate_bytes)
+                            : std::nullopt;
+    const auto retained = second.has_value()
+                              ? common::checked_add(*second, pre_group_configuration_bytes)
                               : std::nullopt;
     if (!retained.has_value() || *retained > request.limits.maximum_retained_configuration_bytes) {
       return common::make_unexpected(
@@ -1382,6 +1412,9 @@ execute_distributed_mutable_vector_rows_fragment(
   const common::Status structural = validate_distributed_mutable_vector_fragment(fragment);
   if (!structural.is_ok())
     return common::make_unexpected(structural);
+  if (fragment.pre_group_program.has_value())
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kNotSupported, "mutable pre-group rows execution is not supported"});
   if (request.limits.maximum_query_memory_bytes == 0U ||
       request.limits.maximum_query_memory_bytes >
           kMaximumDistributedVectorRowsWorkerMemoryBytesV2 ||
@@ -1835,12 +1868,21 @@ execute_distributed_mutable_vector_grouped_aggregate_fragment(
       if (!pipeline.has_value())
         return common::make_unexpected(pipeline.error());
     }
-    std::vector<std::size_t> output_ordinals;
-    output_ordinals.reserve(fragment.destination_column_ordinals.size());
-    for (const std::uint32_t ordinal : fragment.destination_column_ordinals)
-      output_ordinals.push_back(ordinal);
-    pipeline = SourceColumnOutputOperator::create(std::move(*pipeline), std::move(output_ordinals),
-                                                  request.limits.projection);
+    if (fragment.pre_group_program.has_value()) {
+      std::vector<ColumnOutputPosition> outputs;
+      outputs.reserve(fragment.pre_group_program->outputs.size());
+      for (const VectorExpression& expression : fragment.pre_group_program->outputs)
+        outputs.emplace_back(ComputedColumnOutputPosition{expression});
+      pipeline = ColumnOutputOperator::create(std::move(*pipeline), std::move(outputs),
+                                              request.limits.projection);
+    } else {
+      std::vector<std::size_t> output_ordinals;
+      output_ordinals.reserve(fragment.destination_column_ordinals.size());
+      for (const std::uint32_t ordinal : fragment.destination_column_ordinals)
+        output_ordinals.push_back(ordinal);
+      pipeline = SourceColumnOutputOperator::create(
+          std::move(*pipeline), std::move(output_ordinals), request.limits.projection);
+    }
     if (!pipeline.has_value())
       return common::make_unexpected(pipeline.error());
     return execute_vector_grouped_aggregate_pipeline(

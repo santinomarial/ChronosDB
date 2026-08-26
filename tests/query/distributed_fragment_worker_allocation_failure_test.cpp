@@ -316,6 +316,11 @@ TEST(DistributedVectorAggregateWorkerAllocationFailureTest,
                                                    .observed_leader_commit_position = 5U,
                                                    .linearizable_barrier = mutable_barrier};
   const std::array<std::uint32_t, 1U> mutable_projection{1U};
+  std::vector<VectorExpressionInstruction> mutable_instructions{
+      VectorInputExpression{1U, mutable_schema->columns()[1].type(), true},
+      VectorUnaryExpression{VectorUnaryOperation::kUpperAscii, 0U}};
+  const DistributedVectorPreGroupProgram mutable_pre_group{
+      .outputs = {VectorExpression::create(std::move(mutable_instructions)).value()}};
   const DistributedVectorResultSchema mutable_result_schema{
       .columns = {
           {"tag", mutable_schema->columns()[1].type(), true},
@@ -330,7 +335,8 @@ TEST(DistributedVectorAggregateWorkerAllocationFailureTest,
                                                 .placement = std::cref(mutable_placement),
                                                 .destination_column_ordinals = mutable_projection,
                                                 .event_time_predicate = std::nullopt,
-                                                .result_schema = std::cref(mutable_result_schema)});
+                                                .result_schema = std::cref(mutable_result_schema),
+                                                .pre_group_program = &mutable_pre_group});
   ASSERT_TRUE(mutable_fragment.has_value());
   const DistributedMutableVectorGroupedAggregateWorkerRequest mutable_request{
       .fragment = std::cref(*mutable_fragment),

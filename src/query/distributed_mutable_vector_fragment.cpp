@@ -50,6 +50,46 @@ inline constexpr std::size_t kMinimumFrameLength =
   return {common::StatusCode::kResourceExhausted, message};
 }
 
+[[nodiscard]] common::Status not_supported(const char* message) {
+  return {common::StatusCode::kNotSupported, message};
+}
+
+[[nodiscard]] common::Result<std::vector<PhysicalColumnShape>>
+pre_group_shapes(const DistributedVectorPreGroupProgram& program) {
+  const common::Status status = validate_distributed_vector_pre_group_program(program);
+  if (!status.is_ok())
+    return common::make_unexpected(status);
+  try {
+    std::vector<PhysicalColumnShape> shapes;
+    shapes.reserve(program.outputs.size());
+    for (const VectorExpression& expression : program.outputs)
+      shapes.push_back({expression.result_shape().type, expression.result_shape().nullable});
+    return shapes;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("mutable pre-group shape allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("mutable pre-group shape exceeds limits"));
+  }
+}
+
+[[nodiscard]] common::Status
+validate_pre_group_sources(const DistributedVectorPreGroupProgram& program,
+                           const schema::TableSchema& schema_value) {
+  for (const VectorExpression& expression : program.outputs) {
+    for (const VectorExpressionInstruction& instruction : expression.instructions()) {
+      const auto* input = std::get_if<VectorInputExpression>(&instruction);
+      if (input == nullptr)
+        continue;
+      if (input->input_column_ordinal >= schema_value.columns().size())
+        return invalid("mutable pre-group source ordinal is out of bounds");
+      const schema::ColumnDefinition& column = schema_value.columns()[input->input_column_ordinal];
+      if (input->type != column.type() || input->nullable != column.nullable())
+        return invalid("mutable pre-group source shape differs from destination schema");
+    }
+  }
+  return common::Status::ok();
+}
+
 [[nodiscard]] common::Status validate_placement(const raft::TabletPlacementMetadata& placement,
                                                 const schema::TableId& table_id,
                                                 const schema::TabletId& tablet_id,
@@ -105,6 +145,9 @@ encode_distributed_mutable_vector_fragment(const DistributedMutableVectorFragmen
   const common::Status validation = validate_distributed_mutable_vector_fragment(fragment);
   if (!validation.is_ok())
     return common::make_unexpected(validation);
+  if (fragment.pre_group_program.has_value())
+    return common::make_unexpected(
+        not_supported("mutable pre-group program transport is not implemented"));
   auto plan = encode_distributed_vector_plan_intent(fragment.plan);
   if (!plan.has_value())
     return common::make_unexpected(plan.error());
@@ -435,7 +478,8 @@ common::Result<DistributedMutableVectorFragment> decode_distributed_mutable_vect
         .destination_column_ordinals = std::move(projection),
         .event_time_predicate = predicate,
         .plan = std::move(*plan),
-        .result_schema = std::move(*result_schema)};
+        .result_schema = std::move(*result_schema),
+        .pre_group_program = std::nullopt};
     const common::Status validation = validate_distributed_mutable_vector_fragment(fragment);
     if (!validation.is_ok()) {
       if (validation.code() == common::StatusCode::kResourceExhausted)
@@ -505,10 +549,24 @@ validate_distributed_mutable_vector_fragment(const DistributedMutableVectorFragm
       !fragment.event_time_predicate->upper.has_value()) {
     return invalid("mutable vector fragment event-time predicate is empty");
   }
-  common::Status plan_status = validate_distributed_vector_plan_intent(
-      fragment.plan, static_cast<std::uint32_t>(fragment.destination_column_ordinals.size()));
+  std::vector<PhysicalColumnShape> program_shapes;
+  std::uint32_t input_count =
+      static_cast<std::uint32_t>(fragment.destination_column_ordinals.size());
+  if (fragment.pre_group_program.has_value()) {
+    if (fragment.plan.mode != DistributedVectorPlanMode::kGroupedAggregate)
+      return invalid("mutable pre-group program requires a grouped aggregate plan");
+    auto shapes = pre_group_shapes(*fragment.pre_group_program);
+    if (!shapes.has_value())
+      return shapes.error();
+    program_shapes = std::move(*shapes);
+    input_count = static_cast<std::uint32_t>(program_shapes.size());
+  }
+  common::Status plan_status = validate_distributed_vector_plan_intent(fragment.plan, input_count);
   if (!plan_status.is_ok())
     return plan_status;
+  if (fragment.pre_group_program.has_value())
+    return validate_distributed_vector_result_schema(fragment.plan, program_shapes,
+                                                     fragment.result_schema);
   auto encoded_schema = encode_distributed_vector_result_schema(fragment.result_schema);
   return encoded_schema.has_value() ? common::Status::ok() : encoded_schema.error();
 }
@@ -549,7 +607,20 @@ bind_distributed_mutable_vector_fragment(const DistributedMutableVectorFragmentB
         unavailable("mutable vector snapshot differs from the admitted Raft boundary"));
   }
 
-  auto projected = projected_shapes(*destination, binding.destination_column_ordinals);
+  std::vector<PhysicalColumnShape> program_shapes;
+  if (binding.pre_group_program != nullptr) {
+    const common::Status sources =
+        validate_pre_group_sources(*binding.pre_group_program, *destination);
+    if (!sources.is_ok())
+      return common::make_unexpected(sources);
+    auto shapes = pre_group_shapes(*binding.pre_group_program);
+    if (!shapes.has_value())
+      return common::make_unexpected(shapes.error());
+    program_shapes = std::move(*shapes);
+  }
+  auto projected = binding.pre_group_program == nullptr
+                       ? projected_shapes(*destination, binding.destination_column_ordinals)
+                       : common::Result<std::vector<PhysicalColumnShape>>{program_shapes};
   if (!projected.has_value())
     return common::make_unexpected(projected.error());
   const common::Status result_status = validate_distributed_vector_result_schema(
@@ -575,7 +646,11 @@ bind_distributed_mutable_vector_fragment(const DistributedMutableVectorFragmentB
                                         binding.destination_column_ordinals.end()},
         .event_time_predicate = binding.event_time_predicate,
         .plan = plan.intent,
-        .result_schema = binding.result_schema.get()};
+        .result_schema = binding.result_schema.get(),
+        .pre_group_program =
+            binding.pre_group_program == nullptr
+                ? std::nullopt
+                : std::optional<DistributedVectorPreGroupProgram>{*binding.pre_group_program}};
     const common::Status structural = validate_distributed_mutable_vector_fragment(fragment);
     if (!structural.is_ok())
       return common::make_unexpected(structural);

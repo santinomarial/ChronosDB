@@ -320,6 +320,101 @@ TEST(DistributedMutableVectorFragmentTest,
             common::StatusCode::kResourceExhausted);
 }
 
+TEST(DistributedMutableVectorFragmentTest,
+     BindsAndExecutesOwnedPreGroupShapesButFailsClosedBeforeTransport) {
+  Fixture fixture;
+  const ingest::TabletSnapshot snapshot = fixture.append();
+  const raft::ReadBarrier barrier{.term = 3U, .context = 4U, .read_index = 5U};
+  const DistributedVectorQueryPlan plan{
+      .query_id = uuid(85U),
+      .read_policy = {.consistency = DistributedReadConsistency::kLeaderLinearizable},
+      .fragments = {{.tablet_id = fixture.tablet_id,
+                     .leader_node = 11U,
+                     .local_applied_position = 5U,
+                     .known_leader_commit_position = 5U}},
+      .intent = {.mode = DistributedVectorPlanMode::kGroupedAggregate,
+                 .group_key_input_indices = {0U},
+                 .aggregates = {{.operation = VectorAggregateOperation::kCountStar}}}};
+  const DistributedReadAdmission admission{.tablet_id = fixture.tablet_id,
+                                           .serving_node = 11U,
+                                           .applied_position = 5U,
+                                           .observed_leader_commit_position = 5U,
+                                           .linearizable_barrier = barrier};
+  const raft::TabletPlacementMetadata placement{.table_id = fixture.schema_value->table_id(),
+                                                .tablet_id = fixture.tablet_id,
+                                                .placement_epoch = 7U,
+                                                .replicas = {11U},
+                                                .leader_hint = 11U};
+  const std::array<std::uint32_t, 1U> projection{1U};
+  std::vector<VectorExpressionInstruction> instructions{
+      VectorInputExpression{1U, fixture.schema_value->columns()[1].type(), true},
+      VectorUnaryExpression{VectorUnaryOperation::kUpperAscii, 0U}};
+  const DistributedVectorPreGroupProgram pre_group{
+      .outputs = {VectorExpression::create(std::move(instructions)).value()}};
+  const auto int64 = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  const DistributedVectorResultSchema result_schema{
+      .columns = {{"lower_tag", fixture.schema_value->columns()[1].type(), true},
+                  {"rows", int64, false}}};
+  auto fragment =
+      bind_distributed_mutable_vector_fragment({.plan = std::cref(plan),
+                                                .admission = std::cref(admission),
+                                                .database_id = fixture.database_id,
+                                                .snapshot = std::cref(snapshot),
+                                                .lineage = std::cref(fixture.lineage),
+                                                .raft_group_id = fixture.group_id,
+                                                .placement = std::cref(placement),
+                                                .destination_column_ordinals = projection,
+                                                .event_time_predicate = std::nullopt,
+                                                .result_schema = std::cref(result_schema),
+                                                .pre_group_program = &pre_group});
+  ASSERT_TRUE(fragment.has_value()) << fragment.error().to_string();
+  ASSERT_TRUE(fragment->pre_group_program.has_value());
+  EXPECT_EQ(*fragment->pre_group_program, pre_group);
+  EXPECT_EQ(encode_distributed_mutable_vector_fragment(*fragment).error().code(),
+            common::StatusCode::kNotSupported);
+
+  const DistributedMutableVectorGroupedAggregateWorkerRequest request{
+      .fragment = std::cref(*fragment),
+      .snapshot = std::cref(snapshot),
+      .lineage = std::cref(fixture.lineage),
+      .placement = std::cref(placement),
+      .raft_group_id = fixture.group_id,
+      .local_node = 11U,
+      .local_linearizable_barrier = barrier,
+      .limits = {}};
+  auto executed = execute_distributed_mutable_vector_grouped_aggregate_fragment(request);
+  ASSERT_TRUE(executed.has_value()) << executed.error().to_string();
+  EXPECT_EQ(executed->input_rows, 2U);
+  EXPECT_EQ(executed->group_count, 2U);
+  ASSERT_EQ(executed->messages.size(), 2U);
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  auto decoded = decode_distributed_vector_grouped_aggregate_exchange_message_exact(
+      executed->messages.front().bytes(), executed->authority.keys, executed->authority.aggregates,
+      resources);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  ASSERT_EQ(decoded->keys().size(), 1U);
+  EXPECT_EQ(std::get<std::string>(decoded->keys()[0].storage()), "X");
+
+  std::vector<VectorExpressionInstruction> wrong_instructions{
+      VectorInputExpression{1U, fixture.schema_value->columns()[0].type(), true}};
+  const DistributedVectorPreGroupProgram wrong{
+      .outputs = {VectorExpression::create(std::move(wrong_instructions)).value()}};
+  auto rejected =
+      bind_distributed_mutable_vector_fragment({.plan = std::cref(plan),
+                                                .admission = std::cref(admission),
+                                                .database_id = fixture.database_id,
+                                                .snapshot = std::cref(snapshot),
+                                                .lineage = std::cref(fixture.lineage),
+                                                .raft_group_id = fixture.group_id,
+                                                .placement = std::cref(placement),
+                                                .destination_column_ordinals = projection,
+                                                .event_time_predicate = std::nullopt,
+                                                .result_schema = std::cref(result_schema),
+                                                .pre_group_program = &wrong});
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+}
+
 TEST(DistributedMutableVectorFragmentTest, RejectsMixedAdmissionAndPublicationAuthority) {
   Fixture fixture;
   const ingest::TabletSnapshot snapshot = fixture.append();
