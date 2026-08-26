@@ -188,6 +188,7 @@ DistributedVectorGroupedAggregateShuffleResultStreamReceiver::take_complete_stre
       .target_node_id = coordinator_node_id_,
       .partition_id = *partition_id_,
       .encoded_result_batches = std::move(batches_),
+      .frame_count = static_cast<std::uint32_t>(accepted_frames_),
       .encoded_bytes = accepted_bytes_};
 }
 

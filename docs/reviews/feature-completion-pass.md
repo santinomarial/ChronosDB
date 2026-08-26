@@ -1108,10 +1108,10 @@ were deliberately not run.
   path feeds direct and checked computed pre-group plans from proof-revalidated workers through
   authenticated finite TCP scheduling, globally merges complete all-tablet state streams, and
   packages final projection/order/limit through Native SQL. Arbitrary relational plans,
-  mutual-TLS independent-process shuffle result sessions and lifecycle composition, and
+  TCP-owned independent-process shuffle result scheduling and lifecycle composition, and
   fragment-level durable retries remain absent. The reduced-partition product now has an authority-
   and raw-schema-bound, checksummed, bounded v1 codec plus an authenticated all-or-none stream owner
-  and exact reverse-route success receipt.
+  and exact reverse-route success receipt composed through a bounded mutual-TLS carrier.
 - Movement now composes deterministic actions with joint Raft membership and durable checkpoints;
   automatic placement-driven orchestration remains external.
 - Cold upload independently performs exact schema/source-bound CSEG validation before remote

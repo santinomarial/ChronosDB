@@ -251,10 +251,14 @@ result product; authenticated complete-stream sessions and lifecycle composition
 The result stream layer now constructs every partition frame before write publication and assigns
 contiguous sequence plus one terminal. Its receiver binds the authenticated peer principal to the
 authority destination, locks one partition, withholds all batches until terminal closure, and
-discards the whole prefix on drift, gaps, suffixes, or exhaustion. Mutual-TLS connected-session and
-process lifecycle ownership remain next. A fixed checksummed reverse-route result receipt now binds
-the same authority, raw schema, and exact accepted stream extent so a connected sender need not
-mistake completed socket writes for coordinator acceptance.
+discards the whole prefix on drift, gaps, suffixes, or exhaustion. A fixed checksummed reverse-route
+result receipt binds the same authority, raw schema, and exact accepted stream extent so a
+connected sender need not mistake completed socket writes for coordinator acceptance. The
+connected result carrier now drives
+both through nonblocking mutual TLS: the reducer authorizes the coordinator before writing, the
+coordinator authenticates the reducer before application reads, and one-shot result transfer is
+unavailable until the receipt is fully written. TCP ownership, retry, and process lifecycle
+composition remain next.
 
 ### Portable sufficient-state execution boundary
 

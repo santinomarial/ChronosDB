@@ -38,6 +38,7 @@ struct DistributedVectorGroupedAggregateShuffleCompleteResultStream {
   raft::NodeId target_node_id{};
   std::uint32_t partition_id{};
   std::vector<std::vector<std::byte>> encoded_result_batches;
+  std::uint32_t frame_count{};
   std::size_t encoded_bytes{};
 };
 

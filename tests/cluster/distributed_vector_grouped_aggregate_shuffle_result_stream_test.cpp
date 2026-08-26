@@ -83,6 +83,7 @@ TEST(DistributedVectorGroupedAggregateShuffleResultStreamTest,
   EXPECT_EQ(complete->source_node_id, 3U);
   EXPECT_EQ(complete->target_node_id, 9U);
   EXPECT_EQ(complete->encoded_result_batches, batches);
+  EXPECT_EQ(complete->frame_count, 2U);
 }
 
 TEST(DistributedVectorGroupedAggregateShuffleResultStreamTest,
@@ -159,6 +160,7 @@ TEST(DistributedVectorGroupedAggregateShuffleResultStreamTest,
   auto complete = receiver.take_complete_stream();
   ASSERT_TRUE(complete.has_value());
   EXPECT_TRUE(complete->encoded_result_batches.empty());
+  EXPECT_EQ(complete->frame_count, 1U);
 }
 
 TEST(DistributedVectorGroupedAggregateShuffleResultStreamTest,
