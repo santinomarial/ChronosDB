@@ -32,6 +32,14 @@ Reducer-job dispatch is opt-in at the cluster owner boundary to preserve pre-alp
 have not yet supplied result-return TLS routes. A daemon claiming distributed grouped-shuffle
 support must install the service; silently accepting the magic without it is forbidden.
 
+The replicated service package may own that optional job service before it creates the shared
+listener. It requires the reducer local node, connection authenticator, and node authorizer to be
+the same authority as the other packaged query-control protocols. Result-return TLS contexts are a
+borrowed canonical node-ID map rather than one process-wide context: PREPARE rejects an otherwise
+authorized coordinator with `NOT_FOUND` before job admission when its exact TLS identity is absent.
+`chronosd` installs this owner with its committed peer authority and per-peer TLS contexts, while
+the job's shuffle data listener remains an ephemeral endpoint published only by successful PREPARE.
+
 ## Consequences
 
 Mutable rows, mutable grouped sufficient state, Raft read authority, and grouped reducer-job
@@ -39,8 +47,10 @@ control can share one committed authenticated endpoint. No port inference or pre
 application parsing is introduced. Connection count, accepts, job count, frames, bytes, memory,
 and poll work retain independent bounds.
 
-The generic shared endpoint borrows the job service. Packaged service and `chronosd` ownership,
-outbound result TLS route selection, and multi-daemon qualification remain.
+The generic shared endpoint still borrows the job service. The replicated package owns it in
+reverse-safe teardown order, and `chronosd` now supplies stable per-node result identities without
+inventing another committed port. Coordinator-side PREPARE/SEAL scheduling and multi-daemon
+qualification remain.
 
 ## Affected invariants
 
@@ -74,8 +84,8 @@ compatible.
 
 ## Unresolved questions
 
-- Package stable reducer-job and result-route ownership in the replicated service.
-- Install that packaged owner in `chronosd` and qualify independent daemon processes.
+- Compose coordinator-side PREPARE/SEAL scheduling with the packaged query lifecycle.
+- Qualify complete grouped shuffle across independent daemon processes and failure cases.
 
 ## References
 

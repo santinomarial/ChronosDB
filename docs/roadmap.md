@@ -1611,8 +1611,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   now own control stream fragmentation. One nonblocking mutual-TLS session now authenticates both
   peers, authorizes the reducer identity, bounds handshake/exchange time, and exact-correlates the
   response before endpoint publication. The committed query-control listener now dispatches that
-  job magic, bounds connections, reports distinct completion, and polls installed jobs. Packaged
-  daemon and result-route ownership remain. The computed path now
+  job magic, bounds connections, reports distinct completion, and polls installed jobs. The
+  replicated service package now owns the optional reducer service in teardown-safe order, selects
+  result-return TLS identity from a canonical coordinator-node map, and `chronosd` installs it from
+  the same committed peer authority. Coordinator-side PREPARE/SEAL lifecycle composition and full
+  multi-daemon qualification remain. The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives
   plan and result shapes from its outputs, and executes it locally before grouping.

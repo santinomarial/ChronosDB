@@ -175,7 +175,11 @@ common::Status ReplicatedDistributedMutableQueryControlTcpServer::poll_once(
 common::Status ReplicatedDistributedMutableQueryControlTcpServer::shutdown() {
   cluster::DistributedMutableQueryControlTcpServer* const server =
       implementation_ ? implementation_->active_server() : nullptr;
-  return server == nullptr ? empty_server() : server->shutdown();
+  if (server == nullptr)
+    return empty_server();
+  const common::Status closed = server->shutdown();
+  implementation_->grouped_shuffle_job_service.reset();
+  return closed;
 }
 
 network::Ipv4Endpoint
