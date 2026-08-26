@@ -60,6 +60,9 @@ TEST(DistributedVectorGroupedAggregateShuffleResultStreamTest,
   auto sender = DistributedVectorGroupedAggregateShuffleResultStreamSender::create(
                     expected, schema, 0U, 3U, 9U, batches)
                     .value();
+  EXPECT_EQ(sender.partition_id(), 0U);
+  EXPECT_EQ(sender.source_node_id(), 3U);
+  EXPECT_EQ(sender.coordinator_node_id(), 9U);
   Authorizer authorizer;
   auto receiver = DistributedVectorGroupedAggregateShuffleResultStreamReceiver::create(
                       expected, schema, 9U, authorizer, {.authorized = true, .principal_id = 91U})

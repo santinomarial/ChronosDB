@@ -217,10 +217,13 @@ DistributedVectorGroupedAggregateShuffleResultStreamReceiver::accepted_bytes() c
 
 DistributedVectorGroupedAggregateShuffleResultStreamSender::
     DistributedVectorGroupedAggregateShuffleResultStreamSender(
-        const std::uint32_t partition_id,
+        const std::uint32_t partition_id, const raft::NodeId source_node_id,
+        const raft::NodeId coordinator_node_id,
         std::vector<DistributedVectorGroupedAggregateShuffleResultWriteCursor> writers,
         const std::size_t encoded_bytes) noexcept
-    : partition_id_(partition_id), writers_(std::move(writers)), encoded_bytes_(encoded_bytes) {}
+    : partition_id_(partition_id), source_node_id_(source_node_id),
+      coordinator_node_id_(coordinator_node_id), writers_(std::move(writers)),
+      encoded_bytes_(encoded_bytes) {}
 
 common::Result<DistributedVectorGroupedAggregateShuffleResultStreamSender>
 DistributedVectorGroupedAggregateShuffleResultStreamSender::create(
@@ -261,7 +264,7 @@ DistributedVectorGroupedAggregateShuffleResultStreamSender::create(
       writers.push_back(std::move(*writer));
     }
     return DistributedVectorGroupedAggregateShuffleResultStreamSender{
-        partition_id, std::move(writers), encoded_bytes};
+        partition_id, source_node_id, coordinator_node_id, std::move(writers), encoded_bytes};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("grouped shuffle result sender allocation failed"));
   } catch (const std::length_error&) {
@@ -310,6 +313,16 @@ DistributedVectorGroupedAggregateShuffleResultStreamSender::written_bytes() cons
 std::uint32_t
 DistributedVectorGroupedAggregateShuffleResultStreamSender::partition_id() const noexcept {
   return partition_id_;
+}
+
+raft::NodeId
+DistributedVectorGroupedAggregateShuffleResultStreamSender::source_node_id() const noexcept {
+  return source_node_id_;
+}
+
+raft::NodeId
+DistributedVectorGroupedAggregateShuffleResultStreamSender::coordinator_node_id() const noexcept {
+  return coordinator_node_id_;
 }
 
 } // namespace chronos::cluster

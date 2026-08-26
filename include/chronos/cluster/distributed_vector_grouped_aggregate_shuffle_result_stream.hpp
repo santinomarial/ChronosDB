@@ -138,14 +138,18 @@ public:
   [[nodiscard]] std::size_t encoded_bytes() const noexcept;
   [[nodiscard]] std::size_t written_bytes() const noexcept;
   [[nodiscard]] std::uint32_t partition_id() const noexcept;
+  [[nodiscard]] raft::NodeId source_node_id() const noexcept;
+  [[nodiscard]] raft::NodeId coordinator_node_id() const noexcept;
 
 private:
   DistributedVectorGroupedAggregateShuffleResultStreamSender(
-      std::uint32_t partition_id,
+      std::uint32_t partition_id, raft::NodeId source_node_id, raft::NodeId coordinator_node_id,
       std::vector<DistributedVectorGroupedAggregateShuffleResultWriteCursor> writers,
       std::size_t encoded_bytes) noexcept;
 
   std::uint32_t partition_id_{};
+  raft::NodeId source_node_id_{};
+  raft::NodeId coordinator_node_id_{};
   std::vector<DistributedVectorGroupedAggregateShuffleResultWriteCursor> writers_;
   std::size_t encoded_bytes_{};
   std::size_t writer_index_{};

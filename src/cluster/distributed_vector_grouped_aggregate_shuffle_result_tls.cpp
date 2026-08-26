@@ -386,8 +386,9 @@ DistributedVectorGroupedAggregateShuffleResultTlsClient::create(
   const auto source_node = authority.destination_node(sender.partition_id());
   if (config.authenticator == nullptr || config.node_authorizer == nullptr ||
       !valid_limits<TimePoint>(config.limits) || coordinator_node_id == 0U ||
-      !source_node.has_value() || *source_node == coordinator_node_id || sender.complete() ||
-      sender.frame_count() > config.limits.stream.maximum_frames ||
+      !source_node.has_value() || *source_node != sender.source_node_id() ||
+      *source_node == coordinator_node_id || sender.coordinator_node_id() != coordinator_node_id ||
+      sender.complete() || sender.frame_count() > config.limits.stream.maximum_frames ||
       sender.encoded_bytes() > config.limits.stream.maximum_encoded_bytes ||
       !query::validate_distributed_vector_result_schema_value(result_schema).is_ok()) {
     return common::make_unexpected(
