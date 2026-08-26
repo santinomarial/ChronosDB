@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <memory>
 #include <utility>
 
 namespace chronos::cluster {
@@ -168,6 +169,16 @@ raft::NodeId DistributedVectorGroupedAggregateShuffleResultRetry::source_node_id
 
 raft::NodeId DistributedVectorGroupedAggregateShuffleResultRetry::target_node_id() const noexcept {
   return coordinator_node_id_;
+}
+
+const DistributedVectorGroupedAggregateShuffleAuthority*
+DistributedVectorGroupedAggregateShuffleResultRetry::authority() const noexcept {
+  return std::addressof(authority_.get());
+}
+
+const query::DistributedVectorResultSchema*
+DistributedVectorGroupedAggregateShuffleResultRetry::result_schema() const noexcept {
+  return std::addressof(result_schema_.get());
 }
 
 } // namespace chronos::cluster

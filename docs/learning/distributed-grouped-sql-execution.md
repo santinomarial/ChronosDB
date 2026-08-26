@@ -264,7 +264,11 @@ success. A deadline-bound TCP client proves nonblocking connect completion befor
 attempt into mutual TLS, while a bounded server caps accepted descriptors, active sessions, and
 per-poll work. The all-remote collector preallocates one slot per authority partition, suppresses
 exact retransmissions, rejects conflicting duplicates, and publishes only complete canonical
-partition order.
+partition order. A reducer-side scheduler now joins immutable retry to the TCP client: it
+prevalidates exact authority/schema identity, unique local partitions, and coordinator routes,
+rotates finite addresses only between whole attempts, and bounds polling by retry, carrier, and
+query deadlines. Only receipt-proven partitions complete; cancellation or one exhausted partition
+closes every active attempt.
 
 Collected Native batches now enter the existing global grouped SQL pipeline through a move-only
 materializer. It reconstructs each stream extent before execution, decodes one nonempty batch at a

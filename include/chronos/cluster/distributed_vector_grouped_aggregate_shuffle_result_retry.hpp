@@ -74,6 +74,8 @@ public:
   [[nodiscard]] std::uint32_t partition_id() const noexcept;
   [[nodiscard]] raft::NodeId source_node_id() const noexcept;
   [[nodiscard]] raft::NodeId target_node_id() const noexcept;
+  [[nodiscard]] const DistributedVectorGroupedAggregateShuffleAuthority* authority() const noexcept;
+  [[nodiscard]] const query::DistributedVectorResultSchema* result_schema() const noexcept;
 
 private:
   DistributedVectorGroupedAggregateShuffleResultRetry(
