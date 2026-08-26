@@ -22,13 +22,15 @@ namespace chronos::query {
 namespace distributed_mutable_vector_fragment_format {
 inline constexpr std::uint16_t kMajor = 1U;
 inline constexpr std::uint16_t kMinor = 0U;
+inline constexpr std::uint16_t kPreGroupMajor = 2U;
 inline constexpr std::size_t kHeaderLength = 248U;
 inline constexpr std::size_t kTrailerLength = 4U;
 inline constexpr std::uint32_t kMaximumProjectionColumns = 4096U;
 inline constexpr std::size_t kMaximumFrameLength =
     kHeaderLength + static_cast<std::size_t>(kMaximumProjectionColumns) * 4U +
     distributed_vector_plan_format::kMaximumFrameLength +
-    distributed_vector_result_schema_format::kMaximumFrameLength + kTrailerLength;
+    distributed_vector_result_schema_format::kMaximumFrameLength +
+    distributed_vector_pre_group_program_format::kMaximumFrameLength + kTrailerLength;
 } // namespace distributed_mutable_vector_fragment_format
 
 // Distinct authority value for one immutable TabletState publication. It deliberately has no
@@ -77,6 +79,7 @@ struct DistributedMutableVectorFragmentDecodeLimits {
       distributed_mutable_vector_fragment_format::kMaximumProjectionColumns};
   DistributedVectorPlanDecodeLimits plan;
   DistributedVectorResultSchemaDecodeLimits result_schema;
+  DistributedVectorPreGroupProgramDecodeLimits pre_group_program;
 };
 
 class EncodedDistributedMutableVectorFragment {

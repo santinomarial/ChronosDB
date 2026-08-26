@@ -1587,8 +1587,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   plan splitting and cross-process result transport are still missing. The computed path now has a
   standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec. Mutable
   in-memory binding now owns it, proves every source leaf against the exact schema, derives plan and
-  result shapes from its outputs, and executes it locally before grouping; v1 transport rejects the
-  program until a new fragment version carries it. Replicated Native SQL can
+  result shapes from its outputs, and executes it locally before grouping. Backward-compatible
+  Mutable Fragment v2 now carries the exact program through existing authenticated request
+  transport while preserving v1 bytes for fragments without one. Replicated Native SQL can
   now explicitly select the composition through a deployment-owned per-query provider that supplies
   fresh destination/listener/route configuration while service-owned SQL and protocol bounds remain
   authoritative;

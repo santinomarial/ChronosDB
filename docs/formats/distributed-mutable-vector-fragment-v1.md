@@ -39,3 +39,7 @@ head. No Manifest generation or durable position is inferred.
 
 Unknown versions return `NOT_SUPPORTED`; damaged bytes return `CORRUPTION`; invalid encoder input
 returns `INVALID_ARGUMENT`; caller-bound exhaustion returns `RESOURCE_EXHAUSTED`.
+
+Fragments without a pre-group program continue to encode in this exact format. Computed grouped
+fragments use [Distributed Mutable Vector Fragment v2](distributed-mutable-vector-fragment-v2.md);
+the exact decoder accepts both versions without reinterpreting v1 bytes.

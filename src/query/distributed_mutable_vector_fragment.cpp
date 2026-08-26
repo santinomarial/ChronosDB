@@ -17,9 +17,12 @@
 namespace chronos::query {
 namespace {
 
-inline constexpr std::array<std::byte, 8U> kMagic{std::byte{'C'}, std::byte{'H'}, std::byte{'D'},
-                                                  std::byte{'M'}, std::byte{'V'}, std::byte{'F'},
-                                                  std::byte{'R'}, std::byte{'1'}};
+inline constexpr std::array<std::byte, 8U> kMagicV1{std::byte{'C'}, std::byte{'H'}, std::byte{'D'},
+                                                    std::byte{'M'}, std::byte{'V'}, std::byte{'F'},
+                                                    std::byte{'R'}, std::byte{'1'}};
+inline constexpr std::array<std::byte, 8U> kMagicV2{std::byte{'C'}, std::byte{'H'}, std::byte{'D'},
+                                                    std::byte{'M'}, std::byte{'V'}, std::byte{'F'},
+                                                    std::byte{'R'}, std::byte{'2'}};
 inline constexpr std::uint32_t kLowerPresent = 1U << 0U;
 inline constexpr std::uint32_t kLowerInclusive = 1U << 1U;
 inline constexpr std::uint32_t kUpperPresent = 1U << 2U;
@@ -29,7 +32,8 @@ inline constexpr std::uint32_t kBarrierPresent = 1U << 5U;
 inline constexpr std::uint32_t kKnownFlags = kLowerPresent | kLowerInclusive | kUpperPresent |
                                              kUpperInclusive | kMaximumStalenessPresent |
                                              kBarrierPresent;
-inline constexpr std::size_t kHeaderCrcOffset = 240U;
+inline constexpr std::size_t kV1HeaderCrcOffset = 240U;
+inline constexpr std::size_t kV2HeaderCrcOffset = 244U;
 inline constexpr std::size_t kMinimumFrameLength =
     distributed_mutable_vector_fragment_format::kHeaderLength + sizeof(std::uint32_t) +
     distributed_vector_plan_format::kHeaderLength + distributed_vector_plan_format::kTrailerLength +
@@ -48,10 +52,6 @@ inline constexpr std::size_t kMinimumFrameLength =
 
 [[nodiscard]] common::Status exhausted(const char* message) {
   return {common::StatusCode::kResourceExhausted, message};
-}
-
-[[nodiscard]] common::Status not_supported(const char* message) {
-  return {common::StatusCode::kNotSupported, message};
 }
 
 [[nodiscard]] common::Result<std::vector<PhysicalColumnShape>>
@@ -145,25 +145,35 @@ encode_distributed_mutable_vector_fragment(const DistributedMutableVectorFragmen
   const common::Status validation = validate_distributed_mutable_vector_fragment(fragment);
   if (!validation.is_ok())
     return common::make_unexpected(validation);
-  if (fragment.pre_group_program.has_value())
-    return common::make_unexpected(
-        not_supported("mutable pre-group program transport is not implemented"));
   auto plan = encode_distributed_vector_plan_intent(fragment.plan);
   if (!plan.has_value())
     return common::make_unexpected(plan.error());
   auto result_schema = encode_distributed_vector_result_schema(fragment.result_schema);
   if (!result_schema.has_value())
     return common::make_unexpected(result_schema.error());
+  std::optional<EncodedDistributedVectorPreGroupProgram> pre_group_program;
+  if (fragment.pre_group_program.has_value()) {
+    auto encoded = encode_distributed_vector_pre_group_program(*fragment.pre_group_program);
+    if (!encoded.has_value())
+      return common::make_unexpected(encoded.error());
+    pre_group_program = std::move(*encoded);
+  }
+  const std::size_t pre_group_length =
+      pre_group_program.has_value() ? pre_group_program->bytes().size() : 0U;
   const std::size_t frame_length = distributed_mutable_vector_fragment_format::kHeaderLength +
                                    fragment.destination_column_ordinals.size() * 4U +
                                    plan->bytes().size() + result_schema->bytes().size() +
+                                   pre_group_length +
                                    distributed_mutable_vector_fragment_format::kTrailerLength;
   try {
     std::vector<std::byte> bytes(frame_length);
     common::ByteWriter writer{bytes};
-    common::Status status = writer.write_exact(kMagic);
+    const bool version_two = pre_group_program.has_value();
+    common::Status status = writer.write_exact(version_two ? kMagicV2 : kMagicV1);
     if (status.is_ok())
-      status = writer.write_u16_le(distributed_mutable_vector_fragment_format::kMajor);
+      status = writer.write_u16_le(version_two
+                                       ? distributed_mutable_vector_fragment_format::kPreGroupMajor
+                                       : distributed_mutable_vector_fragment_format::kMajor);
     if (status.is_ok())
       status = writer.write_u16_le(distributed_mutable_vector_fragment_format::kMinor);
     if (status.is_ok())
@@ -244,10 +254,19 @@ encode_distributed_mutable_vector_fragment(const DistributedMutableVectorFragmen
       status = writer.write_u32_le(common::crc32c(plan->bytes()));
     if (status.is_ok())
       status = writer.write_u32_le(common::crc32c(result_schema->bytes()));
-    if (status.is_ok())
-      status = writer.write_u32_le(common::crc32c(common::ByteView{bytes}.first(kHeaderCrcOffset)));
-    if (status.is_ok())
-      status = writer.zero_fill(4U);
+    if (version_two) {
+      if (status.is_ok())
+        status = writer.write_u32_le(static_cast<std::uint32_t>(pre_group_length));
+      if (status.is_ok())
+        status =
+            writer.write_u32_le(common::crc32c(common::ByteView{bytes}.first(kV2HeaderCrcOffset)));
+    } else {
+      if (status.is_ok())
+        status =
+            writer.write_u32_le(common::crc32c(common::ByteView{bytes}.first(kV1HeaderCrcOffset)));
+      if (status.is_ok())
+        status = writer.zero_fill(4U);
+    }
     for (const std::uint32_t ordinal : fragment.destination_column_ordinals) {
       if (status.is_ok())
         status = writer.write_u32_le(ordinal);
@@ -256,10 +275,14 @@ encode_distributed_mutable_vector_fragment(const DistributedMutableVectorFragmen
       status = writer.write_exact(plan->bytes());
     if (status.is_ok())
       status = writer.write_exact(result_schema->bytes());
+    if (status.is_ok() && pre_group_program.has_value())
+      status = writer.write_exact(pre_group_program->bytes());
     if (status.is_ok())
       status =
           writer.write_u32_le(common::crc32c(common::ByteView{bytes}.first(bytes.size() - 4U)));
-    if (!status.is_ok() || !writer.full()) {
+    if (!status.is_ok())
+      return common::make_unexpected(status);
+    if (!writer.full()) {
       return common::make_unexpected(
           common::Status{common::StatusCode::kInternal, "mutable vector fragment layout failed"});
     }
@@ -287,18 +310,21 @@ common::Result<DistributedMutableVectorFragment> decode_distributed_mutable_vect
                                                   "mutable vector fragment length is invalid"});
   if (bytes.size() > limits.maximum_frame_length)
     return common::make_unexpected(exhausted("mutable vector fragment exceeds caller limit"));
-  if (!std::ranges::equal(bytes.first(kMagic.size()), kMagic))
+  const bool version_one_magic = std::ranges::equal(bytes.first(kMagicV1.size()), kMagicV1);
+  const bool version_two_magic = std::ranges::equal(bytes.first(kMagicV2.size()), kMagicV2);
+  if (!version_one_magic && !version_two_magic)
     return common::make_unexpected(common::Status{common::StatusCode::kCorruption,
                                                   "mutable vector fragment magic is invalid"});
-  common::ByteReader crc_reader{bytes.subspan(kHeaderCrcOffset, 4U)};
+  const std::size_t header_crc_offset = version_two_magic ? kV2HeaderCrcOffset : kV1HeaderCrcOffset;
+  common::ByteReader crc_reader{bytes.subspan(header_crc_offset, 4U)};
   const auto header_crc = crc_reader.read_u32_le();
-  if (!header_crc.has_value() || *header_crc != common::crc32c(bytes.first(kHeaderCrcOffset))) {
+  if (!header_crc.has_value() || *header_crc != common::crc32c(bytes.first(header_crc_offset))) {
     return common::make_unexpected(common::Status{
         common::StatusCode::kCorruption, "mutable vector fragment header checksum is invalid"});
   }
 
   common::ByteReader reader{bytes};
-  static_cast<void>(reader.skip(kMagic.size()));
+  static_cast<void>(reader.skip(kMagicV1.size()));
   const auto major = reader.read_u16_le();
   const auto minor = reader.read_u16_le();
   const auto header_length = reader.read_u32_le();
@@ -331,8 +357,8 @@ common::Result<DistributedMutableVectorFragment> decode_distributed_mutable_vect
   const auto upper = reader.read_i64_le();
   const auto plan_crc = reader.read_u32_le();
   const auto schema_crc = reader.read_u32_le();
-  static_cast<void>(reader.skip(4U));
-  const auto reserved = reader.read_u32_le();
+  const auto tail_word_0 = reader.read_u32_le();
+  const auto tail_word_1 = reader.read_u32_le();
   if (!major.has_value() || !minor.has_value() || !header_length.has_value() ||
       !frame_length.has_value() || !plan_length.has_value() || !schema_length.has_value() ||
       !identities_complete || !serving_node.has_value() || !applied_position.has_value() ||
@@ -341,17 +367,23 @@ common::Result<DistributedMutableVectorFragment> decode_distributed_mutable_vect
       !barrier_index.has_value() || !projection_count.has_value() || !flags.has_value() ||
       !consistency.has_value() || !small_reserved.has_value() || !lower.has_value() ||
       !upper.has_value() || !plan_crc.has_value() || !schema_crc.has_value() ||
-      !reserved.has_value()) {
+      !tail_word_0.has_value() || !tail_word_1.has_value()) {
     return common::make_unexpected(common::Status{common::StatusCode::kCorruption,
                                                   "mutable vector fragment header is truncated"});
   }
-  if (*major != distributed_mutable_vector_fragment_format::kMajor ||
-      *minor != distributed_mutable_vector_fragment_format::kMinor) {
+  const std::uint32_t pre_group_length = version_two_magic ? *tail_word_0 : 0U;
+  const std::uint32_t reserved = version_one_magic ? *tail_word_1 : 0U;
+  const bool supported_version =
+      *minor == distributed_mutable_vector_fragment_format::kMinor &&
+      ((version_one_magic && *major == distributed_mutable_vector_fragment_format::kMajor) ||
+       (version_two_magic && *major == distributed_mutable_vector_fragment_format::kPreGroupMajor));
+  if (!supported_version) {
     return common::make_unexpected(common::Status{
         common::StatusCode::kNotSupported, "mutable vector fragment version is unsupported"});
   }
   if (*header_length != distributed_mutable_vector_fragment_format::kHeaderLength ||
-      *frame_length != bytes.size() || (*flags & ~kKnownFlags) != 0U || *reserved != 0U ||
+      *frame_length != bytes.size() || (*flags & ~kKnownFlags) != 0U ||
+      (version_one_magic && reserved != 0U) ||
       std::ranges::any_of(*small_reserved,
                           [](const std::byte value) { return value != std::byte{}; }) ||
       *projection_count == 0U ||
@@ -366,13 +398,20 @@ common::Result<DistributedMutableVectorFragment> decode_distributed_mutable_vect
     return common::make_unexpected(common::Status{
         common::StatusCode::kCorruption, "mutable vector fragment header is noncanonical"});
   }
+  if ((version_two_magic &&
+       (pre_group_length < distributed_vector_pre_group_program_format::kMinimumFrameLength ||
+        pre_group_length > distributed_vector_pre_group_program_format::kMaximumFrameLength)) ||
+      (version_one_magic && pre_group_length != 0U)) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kCorruption, "mutable vector pre-group length is noncanonical"});
+  }
   if (*projection_count > limits.maximum_projection_columns)
     return common::make_unexpected(exhausted("mutable vector projection exceeds caller limit"));
-  const std::size_t expected_length = distributed_mutable_vector_fragment_format::kHeaderLength +
-                                      static_cast<std::size_t>(*projection_count) * 4U +
-                                      static_cast<std::size_t>(*plan_length) +
-                                      static_cast<std::size_t>(*schema_length) +
-                                      distributed_mutable_vector_fragment_format::kTrailerLength;
+  const std::size_t expected_length =
+      distributed_mutable_vector_fragment_format::kHeaderLength +
+      static_cast<std::size_t>(*projection_count) * 4U + static_cast<std::size_t>(*plan_length) +
+      static_cast<std::size_t>(*schema_length) + static_cast<std::size_t>(pre_group_length) +
+      distributed_mutable_vector_fragment_format::kTrailerLength;
   if (expected_length != bytes.size())
     return common::make_unexpected(common::Status{common::StatusCode::kCorruption,
                                                   "mutable vector encoded length is invalid"});
@@ -430,7 +469,8 @@ common::Result<DistributedMutableVectorFragment> decode_distributed_mutable_vect
     }
     const auto plan_bytes = reader.read_exact(static_cast<std::size_t>(*plan_length));
     const auto schema_bytes = reader.read_exact(static_cast<std::size_t>(*schema_length));
-    if (!plan_bytes.has_value() || !schema_bytes.has_value() ||
+    const auto pre_group_bytes = reader.read_exact(static_cast<std::size_t>(pre_group_length));
+    if (!plan_bytes.has_value() || !schema_bytes.has_value() || !pre_group_bytes.has_value() ||
         reader.remaining() != distributed_mutable_vector_fragment_format::kTrailerLength ||
         common::crc32c(*plan_bytes) != *plan_crc || common::crc32c(*schema_bytes) != *schema_crc) {
       return common::make_unexpected(common::Status{common::StatusCode::kCorruption,
@@ -443,6 +483,14 @@ common::Result<DistributedMutableVectorFragment> decode_distributed_mutable_vect
         decode_distributed_vector_result_schema_exact(*schema_bytes, limits.result_schema);
     if (!result_schema.has_value())
       return common::make_unexpected(result_schema.error());
+    std::optional<DistributedVectorPreGroupProgram> pre_group_program;
+    if (version_two_magic) {
+      auto decoded = decode_distributed_vector_pre_group_program_exact(*pre_group_bytes,
+                                                                       limits.pre_group_program);
+      if (!decoded.has_value())
+        return common::make_unexpected(decoded.error());
+      pre_group_program = std::move(*decoded);
+    }
     std::optional<cseg::EventTimePredicate> predicate;
     if ((*flags & (kLowerPresent | kUpperPresent)) != 0U) {
       predicate = cseg::EventTimePredicate{
@@ -479,7 +527,7 @@ common::Result<DistributedMutableVectorFragment> decode_distributed_mutable_vect
         .event_time_predicate = predicate,
         .plan = std::move(*plan),
         .result_schema = std::move(*result_schema),
-        .pre_group_program = std::nullopt};
+        .pre_group_program = std::move(pre_group_program)};
     const common::Status validation = validate_distributed_mutable_vector_fragment(fragment);
     if (!validation.is_ok()) {
       if (validation.code() == common::StatusCode::kResourceExhausted)

@@ -18,6 +18,9 @@ namespace {
 inline constexpr std::array<std::byte, 8U> kMutableMagic{
     std::byte{'C'}, std::byte{'H'}, std::byte{'D'}, std::byte{'M'},
     std::byte{'V'}, std::byte{'F'}, std::byte{'R'}, std::byte{'1'}};
+inline constexpr std::array<std::byte, 8U> kMutablePreGroupMagic{
+    std::byte{'C'}, std::byte{'H'}, std::byte{'D'}, std::byte{'M'},
+    std::byte{'V'}, std::byte{'F'}, std::byte{'R'}, std::byte{'2'}};
 
 [[nodiscard]] common::Uuid uuid(const std::uint16_t value) {
   common::Uuid::Bytes bytes{};
@@ -320,8 +323,7 @@ TEST(DistributedMutableVectorFragmentTest,
             common::StatusCode::kResourceExhausted);
 }
 
-TEST(DistributedMutableVectorFragmentTest,
-     BindsAndExecutesOwnedPreGroupShapesButFailsClosedBeforeTransport) {
+TEST(DistributedMutableVectorFragmentTest, BindsTransportsAndExecutesOwnedPreGroupShapes) {
   Fixture fixture;
   const ingest::TabletSnapshot snapshot = fixture.append();
   const raft::ReadBarrier barrier{.term = 3U, .context = 4U, .read_index = 5U};
@@ -370,8 +372,27 @@ TEST(DistributedMutableVectorFragmentTest,
   ASSERT_TRUE(fragment.has_value()) << fragment.error().to_string();
   ASSERT_TRUE(fragment->pre_group_program.has_value());
   EXPECT_EQ(*fragment->pre_group_program, pre_group);
-  EXPECT_EQ(encode_distributed_mutable_vector_fragment(*fragment).error().code(),
-            common::StatusCode::kNotSupported);
+  auto encoded = encode_distributed_mutable_vector_fragment(*fragment);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  EXPECT_TRUE(std::ranges::equal(encoded->bytes().first(8U), kMutablePreGroupMagic));
+  auto round_trip = decode_distributed_mutable_vector_fragment_exact(encoded->bytes());
+  ASSERT_TRUE(round_trip.has_value()) << round_trip.error().to_string();
+  EXPECT_EQ(*round_trip, *fragment);
+  auto encoded_program = encode_distributed_vector_pre_group_program(pre_group);
+  ASSERT_TRUE(encoded_program.has_value());
+  EXPECT_EQ(decode_distributed_mutable_vector_fragment_exact(
+                encoded->bytes(), {.pre_group_program = {.maximum_frame_length =
+                                                             encoded_program->bytes().size() - 1U}})
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+
+  std::vector<std::byte> damaged(encoded->bytes().begin(), encoded->bytes().end());
+  damaged[damaged.size() - 5U] ^= std::byte{1U};
+  store_u32_le(damaged, damaged.size() - 4U,
+               common::crc32c(common::ByteView{damaged}.first(damaged.size() - 4U)));
+  EXPECT_EQ(decode_distributed_mutable_vector_fragment_exact(damaged).error().code(),
+            common::StatusCode::kCorruption);
 
   const DistributedMutableVectorGroupedAggregateWorkerRequest request{
       .fragment = std::cref(*fragment),

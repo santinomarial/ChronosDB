@@ -338,6 +338,34 @@ TEST(DistributedVectorAggregateWorkerAllocationFailureTest,
                                                 .result_schema = std::cref(mutable_result_schema),
                                                 .pre_group_program = &mutable_pre_group});
   ASSERT_TRUE(mutable_fragment.has_value());
+  auto mutable_encoded = encode_distributed_mutable_vector_fragment(*mutable_fragment);
+  ASSERT_TRUE(mutable_encoded.has_value());
+  const std::vector<std::byte> mutable_bytes(mutable_encoded->bytes().begin(),
+                                             mutable_encoded->bytes().end());
+  bool mutable_encode_succeeded{};
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    auto result = run_failure(
+        fail_after, [&] { return encode_distributed_mutable_vector_fragment(*mutable_fragment); });
+    if (result.has_value()) {
+      mutable_encode_succeeded = true;
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(mutable_encode_succeeded);
+  bool mutable_decode_succeeded{};
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    auto result = run_failure(fail_after, [&] {
+      return decode_distributed_mutable_vector_fragment_exact(mutable_bytes);
+    });
+    if (result.has_value()) {
+      EXPECT_EQ(*result, *mutable_fragment);
+      mutable_decode_succeeded = true;
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(mutable_decode_succeeded);
   const DistributedMutableVectorGroupedAggregateWorkerRequest mutable_request{
       .fragment = std::cref(*mutable_fragment),
       .snapshot = std::cref(mutable_snapshot),

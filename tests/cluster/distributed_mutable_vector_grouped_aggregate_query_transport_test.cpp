@@ -38,6 +38,9 @@ template <typename Id> [[nodiscard]] Id id(const std::uint8_t seed) {
 
 [[nodiscard]] query::DistributedMutableVectorFragment fragment() {
   const auto int64 = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  std::vector<query::VectorExpressionInstruction> instructions{
+      query::VectorInputExpression{0U, string_type(), false},
+      query::VectorUnaryExpression{query::VectorUnaryOperation::kUpperAscii, 0U}};
   return {
       .query_id = uuid(1U),
       .database_id = id<manifest::DatabaseId>(2U),
@@ -56,7 +59,9 @@ template <typename Id> [[nodiscard]] Id id(const std::uint8_t seed) {
                .group_key_input_indices = {0U},
                .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}}},
       .result_schema = {.columns = {{.name = "region", .type = string_type(), .nullable = false},
-                                    {.name = "count", .type = int64, .nullable = false}}}};
+                                    {.name = "count", .type = int64, .nullable = false}}},
+      .pre_group_program = query::DistributedVectorPreGroupProgram{
+          .outputs = {query::VectorExpression::create(std::move(instructions)).value()}}};
 }
 
 [[nodiscard]] query::DistributedVectorGroupedAggregateExchangeMessage
