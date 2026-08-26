@@ -1110,7 +1110,8 @@ were deliberately not run.
   packages final projection/order/limit through Native SQL. Arbitrary relational plans,
   mutual-TLS independent-process shuffle result sessions and lifecycle composition, and
   fragment-level durable retries remain absent. The reduced-partition product now has an authority-
-  and raw-schema-bound, checksummed, bounded v1 codec plus an authenticated all-or-none stream owner.
+  and raw-schema-bound, checksummed, bounded v1 codec plus an authenticated all-or-none stream owner
+  and exact reverse-route success receipt.
 - Movement now composes deterministic actions with joint Raft membership and durable checkpoints;
   automatic placement-driven orchestration remains external.
 - Cold upload independently performs exact schema/source-bound CSEG validation before remote

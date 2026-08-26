@@ -130,6 +130,12 @@ existence of a design document alone is not implementation evidence.
   v1](formats/distributed-vector-grouped-aggregate-shuffle-ack-v1.md): fixed checksummed reverse-
   route success receipt binding exact immutable edge authority and accepted stream frame/byte
   extent, with fixed-reader and move-only short-write ownership.
+- [Distributed Vector Grouped Aggregate Shuffle Result
+  v1](formats/distributed-vector-grouped-aggregate-shuffle-result-v1.md): proof- and raw-schema-bound
+  reduced-partition result frames with contiguous terminal stream ownership.
+- [Distributed Vector Grouped Aggregate Shuffle Result Acknowledgment
+  v1](formats/distributed-vector-grouped-aggregate-shuffle-result-ack-v1.md): fixed checksummed
+  reverse-route success receipt binding result authority, raw schema, and accepted stream extent.
 - [Distributed Aggregate Fragment v1](formats/distributed-aggregate-fragment-v1.md): bounded,
   integrity-first worker request bytes binding an exact snapshot route, consistency evidence,
   projection, aggregate input, and event-time predicate.

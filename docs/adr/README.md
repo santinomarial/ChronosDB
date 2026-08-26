@@ -560,3 +560,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0523](0523-owned-computed-grouped-sql-lowering.md) | Owned computed grouped SQL lowering | accepted |
 | [0524](0524-proof-bound-grouped-shuffle-result-frame.md) | Proof-bound grouped shuffle result frame | accepted |
 | [0525](0525-authenticated-complete-grouped-shuffle-result-stream.md) | Authenticated complete grouped shuffle result stream | accepted |
+| [0526](0526-correlated-grouped-shuffle-result-success-acknowledgment.md) | Correlated grouped shuffle result success acknowledgment | accepted |

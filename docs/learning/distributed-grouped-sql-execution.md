@@ -252,7 +252,9 @@ The result stream layer now constructs every partition frame before write public
 contiguous sequence plus one terminal. Its receiver binds the authenticated peer principal to the
 authority destination, locks one partition, withholds all batches until terminal closure, and
 discards the whole prefix on drift, gaps, suffixes, or exhaustion. Mutual-TLS connected-session and
-process lifecycle ownership remain next.
+process lifecycle ownership remain next. A fixed checksummed reverse-route result receipt now binds
+the same authority, raw schema, and exact accepted stream extent so a connected sender need not
+mistake completed socket writes for coordinator acceptance.
 
 ### Portable sufficient-state execution boundary
 

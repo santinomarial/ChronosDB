@@ -32,7 +32,7 @@ trailer. Deployments may impose lower frame, row, column, name, and payload limi
 | 68 | 8 | sequence | Nonzero; enclosing receiver requires contiguous order |
 | 76 | 4 | payload length | Zero only for a terminal marker |
 | 80 | 4 | payload CRC32C | Exact payload bytes |
-| 84 | 4 | schema CRC32C | Canonical encoded raw result schema |
+| 84 | 4 | schema CRC32C | Canonical schema bytes excluding their trailing CRC |
 | 88 | 36 | reserved | Zero |
 | 124 | 4 | header CRC32C | Bytes `[0,124)` |
 | 128 | variable | payload | Canonical nonempty Native `QUERY_RESULT`, or empty terminal |

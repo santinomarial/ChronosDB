@@ -76,7 +76,8 @@ result_schema_fingerprint(const query::DistributedVectorResultSchema& result_sch
   auto encoded = query::encode_distributed_vector_result_schema(result_schema);
   if (!encoded.has_value())
     return common::make_unexpected(encoded.error());
-  return common::crc32c(encoded->bytes());
+  const common::ByteView bytes = encoded->bytes();
+  return common::crc32c(bytes.first(bytes.size() - sizeof(std::uint32_t)));
 }
 
 [[nodiscard]] common::Status

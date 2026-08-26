@@ -105,6 +105,13 @@ TEST(DistributedVectorGroupedAggregateShuffleResultTransportTest,
   EXPECT_TRUE(decode_distributed_vector_grouped_aggregate_shuffle_result_frame_exact(
                   *encoded_empty, expected, schema_value, 9U)
                   ->encoded_result_batch.empty());
+  auto drifted_schema = schema_value;
+  drifted_schema.columns[0].name = "different";
+  EXPECT_EQ(decode_distributed_vector_grouped_aggregate_shuffle_result_frame_exact(
+                *encoded_empty, expected, drifted_schema, 9U)
+                .error()
+                .code(),
+            common::StatusCode::kCorruption);
 
   empty.terminal = false;
   EXPECT_EQ(encode_distributed_vector_grouped_aggregate_shuffle_result_frame(empty, expected,

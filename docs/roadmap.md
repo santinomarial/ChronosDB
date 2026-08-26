@@ -1588,7 +1588,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   bound reduced-partition result frame now defines the cross-process product, including canonical
   empty terminal, bounded header-first reads, and partial-write ownership. An authenticated
   all-or-none stream owner now binds the result-source principal, contiguous sequence, one
-  partition, one terminal, frame count, and total bytes before one-shot publication. The computed path now
+  partition, one terminal, frame count, and total bytes before one-shot publication. Its fixed,
+  checksummed reverse-route success receipt binds the same authority, raw schema, and exact accepted
+  extent for later connected-session use. The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives
   plan and result shapes from its outputs, and executes it locally before grouping.
