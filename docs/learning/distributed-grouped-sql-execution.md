@@ -248,6 +248,12 @@ coordinator. Query, partition, hash version, nodes, sequence, raw grouped schema
 descriptors, payload, and complete frame are checked before publication. This is the versioned
 result product; authenticated complete-stream sessions and lifecycle composition still remain.
 
+The result stream layer now constructs every partition frame before write publication and assigns
+contiguous sequence plus one terminal. Its receiver binds the authenticated peer principal to the
+authority destination, locks one partition, withholds all batches until terminal closure, and
+discards the whole prefix on drift, gaps, suffixes, or exhaustion. Mutual-TLS connected-session and
+process lifecycle ownership remain next.
+
 ### Portable sufficient-state execution boundary
 
 `DistributedVectorGroupedAggregateQueryExecutionV2` now joins the compatible snapshot to the

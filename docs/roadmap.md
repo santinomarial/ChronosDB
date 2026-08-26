@@ -1586,7 +1586,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   source-stream handoff while retaining the existing direct path as the default. Independent-process
   partition-result sessions are still missing. A versioned, checksummed, authority- and raw-schema-
   bound reduced-partition result frame now defines the cross-process product, including canonical
-  empty terminal, bounded header-first reads, and partial-write ownership. The computed path now
+  empty terminal, bounded header-first reads, and partial-write ownership. An authenticated
+  all-or-none stream owner now binds the result-source principal, contiguous sequence, one
+  partition, one terminal, frame count, and total bytes before one-shot publication. The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives
   plan and result shapes from its outputs, and executes it locally before grouping.
@@ -1603,9 +1605,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   and aggregate inputs into that owned program, replicated preparation transfers it through every
   exact fragment, and both local and authenticated remote Native execution use the sufficient-state
   path. The complete logical identity rejects mixed programs and computation-changing authority
-  retries. Authenticated complete partition-result streams, independent-process lifecycle
-  composition, and the remaining unsupported SQL vocabulary still prevent making the row-backed
-  oracle fallback-only.
+  retries. Mutual-TLS result sessions, independent-process lifecycle composition, and the remaining
+  unsupported SQL vocabulary still prevent making the row-backed oracle fallback-only.
   The full phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
