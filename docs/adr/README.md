@@ -574,3 +574,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0537](0537-grouped-shuffle-reducer-job-control-envelope.md) | Grouped shuffle reducer-job control envelope | accepted |
 | [0538](0538-bounded-grouped-shuffle-reducer-job-service.md) | Bounded grouped shuffle reducer-job service | accepted |
 | [0539](0539-header-first-grouped-reducer-job-control-transport.md) | Header-first grouped reducer-job control transport | accepted |
+| [0540](0540-mutually-authenticated-grouped-reducer-job-control-session.md) | Mutually authenticated grouped reducer-job control session | accepted |

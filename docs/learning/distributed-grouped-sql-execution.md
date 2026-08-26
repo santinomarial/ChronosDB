@@ -316,8 +316,9 @@ owned above the codec.
 
 The fixed `CHDVGJR1` response echoes action, query, coordinator, target, and stable status. Only a
 successful PREPARE may carry the reducer's live shuffle-listener endpoint; failed admission and all
-SEAL responses have one canonical endpoint-free representation. A future carrier must still prove
-mutual authentication and exact response correlation before source routing begins.
+SEAL responses have one canonical endpoint-free representation. The standalone control session
+proves mutual authentication, authorizes the server principal for the target reducer, and requires
+exact response correlation before source routing begins.
 
 The request stream reader retains the fixed checksummed header inline and allocates exactly the
 declared request only after hard and deployment bounds pass. The fixed response reader remains
@@ -332,8 +333,8 @@ authority sources close. It then shuts ingress, drains and Native-encodes every 
 partition, and constructs the complete result retry scheduler before acknowledging success.
 Receipt-proven result completion, cancellation, and the relative job deadline are polled by the
 same thread. Terminal jobs remain idempotently addressable only until that deadline, after which
-cleanup releases bounded admission capacity. The authenticated control session and daemon
-ownership remain the next boundary.
+cleanup releases bounded admission capacity. Shared endpoint and daemon ownership remain the next
+boundary.
 
 ### Portable sufficient-state execution boundary
 

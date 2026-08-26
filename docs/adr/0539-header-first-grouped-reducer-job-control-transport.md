@@ -70,8 +70,11 @@ socket carrier may remain if it depends on these readers or cursors.
 
 ## Unresolved questions
 
-- Add one mutual-TLS client/server exchange with exact response-correlation validation.
+- Add bounded shared-listener ownership around the implemented exact mutual-TLS exchange.
 - Dispatch authenticated reducer-job control through the shared query-control endpoint.
+
+[ADR 0540](0540-mutually-authenticated-grouped-reducer-job-control-session.md) now owns mutual
+authentication, target-node authorization, exact response correlation, and session deadlines.
 
 ## References
 

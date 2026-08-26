@@ -77,13 +77,15 @@ request format; reducer daemons must then reject remote job setup rather than in
 
 ## Unresolved questions
 
-- Add a mutual-TLS carrier around the implemented header-first request/response ownership.
+- Add shared-listener and daemon ownership around the implemented mutual-TLS carrier.
 - Dispatch the control protocol from the shared daemon query-control endpoint.
 
 [ADR 0538](0538-bounded-grouped-shuffle-reducer-job-service.md) now owns finite job admission,
 idempotent PREPARE/SEAL, ingress progress, cancellation, timeout cleanup, and result scheduling.
 [ADR 0539](0539-header-first-grouped-reducer-job-control-transport.md) owns bounded fragmented reads,
 header-gated allocation, coalesced-suffix reporting, and move-only partial writes.
+[ADR 0540](0540-mutually-authenticated-grouped-reducer-job-control-session.md) authenticates both
+peers, authorizes the target, bounds the exchange, and validates exact response correlation.
 
 ## References
 
