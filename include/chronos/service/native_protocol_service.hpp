@@ -3,6 +3,7 @@
 
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_execution.hpp"
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_execution.hpp"
+#include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_job_execution.hpp"
 #include "chronos/cluster/distributed_mutable_vector_rows_query_tcp_execution.hpp"
 #include "chronos/cluster/distributed_vector_aggregate_rows_finalization_v2.hpp"
 #include "chronos/cluster/distributed_vector_physical_rows_finalization_v2.hpp"
@@ -28,6 +29,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -85,7 +87,10 @@ public:
 using NativeIdentityGenerator = common::UuidGenerator;
 
 struct NativeDistributedGroupedShufflePlan {
+  bool selected{true};
   cluster::DistributedVectorGroupedAggregateShuffleQueryExecutionConfig execution;
+  std::optional<cluster::DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionConfig>
+      reducer_jobs;
   cluster::DistributedVectorGroupedAggregateShuffleAuthorityLimits authority;
 };
 
@@ -98,6 +103,7 @@ public:
   prepare(std::span<const query::DistributedMutableVectorFragment> fragments,
           std::span<const query::VectorGroupKeyDefinition> keys,
           std::span<const query::VectorAggregateDefinition> aggregates,
+          std::span<const cluster::DistributedQueryNodeRoute> routes,
           std::chrono::steady_clock::time_point execution_deadline) = 0;
 };
 

@@ -88,5 +88,41 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlAllocationFailureTest,
   EXPECT_EQ(response_failure.error().code(), common::StatusCode::kResourceExhausted);
 }
 
+TEST(DistributedVectorGroupedAggregateShuffleJobControlAllocationFailureTest,
+     ClassifiesVersionTwoRouteEncodingAndDecodeAllocations) {
+  const DistributedVectorGroupedAggregateShuffleJobInstallRoutes routes{
+      .query_id = uuid(1U),
+      .coordinator_node_id = 9U,
+      .target_node_id = 7U,
+      .routes = {{.node_id = 7U, .endpoint = {{127U, 0U, 0U, 1U}, 9123U}},
+                 {.node_id = 8U, .endpoint = {{127U, 0U, 0U, 2U}, 9124U}}}};
+  auto encode_failure = run_failure(0U, [&] {
+    return encode_distributed_vector_grouped_aggregate_shuffle_job_install_routes_v2(routes);
+  });
+  ASSERT_FALSE(encode_failure.has_value());
+  EXPECT_EQ(encode_failure.error().code(), common::StatusCode::kResourceExhausted);
+
+  auto encoded =
+      encode_distributed_vector_grouped_aggregate_shuffle_job_install_routes_v2(routes).value();
+  bool saw_failure{};
+  bool saw_success{};
+  for (std::size_t fail_after = 0U; fail_after < 16U; ++fail_after) {
+    auto decoded = run_failure(fail_after, [&] {
+      return decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v2_exact(
+          encoded.bytes());
+    });
+    if (!decoded.has_value()) {
+      saw_failure = true;
+      EXPECT_EQ(decoded.error().code(), common::StatusCode::kResourceExhausted)
+          << decoded.error().to_string();
+      continue;
+    }
+    saw_success = true;
+    break;
+  }
+  EXPECT_TRUE(saw_failure);
+  EXPECT_TRUE(saw_success);
+}
+
 } // namespace
 } // namespace chronos::cluster

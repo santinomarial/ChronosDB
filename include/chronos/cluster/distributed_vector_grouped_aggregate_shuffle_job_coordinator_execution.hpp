@@ -22,6 +22,7 @@ struct DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionConfig {
   DistributedVectorGroupedAggregateShuffleJobControlTlsLimits carrier_limits;
   std::chrono::milliseconds connect_timeout{5000};
   DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits prepare_retry;
+  DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits route_install_retry;
   DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits seal_retry;
   std::chrono::milliseconds reducer_execution_timeout{30000};
   std::chrono::steady_clock::time_point execution_deadline;
@@ -32,6 +33,7 @@ struct DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionConfig {
 struct DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionMetrics {
   std::size_t reducer_nodes{};
   std::size_t prepared_reducers{};
+  std::size_t route_installed_reducers{};
   std::size_t sealed_reducers{};
   std::uint64_t control_attempts_started{};
   std::uint64_t control_retries_started{};
@@ -41,13 +43,14 @@ struct DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionMetrics {
 
 enum class DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState : std::uint8_t {
   kPreparing = 1,
-  kPrepared = 2,
-  kSealing = 3,
-  kCollectingResults = 4,
-  kComplete = 5,
-  kResultTaken = 6,
-  kFailed = 7,
-  kCancelled = 8,
+  kInstallingRoutes = 2,
+  kPrepared = 3,
+  kSealing = 4,
+  kCollectingResults = 5,
+  kComplete = 6,
+  kResultTaken = 7,
+  kFailed = 8,
+  kCancelled = 9,
 };
 
 // Owns one coordinator-side reducer set. It starts every PREPARE before blocking, publishes no

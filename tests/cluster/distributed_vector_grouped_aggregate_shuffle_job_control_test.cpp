@@ -223,5 +223,64 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTest,
       common::StatusCode::kCorruption);
 }
 
+TEST(DistributedVectorGroupedAggregateShuffleJobControlTest,
+     RoundTripsVersionTwoRouteInstallationAndCorrelatedResponse) {
+  const DistributedVectorGroupedAggregateShuffleJobInstallRoutes expected{
+      .query_id = uuid(1U),
+      .coordinator_node_id = 9U,
+      .target_node_id = 7U,
+      .routes = {{.node_id = 7U, .endpoint = {{127U, 0U, 0U, 1U}, 9123U}},
+                 {.node_id = 8U, .endpoint = {{127U, 0U, 0U, 2U}, 9124U}}}};
+  auto encoded =
+      encode_distributed_vector_grouped_aggregate_shuffle_job_install_routes_v2(expected);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  auto decoded = decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v2_exact(
+      encoded->bytes());
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  const auto* actual =
+      std::get_if<DistributedVectorGroupedAggregateShuffleJobInstallRoutes>(&*decoded);
+  ASSERT_NE(actual, nullptr);
+  EXPECT_EQ(*actual, expected);
+
+  DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits limited;
+  limited.maximum_routes = 1U;
+  EXPECT_EQ(decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v2_exact(
+                encoded->bytes(), limited)
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+
+  auto noncanonical = expected;
+  std::ranges::reverse(noncanonical.routes);
+  EXPECT_EQ(encode_distributed_vector_grouped_aggregate_shuffle_job_install_routes_v2(noncanonical)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  const DistributedVectorGroupedAggregateShuffleJobControlResponse response{
+      .action = DistributedVectorGroupedAggregateShuffleJobControlAction::kInstallRoutes,
+      .status_code = common::StatusCode::kOk,
+      .query_id = uuid(1U),
+      .coordinator_node_id = 9U,
+      .target_node_id = 7U};
+  auto encoded_response =
+      encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v2(response);
+  ASSERT_TRUE(encoded_response.has_value()) << encoded_response.error().to_string();
+  auto decoded_response =
+      decode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v2_exact(
+          encoded_response->bytes());
+  ASSERT_TRUE(decoded_response.has_value()) << decoded_response.error().to_string();
+  EXPECT_EQ(*decoded_response, response);
+
+  std::vector<std::byte> damaged(encoded->bytes().begin(), encoded->bytes().end());
+  damaged[distributed_vector_grouped_aggregate_shuffle_job_control_v2_format::kHeaderLength] ^=
+      std::byte{1U};
+  EXPECT_EQ(
+      decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v2_exact(damaged)
+          .error()
+          .code(),
+      common::StatusCode::kCorruption);
+}
+
 } // namespace
 } // namespace chronos::cluster

@@ -669,6 +669,8 @@ add_library(
   src/cluster/distributed_mutable_vector_query_tcp_execution.cpp
   src/cluster/distributed_mutable_query_control_tls.cpp
   src/cluster/distributed_mutable_query_control_tcp.cpp
+  src/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_source_worker.cpp
+  src/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_job_execution.cpp
   src/cluster/distributed_mutable_vector_rows_query_tcp_execution.cpp
   src/cluster/distributed_vector_aggregate_finalization_v2.cpp
   src/cluster/distributed_vector_aggregate_rows_finalization_v2.cpp
@@ -680,6 +682,7 @@ add_library(
   src/cluster/distributed_vector_grouped_aggregate_shuffle_authority.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_authority_codec.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_job_control.cpp
+  src/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_v2.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_transport.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_tls.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_tcp_client.cpp
@@ -826,6 +829,7 @@ add_library(
   src/service/native_client_route_authority.cpp
   src/service/native_client_route_config.cpp
   src/service/native_client_tls_route_owner.cpp
+  src/service/native_distributed_grouped_shuffle_job_provider.cpp
   src/service/native_server_principal_authority.cpp
   src/service/native_server_principal_config.cpp
   src/service/replicated_distributed_grouped_query_receiver.cpp
@@ -1080,6 +1084,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/service/native_client_route_config_test.cpp
     tests/service/native_client_tls_route_owner_header_self_contained.cpp
     tests/service/native_client_tls_route_owner_test.cpp
+    tests/service/native_distributed_grouped_shuffle_job_provider_header_self_contained.cpp
+    tests/service/native_distributed_grouped_shuffle_job_provider_test.cpp
     tests/service/native_server_principal_authority_header_self_contained.cpp
     tests/service/native_server_principal_authority_test.cpp
     tests/service/native_server_principal_config_header_self_contained.cpp
@@ -1147,6 +1153,7 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_service_allocation_failure_tests
+    tests/service/native_distributed_grouped_shuffle_job_provider_allocation_failure_test.cpp
     tests/service/replicated_distributed_query_allocation_failure_test.cpp
     tests/support/failing_allocator.cpp
   )
@@ -1563,6 +1570,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/distributed_mutable_vector_grouped_aggregate_query_transport_test.cpp
     tests/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_execution_header_self_contained.cpp
     tests/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_execution_test.cpp
+    tests/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_job_execution_header_self_contained.cpp
+    tests/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_source_worker_header_self_contained.cpp
     tests/cluster/distributed_mutable_vector_query_transport_header_self_contained.cpp
     tests/cluster/distributed_mutable_vector_query_transport_test.cpp
     tests/cluster/distributed_vector_result_exchange_header_self_contained.cpp
@@ -1669,6 +1678,7 @@ if(CHRONOS_BUILD_TESTS)
   add_executable(
     chronos_cluster_allocation_failure_tests
     tests/cluster/distributed_mutable_vector_grouped_aggregate_query_transport_allocation_failure_test.cpp
+    tests/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_job_execution_allocation_failure_test.cpp
     tests/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_execution_allocation_failure_test.cpp
     tests/cluster/distributed_mutable_vector_query_transport_allocation_failure_test.cpp
     tests/cluster/distributed_vector_aggregate_finalization_v2_allocation_failure_test.cpp

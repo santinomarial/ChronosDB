@@ -1354,6 +1354,21 @@ were deliberately not run.
   focused ASan/UBSan cases pass; formatting, workflow pins, and whitespace pass, while LLVM 18
   static analysis stops only at the known macOS 26 libc++ builtin incompatibility after local
   findings were corrected.
+- Packaged grouped shuffle job lifecycle: Job Control v2 installs one canonical complete reducer
+  listener map after all PREPARE responses. The job service retains exact query-accounted source
+  submissions on their authenticated worker nodes, admits local edges, drives finite remote receipt
+  scheduling, and blocks SEAL until complete source closure. The packaged shared endpoint owns a
+  source-publishing worker decorator used by remote and local dispatch. One move-only execution
+  joins reducer preparation, route installation, workers, source transport, SEAL, result return,
+  and atomic Native output. A deployment provider consumes the exact committed query routes and
+  selects jobs only for gateway coordinators, leaving coordinator-local queries on the direct path
+  required by current self-route restrictions. Codec, service, whole-lifecycle, replicated Native,
+  header, and allocation tests cover this boundary. Warning-as-error builds; 349 cluster, 78
+  cluster allocation-failure, 113 service, 7 service allocation-failure, 1 feature-smoke, and 2
+  result-process tests; focused ASan/UBSan and TSan; formatting; workflow pins; and whitespace pass.
+  Pinned LLVM 18 static analysis reaches only the known macOS 26 libc++ builtin incompatibility
+  after its one actionable move finding was corrected. Packaged Linux split-leader, fault, skew,
+  and measurement qualification remain open.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

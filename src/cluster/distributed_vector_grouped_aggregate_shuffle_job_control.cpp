@@ -86,7 +86,10 @@ inline constexpr std::uint16_t kResponseEndpointFlag = 1U;
              query::distributed_vector_result_schema_format::kMaximumColumns &&
          limits.result_schema.maximum_name_length > 0U &&
          limits.result_schema.maximum_name_length <=
-             query::distributed_vector_result_schema_format::kMaximumNameLength;
+             query::distributed_vector_result_schema_format::kMaximumNameLength &&
+         limits.maximum_routes > 0U &&
+         limits.maximum_routes <=
+             distributed_vector_grouped_aggregate_shuffle_job_control_v2_format::kMaximumRoutes;
 }
 
 [[nodiscard]] bool has_target(const DistributedVectorGroupedAggregateShuffleAuthority& authority,
@@ -149,6 +152,8 @@ action_code(const DistributedVectorGroupedAggregateShuffleJobControlAction actio
     return 1U;
   case DistributedVectorGroupedAggregateShuffleJobControlAction::kSeal:
     return 2U;
+  case DistributedVectorGroupedAggregateShuffleJobControlAction::kInstallRoutes:
+    break;
   }
   return common::make_unexpected(invalid("grouped shuffle reducer-job action is invalid"));
 }

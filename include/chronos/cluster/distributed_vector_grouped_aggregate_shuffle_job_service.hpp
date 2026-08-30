@@ -5,6 +5,8 @@
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_destination_execution.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_control.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_result_tcp_execution.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_source_plan.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_execution.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/network/messages.hpp"
 #include "chronos/network/security.hpp"
@@ -30,11 +32,13 @@ struct DistributedVectorGroupedAggregateShuffleJobServiceConfig {
   const ClusterNodePrincipalAuthorizer* node_authorizer{};
   std::span<const DistributedQueryNodeTlsContext> result_tls_contexts;
   DistributedVectorGroupedAggregateShuffleTlsLimits shuffle_carrier_limits;
+  DistributedVectorGroupedAggregateShuffleSourcePlanLimits source_plan_limits;
   DistributedVectorGroupedAggregateShuffleReducerLimits reducer_limits;
   DistributedVectorGroupedAggregateShuffleResultRetryLimits result_retry_limits;
   DistributedVectorGroupedAggregateShuffleResultTlsLimits result_carrier_limits;
   network::QueryResultLimits result_batch_limits;
   std::chrono::milliseconds result_connect_timeout{5000};
+  std::chrono::milliseconds shuffle_connect_timeout{5000};
   std::size_t maximum_jobs{64U};
   std::size_t maximum_job_query_memory_bytes{std::size_t{256U} * 1024U * 1024U};
   std::size_t maximum_retained_streams_per_job{1024U};
@@ -47,6 +51,11 @@ struct DistributedVectorGroupedAggregateShuffleJobServiceMetrics {
   std::uint64_t duplicate_prepares{};
   std::uint64_t conflicting_prepares{};
   std::uint64_t seal_requests{};
+  std::uint64_t route_install_requests{};
+  std::uint64_t duplicate_route_installs{};
+  std::uint64_t submitted_source_tablets{};
+  std::uint64_t duplicate_source_submissions{};
+  std::uint64_t completed_source_transports{};
   std::uint64_t completed_jobs{};
   std::uint64_t failed_jobs{};
   std::uint64_t cancelled_jobs{};
@@ -80,6 +89,12 @@ public:
   [[nodiscard]] common::Status
   accept_local_stream(const common::Uuid& query_id,
                       const DistributedVectorGroupedAggregateShuffleCompleteStream& stream);
+  // Returns false without side effects when no prepared job has this query identity. A true result
+  // means the exact source was retained for idempotent worker retry and all of its self-routes were
+  // admitted; remote edges remain owned by the job until authenticated receipts complete.
+  [[nodiscard]] common::Result<bool> publish_local_source(
+      const common::Uuid& query_id, const schema::TabletId& tablet_id,
+      std::span<const query::EncodedDistributedVectorGroupedAggregateExchangeMessage> messages);
   [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait,
                                          std::chrono::steady_clock::time_point now);
   [[nodiscard]] common::Status cancel(const common::Uuid& query_id);

@@ -7,6 +7,7 @@
 #include "chronos/network/reactor.hpp"
 #include "chronos/network/spsc_queue.hpp"
 #include "chronos/network/tcp_socket.hpp"
+#include "chronos/service/native_distributed_grouped_shuffle_job_provider.hpp"
 #include "chronos/service/native_protocol_service.hpp"
 #include "chronos/service/native_server_principal_authority.hpp"
 #include "chronos/service/native_server_principal_config.hpp"
@@ -703,9 +704,9 @@ struct DaemonDistributedMutableQuery {
   std::vector<chronos::network::TlsClientContext> client_contexts;
   std::vector<chronos::cluster::DistributedQueryNodeTlsContext> tls_contexts;
   std::optional<chronos::service::ReplicatedDistributedMutableVectorQueryWorker> local_worker;
-  std::optional<chronos::service::ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker>
-      local_grouped_worker;
   std::optional<ReplicatedDistributedMutableQueryControlTcpServer> server;
+  std::optional<chronos::service::NativeDistributedGroupedShuffleJobProvider>
+      grouped_shuffle_provider;
   chronos::service::NativeDistributedMutableVectorRowsQueryConfig native_config;
 };
 
@@ -773,14 +774,6 @@ configure_distributed_mutable_query(
       return chronos::common::make_unexpected(local_worker.error());
     chronos::service::ReplicatedDistributedMutableVectorQueryWorker& installed_worker =
         owner->local_worker.emplace(std::move(*local_worker));
-    auto local_grouped_worker =
-        chronos::service::ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker::create(
-            {.local_node_id = local_node_id, .context_provider = &database});
-    if (!local_grouped_worker.has_value())
-      return chronos::common::make_unexpected(local_grouped_worker.error());
-    chronos::service::ReplicatedDistributedMutableVectorGroupedAggregateQueryWorker&
-        installed_grouped_worker =
-            owner->local_grouped_worker.emplace(std::move(*local_grouped_worker));
     auto server = ReplicatedDistributedMutableQueryControlTcpServer::start(
         {.worker = {.local_node_id = local_node_id, .context_provider = &database},
          .read_barrier = &read_barrier,
@@ -799,12 +792,25 @@ configure_distributed_mutable_query(
                  .result_tls_contexts = owner->tls_contexts}});
     if (!server.has_value())
       return chronos::common::make_unexpected(server.error());
-    owner->server.emplace(std::move(*server));
+    auto& installed_server = owner->server.emplace(std::move(*server));
+    auto grouped_shuffle_provider =
+        chronos::service::NativeDistributedGroupedShuffleJobProvider::create(
+            {.coordinator_node_id = local_node_id,
+             .result_tls = {.pem_credentials = credentials},
+             .authenticator = &installed_authority,
+             .node_authorizer = &installed_authority,
+             .result_listener = {
+                 .bind_endpoint = {.address = local_query_endpoint->address, .port = 0U}}});
+    if (!grouped_shuffle_provider.has_value())
+      return chronos::common::make_unexpected(grouped_shuffle_provider.error());
+    auto& installed_grouped_shuffle_provider =
+        owner->grouped_shuffle_provider.emplace(std::move(*grouped_shuffle_provider));
     owner->native_config = {.source_node_id = local_node_id,
                             .authenticator = &installed_authority,
                             .node_authorizer = &installed_authority,
                             .local_worker = &installed_worker,
-                            .local_grouped_worker = &installed_grouped_worker,
+                            .local_grouped_worker = installed_server.mutable_grouped_worker(),
+                            .grouped_shuffle_provider = &installed_grouped_shuffle_provider,
                             .tls_contexts = owner->tls_contexts};
     return owner;
   } catch (const std::bad_alloc&) {

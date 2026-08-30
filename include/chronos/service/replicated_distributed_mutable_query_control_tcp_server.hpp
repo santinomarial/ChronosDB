@@ -2,6 +2,7 @@
 #define CHRONOS_SERVICE_REPLICATED_DISTRIBUTED_MUTABLE_QUERY_CONTROL_TCP_SERVER_HPP_
 
 #include "chronos/cluster/distributed_mutable_query_control_tcp.hpp"
+#include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_source_worker.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/network/tcp_socket.hpp"
 #include "chronos/network/tls_socket.hpp"
@@ -57,6 +58,11 @@ public:
   [[nodiscard]] network::Ipv4Endpoint bound_endpoint() const noexcept;
   [[nodiscard]] cluster::DistributedMutableQueryControlTcpServerMetrics metrics() const noexcept;
   [[nodiscard]] bool is_running() const noexcept;
+  // Borrowed in-process endpoint matching the installed remote grouped receiver. When reducer
+  // jobs are configured this is the source-publishing decorator; otherwise it is the plain
+  // replicated worker. The pointer is stable until shutdown/destruction.
+  [[nodiscard]] cluster::DistributedMutableVectorGroupedAggregateQueryWorkerService*
+  mutable_grouped_worker() noexcept;
 
 private:
   class Impl;

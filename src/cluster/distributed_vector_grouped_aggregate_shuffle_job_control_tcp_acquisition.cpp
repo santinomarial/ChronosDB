@@ -63,7 +63,11 @@ target_node(const DistributedVectorGroupedAggregateShuffleJobControlRequest& req
     return prepare->target_node_id;
   }
   const auto* seal = std::get_if<DistributedVectorGroupedAggregateShuffleJobSeal>(&request);
-  return seal == nullptr ? 0U : seal->target_node_id;
+  if (seal != nullptr)
+    return seal->target_node_id;
+  const auto* routes =
+      std::get_if<DistributedVectorGroupedAggregateShuffleJobInstallRoutes>(&request);
+  return routes == nullptr ? 0U : routes->target_node_id;
 }
 
 [[nodiscard]] bool
@@ -77,8 +81,10 @@ encode_request(const DistributedVectorGroupedAggregateShuffleJobControlRequest& 
           std::get_if<DistributedVectorGroupedAggregateShuffleJobPrepare>(&request)) {
     return encode_distributed_vector_grouped_aggregate_shuffle_job_prepare_v1(*prepare);
   }
-  return encode_distributed_vector_grouped_aggregate_shuffle_job_seal_v1(
-      std::get<DistributedVectorGroupedAggregateShuffleJobSeal>(request));
+  if (const auto* seal = std::get_if<DistributedVectorGroupedAggregateShuffleJobSeal>(&request))
+    return encode_distributed_vector_grouped_aggregate_shuffle_job_seal_v1(*seal);
+  return encode_distributed_vector_grouped_aggregate_shuffle_job_install_routes_v2(
+      std::get<DistributedVectorGroupedAggregateShuffleJobInstallRoutes>(request));
 }
 
 } // namespace
@@ -155,8 +161,18 @@ public:
     if (attempt_index > 0U)
       ++acquisition_metrics.retries_started;
     next_attempt_not_before.reset();
-    auto request = decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v1_exact(
-        common::ByteView{request_bytes}, config.carrier_limits.request);
+    const common::ByteView frozen{request_bytes};
+    const bool version_two = std::ranges::equal(
+        frozen.first(
+            distributed_vector_grouped_aggregate_shuffle_job_control_v2_format::kRequestMagic
+                .size()),
+        distributed_vector_grouped_aggregate_shuffle_job_control_v2_format::kRequestMagic);
+    auto request =
+        version_two
+            ? decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v2_exact(
+                  frozen, config.carrier_limits.request)
+            : decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v1_exact(
+                  frozen, config.carrier_limits.request);
     if (!request.has_value())
       return schedule_failure(request.error(), now);
     auto started = DistributedVectorGroupedAggregateShuffleJobControlTcpClient::begin(

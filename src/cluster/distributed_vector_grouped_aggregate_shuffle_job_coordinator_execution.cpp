@@ -48,6 +48,15 @@ bounded_wait(const std::chrono::milliseconds maximum_wait,
              : left + right;
 }
 
+[[nodiscard]] bool valid_retry(
+    const DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits& retry) noexcept {
+  const auto maximum = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::duration::max());
+  return retry.maximum_attempts > 0U && retry.maximum_attempts <= 1024U &&
+         retry.initial_backoff.count() > 0 && retry.maximum_backoff >= retry.initial_backoff &&
+         retry.maximum_backoff <= maximum;
+}
+
 } // namespace
 
 class DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::Impl {
@@ -137,10 +146,12 @@ public:
     refresh_control_metrics();
     if (completed != acquisitions_.size())
       return common::Status::ok();
-    return state_ ==
-                   DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kPreparing
-               ? publish_prepared()
-               : publish_sealed();
+    if (state_ == DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kPreparing)
+      return publish_prepared();
+    if (state_ ==
+        DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kInstallingRoutes)
+      return publish_routes_installed();
+    return publish_sealed();
   }
 
   [[nodiscard]] common::Status publish_prepared() {
@@ -174,7 +185,40 @@ public:
       metrics_.prepared_reducers = acquisitions_.size();
       commit_control_metrics();
       acquisitions_.clear();
-      state_ = DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kPrepared;
+
+      std::vector<DistributedVectorGroupedAggregateShuffleJobRoute> wire_routes;
+      wire_routes.reserve(prepared_routes_.size());
+      for (const auto& route : prepared_routes_) {
+        if (route.endpoints.size() != 1U)
+          return fail(status(common::StatusCode::kCorruption,
+                             "prepared grouped shuffle route has invalid endpoint coverage"));
+        wire_routes.push_back({.node_id = route.node_id, .endpoint = route.endpoints.front()});
+      }
+      std::vector<DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition> installs;
+      installs.reserve(config_.reducer_control_routes.size());
+      for (const auto& route : config_.reducer_control_routes) {
+        auto acquisition = DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition::create(
+            {.route = route,
+             .authenticator = config_.authenticator,
+             .node_authorizer = config_.node_authorizer,
+             .request =
+                 DistributedVectorGroupedAggregateShuffleJobControlRequest{
+                     DistributedVectorGroupedAggregateShuffleJobInstallRoutes{
+                         .query_id = query_id_,
+                         .coordinator_node_id = config_.coordinator_node_id,
+                         .target_node_id = route.node_id,
+                         .routes = wire_routes}},
+             .carrier_limits = config_.carrier_limits,
+             .connect_timeout = config_.connect_timeout,
+             .retry = config_.route_install_retry,
+             .execution_deadline = config_.execution_deadline});
+        if (!acquisition.has_value())
+          return fail(acquisition.error());
+        installs.push_back(std::move(*acquisition));
+      }
+      acquisitions_ = std::move(installs);
+      state_ =
+          DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kInstallingRoutes;
       return common::Status::ok();
     } catch (const std::bad_alloc&) {
       return fail(status(common::StatusCode::kResourceExhausted,
@@ -183,6 +227,26 @@ public:
       return fail(status(common::StatusCode::kResourceExhausted,
                          "grouped shuffle prepared routes exceed container limits"));
     }
+  }
+
+  [[nodiscard]] common::Status publish_routes_installed() {
+    for (auto& acquisition : acquisitions_) {
+      auto response = acquisition.result();
+      if (!response.has_value())
+        return fail(response.error());
+      if (response->status_code != common::StatusCode::kOk ||
+          response->reducer_shuffle_endpoint.has_value()) {
+        return fail(status(response->status_code == common::StatusCode::kOk
+                               ? common::StatusCode::kCorruption
+                               : response->status_code,
+                           "grouped shuffle reducer route installation was not accepted"));
+      }
+    }
+    metrics_.route_installed_reducers = acquisitions_.size();
+    commit_control_metrics();
+    acquisitions_.clear();
+    state_ = DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kPrepared;
+    return common::Status::ok();
   }
 
   [[nodiscard]] common::Status publish_sealed() {
@@ -253,7 +317,8 @@ DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::create(
       config.reducer_execution_timeout >
           distributed_vector_grouped_aggregate_shuffle_job_control_format::
               kMaximumExecutionTimeout ||
-      config.execution_deadline <= now ||
+      !valid_retry(config.prepare_retry) || !valid_retry(config.route_install_retry) ||
+      !valid_retry(config.seal_retry) || config.execution_deadline <= now ||
       config.result.coordinator_node_id != config.coordinator_node_id ||
       config.result.authenticator != config.authenticator ||
       config.result.node_authorizer != config.node_authorizer ||
@@ -367,11 +432,15 @@ common::Status DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::
   if (impl.state_ ==
           DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kPreparing ||
       impl.state_ ==
+          DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kInstallingRoutes ||
+      impl.state_ ==
           DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kSealing) {
     common::Status progress = impl.drive_controls();
     if (!progress.is_ok() ||
         (impl.state_ !=
              DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kPreparing &&
+         impl.state_ != DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::
+                            kInstallingRoutes &&
          impl.state_ !=
              DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kSealing))
       return progress;

@@ -350,8 +350,23 @@ it seals the complete reducer set and enters the existing lossless result coordi
 all SEAL responses succeed. Result bytes remain unavailable until every partition is receipt-proven
 and the global Native finalizer succeeds. Failure clears unpublished routes and cancels local
 control/result owners; already admitted remote jobs expire at their relative deadline because
-control v1 has no CANCEL action. Worker-source composition, immediate remote cancellation, and
-complete packaged multi-daemon qualification remain the next boundary.
+control v1 has no CANCEL action.
+
+The packaged continuation inserts one route-install phase between PREPARE and worker scheduling.
+Job Control v2 broadcasts the same sorted destination listener map to every reducer; each reducer
+exact-checks its own advertised endpoint and resolves the remaining nodes through configured TLS
+authority. The production grouped worker is decorated at the source node, so a successful worker
+result publishes its complete canonical state stream to a matching job before worker success can
+escape. Exact submission retry is idempotent. Local edges enter reducers directly and remote edges
+use the finite receipt-gated scheduler. A missing matching job remains a no-op for the direct path.
+
+One whole-query owner now drives PREPARE, route installation, workers, source closure, SEAL, result
+collection, and final Native ownership in that order. The Native provider receives routes resolved
+from the same committed query snapshot. It selects this independent-process path only on a gateway
+coordinator with no local fragment; the current protocols require authenticated source/target node
+identity and intentionally reject network self routes. Queries with a coordinator-local fragment
+therefore retain the direct grouped lifecycle. Immediate remote cancellation, durable job recovery,
+self-role protocol support, and complete packaged multi-daemon qualification remain open.
 
 ### Portable sufficient-state execution boundary
 
@@ -460,8 +475,10 @@ timeouts make both groups choose the same leader for this deterministic qualific
 
 That evidence does not prove arbitrary split-leader process coordination because it deliberately
 elects one common leader. The Native coordinator now combines local and authenticated remote
-per-group authority in focused in-process coverage, but Linux multi-daemon split-leader
-qualification remains separate. The standalone result-return process gate now qualifies distinct
-reducer/coordinator address spaces, finite route retry, missing-reducer cancellation, and a fresh
-whole-query retry, but not packaged daemon ownership. Multi-process real-CSEG scans and a packaged
-destination-routed multi-key/all-type sufficient-state shuffle also remain separate gates.
+per-group authority in focused in-process coverage. A replicated Native gateway fixture additionally
+qualifies the packaged mutable worker, reducer job, route installation, result return, and final SQL
+path through real mTLS, but it is not a separate daemon process test. Linux multi-daemon
+split-leader qualification remains separate. The standalone result-return process gate qualifies
+distinct reducer/coordinator address spaces, finite route retry, missing-reducer cancellation, and
+a fresh whole-query retry. Multi-process real-CSEG scans, network partitions, and skew/scale
+measurement remain separate gates.

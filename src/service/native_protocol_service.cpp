@@ -1210,75 +1210,155 @@ NativeProtocolService::execute_query(network::NetworkTask request,
         for (;;) {
           if (config.grouped_shuffle_provider != nullptr) {
             auto shuffle_plan = config.grouped_shuffle_provider->prepare(
-                current.fragments, current.keys, current.aggregates, execution_deadline);
+                current.fragments, current.keys, current.aggregates, current.routes,
+                execution_deadline);
             if (!shuffle_plan.has_value())
               return query_error(target, shuffle_plan.error(), limits_.protocol);
-            shuffle_plan->execution.finalization =
-                bounded_grouped_aggregate_finalization_limits(config, limits_);
-            shuffle_plan->execution.coordinator_projection =
-                lowered_grouped_aggregate->coordinator_projection;
-            if (shuffle_plan->execution.transport.has_value()) {
-              shuffle_plan->execution.transport->execution_deadline = execution_deadline;
-            }
-            const bool local_enabled = config.local_grouped_worker != nullptr;
-            cluster::DistributedMutableVectorGroupedAggregateShuffleExecutionConfig
-                shuffle_execution_config{
-                    .worker_execution = config.grouped_aggregate_execution,
-                    .worker_transport = {.authenticator = config.authenticator,
-                                         .node_authorizer = config.node_authorizer,
-                                         .local_node_id =
-                                             local_enabled ? config.source_node_id : raft::NodeId{},
-                                         .local_worker = config.local_grouped_worker,
-                                         .routes = std::move(current.routes),
-                                         .carrier_limits = config.grouped_aggregate_carrier,
-                                         .connect_timeout = config.connect_timeout,
-                                         .execution_deadline = execution_deadline,
-                                         .maximum_rebindings = 0U},
-                    .shuffle = std::move(shuffle_plan->execution),
-                    .authority = shuffle_plan->authority};
-            auto scheduler =
-                cluster::DistributedMutableVectorGroupedAggregateShuffleExecution::create(
-                    config.source_node_id, std::move(current.fragments), std::move(current.keys),
-                    std::move(current.aggregates), std::move(shuffle_execution_config));
-            if (!scheduler.has_value())
-              return query_error(target, scheduler.error(), limits_.protocol);
-            std::optional<common::Status> retryable_failure;
-            while (scheduler->state() ==
-                       cluster::DistributedMutableVectorGroupedAggregateShuffleExecutionState::
-                           kCollectingSources ||
-                   scheduler->state() ==
-                       cluster::DistributedMutableVectorGroupedAggregateShuffleExecutionState::
-                           kShuffling) {
-              if (cancellation != nullptr && cancellation->requested()) {
-                static_cast<void>(scheduler->cancel());
-                return query_error(target,
-                                   {common::StatusCode::kCancelled, "native query was cancelled"},
-                                   limits_.protocol);
+            if (shuffle_plan->selected) {
+              if (shuffle_plan->reducer_jobs.has_value()) {
+                auto reducer_config = std::move(*shuffle_plan->reducer_jobs);
+                reducer_config.execution_deadline = execution_deadline;
+                reducer_config.result.execution_deadline = execution_deadline;
+                reducer_config.result.finalization_limits =
+                    bounded_grouped_aggregate_finalization_limits(config, limits_);
+                reducer_config.result.projection =
+                    lowered_grouped_aggregate->coordinator_projection.has_value()
+                        ? std::addressof(*lowered_grouped_aggregate->coordinator_projection)
+                        : nullptr;
+                const bool local_enabled = config.local_grouped_worker != nullptr;
+                cluster::DistributedMutableVectorGroupedAggregateShuffleJobExecutionConfig
+                    job_execution_config{
+                        .worker_execution = config.grouped_aggregate_execution,
+                        .worker_transport = {.authenticator = config.authenticator,
+                                             .node_authorizer = config.node_authorizer,
+                                             .local_node_id = local_enabled ? config.source_node_id
+                                                                            : raft::NodeId{},
+                                             .local_worker = config.local_grouped_worker,
+                                             .routes = std::move(current.routes),
+                                             .carrier_limits = config.grouped_aggregate_carrier,
+                                             .connect_timeout = config.connect_timeout,
+                                             .execution_deadline = execution_deadline,
+                                             .maximum_rebindings = 0U},
+                        .authority = shuffle_plan->authority,
+                        .reducers = std::move(reducer_config)};
+                auto scheduler =
+                    cluster::DistributedMutableVectorGroupedAggregateShuffleJobExecution::create(
+                        config.source_node_id, std::move(current.fragments),
+                        std::move(current.keys), std::move(current.aggregates),
+                        std::move(job_execution_config));
+                if (!scheduler.has_value())
+                  return query_error(target, scheduler.error(), limits_.protocol);
+                std::optional<common::Status> retryable_failure;
+                while (
+                    scheduler->state() !=
+                        cluster::DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::
+                            kComplete &&
+                    scheduler->state() !=
+                        cluster::DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::
+                            kFailed &&
+                    scheduler->state() !=
+                        cluster::DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::
+                            kCancelled) {
+                  if (cancellation != nullptr && cancellation->requested()) {
+                    static_cast<void>(scheduler->cancel());
+                    return query_error(
+                        target, {common::StatusCode::kCancelled, "native query was cancelled"},
+                        limits_.protocol);
+                  }
+                  const common::Status polled = scheduler->poll_once(config.maximum_poll_wait);
+                  if (!polled.is_ok()) {
+                    if (retryable_authority_failure(polled.code()))
+                      retryable_failure.emplace(polled);
+                    else
+                      return query_error(target, polled, limits_.protocol);
+                    break;
+                  }
+                }
+                if (retryable_failure.has_value()) {
+                  common::Status rebound =
+                      install_fresh_grouped_authority(std::move(*retryable_failure));
+                  if (!rebound.is_ok())
+                    return query_error(target, rebound, limits_.protocol);
+                  continue;
+                }
+                if (scheduler->state() !=
+                    cluster::DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::
+                        kComplete) {
+                  return query_error(target, scheduler->failure(), limits_.protocol);
+                }
+                auto finalized = scheduler->take_result();
+                if (!finalized.has_value())
+                  return query_error(target, finalized.error(), limits_.protocol);
+                return distributed_rows_result(target, std::move(*finalized), limits_);
               }
-              const common::Status polled = scheduler->poll_once(config.maximum_poll_wait);
-              if (!polled.is_ok()) {
-                if (retryable_authority_failure(polled.code()))
-                  retryable_failure.emplace(polled);
-                else
-                  return query_error(target, polled, limits_.protocol);
-                break;
+              shuffle_plan->execution.finalization =
+                  bounded_grouped_aggregate_finalization_limits(config, limits_);
+              shuffle_plan->execution.coordinator_projection =
+                  lowered_grouped_aggregate->coordinator_projection;
+              if (shuffle_plan->execution.transport.has_value()) {
+                shuffle_plan->execution.transport->execution_deadline = execution_deadline;
               }
+              const bool local_enabled = config.local_grouped_worker != nullptr;
+              cluster::DistributedMutableVectorGroupedAggregateShuffleExecutionConfig
+                  shuffle_execution_config{
+                      .worker_execution = config.grouped_aggregate_execution,
+                      .worker_transport = {.authenticator = config.authenticator,
+                                           .node_authorizer = config.node_authorizer,
+                                           .local_node_id = local_enabled ? config.source_node_id
+                                                                          : raft::NodeId{},
+                                           .local_worker = config.local_grouped_worker,
+                                           .routes = std::move(current.routes),
+                                           .carrier_limits = config.grouped_aggregate_carrier,
+                                           .connect_timeout = config.connect_timeout,
+                                           .execution_deadline = execution_deadline,
+                                           .maximum_rebindings = 0U},
+                      .shuffle = std::move(shuffle_plan->execution),
+                      .authority = shuffle_plan->authority};
+              auto scheduler =
+                  cluster::DistributedMutableVectorGroupedAggregateShuffleExecution::create(
+                      config.source_node_id, std::move(current.fragments), std::move(current.keys),
+                      std::move(current.aggregates), std::move(shuffle_execution_config));
+              if (!scheduler.has_value())
+                return query_error(target, scheduler.error(), limits_.protocol);
+              std::optional<common::Status> retryable_failure;
+              while (scheduler->state() ==
+                         cluster::DistributedMutableVectorGroupedAggregateShuffleExecutionState::
+                             kCollectingSources ||
+                     scheduler->state() ==
+                         cluster::DistributedMutableVectorGroupedAggregateShuffleExecutionState::
+                             kShuffling) {
+                if (cancellation != nullptr && cancellation->requested()) {
+                  static_cast<void>(scheduler->cancel());
+                  return query_error(target,
+                                     {common::StatusCode::kCancelled, "native query was cancelled"},
+                                     limits_.protocol);
+                }
+                const common::Status polled = scheduler->poll_once(config.maximum_poll_wait);
+                if (!polled.is_ok()) {
+                  if (retryable_authority_failure(polled.code()))
+                    retryable_failure.emplace(polled);
+                  else
+                    return query_error(target, polled, limits_.protocol);
+                  break;
+                }
+              }
+              if (retryable_failure.has_value()) {
+                common::Status rebound =
+                    install_fresh_grouped_authority(std::move(*retryable_failure));
+                if (!rebound.is_ok())
+                  return query_error(target, rebound, limits_.protocol);
+                continue;
+              }
+              if (scheduler->state() !=
+                  cluster::DistributedMutableVectorGroupedAggregateShuffleExecutionState::
+                      kComplete) {
+                return query_error(target, scheduler->failure(), limits_.protocol);
+              }
+              auto finalized = scheduler->take_result();
+              if (!finalized.has_value())
+                return query_error(target, finalized.error(), limits_.protocol);
+              return distributed_rows_result(target, std::move(*finalized), limits_);
             }
-            if (retryable_failure.has_value()) {
-              common::Status rebound =
-                  install_fresh_grouped_authority(std::move(*retryable_failure));
-              if (!rebound.is_ok())
-                return query_error(target, rebound, limits_.protocol);
-              continue;
-            }
-            if (scheduler->state() !=
-                cluster::DistributedMutableVectorGroupedAggregateShuffleExecutionState::kComplete) {
-              return query_error(target, scheduler->failure(), limits_.protocol);
-            }
-            auto finalized = scheduler->take_result();
-            if (!finalized.has_value())
-              return query_error(target, finalized.error(), limits_.protocol);
-            return distributed_rows_result(target, std::move(*finalized), limits_);
           }
           auto portable = cluster::DistributedMutableVectorGroupedAggregateQueryExecution::create(
               config.source_node_id, std::move(current.fragments), std::move(current.keys),

@@ -87,3 +87,6 @@ Unknown versions are unsupported. Malformed and noncanonical wire values are cor
 limits and allocation failure are resource exhaustion. Changing action semantics, nested proof
 identity, route identity, deadline meaning, response status mapping, or endpoint publication
 requires a new version.
+
+The additive [Job Control v2](distributed-vector-grouped-aggregate-shuffle-job-control-v2.md)
+defines only the subsequent INSTALL_ROUTES action. PREPARE and SEAL remain canonical v1 frames.

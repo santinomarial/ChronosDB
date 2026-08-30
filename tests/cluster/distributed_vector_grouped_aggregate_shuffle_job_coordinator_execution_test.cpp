@@ -1,4 +1,6 @@
 #include "chronos/cluster/distributed_mutable_query_control_tcp.hpp"
+#include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_job_execution.hpp"
+#include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_source_worker.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_coordinator_execution.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_service.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_source_plan.hpp"
@@ -178,6 +180,32 @@ public:
   }
 };
 
+class FixedGroupedWorker final : public DistributedMutableVectorGroupedAggregateQueryWorkerService {
+public:
+  explicit FixedGroupedWorker(const DistributedVectorGroupedAggregateShuffleAuthority& authority)
+      : authority_(&authority) {}
+
+  common::Result<query::DistributedVectorGroupedAggregateAuthority>
+  bind_authority(const query::DistributedMutableVectorFragment&) override {
+    return query::DistributedVectorGroupedAggregateAuthority{keys(), aggregates()};
+  }
+
+  common::Result<query::DistributedVectorGroupedAggregateWorkerResultV2>
+  execute(const query::DistributedMutableVectorFragment&) override {
+    auto messages = input(*authority_);
+    const std::size_t encoded_bytes = messages.front().bytes().size();
+    return query::DistributedVectorGroupedAggregateWorkerResultV2{
+        .authority = {keys(), aggregates()},
+        .messages = std::move(messages),
+        .input_rows = 1U,
+        .group_count = 1U,
+        .encoded_bytes = encoded_bytes};
+  }
+
+private:
+  const DistributedVectorGroupedAggregateShuffleAuthority* authority_{};
+};
+
 class UnusedAuthorityService final : public RaftReadAuthorityService {
 public:
   // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
@@ -349,8 +377,9 @@ TEST(DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionTest,
   const auto metrics = coordinator->metrics();
   EXPECT_EQ(metrics.reducer_nodes, 1U);
   EXPECT_EQ(metrics.prepared_reducers, 1U);
+  EXPECT_EQ(metrics.route_installed_reducers, 1U);
   EXPECT_EQ(metrics.sealed_reducers, 1U);
-  EXPECT_EQ(metrics.control_attempts_started, 2U);
+  EXPECT_EQ(metrics.control_attempts_started, 3U);
   EXPECT_EQ(metrics.control_retries_started, 0U);
   EXPECT_EQ(metrics.result.collector.accepted_partitions, 1U);
   EXPECT_EQ(metrics.result.finalization_attempts, 1U);
@@ -378,6 +407,130 @@ TEST(DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionTest,
             DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kResultTaken);
   EXPECT_EQ(coordinator->take_result().error().code(), common::StatusCode::kUnavailable);
   EXPECT_EQ(job_service->metrics().completed_jobs, 1U);
+}
+
+TEST(DistributedMutableVectorGroupedAggregateShuffleJobExecutionTest,
+     OwnsPreparedWorkerSourceSealAndNativeResultAsOneLifecycle) {
+  Proofs proof;
+  Authorizer authorizer;
+  UnusedReceivers receivers{authorizer};
+  Authenticator control_server_authenticator{91U};
+  Authenticator control_client_authenticator{92U};
+  Authenticator result_client_authenticator{93U};
+  auto client_context = network::TlsClientContext::create(client_tls()).value();
+  const std::array result_contexts{DistributedQueryNodeTlsContext{9U, &client_context}};
+  auto job_service =
+      DistributedVectorGroupedAggregateShuffleJobService::create(
+          {.local_node_id = 2U,
+           .shuffle_listener = {},
+           .shuffle_tls = server_tls(),
+           .shuffle_authenticator = &control_server_authenticator,
+           .result_authenticator = &result_client_authenticator,
+           .node_authorizer = &authorizer,
+           .result_tls_contexts = result_contexts,
+           .shuffle_carrier_limits = shuffle_limits(),
+           .result_retry_limits = {.retry = {.maximum_attempts = 3U,
+                                             .initial_backoff = std::chrono::milliseconds{1},
+                                             .maximum_backoff = std::chrono::milliseconds{2}},
+                                   .stream = result_limits().stream},
+           .result_carrier_limits = result_limits(),
+           .maximum_jobs = 1U,
+           .maximum_job_query_memory_bytes = 16U << 20U,
+           .maximum_retained_streams_per_job = 1U,
+           .maximum_accepts_per_job_poll = 1U,
+           .maximum_reducer_admissions_per_job_poll = 1U})
+          .value();
+  FixedGroupedWorker worker{proof.authority};
+  auto publishing_worker =
+      DistributedMutableVectorGroupedAggregateShuffleSourceWorker::create(worker, job_service)
+          .value();
+  auto grouped_receiver =
+      DistributedMutableVectorGroupedAggregateQueryReceiver::create(
+          {.local_node_id = 2U, .authorizer = &authorizer, .worker = &publishing_worker})
+          .value();
+  auto control_server =
+      DistributedMutableQueryControlTcpServer::start(
+          {.listener = {},
+           .tls = server_tls(),
+           .authenticator = &control_server_authenticator,
+           .mutable_receiver = &receivers.mutable_receiver,
+           .mutable_grouped_receiver = &grouped_receiver,
+           .read_authority_receiver = &receivers.authority_receiver,
+           .grouped_shuffle_job_service = &job_service,
+           .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                              .exchange_timeout = std::chrono::milliseconds{1000}},
+           .maximum_connections = 2U,
+           .maximum_accepts_per_poll = 2U})
+          .value();
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+  auto execution = DistributedMutableVectorGroupedAggregateShuffleJobExecution::create(
+      9U, proof.fragments, keys(), aggregates(),
+      {.worker_transport = {.authenticator = &control_client_authenticator,
+                            .node_authorizer = &authorizer,
+                            .routes = {{.node_id = 2U,
+                                        .endpoints = {control_server.bound_endpoint()},
+                                        .tls_context = &client_context}},
+                            .connect_timeout = std::chrono::milliseconds{1000},
+                            .execution_deadline = deadline,
+                            .maximum_rebindings = 0U},
+       .reducers = {.coordinator_node_id = 9U,
+                    .reducer_control_routes = {{.node_id = 2U,
+                                                .endpoints = {control_server.bound_endpoint()},
+                                                .tls_context = &client_context}},
+                    .authenticator = &control_client_authenticator,
+                    .node_authorizer = &authorizer,
+                    .carrier_limits = control_limits(),
+                    .connect_timeout = std::chrono::milliseconds{1000},
+                    .prepare_retry = {.maximum_attempts = 2U,
+                                      .initial_backoff = std::chrono::milliseconds{1},
+                                      .maximum_backoff = std::chrono::milliseconds{2}},
+                    .route_install_retry = {.maximum_attempts = 2U,
+                                            .initial_backoff = std::chrono::milliseconds{1},
+                                            .maximum_backoff = std::chrono::milliseconds{2}},
+                    .seal_retry = {.maximum_attempts = 8U,
+                                   .initial_backoff = std::chrono::milliseconds{1},
+                                   .maximum_backoff = std::chrono::milliseconds{4}},
+                    .reducer_execution_timeout = std::chrono::seconds{5},
+                    .execution_deadline = deadline,
+                    .result = {.listener = {},
+                               .tls = server_tls(),
+                               .authenticator = &control_client_authenticator,
+                               .node_authorizer = &authorizer,
+                               .coordinator_node_id = 9U,
+                               .carrier_limits = result_limits(),
+                               .maximum_retained_server_streams = 1U,
+                               .maximum_accepts_per_poll = 1U}}});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+  EXPECT_EQ(execution->take_result().error().code(), common::StatusCode::kUnavailable);
+  for (std::size_t iteration = 0U; iteration < 8192U; ++iteration) {
+    const common::Status client = execution->poll_once(std::chrono::milliseconds{1});
+    ASSERT_TRUE(client.is_ok()) << client.to_string();
+    const common::Status server = control_server.poll_once(std::chrono::milliseconds{1});
+    ASSERT_TRUE(server.is_ok()) << server.to_string();
+    if (execution->state() ==
+        DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kComplete)
+      break;
+  }
+  ASSERT_EQ(execution->state(),
+            DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kComplete)
+      << execution->failure().to_string();
+  const auto metrics = execution->metrics();
+  EXPECT_EQ(metrics.workers.transport_completed_attempts, 1U);
+  EXPECT_EQ(metrics.reducers.prepared_reducers, 1U);
+  EXPECT_EQ(metrics.reducers.route_installed_reducers, 1U);
+  EXPECT_EQ(metrics.reducers.sealed_reducers, 1U);
+  EXPECT_EQ(job_service.metrics().submitted_source_tablets, 1U);
+  auto result = execution->take_result();
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  ASSERT_EQ(result->encoded_batches.size(), 1U);
+  auto decoded = network::decode_query_result_batch(result->encoded_batches.front());
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  ASSERT_EQ(decoded->row_count(), 1U);
+  const auto* count = decoded->cell(0U, 1U);
+  ASSERT_NE(count, nullptr);
+  EXPECT_EQ(count->value.front(), std::byte{1U});
+  EXPECT_EQ(execution->state(),
+            DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kResultTaken);
 }
 
 TEST(DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionTest,

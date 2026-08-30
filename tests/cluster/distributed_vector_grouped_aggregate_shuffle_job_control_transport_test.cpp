@@ -140,5 +140,44 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTransportTest,
   EXPECT_FALSE(response_writer.complete());
 }
 
+TEST(DistributedVectorGroupedAggregateShuffleJobControlTransportTest,
+     DispatchesFragmentedVersionTwoRouteFramesAndResponses) {
+  const DistributedVectorGroupedAggregateShuffleJobInstallRoutes routes{
+      .query_id = uuid(1U),
+      .coordinator_node_id = 9U,
+      .target_node_id = 7U,
+      .routes = {{.node_id = 7U, .endpoint = {{127U, 0U, 0U, 1U}, 9123U}}}};
+  auto encoded =
+      encode_distributed_vector_grouped_aggregate_shuffle_job_install_routes_v2(routes).value();
+  auto reader = DistributedVectorGroupedAggregateShuffleJobControlRequestReader::create().value();
+  auto prefix = reader.consume(encoded.bytes().first(31U));
+  ASSERT_TRUE(prefix.has_value());
+  EXPECT_FALSE(prefix->request.has_value());
+  auto completed = reader.consume(encoded.bytes().subspan(31U));
+  ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
+  ASSERT_TRUE(completed->request.has_value());
+  const auto* actual =
+      std::get_if<DistributedVectorGroupedAggregateShuffleJobInstallRoutes>(&*completed->request);
+  ASSERT_NE(actual, nullptr);
+  EXPECT_EQ(*actual, routes);
+
+  const DistributedVectorGroupedAggregateShuffleJobControlResponse response{
+      .action = DistributedVectorGroupedAggregateShuffleJobControlAction::kInstallRoutes,
+      .status_code = common::StatusCode::kOk,
+      .query_id = uuid(1U),
+      .coordinator_node_id = 9U,
+      .target_node_id = 7U};
+  auto response_bytes =
+      encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v2(response).value();
+  DistributedVectorGroupedAggregateShuffleJobControlResponseReader response_reader;
+  auto response_prefix = response_reader.consume(response_bytes.bytes().first(19U));
+  ASSERT_TRUE(response_prefix.has_value());
+  EXPECT_FALSE(response_prefix->response.has_value());
+  auto response_complete = response_reader.consume(response_bytes.bytes().subspan(19U));
+  ASSERT_TRUE(response_complete.has_value()) << response_complete.error().to_string();
+  ASSERT_TRUE(response_complete->response.has_value());
+  EXPECT_EQ(*response_complete->response, response);
+}
+
 } // namespace
 } // namespace chronos::cluster

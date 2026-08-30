@@ -34,6 +34,8 @@ public:
   std::optional<cluster::RaftReadAuthorityReceiver> authority_receiver;
   std::optional<cluster::DistributedVectorGroupedAggregateShuffleJobService>
       grouped_shuffle_job_service;
+  std::optional<cluster::DistributedMutableVectorGroupedAggregateShuffleSourceWorker>
+      grouped_shuffle_source_worker;
   std::optional<cluster::DistributedMutableQueryControlTcpServer> server;
 
   [[nodiscard]] cluster::DistributedMutableQueryControlTcpServer* active_server() noexcept {
@@ -99,6 +101,24 @@ ReplicatedDistributedMutableQueryControlTcpServer::start(
   try {
     auto implementation = std::make_unique<Impl>(std::move(*worker), std::move(*grouped_worker),
                                                  std::move(*authority_service));
+    cluster::DistributedVectorGroupedAggregateShuffleJobService* grouped_shuffle_job_service{};
+    cluster::DistributedMutableVectorGroupedAggregateQueryWorkerService* grouped_receiver_worker =
+        std::addressof(implementation->grouped_worker);
+    if (config.grouped_shuffle_jobs.has_value()) {
+      auto service = cluster::DistributedVectorGroupedAggregateShuffleJobService::create(
+          std::move(*config.grouped_shuffle_jobs));
+      if (!service.has_value())
+        return common::make_unexpected(service.error());
+      grouped_shuffle_job_service =
+          std::addressof(implementation->grouped_shuffle_job_service.emplace(std::move(*service)));
+      auto source_worker =
+          cluster::DistributedMutableVectorGroupedAggregateShuffleSourceWorker::create(
+              implementation->grouped_worker, *grouped_shuffle_job_service);
+      if (!source_worker.has_value())
+        return common::make_unexpected(source_worker.error());
+      grouped_receiver_worker = std::addressof(
+          implementation->grouped_shuffle_source_worker.emplace(std::move(*source_worker)));
+    }
     auto mutable_receiver = cluster::DistributedMutableVectorQueryReceiver::create(
         {.local_node_id = config.worker.local_node_id,
          .authorizer = config.node_authorizer,
@@ -112,7 +132,7 @@ ReplicatedDistributedMutableQueryControlTcpServer::start(
         cluster::DistributedMutableVectorGroupedAggregateQueryReceiver::create(
             {.local_node_id = config.worker.local_node_id,
              .authorizer = config.node_authorizer,
-             .worker = std::addressof(implementation->grouped_worker),
+             .worker = grouped_receiver_worker,
              .leader_hint_provider = config.leader_hint_provider,
              .maximum_response_frames =
                  config.carrier_limits.maximum_mutable_grouped_response_frames,
@@ -134,15 +154,6 @@ ReplicatedDistributedMutableQueryControlTcpServer::start(
         implementation->mutable_grouped_receiver.emplace(*mutable_grouped_receiver);
     auto& installed_authority_receiver =
         implementation->authority_receiver.emplace(*authority_receiver);
-    cluster::DistributedVectorGroupedAggregateShuffleJobService* grouped_shuffle_job_service{};
-    if (config.grouped_shuffle_jobs.has_value()) {
-      auto service = cluster::DistributedVectorGroupedAggregateShuffleJobService::create(
-          std::move(*config.grouped_shuffle_jobs));
-      if (!service.has_value())
-        return common::make_unexpected(service.error());
-      grouped_shuffle_job_service =
-          std::addressof(implementation->grouped_shuffle_job_service.emplace(std::move(*service)));
-    }
     auto server = cluster::DistributedMutableQueryControlTcpServer::start(
         {.listener = config.listener,
          .tls = std::move(config.tls),
@@ -178,6 +189,7 @@ common::Status ReplicatedDistributedMutableQueryControlTcpServer::shutdown() {
   if (server == nullptr)
     return empty_server();
   const common::Status closed = server->shutdown();
+  implementation_->grouped_shuffle_source_worker.reset();
   implementation_->grouped_shuffle_job_service.reset();
   return closed;
 }
@@ -201,6 +213,15 @@ bool ReplicatedDistributedMutableQueryControlTcpServer::is_running() const noexc
   const cluster::DistributedMutableQueryControlTcpServer* const server =
       implementation_ ? implementation_->active_server() : nullptr;
   return server != nullptr && server->is_running();
+}
+
+cluster::DistributedMutableVectorGroupedAggregateQueryWorkerService*
+ReplicatedDistributedMutableQueryControlTcpServer::mutable_grouped_worker() noexcept {
+  if (!implementation_ || !is_running())
+    return nullptr;
+  if (implementation_->grouped_shuffle_source_worker.has_value())
+    return std::addressof(*implementation_->grouped_shuffle_source_worker);
+  return std::addressof(implementation_->grouped_worker);
 }
 
 } // namespace chronos::service

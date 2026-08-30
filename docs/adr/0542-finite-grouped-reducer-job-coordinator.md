@@ -58,8 +58,9 @@ all-or-nothing control boundary. Address retry cannot mutate proof authority, pa
 success cannot leak a route, and receipt-proven partition results cannot leak a partial Native
 answer. All-local execution avoids opening an unused shuffle listener.
 
-The owner does not yet construct worker source plans or install itself in the packaged Native SQL
-lifecycle. Immediate remote cancellation would require a separately versioned wire action. A
+[ADR 0543](0543-packaged-grouped-shuffle-job-lifecycle.md) now constructs source plans on their
+authenticated worker nodes and installs the coordinator in packaged Native SQL for gateway
+topologies. Immediate remote cancellation still requires a separately versioned wire action. A
 coordinator crash still retries the whole query with fresh in-memory jobs.
 
 ## Affected invariants
@@ -100,8 +101,6 @@ the immutable-attempt retry contract.
 
 ## Unresolved questions
 
-- Compose worker source planning, local delivery, remote shuffle scheduling, reducer coordination,
-  and final result ownership into the packaged Native grouped-query lifecycle.
 - Add an explicitly versioned authenticated remote CANCEL action if deadline cleanup is
   insufficient operationally.
 - Qualify the complete lifecycle across packaged independent daemons under process and network
@@ -110,5 +109,6 @@ the immutable-attempt retry contract.
 ## References
 
 - [Grouped reducer-job control format](../formats/distributed-vector-grouped-aggregate-shuffle-job-control-v1.md)
+- [Packaged grouped shuffle job lifecycle](0543-packaged-grouped-shuffle-job-lifecycle.md)
 - [Distributed grouped SQL execution](../learning/distributed-grouped-sql-execution.md)
 - [Implementation roadmap](../roadmap.md)

@@ -10,6 +10,7 @@
 #include "chronos/raft/metadata_runtime.hpp"
 #include "chronos/raft/schema_definition_codec.hpp"
 #include "chronos/raft/tablet_group_binding_codec.hpp"
+#include "chronos/service/native_distributed_grouped_shuffle_job_provider.hpp"
 #include "chronos/service/native_protocol_service.hpp"
 #include "chronos/service/replicated_distributed_mutable_query_control_tcp_server.hpp"
 #include "chronos/service/replicated_ingest_database.hpp"
@@ -82,6 +83,7 @@ public:
   prepare(const std::span<const query::DistributedMutableVectorFragment> fragments,
           std::span<const query::VectorGroupKeyDefinition>,
           std::span<const query::VectorAggregateDefinition>,
+          std::span<const cluster::DistributedQueryNodeRoute>,
           const std::chrono::steady_clock::time_point execution_deadline) override {
     ++calls;
     if (fragments.empty() || execution_deadline <= std::chrono::steady_clock::now()) {
@@ -1192,6 +1194,13 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
       .exchange_timeout = std::chrono::milliseconds{1000},
       .maximum_response_frames = 4U,
       .maximum_response_bytes = std::size_t{1024U} * 1024U};
+  auto client_context = network::TlsClientContext::create(distributed_client_tls());
+  ASSERT_TRUE(client_context.has_value()) << client_context.error().to_string();
+  const std::array distributed_tls_contexts{cluster::DistributedQueryNodeTlsContext{
+      .node_id = 1U, .tls_context = std::addressof(*client_context)}};
+  const std::array grouped_result_tls_contexts{cluster::DistributedQueryNodeTlsContext{
+      .node_id = 9U, .tls_context = std::addressof(*client_context)}};
+  DistributedTestAuthenticator outbound_authenticator{92U};
   auto distributed_server = ReplicatedDistributedMutableQueryControlTcpServer::start(
       {.worker = {.local_node_id = 1U, .context_provider = &*database},
        .read_barrier = &*read_barrier,
@@ -1199,6 +1208,14 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
        .tls = distributed_server_tls(),
        .authenticator = &inbound_authenticator,
        .node_authorizer = &node_authorizer,
+       .grouped_shuffle_jobs =
+           cluster::DistributedVectorGroupedAggregateShuffleJobServiceConfig{
+               .local_node_id = 1U,
+               .shuffle_tls = distributed_server_tls(),
+               .shuffle_authenticator = &inbound_authenticator,
+               .result_authenticator = &inbound_authenticator,
+               .node_authorizer = &node_authorizer,
+               .result_tls_contexts = grouped_result_tls_contexts},
        .carrier_limits = {.handshake_timeout = distributed_carrier.handshake_timeout,
                           .exchange_timeout = distributed_carrier.exchange_timeout,
                           .maximum_mutable_response_frames = 4U,
@@ -1208,15 +1225,19 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
        .maximum_connections = 4U,
        .maximum_accepts_per_poll = 4U});
   ASSERT_TRUE(distributed_server.has_value()) << distributed_server.error().to_string();
-  auto client_context = network::TlsClientContext::create(distributed_client_tls());
-  ASSERT_TRUE(client_context.has_value()) << client_context.error().to_string();
-  const std::array distributed_tls_contexts{cluster::DistributedQueryNodeTlsContext{
-      .node_id = 1U, .tls_context = std::addressof(*client_context)}};
-  DistributedTestAuthenticator outbound_authenticator{92U};
+  auto grouped_shuffle_provider = NativeDistributedGroupedShuffleJobProvider::create(
+      {.coordinator_node_id = 9U,
+       .result_tls = distributed_server_tls(),
+       .authenticator = &outbound_authenticator,
+       .node_authorizer = &node_authorizer,
+       .connect_timeout = std::chrono::milliseconds{1000},
+       .reducer_execution_timeout = std::chrono::milliseconds{5000}});
+  ASSERT_TRUE(grouped_shuffle_provider.has_value()) << grouped_shuffle_provider.error().to_string();
   const NativeDistributedMutableVectorRowsQueryConfig distributed_config{
       .source_node_id = 9U,
       .authenticator = &outbound_authenticator,
       .node_authorizer = &node_authorizer,
+      .grouped_shuffle_provider = std::addressof(*grouped_shuffle_provider),
       .tls_contexts = distributed_tls_contexts,
       .execution = {.sender = {.retry = {.maximum_attempts = 1U},
                                .maximum_response_frames = 4U,

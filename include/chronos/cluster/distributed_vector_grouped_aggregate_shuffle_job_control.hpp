@@ -37,9 +37,29 @@ inline constexpr std::size_t kResponseHeaderLength = 96U;
 inline constexpr std::size_t kResponseFrameLength = kResponseHeaderLength + kTrailerLength;
 } // namespace distributed_vector_grouped_aggregate_shuffle_job_control_format
 
+namespace distributed_vector_grouped_aggregate_shuffle_job_control_v2_format {
+inline constexpr std::array<std::byte, 8U> kRequestMagic{
+    std::byte{'C'}, std::byte{'H'}, std::byte{'D'}, std::byte{'V'},
+    std::byte{'G'}, std::byte{'J'}, std::byte{'C'}, std::byte{'2'}};
+inline constexpr std::array<std::byte, 8U> kResponseMagic{
+    std::byte{'C'}, std::byte{'H'}, std::byte{'D'}, std::byte{'V'},
+    std::byte{'G'}, std::byte{'J'}, std::byte{'R'}, std::byte{'2'}};
+inline constexpr std::uint16_t kMajor = 2U;
+inline constexpr std::uint16_t kMinor = 0U;
+inline constexpr std::size_t kHeaderLength = 128U;
+inline constexpr std::size_t kTrailerLength = 4U;
+inline constexpr std::size_t kRouteDescriptorLength = 16U;
+inline constexpr std::size_t kMaximumRoutes = 4096U;
+inline constexpr std::size_t kMaximumFrameLength =
+    kHeaderLength + (kMaximumRoutes * kRouteDescriptorLength) + kTrailerLength;
+inline constexpr std::size_t kResponseHeaderLength = 96U;
+inline constexpr std::size_t kResponseFrameLength = kResponseHeaderLength + kTrailerLength;
+} // namespace distributed_vector_grouped_aggregate_shuffle_job_control_v2_format
+
 enum class DistributedVectorGroupedAggregateShuffleJobControlAction : std::uint8_t {
   kPrepare = 1,
   kSeal = 2,
+  kInstallRoutes = 3,
 };
 
 struct DistributedVectorGroupedAggregateShuffleJobPrepare {
@@ -60,9 +80,28 @@ struct DistributedVectorGroupedAggregateShuffleJobSeal {
                          const DistributedVectorGroupedAggregateShuffleJobSeal&) = default;
 };
 
+struct DistributedVectorGroupedAggregateShuffleJobRoute {
+  raft::NodeId node_id{};
+  network::Ipv4Endpoint endpoint;
+
+  friend bool operator==(const DistributedVectorGroupedAggregateShuffleJobRoute&,
+                         const DistributedVectorGroupedAggregateShuffleJobRoute&) = default;
+};
+
+struct DistributedVectorGroupedAggregateShuffleJobInstallRoutes {
+  common::Uuid query_id;
+  raft::NodeId coordinator_node_id{};
+  raft::NodeId target_node_id{};
+  std::vector<DistributedVectorGroupedAggregateShuffleJobRoute> routes;
+
+  friend bool operator==(const DistributedVectorGroupedAggregateShuffleJobInstallRoutes&,
+                         const DistributedVectorGroupedAggregateShuffleJobInstallRoutes&) = default;
+};
+
 using DistributedVectorGroupedAggregateShuffleJobControlRequest =
     std::variant<DistributedVectorGroupedAggregateShuffleJobPrepare,
-                 DistributedVectorGroupedAggregateShuffleJobSeal>;
+                 DistributedVectorGroupedAggregateShuffleJobSeal,
+                 DistributedVectorGroupedAggregateShuffleJobInstallRoutes>;
 
 struct DistributedVectorGroupedAggregateShuffleJobControlResponse {
   DistributedVectorGroupedAggregateShuffleJobControlAction action{
@@ -85,6 +124,8 @@ struct DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits {
       distributed_vector_grouped_aggregate_shuffle_job_control_format::kMaximumExecutionTimeout};
   DistributedVectorGroupedAggregateShuffleAuthorityDecodeLimits authority;
   query::DistributedVectorResultSchemaDecodeLimits result_schema;
+  std::size_t maximum_routes{
+      distributed_vector_grouped_aggregate_shuffle_job_control_v2_format::kMaximumRoutes};
 };
 
 [[nodiscard]] common::Status
@@ -116,6 +157,9 @@ private:
   friend common::Result<EncodedDistributedVectorGroupedAggregateShuffleJobControlRequest>
   encode_distributed_vector_grouped_aggregate_shuffle_job_seal_v1(
       const DistributedVectorGroupedAggregateShuffleJobSeal& request);
+  friend common::Result<EncodedDistributedVectorGroupedAggregateShuffleJobControlRequest>
+  encode_distributed_vector_grouped_aggregate_shuffle_job_install_routes_v2(
+      const DistributedVectorGroupedAggregateShuffleJobInstallRoutes& request);
 };
 
 class EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse {
@@ -140,6 +184,9 @@ private:
   friend common::Result<EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse>
   encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1(
       const DistributedVectorGroupedAggregateShuffleJobControlResponse& response);
+  friend common::Result<EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse>
+  encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v2(
+      const DistributedVectorGroupedAggregateShuffleJobControlResponse& response);
 };
 
 [[nodiscard]] common::Result<EncodedDistributedVectorGroupedAggregateShuffleJobControlRequest>
@@ -150,8 +197,17 @@ encode_distributed_vector_grouped_aggregate_shuffle_job_prepare_v1(
 encode_distributed_vector_grouped_aggregate_shuffle_job_seal_v1(
     const DistributedVectorGroupedAggregateShuffleJobSeal& request);
 
+[[nodiscard]] common::Result<EncodedDistributedVectorGroupedAggregateShuffleJobControlRequest>
+encode_distributed_vector_grouped_aggregate_shuffle_job_install_routes_v2(
+    const DistributedVectorGroupedAggregateShuffleJobInstallRoutes& request);
+
 [[nodiscard]] common::Result<DistributedVectorGroupedAggregateShuffleJobControlRequest>
 decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v1_exact(
+    common::ByteView bytes,
+    DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits limits = {});
+
+[[nodiscard]] common::Result<DistributedVectorGroupedAggregateShuffleJobControlRequest>
+decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v2_exact(
     common::ByteView bytes,
     DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits limits = {});
 
@@ -159,8 +215,16 @@ decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v1_exact
 encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1(
     const DistributedVectorGroupedAggregateShuffleJobControlResponse& response);
 
+[[nodiscard]] common::Result<EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse>
+encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v2(
+    const DistributedVectorGroupedAggregateShuffleJobControlResponse& response);
+
 [[nodiscard]] common::Result<DistributedVectorGroupedAggregateShuffleJobControlResponse>
 decode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1_exact(
+    common::ByteView bytes);
+
+[[nodiscard]] common::Result<DistributedVectorGroupedAggregateShuffleJobControlResponse>
+decode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v2_exact(
     common::ByteView bytes);
 
 } // namespace chronos::cluster

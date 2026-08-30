@@ -36,8 +36,10 @@ encode_request(const DistributedVectorGroupedAggregateShuffleJobControlRequest& 
           std::get_if<DistributedVectorGroupedAggregateShuffleJobPrepare>(&request)) {
     return encode_distributed_vector_grouped_aggregate_shuffle_job_prepare_v1(*prepare);
   }
-  return encode_distributed_vector_grouped_aggregate_shuffle_job_seal_v1(
-      std::get<DistributedVectorGroupedAggregateShuffleJobSeal>(request));
+  if (const auto* seal = std::get_if<DistributedVectorGroupedAggregateShuffleJobSeal>(&request))
+    return encode_distributed_vector_grouped_aggregate_shuffle_job_seal_v1(*seal);
+  return encode_distributed_vector_grouped_aggregate_shuffle_job_install_routes_v2(
+      std::get<DistributedVectorGroupedAggregateShuffleJobInstallRoutes>(request));
 }
 
 } // namespace

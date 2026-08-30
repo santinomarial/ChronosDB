@@ -152,7 +152,8 @@ TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
   Authorizer authorizer;
   auto shuffle_client_context = network::TlsClientContext::create(client_tls()).value();
   auto result_client_context = network::TlsClientContext::create(client_tls()).value();
-  const std::array result_contexts{DistributedQueryNodeTlsContext{9U, &result_client_context}};
+  const std::array result_contexts{DistributedQueryNodeTlsContext{3U, &shuffle_client_context},
+                                   DistributedQueryNodeTlsContext{9U, &result_client_context}};
   auto result_server = DistributedVectorGroupedAggregateShuffleResultTcpServer::start(
                            {.listener = {},
                             .tls = server_tls(),
@@ -194,6 +195,22 @@ TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
   ASSERT_EQ(admitted->status_code, common::StatusCode::kOk);
   ASSERT_TRUE(admitted->reducer_shuffle_endpoint.has_value());
 
+  const DistributedVectorGroupedAggregateShuffleJobInstallRoutes routes{
+      .query_id = uuid(1U),
+      .coordinator_node_id = 9U,
+      .target_node_id = 3U,
+      .routes = {{.node_id = 3U, .endpoint = *admitted->reducer_shuffle_endpoint}}};
+  auto installed =
+      service.receive(DistributedVectorGroupedAggregateShuffleJobControlRequest{routes},
+                      control_peer, std::chrono::steady_clock::now());
+  ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+  EXPECT_EQ(installed->status_code, common::StatusCode::kOk);
+  auto duplicate_routes =
+      service.receive(DistributedVectorGroupedAggregateShuffleJobControlRequest{routes},
+                      control_peer, std::chrono::steady_clock::now());
+  ASSERT_TRUE(duplicate_routes.has_value());
+  EXPECT_EQ(duplicate_routes->status_code, common::StatusCode::kOk);
+
   auto duplicate =
       service.receive(DistributedVectorGroupedAggregateShuffleJobControlRequest{prepare(
                           result_server.bound_endpoint())},
@@ -209,14 +226,15 @@ TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
   ASSERT_TRUE(conflicting.has_value());
   EXPECT_EQ(conflicting->status_code, common::StatusCode::kAlreadyExists);
 
-  auto resources = query::QueryResourceContext::create(16U << 20U).value();
-  auto local_plan = DistributedVectorGroupedAggregateShuffleSourcePlan::create(
-                        expected, tablet(3U), input(tablet(3U)), resources)
-                        .value();
-  auto local_streams = local_plan.take_local_streams();
-  ASSERT_EQ(local_streams.size(), 1U);
-  EXPECT_TRUE(service.accept_local_stream(uuid(1U), local_streams.front()).is_ok());
+  auto local_input = input(tablet(3U));
+  auto published = service.publish_local_source(uuid(1U), tablet(3U), local_input);
+  ASSERT_TRUE(published.has_value()) << published.error().to_string();
+  EXPECT_TRUE(*published);
+  auto duplicate_source = service.publish_local_source(uuid(1U), tablet(3U), local_input);
+  ASSERT_TRUE(duplicate_source.has_value()) << duplicate_source.error().to_string();
+  EXPECT_TRUE(*duplicate_source);
 
+  auto resources = query::QueryResourceContext::create(16U << 20U).value();
   auto remote_plan = DistributedVectorGroupedAggregateShuffleSourcePlan::create(
                          expected, tablet(2U), input(tablet(2U)), resources)
                          .value();
@@ -282,6 +300,11 @@ TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
   EXPECT_EQ(duplicate_seal->status_code, common::StatusCode::kOk);
   EXPECT_EQ(service.metrics().duplicate_prepares, 1U);
   EXPECT_EQ(service.metrics().conflicting_prepares, 1U);
+  EXPECT_EQ(service.metrics().route_install_requests, 2U);
+  EXPECT_EQ(service.metrics().duplicate_route_installs, 1U);
+  EXPECT_EQ(service.metrics().submitted_source_tablets, 1U);
+  EXPECT_EQ(service.metrics().duplicate_source_submissions, 1U);
+  EXPECT_EQ(service.metrics().completed_source_transports, 1U);
 }
 
 TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,

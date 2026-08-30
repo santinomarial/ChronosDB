@@ -1620,9 +1620,19 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   reducer-set coordinator starts every PREPARE before waiting, publishes remote shuffle routes only
   after the complete destination set accepts, permits no endpoint for a proven all-local
   destination, seals the whole set with bounded readiness retries, and exposes Native output only
-  after the existing receipt-preserving all-partition result owner completes. Packaged worker-source
-  lifecycle composition, immediate remote cancellation, and full multi-daemon qualification
-  remain. The computed path now
+  after the existing receipt-preserving all-partition result owner completes. A distinct Job Control
+  v2 action now installs the complete destination-listener set at every reducer before workers can
+  start. The reducer job retains exact source publications on their authenticated worker nodes,
+  drives local admission plus remote receipt scheduling, and blocks SEAL until every expected
+  tablet closes. The packaged query-control service decorates its grouped worker with that
+  publication boundary, and one whole-query owner composes PREPARE, route installation, workers,
+  source transport, SEAL, result collection, and take-once Native finalization. The production
+  provider consumes routes from the same committed query snapshot and selects the lifecycle for
+  gateway coordinators. Coordinator-local fragments explicitly retain the direct grouped path
+  because current authenticated protocols forbid self routes. A replicated Native service fixture
+  proves the gateway path through real mTLS and mutable storage. Immediate remote cancellation,
+  durable query recovery, self-role job control, full multi-daemon split-leader qualification,
+  fault campaigns, and measurement remain. The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives
   plan and result shapes from its outputs, and executes it locally before grouping.
