@@ -587,3 +587,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0550](0550-partial-multi-reducer-coordinator-loss-qualification.md) | Partial multi-reducer coordinator-loss qualification | accepted |
 | [0551](0551-authenticated-partial-job-control-frame-qualification.md) | Authenticated partial job-control frame qualification | accepted |
 | [0552](0552-linux-netfilter-directional-job-control-partition-qualification.md) | Linux netfilter directional job-control partition qualification | accepted |
+| [0553](0553-established-job-control-black-hole-qualification.md) | Established Job Control black-hole qualification | accepted |

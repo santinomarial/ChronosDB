@@ -1658,10 +1658,14 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   An opt-in Linux netfilter gate now drops either packets to one exact reducer port or packets from
   it after lease renewal. The isolated reducer expires its lease, the reachable peer receives
   authenticated cancellation, the coordinator fails, and deleting the rule lets both retained
-  reducers complete a fresh lifecycle. Durable query recovery, established-stream/TLS-record
-  interruption, delay/duplication/reordering/probabilistic loss, larger-set skew, broader fault
-  campaigns, and measurement remain; the separate packaged Native split-leader process gate is
-  also qualified.
+  reducers complete a fresh lifecycle. The same gate now holds an already-authenticated real-TCP
+  Job Control session before request dispatch or after PREPARE admission, then drops the applicable
+  direction. Both paths remain deadline-bound; a lost admitted response publishes no client result,
+  retries as one duplicate PREPARE after healing, and accepts authenticated bounded cleanup through
+  the retained listener and service. Durable query recovery, partial TLS-record/application-frame
+  interruption, TCP reset, delay/duplication/reordering/probabilistic loss, larger-set skew, broader
+  fault campaigns, and measurement remain; the separate packaged Native split-leader process gate
+  is also qualified.
   The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives

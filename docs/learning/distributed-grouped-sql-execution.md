@@ -392,8 +392,15 @@ kernel-owned directional black holes after both reducers activate and renew: dro
 one reducer or dropping its response direction forces that reducer's lease expiry, authenticated
 cancellation of the reachable peer, and coordinator failure. Removing
 the exact port-scoped rule lets both retained reducers activate, renew, and cancel a fresh identity.
-Durable job recovery, established-stream/TLS-record interruption, delay, duplication, reordering,
-probabilistic loss, and larger-set campaigns remain open.
+The same privileged target now freezes a real TCP/mTLS Job Control session immediately after
+authentication and drops its request direction: both sessions time out, the reducer dispatch count
+stays zero, and the retained listener accepts a healed lifecycle. A second case stops after PREPARE
+admission but before response writing, drops the response direction, and proves the client cannot
+publish success. An exact retry after healing succeeds against the retained job as one duplicate
+PREPARE, followed by authenticated cancellation and original-execution-deadline reclamation.
+These are whole-application-frame black holes; controlled partial TLS-record/application-frame
+interruption, TCP reset, durable job recovery, delay, duplication, reordering, probabilistic loss,
+and larger-set campaigns remain open.
 
 ### Portable sufficient-state execution boundary
 

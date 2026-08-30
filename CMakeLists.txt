@@ -1834,8 +1834,12 @@ if(CHRONOS_BUILD_TESTS)
       grouped_shuffle_packet_fault_process_tests
       PRIVATE
         GROUPED_SHUFFLE_RESULT_PROCESS_CHILD_PATH="$<TARGET_FILE:grouped_shuffle_result_process_child>"
+        CHRONOS_TEST_TLS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network/tls"
     )
-    target_link_libraries(grouped_shuffle_packet_fault_process_tests PRIVATE GTest::gtest_main)
+    target_link_libraries(
+      grouped_shuffle_packet_fault_process_tests
+      PRIVATE chronos::cluster GTest::gtest_main
+    )
     add_dependencies(
       grouped_shuffle_packet_fault_process_tests
       grouped_shuffle_result_process_child
