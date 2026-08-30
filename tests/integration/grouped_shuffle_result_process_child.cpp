@@ -120,8 +120,13 @@ struct Proofs {
 };
 
 struct LeaseProofs {
-  explicit LeaseProofs(const std::uint8_t query_seed)
-      : fragments{fragment(2U, 2U, query_seed)},
+  struct Inputs {
+    std::uint8_t query_seed;
+    std::span<const raft::NodeId> reducer_nodes;
+  };
+
+  explicit LeaseProofs(const Inputs inputs)
+      : fragments(make_fragments(inputs)),
         authority(*cluster::DistributedVectorGroupedAggregateShuffleAuthority::
                       create_from_mutable_fragments(
                           fragments,
@@ -131,6 +136,17 @@ struct LeaseProofs {
         finalization(
             *cluster::DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2::create(
                 authority, fragments)) {}
+
+  [[nodiscard]] static std::vector<query::DistributedMutableVectorFragment>
+  make_fragments(const Inputs inputs) {
+    std::vector<query::DistributedMutableVectorFragment> result;
+    result.reserve(inputs.reducer_nodes.size());
+    for (std::size_t index = 0U; index < inputs.reducer_nodes.size(); ++index) {
+      result.push_back(fragment(static_cast<std::uint8_t>(index + 2U), inputs.reducer_nodes[index],
+                                inputs.query_seed));
+    }
+    return result;
+  }
 
   std::vector<query::DistributedMutableVectorFragment> fragments;
   cluster::DistributedVectorGroupedAggregateShuffleAuthority authority;
@@ -190,8 +206,9 @@ public:
   common::Result<bool> authorize_node(const std::uint64_t principal,
                                       const raft::NodeId node) const override {
     return common::Result<bool>{
-        (principal == 91U && (node == 3U || node == 4U || node == kCoordinatorNode)) ||
-        (principal == 92U && (node == 2U || node == kCoordinatorNode))};
+        (principal == 91U &&
+         (node == 2U || node == 3U || node == 4U || node == kCoordinatorNode)) ||
+        (principal == 92U && (node == 2U || node == 3U || node == kCoordinatorNode))};
   }
 };
 
@@ -233,18 +250,21 @@ public:
 };
 
 struct UnusedReceivers {
-  explicit UnusedReceivers(Authorizer& authorizer)
+  UnusedReceivers(Authorizer& authorizer, const raft::NodeId local_node_id)
       : mutable_receiver(
-            cluster::DistributedMutableVectorQueryReceiver::create(
-                {.local_node_id = 2U, .authorizer = &authorizer, .worker = &mutable_worker})
+            cluster::DistributedMutableVectorQueryReceiver::create({.local_node_id = local_node_id,
+                                                                    .authorizer = &authorizer,
+                                                                    .worker = &mutable_worker})
                 .value()),
-        grouped_receiver(
-            cluster::DistributedMutableVectorGroupedAggregateQueryReceiver::create(
-                {.local_node_id = 2U, .authorizer = &authorizer, .worker = &grouped_worker})
-                .value()),
+        grouped_receiver(cluster::DistributedMutableVectorGroupedAggregateQueryReceiver::create(
+                             {.local_node_id = local_node_id,
+                              .authorizer = &authorizer,
+                              .worker = &grouped_worker})
+                             .value()),
         authority_receiver(
-            cluster::RaftReadAuthorityReceiver::create(
-                {.local_node_id = 2U, .authorizer = &authorizer, .service = &authority_service})
+            cluster::RaftReadAuthorityReceiver::create({.local_node_id = local_node_id,
+                                                        .authorizer = &authorizer,
+                                                        .service = &authority_service})
                 .value()) {}
 
   UnusedMutableWorker mutable_worker;
@@ -326,23 +346,28 @@ template <typename Integer>
 
 enum class JobReducerPauseBoundary : std::uint8_t {
   kNone = 0,
-  kAfterPrepare = 1,
-  kAfterRoutes = 2,
+  kBeforeControl = 1,
+  kAfterPrepare = 2,
+  kAfterRoutes = 3,
+  kAfterActivation = 4,
 };
 
-[[nodiscard]] int run_job_reducer(const JobReducerPauseBoundary pause_boundary) {
+[[nodiscard]] int run_job_reducer(const raft::NodeId local_node_id,
+                                  const JobReducerPauseBoundary pause_boundary) {
   Authenticator coordinator_authenticator{91U};
   Authorizer authorizer;
-  UnusedReceivers receivers{authorizer};
+  UnusedReceivers receivers{authorizer, local_node_id};
   auto client_context = network::TlsClientContext::create(client_tls());
   if (!client_context.has_value()) {
     std::cerr << client_context.error().to_string() << '\n';
     return 2;
   }
   const std::array result_contexts{
+      cluster::DistributedQueryNodeTlsContext{2U, &*client_context},
+      cluster::DistributedQueryNodeTlsContext{3U, &*client_context},
       cluster::DistributedQueryNodeTlsContext{kCoordinatorNode, &*client_context}};
   auto job_config = cluster::DistributedVectorGroupedAggregateShuffleJobServiceConfig{};
-  job_config.local_node_id = 2U;
+  job_config.local_node_id = local_node_id;
   job_config.shuffle_tls = server_tls();
   job_config.shuffle_authenticator = &coordinator_authenticator;
   job_config.result_authenticator = &coordinator_authenticator;
@@ -388,6 +413,30 @@ enum class JobReducerPauseBoundary : std::uint8_t {
   std::cout << "JOB_REDUCER_READY " << server.bound_endpoint().port << '\n' << std::flush;
   cluster::DistributedVectorGroupedAggregateShuffleJobServiceMetrics observed;
   bool paused{};
+  const auto pause_and_restart = [&](const std::string_view label) -> common::Status {
+    std::cout << label << '\n' << std::flush;
+    if (::raise(SIGSTOP) != 0) {
+      return {common::StatusCode::kIoError,
+              "stopping reducer process at the requested boundary failed"};
+    }
+    common::Status shutdown = server.shutdown();
+    if (!shutdown.is_ok())
+      return shutdown;
+    auto restarted = cluster::DistributedMutableQueryControlTcpServer::start(make_server_config());
+    if (!restarted.has_value())
+      return restarted.error();
+    server = std::move(*restarted);
+    std::cout << "JOB_REDUCER_RESUMED " << server.bound_endpoint().port << '\n' << std::flush;
+    return common::Status::ok();
+  };
+  if (pause_boundary == JobReducerPauseBoundary::kBeforeControl) {
+    paused = true;
+    const common::Status resumed = pause_and_restart("PAUSED_BEFORE_CONTROL");
+    if (!resumed.is_ok()) {
+      std::cerr << resumed.to_string() << '\n';
+      return 5;
+    }
+  }
   for (;;) {
     const common::Status progress = server.poll_once(std::chrono::milliseconds{5});
     if (!progress.is_ok()) {
@@ -416,34 +465,32 @@ enum class JobReducerPauseBoundary : std::uint8_t {
                                  current.route_install_requests == 1U &&
                                  current.lease_activations == 0U &&
                                  server_metrics.completed_grouped_shuffle_job_controls >= 2U;
+    const bool activation_boundary = pause_boundary == JobReducerPauseBoundary::kAfterActivation &&
+                                     current.lease_activations == 1U &&
+                                     current.lease_renewals == 0U &&
+                                     server_metrics.completed_grouped_shuffle_job_controls >= 3U;
     observed = current;
-    if (!paused && (prepare_boundary || routes_boundary)) {
+    if (!paused && (prepare_boundary || routes_boundary || activation_boundary)) {
       paused = true;
-      std::cout << (prepare_boundary ? "PAUSED_AFTER_PREPARE" : "PAUSED_AFTER_ROUTES") << '\n'
-                << std::flush;
-      if (::raise(SIGSTOP) != 0) {
-        std::cerr << "stopping reducer process at the requested boundary failed\n";
+      const std::string_view label = prepare_boundary  ? "PAUSED_AFTER_PREPARE"
+                                     : routes_boundary ? "PAUSED_AFTER_ROUTES"
+                                                       : "PAUSED_AFTER_ACTIVATION";
+      const common::Status resumed = pause_and_restart(label);
+      if (!resumed.is_ok()) {
+        std::cerr << resumed.to_string() << '\n';
         return 6;
       }
-      const common::Status shutdown = server.shutdown();
-      if (!shutdown.is_ok()) {
-        std::cerr << shutdown.to_string() << '\n';
-        return 7;
-      }
-      auto restarted =
-          cluster::DistributedMutableQueryControlTcpServer::start(make_server_config());
-      if (!restarted.has_value()) {
-        std::cerr << restarted.error().to_string() << '\n';
-        return 8;
-      }
-      server = std::move(*restarted);
-      std::cout << "JOB_REDUCER_RESUMED " << server.bound_endpoint().port << '\n' << std::flush;
     }
   }
 }
 
+struct JobReducerEndpoint {
+  raft::NodeId node_id{};
+  std::uint16_t port{};
+};
+
 struct JobCoordinatorInvocation {
-  std::uint16_t reducer_port{};
+  std::vector<JobReducerEndpoint> reducers;
   std::uint8_t query_seed{};
   std::chrono::milliseconds reducer_execution_timeout{};
   std::chrono::milliseconds lease_duration{};
@@ -451,7 +498,12 @@ struct JobCoordinatorInvocation {
 };
 
 [[nodiscard]] int run_job_coordinator(const JobCoordinatorInvocation& invocation) {
-  LeaseProofs proofs{invocation.query_seed};
+  std::vector<raft::NodeId> reducer_nodes;
+  reducer_nodes.reserve(invocation.reducers.size());
+  for (const auto& reducer : invocation.reducers)
+    reducer_nodes.push_back(reducer.node_id);
+  LeaseProofs proofs{
+      LeaseProofs::Inputs{.query_seed = invocation.query_seed, .reducer_nodes = reducer_nodes}};
   Authenticator reducer_authenticator{92U};
   Authorizer authorizer;
   auto client_context = network::TlsClientContext::create(client_tls());
@@ -460,10 +512,13 @@ struct JobCoordinatorInvocation {
     return 2;
   }
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
-  const cluster::DistributedQueryNodeRoute reducer_route{
-      .node_id = 2U,
-      .endpoints = {{{127U, 0U, 0U, 1U}, invocation.reducer_port}},
-      .tls_context = &*client_context};
+  std::vector<cluster::DistributedQueryNodeRoute> reducer_routes;
+  reducer_routes.reserve(invocation.reducers.size());
+  for (const auto& reducer : invocation.reducers) {
+    reducer_routes.push_back({.node_id = reducer.node_id,
+                              .endpoints = {{{127U, 0U, 0U, 1U}, reducer.port}},
+                              .tls_context = &*client_context});
+  }
   const cluster::DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits retry{
       .maximum_attempts = 4U,
       .initial_backoff = std::chrono::milliseconds{1},
@@ -475,14 +530,14 @@ struct JobCoordinatorInvocation {
   result_config.node_authorizer = &authorizer;
   result_config.coordinator_node_id = kCoordinatorNode;
   result_config.carrier_limits = carrier_limits();
-  result_config.maximum_retained_server_streams = 1U;
-  result_config.maximum_accepts_per_poll = 1U;
+  result_config.maximum_retained_server_streams = invocation.reducers.size();
+  result_config.maximum_accepts_per_poll = invocation.reducers.size();
   result_config.execution_deadline = deadline;
 
   auto coordinator_config =
       cluster::DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionConfig{};
   coordinator_config.coordinator_node_id = kCoordinatorNode;
-  coordinator_config.reducer_control_routes = {reducer_route};
+  coordinator_config.reducer_control_routes = std::move(reducer_routes);
   coordinator_config.authenticator = &reducer_authenticator;
   coordinator_config.node_authorizer = &authorizer;
   coordinator_config.carrier_limits = job_control_limits();
@@ -641,14 +696,21 @@ struct JobCoordinatorInvocation {
 int main(const int argc, char** argv) {
   try {
     using namespace chronos::integration;
-    if (argc == 3 && std::string_view{argv[1]} == "job-reducer") {
-      const std::string_view boundary{argv[2]};
+    if (argc == 4 && std::string_view{argv[1]} == "job-reducer") {
+      const auto local_node_id = parse_integer<chronos::raft::NodeId>(argv[2]);
+      const std::string_view boundary{argv[3]};
+      if (!local_node_id.has_value() || (*local_node_id != 2U && *local_node_id != 3U))
+        return 64;
       if (boundary == "none")
-        return run_job_reducer(JobReducerPauseBoundary::kNone);
+        return run_job_reducer(*local_node_id, JobReducerPauseBoundary::kNone);
+      if (boundary == "before-control")
+        return run_job_reducer(*local_node_id, JobReducerPauseBoundary::kBeforeControl);
       if (boundary == "after-prepare")
-        return run_job_reducer(JobReducerPauseBoundary::kAfterPrepare);
+        return run_job_reducer(*local_node_id, JobReducerPauseBoundary::kAfterPrepare);
       if (boundary == "after-routes")
-        return run_job_reducer(JobReducerPauseBoundary::kAfterRoutes);
+        return run_job_reducer(*local_node_id, JobReducerPauseBoundary::kAfterRoutes);
+      if (boundary == "after-activation")
+        return run_job_reducer(*local_node_id, JobReducerPauseBoundary::kAfterActivation);
     }
     if (argc == 7 && std::string_view{argv[1]} == "job-coordinator") {
       const auto port = parse_integer<std::uint16_t>(argv[2]);
@@ -660,7 +722,26 @@ int main(const int argc, char** argv) {
           execution.has_value() && *execution != 0U && lease.has_value() && *lease != 0U &&
           (mode == "hold" || mode == "cancel")) {
         return run_job_coordinator(
-            {.reducer_port = *port,
+            {.reducers = {{.node_id = 2U, .port = *port}},
+             .query_seed = static_cast<std::uint8_t>(*query_seed),
+             .reducer_execution_timeout = std::chrono::milliseconds{*execution},
+             .lease_duration = std::chrono::milliseconds{*lease},
+             .cancel_after_renewal = mode == "cancel"});
+      }
+    }
+    if (argc == 8 && std::string_view{argv[1]} == "job-coordinator-two") {
+      const auto first_port = parse_integer<std::uint16_t>(argv[2]);
+      const auto second_port = parse_integer<std::uint16_t>(argv[3]);
+      const auto query_seed = parse_integer<std::uint32_t>(argv[4]);
+      const auto execution = parse_integer<std::uint64_t>(argv[5]);
+      const auto lease = parse_integer<std::uint64_t>(argv[6]);
+      const std::string_view mode{argv[7]};
+      if (first_port.has_value() && second_port.has_value() && query_seed.has_value() &&
+          *query_seed != 0U && *query_seed <= 255U && execution.has_value() && *execution != 0U &&
+          lease.has_value() && *lease != 0U && (mode == "hold" || mode == "cancel")) {
+        return run_job_coordinator(
+            {.reducers = {{.node_id = 2U, .port = *first_port},
+                          {.node_id = 3U, .port = *second_port}},
              .query_seed = static_cast<std::uint8_t>(*query_seed),
              .reducer_execution_timeout = std::chrono::milliseconds{*execution},
              .lease_duration = std::chrono::milliseconds{*lease},
@@ -691,8 +772,10 @@ int main(const int argc, char** argv) {
     std::cerr << "usage: grouped_shuffle_result_process_child "
                  "coordinator PORT TIMEOUT_MS | reducer PORT REFUSED_PORT PARTITION VALUE COUNT | "
                  "stall-reducer PARTITION | "
-                 "job-reducer none|after-prepare|after-routes | "
-                 "job-coordinator REDUCER_PORT QUERY_SEED EXECUTION_MS LEASE_MS hold|cancel\n";
+                 "job-reducer NODE none|before-control|after-prepare|after-routes|after-activation "
+                 "| job-coordinator REDUCER_PORT QUERY_SEED EXECUTION_MS LEASE_MS hold|cancel | "
+                 "job-coordinator-two REDUCER2_PORT REDUCER3_PORT QUERY_SEED EXECUTION_MS "
+                 "LEASE_MS hold|cancel\n";
     return 64;
   } catch (const std::exception& error) {
     std::cerr << "grouped shuffle process child failed: " << error.what() << '\n';

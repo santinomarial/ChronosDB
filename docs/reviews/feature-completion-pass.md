@@ -1365,15 +1365,17 @@ were deliberately not run.
   selects jobs only for gateway coordinators, leaving coordinator-local queries on the direct path
   required by current self-route restrictions. Codec, service, whole-lifecycle, replicated Native,
   header, and allocation tests cover this boundary. The current warning-as-error build, all 362
-  cluster tests, all 80 cluster allocation-failure tests, and all 5 result-process tests pass. The
+  cluster tests, all 80 cluster allocation-failure tests, and all 8 result-process tests pass. The
   process suite also passes under focused ASan/UBSan, TSan, and GCC 13 Ubuntu 24.04 qualification;
   formatting, workflow pins, and whitespace pass.
   Pinned LLVM 18 static analysis reaches only the known macOS 26 libc++ builtin incompatibility and
   reports no current project-source diagnostic. Standalone production-owner process gates
   now qualify coordinator kill after acknowledged PREPARE, after route installation without a
-  lease, and after lease activation plus renewal. Execution-deadline or lease cleanup and fresh
-  replacement pass at each applicable boundary; partial multi-reducer acknowledgement,
-  partition/fault, skew, and measurement qualification remain open.
+  lease, and after lease activation plus renewal. Two-reducer gates now stop peers at asymmetric
+  PREPARE, route, and lease prefixes before coordinator kill. Each reducer uses its own exact
+  execution-deadline or lease cleanup, and both retained services pass a fresh replacement
+  lifecycle together. Partial frames, packet-level partition/fault, larger-set skew, and
+  measurement qualification remain open.
 - Authenticated grouped reducer-job cancellation: fixed Job Control v3 CANCEL frames now flow
   through header-first transport, finite retry, mutual TLS, and the shared packaged endpoint.
   Reducers retain bounded expiring tombstones when cancellation arrives before PREPARE, preventing
@@ -1397,9 +1399,10 @@ were deliberately not run.
   two-node mixed-role tests cover local and remote workers, opposite shuffle edges, lease/control
   completion, local plus mTLS result collection, and merged output; local cancellation identity,
   provider selection, and allocation classification are separate assertions. Pre-activation and
-  post-activation coordinator process loss plus fresh replacement now pass independently;
-  partial multi-reducer loss and measurement remain open, and the separate Native split-leader
-  process gate also passes.
+  post-activation coordinator process loss plus fresh replacement now pass independently. Partial
+  two-reducer PREPARE, route, and lease acknowledgement plus asymmetric cleanup also pass; partial
+  frames, packet-level partitions, larger-set skew, and measurement remain open. The separate
+  Native split-leader process gate also passes.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

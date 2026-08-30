@@ -124,6 +124,20 @@ public:
     return pid_ > 0 && ::kill(pid_, SIGCONT) == 0;
   }
 
+  [[nodiscard]] bool wait_until_stopped(const std::chrono::milliseconds timeout) const noexcept {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    int status{};
+    while (std::chrono::steady_clock::now() < deadline) {
+      const pid_t result = ::waitpid(pid_, &status, WUNTRACED | WNOHANG);
+      if (result == pid_)
+        return WIFSTOPPED(status) && WSTOPSIG(status) == SIGSTOP;
+      if (result < 0 && errno != EINTR)
+        return false;
+      std::this_thread::sleep_for(std::chrono::milliseconds{5});
+    }
+    return false;
+  }
+
   [[nodiscard]] bool kill_abruptly() noexcept {
     close_output();
     if (pid_ <= 0)
@@ -270,7 +284,7 @@ TEST(GroupedShuffleResultProcessTest,
 TEST(GroupedShuffleResultProcessTest,
      CoordinatorKillExpiresReducerLeaseAndAllowsAFreshReplacement) {
   ChildProcess reducer;
-  ASSERT_TRUE(reducer.start({"job-reducer", "none"}));
+  ASSERT_TRUE(reducer.start({"job-reducer", "2", "none"}));
   const auto reducer_ready = reducer.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(reducer_ready.has_value());
   const std::uint16_t reducer_port = job_reducer_port(*reducer_ready);
@@ -311,7 +325,7 @@ struct PreActivationLossCase {
 
 void expect_pre_activation_coordinator_loss(const PreActivationLossCase& loss_case) {
   ChildProcess reducer;
-  ASSERT_TRUE(reducer.start({"job-reducer", loss_case.reducer_boundary}));
+  ASSERT_TRUE(reducer.start({"job-reducer", "2", loss_case.reducer_boundary}));
   const auto reducer_ready = reducer.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(reducer_ready.has_value());
   const std::uint16_t initial_port = job_reducer_port(*reducer_ready);
@@ -321,6 +335,7 @@ void expect_pre_activation_coordinator_loss(const PreActivationLossCase& loss_ca
   ASSERT_TRUE(lost_coordinator.start(
       {"job-coordinator", std::to_string(initial_port), "1", "500", "200", "hold"}));
   ASSERT_TRUE(reducer.read_until(loss_case.paused_line, std::chrono::seconds{5}).has_value());
+  ASSERT_TRUE(reducer.wait_until_stopped(std::chrono::seconds{2}));
   ASSERT_TRUE(lost_coordinator.kill_abruptly());
   ASSERT_TRUE(reducer.resume());
 
@@ -354,6 +369,135 @@ TEST(GroupedShuffleResultProcessTest,
      CoordinatorKillAfterRouteInstallFallsBackToExecutionDeadlineAndAllowsReplacement) {
   expect_pre_activation_coordinator_loss(
       {.reducer_boundary = "after-routes", .paused_line = "PAUSED_AFTER_ROUTES"});
+}
+
+struct PartialMultiReducerLossCase {
+  std::string first_boundary;
+  std::string_view first_paused_line;
+  std::string first_expiration;
+  std::uint64_t first_replacement_activation{};
+  std::string second_boundary;
+  std::string_view second_paused_line;
+  std::string second_expiration;
+  std::uint64_t second_replacement_activation{};
+};
+
+void expect_partial_multi_reducer_coordinator_loss(const PartialMultiReducerLossCase& loss_case) {
+  ChildProcess first_reducer;
+  ChildProcess second_reducer;
+  ASSERT_TRUE(first_reducer.start({"job-reducer", "2", loss_case.first_boundary}));
+  ASSERT_TRUE(second_reducer.start({"job-reducer", "3", loss_case.second_boundary}));
+  const auto first_ready = first_reducer.read_line(std::chrono::seconds{5});
+  const auto second_ready = second_reducer.read_line(std::chrono::seconds{5});
+  ASSERT_TRUE(first_ready.has_value());
+  ASSERT_TRUE(second_ready.has_value());
+  const std::uint16_t first_port = job_reducer_port(*first_ready);
+  const std::uint16_t second_port = job_reducer_port(*second_ready);
+  ASSERT_NE(first_port, 0U) << *first_ready;
+  ASSERT_NE(second_port, 0U) << *second_ready;
+
+  if (loss_case.first_boundary == "before-control") {
+    ASSERT_TRUE(
+        first_reducer.read_until(loss_case.first_paused_line, std::chrono::seconds{5}).has_value());
+    ASSERT_TRUE(first_reducer.wait_until_stopped(std::chrono::seconds{2}));
+  }
+  if (loss_case.second_boundary == "before-control") {
+    ASSERT_TRUE(second_reducer.read_until(loss_case.second_paused_line, std::chrono::seconds{5})
+                    .has_value());
+    ASSERT_TRUE(second_reducer.wait_until_stopped(std::chrono::seconds{2}));
+  }
+
+  ChildProcess lost_coordinator;
+  ASSERT_TRUE(lost_coordinator.start({"job-coordinator-two", std::to_string(first_port),
+                                      std::to_string(second_port), "1", "1500", "300", "hold"}));
+  if (loss_case.first_boundary != "before-control") {
+    ASSERT_TRUE(
+        first_reducer.read_until(loss_case.first_paused_line, std::chrono::seconds{5}).has_value());
+    ASSERT_TRUE(first_reducer.wait_until_stopped(std::chrono::seconds{2}));
+  }
+  if (loss_case.second_boundary != "before-control") {
+    ASSERT_TRUE(second_reducer.read_until(loss_case.second_paused_line, std::chrono::seconds{5})
+                    .has_value());
+    ASSERT_TRUE(second_reducer.wait_until_stopped(std::chrono::seconds{2}));
+  }
+  ASSERT_TRUE(lost_coordinator.kill_abruptly());
+  ASSERT_TRUE(first_reducer.resume());
+  ASSERT_TRUE(second_reducer.resume());
+
+  const auto first_resumed = first_reducer.read_line(std::chrono::seconds{5});
+  const auto second_resumed = second_reducer.read_line(std::chrono::seconds{5});
+  ASSERT_TRUE(first_resumed.has_value());
+  ASSERT_TRUE(second_resumed.has_value());
+  const std::uint16_t first_resumed_port = resumed_job_reducer_port(*first_resumed);
+  const std::uint16_t second_resumed_port = resumed_job_reducer_port(*second_resumed);
+  ASSERT_NE(first_resumed_port, 0U) << *first_resumed;
+  ASSERT_NE(second_resumed_port, 0U) << *second_resumed;
+  if (!loss_case.first_expiration.empty()) {
+    ASSERT_TRUE(
+        first_reducer.read_until(loss_case.first_expiration, std::chrono::seconds{3}).has_value());
+  }
+  if (!loss_case.second_expiration.empty()) {
+    ASSERT_TRUE(second_reducer.read_until(loss_case.second_expiration, std::chrono::seconds{3})
+                    .has_value());
+  }
+
+  ChildProcess replacement;
+  ASSERT_TRUE(
+      replacement.start({"job-coordinator-two", std::to_string(first_resumed_port),
+                         std::to_string(second_resumed_port), "2", "5000", "300", "cancel"}));
+  const auto replacement_leased = replacement.read_line(std::chrono::seconds{5});
+  ASSERT_TRUE(replacement_leased.has_value());
+  EXPECT_EQ(*replacement_leased, "LEASED 2");
+  ASSERT_TRUE(first_reducer
+                  .read_until("ACTIVE " + std::to_string(loss_case.first_replacement_activation),
+                              std::chrono::seconds{5})
+                  .has_value());
+  ASSERT_TRUE(second_reducer
+                  .read_until("ACTIVE " + std::to_string(loss_case.second_replacement_activation),
+                              std::chrono::seconds{5})
+                  .has_value());
+  const auto replacement_cancelled = replacement.read_line(std::chrono::seconds{5});
+  ASSERT_TRUE(replacement_cancelled.has_value());
+  EXPECT_EQ(*replacement_cancelled, "CANCELLED 2");
+  EXPECT_EQ(replacement.wait_for_exit(std::chrono::seconds{5}), 0);
+  EXPECT_TRUE(first_reducer.kill_abruptly());
+  EXPECT_TRUE(second_reducer.kill_abruptly());
+}
+
+TEST(GroupedShuffleResultProcessTest,
+     CoordinatorKillWithOneOfTwoPrepareAcknowledgementsExpiresOnlyTheAdmittedReducer) {
+  expect_partial_multi_reducer_coordinator_loss({.first_boundary = "after-prepare",
+                                                 .first_paused_line = "PAUSED_AFTER_PREPARE",
+                                                 .first_expiration = "EXECUTION_EXPIRED 1",
+                                                 .first_replacement_activation = 1U,
+                                                 .second_boundary = "before-control",
+                                                 .second_paused_line = "PAUSED_BEFORE_CONTROL",
+                                                 .second_expiration = {},
+                                                 .second_replacement_activation = 1U});
+}
+
+TEST(GroupedShuffleResultProcessTest,
+     CoordinatorKillWithOneOfTwoRouteAcknowledgementsExpiresBothPreparedReducers) {
+  expect_partial_multi_reducer_coordinator_loss({.first_boundary = "after-routes",
+                                                 .first_paused_line = "PAUSED_AFTER_ROUTES",
+                                                 .first_expiration = "EXECUTION_EXPIRED 1",
+                                                 .first_replacement_activation = 1U,
+                                                 .second_boundary = "after-prepare",
+                                                 .second_paused_line = "PAUSED_AFTER_PREPARE",
+                                                 .second_expiration = "EXECUTION_EXPIRED 1",
+                                                 .second_replacement_activation = 1U});
+}
+
+TEST(GroupedShuffleResultProcessTest,
+     CoordinatorKillWithOneOfTwoLeaseAcknowledgementsUsesAsymmetricCleanupBoundaries) {
+  expect_partial_multi_reducer_coordinator_loss({.first_boundary = "after-activation",
+                                                 .first_paused_line = "PAUSED_AFTER_ACTIVATION",
+                                                 .first_expiration = "EXPIRED 1",
+                                                 .first_replacement_activation = 2U,
+                                                 .second_boundary = "after-routes",
+                                                 .second_paused_line = "PAUSED_AFTER_ROUTES",
+                                                 .second_expiration = "EXECUTION_EXPIRED 1",
+                                                 .second_replacement_activation = 1U});
 }
 
 } // namespace

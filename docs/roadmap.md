@@ -1649,9 +1649,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   pre-activation fallback. Standalone real-process gates now kill the coordinator after an
   acknowledged PREPARE, after acknowledged route installation with no active lease, and after lease
   activation plus renewal. The first two prove execution-deadline cleanup; the third proves earlier
-  lease cleanup. Every case admits, renews, and cancels a distinct fresh query identity. Partial
-  multi-reducer acknowledgement, durable query recovery, partitions, broader fault campaigns, and
-  measurement remain; the separate packaged Native split-leader process gate is also qualified.
+  lease cleanup. Two-reducer gates now qualify partial PREPARE, route, and lease acknowledgements:
+  each reducer cleans up according to its own exact phase, a peer that accepted no control retains
+  no abandoned job, and both retained services admit, renew, and cancel a distinct fresh query
+  together. Durable query recovery, partial frames, packet-level partitions, larger-set skew,
+  broader fault campaigns, and measurement remain; the separate packaged Native split-leader
+  process gate is also qualified.
   The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives

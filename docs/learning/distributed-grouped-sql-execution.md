@@ -380,9 +380,12 @@ deadline. Standalone multi-process gates now run the production coordinator and 
 reducer owners in separate children. They kill the coordinator after acknowledged PREPARE, after
 acknowledged route installation but before lease activation, and after activation plus renewal.
 The first two cases discard suspended control connections and prove the original execution-deadline
-fallback; the third proves relative lease expiry. Every case then admits and cancels a fresh query
-identity. Durable job recovery, partial multi-reducer acknowledgements, network partitions, and
-broader fault campaigns remain open.
+fallback; the third proves relative lease expiry. Two-reducer gates also stop peers at different
+PREPARE, route, and activation prefixes before coordinator loss. Each admitted reducer selects its
+own execution-deadline or lease cleanup, a reducer that accepted no control retains no abandoned
+job, and both retained services then admit, renew, and cancel a fresh query identity together.
+Durable job recovery, partial frames, packet-level partitions, larger-set skew, and broader fault
+campaigns remain open.
 
 ### Portable sufficient-state execution boundary
 
