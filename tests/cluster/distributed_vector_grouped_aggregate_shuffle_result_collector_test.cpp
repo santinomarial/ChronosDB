@@ -44,17 +44,17 @@ namespace {
 [[nodiscard]] DistributedVectorGroupedAggregateShuffleCompleteResultStream
 complete(const DistributedVectorGroupedAggregateShuffleAuthority& expected,
          const query::DistributedVectorResultSchema& schema, const std::uint32_t partition_id,
-         const std::string& value) {
+         const std::string& value, const raft::NodeId coordinator_node_id = 9U) {
   const auto source = expected.destination_node(partition_id).value();
   std::vector<std::vector<std::byte>> batches;
   if (!value.empty())
     batches.push_back(batch(value));
   auto sender = DistributedVectorGroupedAggregateShuffleResultStreamSender::create(
-                    expected, schema, partition_id, source, 9U, batches)
+                    expected, schema, partition_id, source, coordinator_node_id, batches)
                     .value();
   return {.query_id = expected.query_id(),
           .source_node_id = source,
-          .target_node_id = 9U,
+          .target_node_id = coordinator_node_id,
           .partition_id = partition_id,
           .encoded_result_batches = std::move(batches),
           .frame_count = static_cast<std::uint32_t>(sender.frame_count()),
@@ -126,11 +126,29 @@ TEST(DistributedVectorGroupedAggregateShuffleResultCollectorTest,
             common::StatusCode::kResourceExhausted);
   EXPECT_EQ(collector->metrics().accepted_partitions, 1U);
   EXPECT_FALSE(collector->ready());
+}
 
-  EXPECT_EQ(DistributedVectorGroupedAggregateShuffleResultCollector::create(expected, schema, 3U)
-                .error()
-                .code(),
-            common::StatusCode::kInvalidArgument);
+TEST(DistributedVectorGroupedAggregateShuffleResultCollectorTest,
+     AcceptsAuthorityValidatedLocalAndRemotePartitionsWithoutASelfRoute) {
+  auto expected = authority();
+  auto schema = result_schema();
+  auto collector =
+      DistributedVectorGroupedAggregateShuffleResultCollector::create(expected, schema, 3U);
+  ASSERT_TRUE(collector.has_value()) << collector.error().to_string();
+  std::vector<std::vector<std::byte>> local_batches{batch("east")};
+  auto local = create_distributed_vector_grouped_aggregate_shuffle_local_result_stream(
+      expected, schema, 0U, 3U, std::move(local_batches));
+  ASSERT_TRUE(local.has_value()) << local.error().to_string();
+  EXPECT_TRUE(collector->accept_stream(std::move(*local)).is_ok());
+  EXPECT_TRUE(collector->accept_stream(complete(expected, schema, 1U, "west", 3U)).is_ok());
+  EXPECT_TRUE(collector->ready());
+  auto streams = collector->take_complete_streams();
+  ASSERT_TRUE(streams.has_value()) << streams.error().to_string();
+  ASSERT_EQ(streams->size(), 2U);
+  EXPECT_EQ((*streams)[0].source_node_id, 3U);
+  EXPECT_EQ((*streams)[0].target_node_id, 3U);
+  EXPECT_EQ((*streams)[1].source_node_id, 4U);
+  EXPECT_EQ((*streams)[1].target_node_id, 3U);
 }
 
 } // namespace

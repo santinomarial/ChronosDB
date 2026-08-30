@@ -799,6 +799,7 @@ configure_distributed_mutable_query(
              .result_tls = {.pem_credentials = credentials},
              .authenticator = &installed_authority,
              .node_authorizer = &installed_authority,
+             .local_reducer_job_service = installed_server.grouped_shuffle_job_service(),
              .result_listener = {
                  .bind_endpoint = {.address = local_query_endpoint->address, .port = 0U}}});
     if (!grouped_shuffle_provider.has_value())

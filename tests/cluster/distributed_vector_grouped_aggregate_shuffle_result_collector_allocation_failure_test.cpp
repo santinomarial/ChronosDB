@@ -52,6 +52,20 @@ complete(const DistributedVectorGroupedAggregateShuffleAuthority& authority,
           .encoded_bytes = sender.encoded_bytes()};
 }
 
+[[nodiscard]] DistributedVectorGroupedAggregateShuffleCompleteResultStream
+complete_local(const DistributedVectorGroupedAggregateShuffleAuthority& authority,
+               const query::DistributedVectorResultSchema& schema,
+               const schema::LogicalType& type) {
+  const std::string value{"allocation-local-result-larger-than-SSO"};
+  const std::array columns{network::QueryResultColumn{"region", type, false}};
+  const std::array cells{network::QueryResultCell{.value = std::as_bytes(std::span{value})}};
+  std::vector<std::vector<std::byte>> batches;
+  batches.push_back(network::encode_query_result_batch(1U, columns, cells).value());
+  return create_distributed_vector_grouped_aggregate_shuffle_local_result_stream(
+             authority, schema, 0U, 3U, std::move(batches))
+      .value();
+}
+
 TEST(DistributedVectorGroupedAggregateShuffleResultCollectorAllocationFailureTest,
      ClassifiesConstructionValidationAndAtomicPublication) {
   const auto tablet = schema::TabletId::from_uuid(uuid(2U)).value();
@@ -98,6 +112,27 @@ TEST(DistributedVectorGroupedAggregateShuffleResultCollectorAllocationFailureTes
   EXPECT_EQ(publication_failure.error().code(), common::StatusCode::kResourceExhausted);
   EXPECT_TRUE(collector.ready());
   EXPECT_TRUE(collector.take_complete_streams().has_value());
+
+  auto local_collector =
+      DistributedVectorGroupedAggregateShuffleResultCollector::create(authority, schema, 3U)
+          .value();
+  bool saw_local_accept_failure{};
+  for (std::size_t fail_after = 0U; fail_after < 64U; ++fail_after) {
+    auto stream = complete_local(authority, schema, type);
+    const common::Status accepted =
+        run_failure(fail_after, [&] { return local_collector.accept_stream_preserving(stream); });
+    if (!accepted.is_ok()) {
+      saw_local_accept_failure = true;
+      EXPECT_EQ(accepted.code(), common::StatusCode::kResourceExhausted);
+      EXPECT_EQ(local_collector.metrics().accepted_partitions, 0U);
+      EXPECT_EQ(stream.source_node_id, 3U);
+      EXPECT_EQ(stream.target_node_id, 3U);
+      continue;
+    }
+    break;
+  }
+  EXPECT_TRUE(saw_local_accept_failure);
+  EXPECT_TRUE(local_collector.ready());
 }
 
 } // namespace

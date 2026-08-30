@@ -107,6 +107,18 @@ TEST(DistributedVectorGroupedAggregateShuffleJobServiceAllocationFailureTest,
   ASSERT_TRUE(response.has_value()) << response.error().to_string();
   EXPECT_EQ(response->status_code, common::StatusCode::kResourceExhausted);
   EXPECT_EQ(service.metrics().active_jobs, 0U);
+
+  auto local_prepare = prepare();
+  local_prepare.coordinator_node_id = 3U;
+  local_prepare.target_node_id = 3U;
+  DistributedVectorGroupedAggregateShuffleJobControlRequest local_request{std::move(local_prepare)};
+  ::chronos::test::ScopedAllocationFailure local_failure{0U};
+  auto local_response =
+      service.receive_local(std::move(local_request), std::chrono::steady_clock::now());
+  local_failure.disable();
+  ASSERT_TRUE(local_response.has_value()) << local_response.error().to_string();
+  EXPECT_EQ(local_response->status_code, common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(service.metrics().active_jobs, 0U);
 }
 
 } // namespace

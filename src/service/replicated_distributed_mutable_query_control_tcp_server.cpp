@@ -224,4 +224,15 @@ ReplicatedDistributedMutableQueryControlTcpServer::mutable_grouped_worker() noex
   return std::addressof(implementation_->grouped_worker);
 }
 
+cluster::DistributedVectorGroupedAggregateShuffleJobService*
+ReplicatedDistributedMutableQueryControlTcpServer::grouped_shuffle_job_service() noexcept {
+  if (!implementation_ || !is_running() ||
+      !implementation_->grouped_shuffle_job_service.has_value()) {
+    return nullptr;
+  }
+  // The immediately preceding guard proves engagement; clang-tidy 18 does not
+  // propagate that fact through the pImpl member access on libc++.
+  return std::addressof(*implementation_->grouped_shuffle_job_service); // NOLINT
+}
+
 } // namespace chronos::service

@@ -1628,9 +1628,14 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   publication boundary, and one whole-query owner composes PREPARE, route installation, workers,
   source transport, SEAL, result collection, and take-once Native finalization. The production
   provider consumes routes from the same committed query snapshot and selects the lifecycle for
-  gateway coordinators. Coordinator-local fragments explicitly retain the direct grouped path
-  because current authenticated protocols forbid self routes. A replicated Native service fixture
-  proves the gateway path through real mTLS and mutable storage. A distinct fixed Job Control v3
+  gateway and mixed-role coordinators. Coordinator-owned reducers use an exact in-process service
+  endpoint for control and authority/schema-validated local result handoff; remote reducers retain
+  mTLS, and every frozen protocol continues to forbid network self routes. One mutex serializes the
+  packaged query and query-control threads over each reducer job. All-local and two-node mixed-role
+  lifecycle tests prove local plus remote workers, opposite shuffle edges, leases, cancellation
+  identity, local plus authenticated result collection, and one merged Native result. A replicated
+  Native service fixture proves the gateway path through real mTLS and mutable storage. A distinct
+  fixed Job Control v3
   CANCEL now authenticates and exact-correlates reducer cleanup. Bounded expiring service
   tombstones close the cancel-before-PREPARE race; reducer and whole-query owners remain in an
   explicit finite cancellation phase until all reachable destinations acknowledge or the query
@@ -1639,8 +1644,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   renews every reducer during worker, SEAL, and result phases while reducer polling expires missing
   coordinators without synchronized clocks; the original PREPARE deadline remains the
   pre-activation fallback. Packaged process-kill qualification and fresh replacement, durable query
-  recovery, self-role job control, full multi-daemon split-leader qualification, fault campaigns,
-  and measurement remain. The computed path now
+  recovery, full multi-daemon split-leader qualification, fault campaigns, and measurement remain.
+  The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives
   plan and result shapes from its outputs, and executes it locally before grouping.

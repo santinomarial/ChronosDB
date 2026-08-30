@@ -4,6 +4,7 @@
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_execution.hpp"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -11,6 +12,7 @@
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -481,6 +483,94 @@ TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
       now + std::chrono::milliseconds{15});
   ASSERT_TRUE(duplicate_prepare.has_value());
   EXPECT_EQ(duplicate_prepare->status_code, common::StatusCode::kCancelled);
+}
+
+TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
+     LocalControlRejectsForeignIdentityAndRetainsCancellationTombstone) {
+  Authenticator authenticator{93U};
+  Authorizer authorizer;
+  auto result_context = network::TlsClientContext::create(client_tls()).value();
+  const std::array result_contexts{DistributedQueryNodeTlsContext{3U, &result_context}};
+  auto service = DistributedVectorGroupedAggregateShuffleJobService::create(
+                     {.local_node_id = 3U,
+                      .shuffle_authenticator = &authenticator,
+                      .result_authenticator = &authenticator,
+                      .node_authorizer = &authorizer,
+                      .result_tls_contexts = result_contexts,
+                      .maximum_jobs = 1U,
+                      .maximum_job_query_memory_bytes = 16U << 20U})
+                     .value();
+  const auto now = std::chrono::steady_clock::now();
+  const DistributedVectorGroupedAggregateShuffleJobCancel local_cancel{
+      .query_id = uuid(1U), .coordinator_node_id = 3U, .target_node_id = 3U};
+  auto cancelled = service.receive_local(
+      DistributedVectorGroupedAggregateShuffleJobControlRequest{local_cancel}, now);
+  ASSERT_TRUE(cancelled.has_value()) << cancelled.error().to_string();
+  EXPECT_EQ(cancelled->status_code, common::StatusCode::kOk);
+  auto duplicate = service.receive_local(
+      DistributedVectorGroupedAggregateShuffleJobControlRequest{local_cancel}, now);
+  ASSERT_TRUE(duplicate.has_value());
+  EXPECT_EQ(duplicate->status_code, common::StatusCode::kOk);
+
+  auto foreign = local_cancel;
+  foreign.coordinator_node_id = 9U;
+  EXPECT_EQ(
+      service.receive_local(DistributedVectorGroupedAggregateShuffleJobControlRequest{foreign}, now)
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
+
+  auto local_prepare = prepare({});
+  local_prepare.coordinator_node_id = 3U;
+  local_prepare.target_node_id = 3U;
+  auto blocked = service.receive_local(
+      DistributedVectorGroupedAggregateShuffleJobControlRequest{std::move(local_prepare)}, now);
+  ASSERT_TRUE(blocked.has_value()) << blocked.error().to_string();
+  EXPECT_EQ(blocked->status_code, common::StatusCode::kCancelled);
+  EXPECT_EQ(service.metrics().cancel_tombstones, 1U);
+  EXPECT_EQ(service.metrics().duplicate_cancels, 1U);
+}
+
+TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
+     SerializesLocalControlMetricsAndPollAcrossThreads) {
+  Authenticator authenticator{93U};
+  Authorizer authorizer;
+  auto result_context = network::TlsClientContext::create(client_tls()).value();
+  const std::array result_contexts{DistributedQueryNodeTlsContext{3U, &result_context}};
+  auto service = DistributedVectorGroupedAggregateShuffleJobService::create(
+                     {.local_node_id = 3U,
+                      .shuffle_authenticator = &authenticator,
+                      .result_authenticator = &authenticator,
+                      .node_authorizer = &authorizer,
+                      .result_tls_contexts = result_contexts,
+                      .maximum_jobs = 1U,
+                      .maximum_job_query_memory_bytes = 16U << 20U})
+                     .value();
+  std::atomic<bool> poll_succeeded{true};
+  std::thread poller{[&] {
+    for (std::size_t iteration = 0U; iteration < 1024U; ++iteration) {
+      if (!service.poll_once(std::chrono::milliseconds{0}, std::chrono::steady_clock::now())
+               .is_ok())
+        poll_succeeded.store(false, std::memory_order_relaxed);
+    }
+  }};
+  bool local_succeeded{true};
+  for (std::uint8_t seed = 1U; seed < 32U; ++seed) {
+    const DistributedVectorGroupedAggregateShuffleJobCancel cancel{
+        .query_id = uuid(seed), .coordinator_node_id = 3U, .target_node_id = 3U};
+    auto response =
+        service.receive_local(DistributedVectorGroupedAggregateShuffleJobControlRequest{cancel},
+                              std::chrono::steady_clock::now());
+    if (!response.has_value() || response->status_code != common::StatusCode::kOk) {
+      local_succeeded = false;
+      break;
+    }
+    static_cast<void>(service.metrics());
+  }
+  poller.join();
+  EXPECT_TRUE(local_succeeded);
+  EXPECT_TRUE(poll_succeeded.load(std::memory_order_relaxed));
+  EXPECT_EQ(service.metrics().cancel_tombstones, 31U);
 }
 
 } // namespace

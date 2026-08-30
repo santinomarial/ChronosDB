@@ -63,6 +63,10 @@ public:
   // replicated worker. The pointer is stable until shutdown/destruction.
   [[nodiscard]] cluster::DistributedMutableVectorGroupedAggregateQueryWorkerService*
   mutable_grouped_worker() noexcept;
+  // Stable same-process reducer endpoint for a coordinator hosted by this daemon. It is available
+  // only while the configured server is running and grouped shuffle jobs are enabled.
+  [[nodiscard]] cluster::DistributedVectorGroupedAggregateShuffleJobService*
+  grouped_shuffle_job_service() noexcept;
 
 private:
   class Impl;

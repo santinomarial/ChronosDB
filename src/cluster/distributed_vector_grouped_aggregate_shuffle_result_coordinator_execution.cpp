@@ -56,6 +56,7 @@ public:
         DistributedVectorGroupedAggregateShuffleResultCoordinatorExecutionState::kRunning) {
       static_cast<void>(server_.shutdown());
       pending_stream_.reset();
+      local_streams_.clear();
       ready_streams_.reset();
       result_.reset();
       failure_ = std::move(status);
@@ -75,6 +76,7 @@ public:
         DistributedVectorGroupedAggregateShuffleResultCoordinatorExecutionState::kRunning) {
       static_cast<void>(server_.shutdown());
       pending_stream_.reset();
+      local_streams_.clear();
       ready_streams_.reset();
       result_.reset();
       failure_ = std::move(status);
@@ -127,6 +129,23 @@ public:
       admitted = admit_pending();
       if (!admitted.is_ok())
         return admitted;
+    }
+    return common::Status::ok();
+  }
+
+  [[nodiscard]] common::Status drain_local() {
+    common::Status admitted = admit_pending();
+    if (!admitted.is_ok())
+      return admitted;
+    while (!collector_.ready() && local_stream_index_ < local_streams_.size()) {
+      pending_stream_.emplace(std::move(local_streams_[local_stream_index_++]));
+      admitted = admit_pending();
+      if (!admitted.is_ok())
+        return admitted;
+    }
+    if (local_stream_index_ == local_streams_.size()) {
+      local_streams_.clear();
+      local_stream_index_ = 0U;
     }
     return common::Status::ok();
   }
@@ -191,6 +210,8 @@ public:
   std::size_t maximum_collected_encoded_bytes_{};
   std::optional<TimePoint> execution_deadline_;
   std::optional<DistributedVectorGroupedAggregateShuffleCompleteResultStream> pending_stream_;
+  std::vector<DistributedVectorGroupedAggregateShuffleCompleteResultStream> local_streams_;
+  std::size_t local_stream_index_{};
   std::optional<std::vector<DistributedVectorGroupedAggregateShuffleCompleteResultStream>>
       ready_streams_;
   std::optional<DistributedVectorRowsFinalizedResultV2> result_;
@@ -305,10 +326,29 @@ common::Status DistributedVectorGroupedAggregateShuffleResultCoordinatorExecutio
     return impl.cancel(
         {common::StatusCode::kCancelled, "grouped shuffle result coordinator deadline expired"});
   }
-  common::Status drained = impl.drain_server();
+  common::Status drained = impl.drain_local();
+  if (!drained.is_ok())
+    return drained;
+  drained = impl.drain_server();
   if (!drained.is_ok())
     return drained;
   return impl.finalize_if_ready();
+}
+
+common::Status
+DistributedVectorGroupedAggregateShuffleResultCoordinatorExecution::accept_local_streams(
+    std::vector<DistributedVectorGroupedAggregateShuffleCompleteResultStream> streams) {
+  if (!implementation_)
+    return invalid("grouped shuffle result coordinator is empty");
+  Impl& impl = *implementation_;
+  if (impl.state_ !=
+          DistributedVectorGroupedAggregateShuffleResultCoordinatorExecutionState::kRunning ||
+      !impl.local_streams_.empty() || impl.local_stream_index_ != 0U || streams.empty()) {
+    return invalid("grouped shuffle local result handoff is invalid");
+  }
+  impl.local_streams_ = std::move(streams);
+  const common::Status drained = impl.drain_local();
+  return drained.code() == common::StatusCode::kResourceExhausted ? common::Status::ok() : drained;
 }
 
 common::Status DistributedVectorGroupedAggregateShuffleResultCoordinatorExecution::cancel() {

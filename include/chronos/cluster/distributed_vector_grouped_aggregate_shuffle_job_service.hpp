@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <vector>
 
 namespace chronos::cluster {
 
@@ -74,8 +75,9 @@ struct DistributedVectorGroupedAggregateShuffleJobServiceMetrics {
 };
 
 // Owns a finite set of reducer jobs after an authenticated control carrier has decoded a request.
-// One caller thread serializes receive, local delivery, lease renewal/expiry, polling, and
-// cancellation. Configuration security/TLS dependencies are borrowed and must outlive the service.
+// One internal mutex serializes remote receive/poll calls with local coordinator/source/result
+// calls from the packaged query thread. No job object or TLS owner is progressed concurrently.
+// Configuration security/TLS dependencies are borrowed and must outlive the service.
 class DistributedVectorGroupedAggregateShuffleJobService {
 public:
   DistributedVectorGroupedAggregateShuffleJobService() noexcept;
@@ -96,6 +98,11 @@ public:
   receive(DistributedVectorGroupedAggregateShuffleJobControlRequest request,
           const network::PeerAuthenticationResult& authenticated_peer,
           std::chrono::steady_clock::time_point now);
+  // Same-process control path. It accepts only requests whose coordinator and target both equal
+  // this service's local node; no peer principal or wire self-route is fabricated.
+  [[nodiscard]] common::Result<DistributedVectorGroupedAggregateShuffleJobControlResponse>
+  receive_local(DistributedVectorGroupedAggregateShuffleJobControlRequest request,
+                std::chrono::steady_clock::time_point now);
   [[nodiscard]] common::Status
   accept_local_stream(const common::Uuid& query_id,
                       const DistributedVectorGroupedAggregateShuffleCompleteStream& stream);
@@ -108,11 +115,18 @@ public:
   [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait,
                                          std::chrono::steady_clock::time_point now);
   [[nodiscard]] common::Status cancel(const common::Uuid& query_id);
+  [[nodiscard]] common::Result<
+      std::vector<DistributedVectorGroupedAggregateShuffleCompleteResultStream>>
+  take_local_result_streams(const common::Uuid& query_id);
 
-  [[nodiscard]] DistributedVectorGroupedAggregateShuffleJobServiceMetrics metrics() const noexcept;
+  [[nodiscard]] DistributedVectorGroupedAggregateShuffleJobServiceMetrics metrics() const;
 
 private:
   class Impl;
+  [[nodiscard]] common::Result<DistributedVectorGroupedAggregateShuffleJobControlResponse>
+  receive_locked(DistributedVectorGroupedAggregateShuffleJobControlRequest request,
+                 const network::PeerAuthenticationResult* authenticated_peer,
+                 std::chrono::steady_clock::time_point now);
   explicit DistributedVectorGroupedAggregateShuffleJobService(
       std::unique_ptr<Impl> implementation) noexcept;
   std::unique_ptr<Impl> implementation_;

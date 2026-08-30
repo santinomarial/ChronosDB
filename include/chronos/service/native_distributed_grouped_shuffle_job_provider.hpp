@@ -19,6 +19,7 @@ struct NativeDistributedGroupedShuffleJobProviderConfig {
   network::TlsServerConfig result_tls;
   network::ConnectionAuthenticator* authenticator{};
   const cluster::ClusterNodePrincipalAuthorizer* node_authorizer{};
+  cluster::DistributedVectorGroupedAggregateShuffleJobService* local_reducer_job_service{};
   network::TcpListenerConfig result_listener;
   cluster::DistributedVectorGroupedAggregateShuffleAuthorityLimits authority;
   cluster::DistributedVectorGroupedAggregateShuffleJobControlTlsLimits carrier_limits;
@@ -41,9 +42,9 @@ struct NativeDistributedGroupedShuffleJobProviderConfig {
       cluster::kDefaultDistributedVectorGroupedAggregateShuffleCollectedResultWorkingBytes};
 };
 
-// Selects the independent-process reducer-job lifecycle only when this coordinator is a gateway:
-// no source or destination is local. Job-control and result protocols deliberately reject self
-// routes, so queries with a local fragment remain on the established direct grouped lifecycle.
+// Selects the independent-process reducer-job lifecycle for remote-only and mixed-role topologies.
+// A coordinator-owned reducer is reached only through the explicit same-process service pointer;
+// job-control and result wire protocols continue to reject self routes.
 // The authenticator and authorizer are borrowed and must outlive this provider and every prepared
 // synchronous Native execution. TLS credentials are retained through shared ownership.
 class NativeDistributedGroupedShuffleJobProvider final

@@ -372,20 +372,27 @@ DistributedVectorGroupedAggregateShuffleCollectedResultExecution::create_preserv
     const auto& stream = streams[partition];
     if (!source.has_value() || stream.query_id != authority.query_id() ||
         stream.partition_id != partition || stream.source_node_id != *source ||
-        stream.target_node_id != coordinator_node_id || coordinator_node_id == 0U ||
-        stream.source_node_id == coordinator_node_id) {
+        stream.target_node_id != coordinator_node_id || coordinator_node_id == 0U) {
       return common::make_unexpected(
           invalid("collected grouped shuffle result coverage is invalid"));
     }
-    auto canonical = DistributedVectorGroupedAggregateShuffleResultStreamSender::create(
-        authority, result_schema, stream.partition_id, stream.source_node_id, coordinator_node_id,
-        stream.encoded_result_batches, limits.stream);
-    if (!canonical.has_value())
-      return common::make_unexpected(canonical.error());
-    if (canonical->frame_count() != stream.frame_count ||
-        canonical->encoded_bytes() != stream.encoded_bytes) {
-      return common::make_unexpected(
-          invalid("collected grouped shuffle result extent is not canonical"));
+    if (stream.source_node_id == coordinator_node_id) {
+      const common::Status canonical =
+          validate_distributed_vector_grouped_aggregate_shuffle_local_result_stream(
+              authority, result_schema, stream, limits.stream);
+      if (!canonical.is_ok())
+        return common::make_unexpected(canonical);
+    } else {
+      auto canonical = DistributedVectorGroupedAggregateShuffleResultStreamSender::create(
+          authority, result_schema, stream.partition_id, stream.source_node_id, coordinator_node_id,
+          stream.encoded_result_batches, limits.stream);
+      if (!canonical.has_value())
+        return common::make_unexpected(canonical.error());
+      if (canonical->frame_count() != stream.frame_count ||
+          canonical->encoded_bytes() != stream.encoded_bytes) {
+        return common::make_unexpected(
+            invalid("collected grouped shuffle result extent is not canonical"));
+      }
     }
   }
   auto resources = query::QueryResourceContext::create(limits.maximum_working_memory_bytes);

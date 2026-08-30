@@ -11,6 +11,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <optional>
 #include <ranges>
@@ -207,6 +208,8 @@ public:
     std::vector<DistributedVectorGroupedAggregateShuffleRetry> source_retries;
     std::optional<DistributedVectorGroupedAggregateShuffleTcpExecution> source_transport;
     std::optional<DistributedVectorGroupedAggregateShuffleResultTcpExecution> result_sender;
+    std::optional<std::vector<DistributedVectorGroupedAggregateShuffleCompleteResultStream>>
+        local_results;
     std::chrono::steady_clock::time_point deadline;
     std::optional<std::chrono::milliseconds> lease_duration;
     std::optional<std::chrono::steady_clock::time_point> lease_deadline;
@@ -340,6 +343,13 @@ public:
     }
   }
 
+  [[nodiscard]] common::Result<bool>
+  authorize(const network::PeerAuthenticationResult* peer,
+            const raft::NodeId coordinator_node_id) const noexcept {
+    return peer == nullptr ? common::Result<bool>{coordinator_node_id == config.local_node_id}
+                           : authorize(*peer, coordinator_node_id);
+  }
+
   [[nodiscard]] common::Status prepare_result_sender(Job& job) {
     if (job.source_publication_started && !job.source_transport_complete) {
       return {common::StatusCode::kUnavailable,
@@ -350,11 +360,15 @@ public:
       return sealed;
     try {
       std::vector<DistributedVectorGroupedAggregateShuffleResultRetry> retries;
+      std::vector<DistributedVectorGroupedAggregateShuffleCompleteResultStream> local_results;
       const auto local_partitions =
           std::ranges::count_if(job.prepare.authority.destinations(), [&](const auto& destination) {
             return destination.node_id == config.local_node_id;
           });
-      retries.reserve(static_cast<std::size_t>(local_partitions));
+      if (job.prepare.coordinator_node_id == config.local_node_id)
+        local_results.reserve(static_cast<std::size_t>(local_partitions));
+      else
+        retries.reserve(static_cast<std::size_t>(local_partitions));
       for (const auto& destination : job.prepare.authority.destinations()) {
         if (destination.node_id != config.local_node_id)
           continue;
@@ -374,15 +388,30 @@ public:
             return encoded.error();
           batches.push_back(std::move(*encoded));
         }
-        auto retry = DistributedVectorGroupedAggregateShuffleResultRetry::create(
-            job.prepare.authority, job.prepare.result_schema,
-            {.partition_id = destination.partition_id,
-             .source_node_id = config.local_node_id,
-             .coordinator_node_id = job.prepare.coordinator_node_id},
-            std::move(batches), config.result_retry_limits);
-        if (!retry.has_value())
-          return retry.error();
-        retries.push_back(std::move(*retry));
+        if (job.prepare.coordinator_node_id == config.local_node_id) {
+          auto stream = create_distributed_vector_grouped_aggregate_shuffle_local_result_stream(
+              job.prepare.authority, job.prepare.result_schema, destination.partition_id,
+              config.local_node_id, std::move(batches), config.result_retry_limits.stream);
+          if (!stream.has_value())
+            return stream.error();
+          local_results.push_back(std::move(*stream));
+        } else {
+          auto retry = DistributedVectorGroupedAggregateShuffleResultRetry::create(
+              job.prepare.authority, job.prepare.result_schema,
+              {.partition_id = destination.partition_id,
+               .source_node_id = config.local_node_id,
+               .coordinator_node_id = job.prepare.coordinator_node_id},
+              std::move(batches), config.result_retry_limits);
+          if (!retry.has_value())
+            return retry.error();
+          retries.push_back(std::move(*retry));
+        }
+      }
+      if (job.prepare.coordinator_node_id == config.local_node_id) {
+        job.local_results.emplace(std::move(local_results));
+        job.state = JobState::kComplete;
+        increment_saturated(service_metrics.completed_jobs);
+        return common::Status::ok();
       }
       auto sender = DistributedVectorGroupedAggregateShuffleResultTcpExecution::create(
           job.prepare.authority, job.prepare.result_schema, std::move(retries),
@@ -442,6 +471,7 @@ public:
   std::vector<std::unique_ptr<Job>> jobs;
   std::vector<CancelTombstone> cancel_tombstones;
   DistributedVectorGroupedAggregateShuffleJobServiceMetrics service_metrics;
+  mutable std::mutex mutex;
 };
 
 DistributedVectorGroupedAggregateShuffleJobService::
@@ -515,6 +545,35 @@ DistributedVectorGroupedAggregateShuffleJobService::receive(
     const std::chrono::steady_clock::time_point now) {
   if (!implementation_)
     return common::make_unexpected(invalid("grouped shuffle reducer-job service is empty"));
+  std::scoped_lock lock(implementation_->mutex);
+  return receive_locked(std::move(request), std::addressof(authenticated_peer), now);
+}
+
+common::Result<DistributedVectorGroupedAggregateShuffleJobControlResponse>
+DistributedVectorGroupedAggregateShuffleJobService::receive_local(
+    DistributedVectorGroupedAggregateShuffleJobControlRequest request,
+    const std::chrono::steady_clock::time_point now) {
+  if (!implementation_)
+    return common::make_unexpected(invalid("grouped shuffle reducer-job service is empty"));
+  std::scoped_lock lock(implementation_->mutex);
+  const auto identities = std::visit(
+      [](const auto& operation) {
+        return std::pair{operation.coordinator_node_id, operation.target_node_id};
+      },
+      request);
+  if (identities.first != implementation_->config.local_node_id ||
+      identities.second != implementation_->config.local_node_id) {
+    return common::make_unexpected(
+        invalid("local grouped shuffle control identity is not the local node"));
+  }
+  return receive_locked(std::move(request), nullptr, now);
+}
+
+common::Result<DistributedVectorGroupedAggregateShuffleJobControlResponse>
+DistributedVectorGroupedAggregateShuffleJobService::receive_locked(
+    DistributedVectorGroupedAggregateShuffleJobControlRequest request,
+    const network::PeerAuthenticationResult* authenticated_peer,
+    const std::chrono::steady_clock::time_point now) {
   Impl& impl = *implementation_;
   impl.prune_cancel_tombstones(now);
   if (auto* prepare = std::get_if<DistributedVectorGroupedAggregateShuffleJobPrepare>(&request)) {
@@ -563,8 +622,9 @@ DistributedVectorGroupedAggregateShuffleJobService::receive(
     const auto result_context =
         std::ranges::lower_bound(impl.config.result_tls_contexts, prepare->coordinator_node_id, {},
                                  &DistributedQueryNodeTlsContext::node_id);
-    if (result_context == impl.config.result_tls_contexts.end() ||
-        result_context->node_id != prepare->coordinator_node_id) {
+    if (prepare->coordinator_node_id != impl.config.local_node_id &&
+        (result_context == impl.config.result_tls_contexts.end() ||
+         result_context->node_id != prepare->coordinator_node_id)) {
       return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kPrepare,
                             common::StatusCode::kNotFound, query_id, prepare->coordinator_node_id,
                             prepare->target_node_id);
@@ -579,9 +639,11 @@ DistributedVectorGroupedAggregateShuffleJobService::receive(
         return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kPrepare,
                               resources.error().code(), query_id, coordinator_node_id,
                               target_node_id);
-      auto job =
-          std::make_unique<Impl::Job>(std::move(*prepare), result_context->tls_context, *resources,
-                                      saturating_deadline(now, execution_timeout));
+      auto job = std::make_unique<Impl::Job>(
+          std::move(*prepare),
+          result_context == impl.config.result_tls_contexts.end() ? nullptr
+                                                                  : result_context->tls_context,
+          *resources, saturating_deadline(now, execution_timeout));
       auto destination = DistributedVectorGroupedAggregateShuffleDestinationExecution::start(
           job->prepare.authority,
           {.local_node_id = impl.config.local_node_id,
@@ -883,7 +945,8 @@ DistributedVectorGroupedAggregateShuffleJobService::receive(
                             started.code(), seal.query_id, seal.coordinator_node_id,
                             seal.target_node_id);
     }
-    ++impl.service_metrics.transmitting_jobs;
+    if (job->state == JobState::kTransmitting)
+      ++impl.service_metrics.transmitting_jobs;
   }
   return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kSeal,
                         common::StatusCode::kOk, seal.query_id, seal.coordinator_node_id,
@@ -895,6 +958,7 @@ common::Status DistributedVectorGroupedAggregateShuffleJobService::accept_local_
     const DistributedVectorGroupedAggregateShuffleCompleteStream& stream) {
   if (!implementation_)
     return invalid("grouped shuffle reducer-job service is empty");
+  std::scoped_lock lock(implementation_->mutex);
   Impl::Job* job = implementation_->find(query_id);
   if (job == nullptr)
     return invalid("grouped shuffle reducer job was not found");
@@ -909,6 +973,7 @@ common::Result<bool> DistributedVectorGroupedAggregateShuffleJobService::publish
         messages) {
   if (!implementation_)
     return common::make_unexpected(invalid("grouped shuffle reducer-job service is empty"));
+  std::scoped_lock lock(implementation_->mutex);
   Impl& impl = *implementation_;
   Impl::Job* job = impl.find(query_id);
   if (job == nullptr)
@@ -999,6 +1064,7 @@ common::Status DistributedVectorGroupedAggregateShuffleJobService::poll_once(
     return invalid("grouped shuffle reducer-job service is empty");
   if (maximum_wait.count() < 0 || maximum_wait.count() > INT_MAX)
     return invalid("grouped shuffle reducer-job service poll timeout is invalid");
+  std::scoped_lock lock(implementation_->mutex);
   Impl& impl = *implementation_;
   impl.prune_cancel_tombstones(now);
   bool waited{};
@@ -1078,6 +1144,7 @@ common::Status
 DistributedVectorGroupedAggregateShuffleJobService::cancel(const common::Uuid& query_id) {
   if (!implementation_)
     return invalid("grouped shuffle reducer-job service is empty");
+  std::scoped_lock lock(implementation_->mutex);
   Impl::Job* job = implementation_->find(query_id);
   if (job == nullptr)
     return invalid("grouped shuffle reducer job was not found");
@@ -1087,10 +1154,28 @@ DistributedVectorGroupedAggregateShuffleJobService::cancel(const common::Uuid& q
   return job->failure;
 }
 
+common::Result<std::vector<DistributedVectorGroupedAggregateShuffleCompleteResultStream>>
+DistributedVectorGroupedAggregateShuffleJobService::take_local_result_streams(
+    const common::Uuid& query_id) {
+  if (!implementation_)
+    return common::make_unexpected(invalid("grouped shuffle reducer-job service is empty"));
+  std::scoped_lock lock(implementation_->mutex);
+  Impl::Job* job = implementation_->find(query_id);
+  if (job == nullptr || job->state != JobState::kComplete || !job->local_results.has_value()) {
+    return common::make_unexpected(
+        invalid("grouped shuffle local reducer results are unavailable"));
+  }
+  auto results = std::move(*job->local_results);
+  job->local_results.reset();
+  return results;
+}
+
 DistributedVectorGroupedAggregateShuffleJobServiceMetrics
-DistributedVectorGroupedAggregateShuffleJobService::metrics() const noexcept {
-  return implementation_ ? implementation_->service_metrics
-                         : DistributedVectorGroupedAggregateShuffleJobServiceMetrics{};
+DistributedVectorGroupedAggregateShuffleJobService::metrics() const {
+  if (!implementation_)
+    return {};
+  std::scoped_lock lock(implementation_->mutex);
+  return implementation_->service_metrics;
 }
 
 } // namespace chronos::cluster

@@ -580,3 +580,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0543](0543-packaged-grouped-shuffle-job-lifecycle.md) | Packaged grouped shuffle job lifecycle | accepted |
 | [0544](0544-authenticated-grouped-reducer-job-cancellation.md) | Authenticated grouped reducer-job cancellation | accepted |
 | [0545](0545-authenticated-grouped-reducer-coordinator-leases.md) | Authenticated grouped reducer coordinator leases | accepted |
+| [0546](0546-mixed-role-grouped-reducer-job-composition.md) | Mixed-role grouped reducer-job composition | accepted |

@@ -1,6 +1,7 @@
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_coordinator_execution.hpp"
 
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_authority_codec.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_service.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -16,6 +17,7 @@
 #include <set>
 #include <stdexcept>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace chronos::cluster {
@@ -25,13 +27,231 @@ namespace {
   return {code, message};
 }
 
-using Acquisition = DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition;
+using RemoteAcquisition = DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition;
+using AcquisitionState = DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState;
+using AcquisitionMetrics = DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionMetrics;
+
+[[nodiscard]] bool retryable(const common::StatusCode code) noexcept {
+  return code == common::StatusCode::kUnavailable || code == common::StatusCode::kIoError ||
+         code == common::StatusCode::kResourceExhausted;
+}
+
+[[nodiscard]] std::chrono::steady_clock::time_point
+saturating_deadline(std::chrono::steady_clock::time_point now,
+                    std::chrono::milliseconds duration) noexcept;
+
+class LocalAcquisition {
+public:
+  using TimePoint = std::chrono::steady_clock::time_point;
+
+  LocalAcquisition(DistributedVectorGroupedAggregateShuffleJobService& service,
+                   DistributedVectorGroupedAggregateShuffleJobControlRequest request,
+                   const DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits retry,
+                   const TimePoint execution_deadline, const bool retry_unavailable) noexcept
+      : service_(&service), request_(std::move(request)), retry_(retry),
+        execution_deadline_(execution_deadline), next_backoff_(retry.initial_backoff),
+        retry_unavailable_(retry_unavailable) {
+    if (const auto* seal =
+            std::get_if<DistributedVectorGroupedAggregateShuffleJobSeal>(&request_)) {
+      seal_.emplace(*seal);
+    }
+  }
+
+  [[nodiscard]] common::Status poll_once(const std::chrono::milliseconds maximum_wait) {
+    if (maximum_wait.count() < 0 || maximum_wait.count() > INT_MAX)
+      return fail(status(common::StatusCode::kInvalidArgument,
+                         "local grouped shuffle control poll timeout is invalid"));
+    if (state_ == AcquisitionState::kFailed || state_ == AcquisitionState::kCancelled)
+      return failure_;
+    if (state_ == AcquisitionState::kComplete)
+      return common::Status::ok();
+    const TimePoint now = TimePoint::clock::now();
+    if (now >= execution_deadline_)
+      return fail(
+          status(common::StatusCode::kCancelled, "local grouped shuffle control deadline expired"));
+    if (next_attempt_not_before_.has_value() && now < *next_attempt_not_before_)
+      return common::Status::ok();
+    ++metrics_.attempts_started;
+    if (metrics_.attempts_started > 1U)
+      ++metrics_.retries_started;
+    metrics_.active_attempts = 1U;
+    common::Result<DistributedVectorGroupedAggregateShuffleJobControlResponse> response =
+        seal_.has_value()
+            ? service_->receive_local(
+                  DistributedVectorGroupedAggregateShuffleJobControlRequest{*seal_}, now)
+            : service_->receive_local(std::move(request_), now);
+    metrics_.active_attempts = 0U;
+    if (!response.has_value())
+      return schedule(response.error(), now);
+    if (retry_unavailable_ && response->status_code == common::StatusCode::kUnavailable)
+      return schedule(status(common::StatusCode::kUnavailable,
+                             "local grouped shuffle control response is not ready"),
+                      now);
+    result_.emplace(*response);
+    ++metrics_.completed_attempts;
+    state_ = AcquisitionState::kComplete;
+    next_attempt_not_before_.reset();
+    return common::Status::ok();
+  }
+
+  [[nodiscard]] common::Status cancel() {
+    if (state_ == AcquisitionState::kRunning) {
+      state_ = AcquisitionState::kCancelled;
+      metrics_.active_attempts = 0U;
+      next_attempt_not_before_.reset();
+      failure_ =
+          status(common::StatusCode::kCancelled, "local grouped shuffle control was cancelled");
+    }
+    return state_ == AcquisitionState::kCancelled ? failure_ : common::Status::ok();
+  }
+
+  [[nodiscard]] AcquisitionState state() const noexcept {
+    return state_;
+  }
+  [[nodiscard]] AcquisitionMetrics metrics() const noexcept {
+    return metrics_;
+  }
+  [[nodiscard]] static int descriptor() noexcept {
+    return -1;
+  }
+  [[nodiscard]] static DistributedVectorGroupedAggregateShuffleJobControlTlsInterest
+  interest() noexcept {
+    return {};
+  }
+  [[nodiscard]] std::optional<TimePoint> wake_deadline() const noexcept {
+    return state_ == AcquisitionState::kRunning
+               ? std::optional<TimePoint>{next_attempt_not_before_.value_or(
+                     TimePoint::clock::now())}
+               : std::nullopt;
+  }
+  [[nodiscard]] common::Result<DistributedVectorGroupedAggregateShuffleJobControlResponse>
+  result() const {
+    if (state_ != AcquisitionState::kComplete || !result_.has_value())
+      return common::make_unexpected(status(common::StatusCode::kUnavailable,
+                                            "local grouped shuffle control result unavailable"));
+    return *result_;
+  }
+  [[nodiscard]] const common::Status& failure() const noexcept {
+    return failure_;
+  }
+
+private:
+  [[nodiscard]] common::Status schedule(common::Status failure, const TimePoint now) {
+    ++metrics_.failed_attempts;
+    if (!retryable(failure.code()) || !seal_.has_value() ||
+        metrics_.attempts_started >= retry_.maximum_attempts) {
+      return fail(std::move(failure));
+    }
+    failure_ = std::move(failure);
+    next_attempt_not_before_ = saturating_deadline(now, next_backoff_);
+    if (*next_attempt_not_before_ > execution_deadline_)
+      next_attempt_not_before_ = execution_deadline_;
+    if (next_backoff_ < retry_.maximum_backoff) {
+      const auto current = next_backoff_.count();
+      const auto maximum = retry_.maximum_backoff.count();
+      next_backoff_ = current > maximum / 2 ? retry_.maximum_backoff
+                                            : std::min(next_backoff_ * 2, retry_.maximum_backoff);
+    }
+    return common::Status::ok();
+  }
+
+  [[nodiscard]] common::Status fail(common::Status failure) {
+    failure_ = std::move(failure);
+    state_ = AcquisitionState::kFailed;
+    metrics_.active_attempts = 0U;
+    next_attempt_not_before_.reset();
+    return failure_;
+  }
+
+  DistributedVectorGroupedAggregateShuffleJobService* service_{};
+  DistributedVectorGroupedAggregateShuffleJobControlRequest request_;
+  std::optional<DistributedVectorGroupedAggregateShuffleJobSeal> seal_;
+  DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits retry_;
+  TimePoint execution_deadline_;
+  std::chrono::milliseconds next_backoff_;
+  std::optional<TimePoint> next_attempt_not_before_;
+  std::optional<DistributedVectorGroupedAggregateShuffleJobControlResponse> result_;
+  AcquisitionMetrics metrics_;
+  AcquisitionState state_{AcquisitionState::kRunning};
+  common::Status failure_{common::StatusCode::kInternal,
+                          "local grouped shuffle control has not failed"};
+  bool retry_unavailable_{};
+};
+
+class Acquisition {
+public:
+  explicit Acquisition(RemoteAcquisition remote) : owner_(std::move(remote)) {}
+  explicit Acquisition(LocalAcquisition local) : owner_(std::move(local)) {}
+
+  [[nodiscard]] common::Status poll_once(const std::chrono::milliseconds wait) {
+    return std::visit([wait](auto& owner) { return owner.poll_once(wait); }, owner_);
+  }
+  [[nodiscard]] common::Status cancel() {
+    return std::visit([](auto& owner) { return owner.cancel(); }, owner_);
+  }
+  [[nodiscard]] AcquisitionState state() const {
+    return std::visit([](const auto& owner) { return owner.state(); }, owner_);
+  }
+  [[nodiscard]] AcquisitionMetrics metrics() const {
+    return std::visit([](const auto& owner) { return owner.metrics(); }, owner_);
+  }
+  [[nodiscard]] int descriptor() const {
+    return std::visit([](const auto& owner) { return owner.descriptor(); }, owner_);
+  }
+  [[nodiscard]] DistributedVectorGroupedAggregateShuffleJobControlTlsInterest interest() const {
+    return std::visit([](const auto& owner) { return owner.interest(); }, owner_);
+  }
+  [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> wake_deadline() const {
+    return std::visit([](const auto& owner) { return owner.wake_deadline(); }, owner_);
+  }
+  [[nodiscard]] common::Result<DistributedVectorGroupedAggregateShuffleJobControlResponse>
+  result() const {
+    return std::visit([](const auto& owner) { return owner.result(); }, owner_);
+  }
+  [[nodiscard]] const common::Status& failure() const {
+    return std::visit([](const auto& owner) -> const common::Status& { return owner.failure(); },
+                      owner_);
+  }
+
+private:
+  std::variant<RemoteAcquisition, LocalAcquisition> owner_;
+};
+
+[[nodiscard]] common::Result<Acquisition> create_acquisition(
+    const DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionConfig& config,
+    const DistributedQueryNodeRoute& route,
+    DistributedVectorGroupedAggregateShuffleJobControlRequest request,
+    const DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits retry,
+    const std::chrono::steady_clock::time_point execution_deadline,
+    const bool retry_unavailable_response = false) {
+  if (route.node_id == config.coordinator_node_id) {
+    if (config.local_reducer_job_service == nullptr) {
+      return common::make_unexpected(
+          status(common::StatusCode::kInvalidArgument,
+                 "local grouped shuffle reducer service is unavailable"));
+    }
+    return Acquisition{LocalAcquisition{*config.local_reducer_job_service, std::move(request),
+                                        retry, execution_deadline, retry_unavailable_response}};
+  }
+  auto remote =
+      RemoteAcquisition::create({.route = route,
+                                 .authenticator = config.authenticator,
+                                 .node_authorizer = config.node_authorizer,
+                                 .request = std::move(request),
+                                 .carrier_limits = config.carrier_limits,
+                                 .connect_timeout = config.connect_timeout,
+                                 .retry = retry,
+                                 .execution_deadline = execution_deadline,
+                                 .retry_unavailable_response = retry_unavailable_response});
+  if (!remote.has_value())
+    return common::make_unexpected(remote.error());
+  return Acquisition{std::move(*remote)};
+}
 
 inline constexpr std::chrono::milliseconds kLeaseActivePollInterval{10};
 
-[[nodiscard]] bool acquisition_running(const Acquisition& acquisition) noexcept {
-  return acquisition.state() ==
-         DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kRunning;
+[[nodiscard]] bool acquisition_running(const Acquisition& acquisition) {
+  return acquisition.state() == AcquisitionState::kRunning;
 }
 
 [[nodiscard]] std::chrono::milliseconds
@@ -80,9 +300,7 @@ public:
 
   Impl(const DistributedVectorGroupedAggregateShuffleAuthority& authority,
        DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionConfig configured,
-       std::vector<DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition>
-           prepare_acquisitions,
-       std::vector<pollfd> descriptors,
+       std::vector<Acquisition> prepare_acquisitions, std::vector<pollfd> descriptors,
        DistributedVectorGroupedAggregateShuffleResultCoordinatorExecution result_execution)
       : authority_(authority), query_id_(authority.query_id()), config_(std::move(configured)),
         acquisitions_(std::move(prepare_acquisitions)), poll_descriptors_(std::move(descriptors)),
@@ -90,7 +308,7 @@ public:
     metrics_.reducer_nodes = acquisitions_.size();
   }
 
-  void refresh_control_metrics() noexcept {
+  void refresh_control_metrics() {
     metrics_.control_attempts_started = committed_control_attempts_started_;
     metrics_.control_retries_started = committed_control_retries_started_;
     metrics_.control_failed_attempts = committed_control_failed_attempts_;
@@ -105,7 +323,7 @@ public:
     }
   }
 
-  void refresh_lease_metrics() noexcept {
+  void refresh_lease_metrics() {
     metrics_.lease_attempts_started = committed_lease_attempts_started_;
     metrics_.lease_retries_started = committed_lease_retries_started_;
     metrics_.lease_failed_attempts = committed_lease_failed_attempts_;
@@ -120,21 +338,21 @@ public:
     }
   }
 
-  void commit_control_metrics() noexcept {
+  void commit_control_metrics() {
     refresh_control_metrics();
     committed_control_attempts_started_ = metrics_.control_attempts_started;
     committed_control_retries_started_ = metrics_.control_retries_started;
     committed_control_failed_attempts_ = metrics_.control_failed_attempts;
   }
 
-  void commit_lease_metrics() noexcept {
+  void commit_lease_metrics() {
     refresh_lease_metrics();
     committed_lease_attempts_started_ = metrics_.lease_attempts_started;
     committed_lease_retries_started_ = metrics_.lease_retries_started;
     committed_lease_failed_attempts_ = metrics_.lease_failed_attempts;
   }
 
-  void cancel_controls() noexcept {
+  void cancel_controls() {
     for (auto& acquisition : acquisitions_)
       if (acquisition_running(acquisition))
         static_cast<void>(acquisition.cancel());
@@ -173,21 +391,15 @@ public:
     acquisitions_.clear();
     lease_acquisitions_.clear();
     try {
-      std::vector<DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition> cancels;
+      std::vector<Acquisition> cancels;
       cancels.reserve(config_.reducer_control_routes.size());
       for (const auto& route : config_.reducer_control_routes) {
-        auto acquisition = DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition::create(
-            {.route = route,
-             .authenticator = config_.authenticator,
-             .node_authorizer = config_.node_authorizer,
-             .request =
-                 DistributedVectorGroupedAggregateShuffleJobControlRequest{
-                     DistributedVectorGroupedAggregateShuffleJobCancel{
-                         query_id_, config_.coordinator_node_id, route.node_id}},
-             .carrier_limits = config_.carrier_limits,
-             .connect_timeout = config_.connect_timeout,
-             .retry = config_.cancel_retry,
-             .execution_deadline = config_.execution_deadline});
+        auto acquisition =
+            create_acquisition(config_, route,
+                               DistributedVectorGroupedAggregateShuffleJobControlRequest{
+                                   DistributedVectorGroupedAggregateShuffleJobCancel{
+                                       query_id_, config_.coordinator_node_id, route.node_id}},
+                               config_.cancel_retry, config_.execution_deadline);
         if (!acquisition.has_value())
           return cancellation_delivery_failed();
         cancels.push_back(std::move(*acquisition));
@@ -204,26 +416,20 @@ public:
 
   [[nodiscard]] common::Status start_lease_round(const TimePoint now, const bool activation) {
     try {
-      std::vector<DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition> renewals;
+      std::vector<Acquisition> renewals;
       renewals.reserve(config_.reducer_control_routes.size());
       const TimePoint round_deadline =
           std::min(config_.execution_deadline, saturating_deadline(now, config_.lease_duration));
       for (const auto& route : config_.reducer_control_routes) {
-        auto acquisition = DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition::create(
-            {.route = route,
-             .authenticator = config_.authenticator,
-             .node_authorizer = config_.node_authorizer,
-             .request =
-                 DistributedVectorGroupedAggregateShuffleJobControlRequest{
-                     DistributedVectorGroupedAggregateShuffleJobRenewLease{
-                         .query_id = query_id_,
-                         .coordinator_node_id = config_.coordinator_node_id,
-                         .target_node_id = route.node_id,
-                         .lease_duration = config_.lease_duration}},
-             .carrier_limits = config_.carrier_limits,
-             .connect_timeout = config_.connect_timeout,
-             .retry = config_.lease_retry,
-             .execution_deadline = round_deadline});
+        auto acquisition =
+            create_acquisition(config_, route,
+                               DistributedVectorGroupedAggregateShuffleJobControlRequest{
+                                   DistributedVectorGroupedAggregateShuffleJobRenewLease{
+                                       .query_id = query_id_,
+                                       .coordinator_node_id = config_.coordinator_node_id,
+                                       .target_node_id = route.node_id,
+                                       .lease_duration = config_.lease_duration}},
+                               config_.lease_retry, round_deadline);
         if (!acquisition.has_value())
           return fail(acquisition.error());
         renewals.push_back(std::move(*acquisition));
@@ -315,7 +521,7 @@ public:
     return started.is_ok() ? drive_lease_controls() : started;
   }
 
-  [[nodiscard]] std::optional<TimePoint> lease_wake_deadline(const TimePoint now) const noexcept {
+  [[nodiscard]] std::optional<TimePoint> lease_wake_deadline(const TimePoint now) const {
     if (lease_acquisitions_.empty())
       return next_lease_renewal_;
     TimePoint deadline = saturating_deadline(now, kLeaseActivePollInterval);
@@ -325,7 +531,7 @@ public:
     return deadline;
   }
 
-  void stop_lease() noexcept {
+  void stop_lease() {
     for (auto& acquisition : lease_acquisitions_)
       if (acquisition_running(acquisition))
         static_cast<void>(acquisition.cancel());
@@ -447,24 +653,18 @@ public:
                              "prepared grouped shuffle route has invalid endpoint coverage"));
         wire_routes.push_back({.node_id = route.node_id, .endpoint = route.endpoints.front()});
       }
-      std::vector<DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition> installs;
+      std::vector<Acquisition> installs;
       installs.reserve(config_.reducer_control_routes.size());
       for (const auto& route : config_.reducer_control_routes) {
-        auto acquisition = DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition::create(
-            {.route = route,
-             .authenticator = config_.authenticator,
-             .node_authorizer = config_.node_authorizer,
-             .request =
-                 DistributedVectorGroupedAggregateShuffleJobControlRequest{
-                     DistributedVectorGroupedAggregateShuffleJobInstallRoutes{
-                         .query_id = query_id_,
-                         .coordinator_node_id = config_.coordinator_node_id,
-                         .target_node_id = route.node_id,
-                         .routes = wire_routes}},
-             .carrier_limits = config_.carrier_limits,
-             .connect_timeout = config_.connect_timeout,
-             .retry = config_.route_install_retry,
-             .execution_deadline = config_.execution_deadline});
+        auto acquisition =
+            create_acquisition(config_, route,
+                               DistributedVectorGroupedAggregateShuffleJobControlRequest{
+                                   DistributedVectorGroupedAggregateShuffleJobInstallRoutes{
+                                       .query_id = query_id_,
+                                       .coordinator_node_id = config_.coordinator_node_id,
+                                       .target_node_id = route.node_id,
+                                       .routes = wire_routes}},
+                               config_.route_install_retry, config_.execution_deadline);
         if (!acquisition.has_value())
           return fail(acquisition.error());
         installs.push_back(std::move(*acquisition));
@@ -514,6 +714,17 @@ public:
                            "grouped shuffle reducer SEAL was not accepted"));
       }
     }
+    if (config_.local_reducer_job_service != nullptr &&
+        std::ranges::any_of(config_.reducer_control_routes, [&](const auto& route) {
+          return route.node_id == config_.coordinator_node_id;
+        })) {
+      auto local_results = config_.local_reducer_job_service->take_local_result_streams(query_id_);
+      if (!local_results.has_value())
+        return fail(local_results.error());
+      const common::Status accepted = result_.accept_local_streams(std::move(*local_results));
+      if (!accepted.is_ok())
+        return fail(accepted);
+    }
     metrics_.sealed_reducers = acquisitions_.size();
     commit_control_metrics();
     acquisitions_.clear();
@@ -553,8 +764,8 @@ public:
   std::reference_wrapper<const DistributedVectorGroupedAggregateShuffleAuthority> authority_;
   common::Uuid query_id_;
   DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionConfig config_;
-  std::vector<DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition> acquisitions_;
-  std::vector<DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition> lease_acquisitions_;
+  std::vector<Acquisition> acquisitions_;
+  std::vector<Acquisition> lease_acquisitions_;
   std::vector<pollfd> poll_descriptors_;
   DistributedVectorGroupedAggregateShuffleResultCoordinatorExecution result_;
   std::vector<DistributedQueryNodeRoute> prepared_routes_;
@@ -631,6 +842,15 @@ DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::create(
                "grouped shuffle reducer-job coordinator routes are not canonical"));
   }
 
+  const bool has_local_reducer =
+      std::ranges::any_of(config.reducer_control_routes, [&](const auto& route) {
+        return route.node_id == config.coordinator_node_id;
+      });
+  if (has_local_reducer && config.local_reducer_job_service == nullptr) {
+    return common::make_unexpected(status(common::StatusCode::kInvalidArgument,
+                                          "grouped shuffle local reducer service is absent"));
+  }
+
   try {
     std::set<raft::NodeId> reducer_nodes;
     for (const auto& destination : authority.destinations())
@@ -654,30 +874,24 @@ DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::create(
     if (!encoded_authority.has_value())
       return common::make_unexpected(encoded_authority.error());
 
-    std::vector<DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition> acquisitions;
+    std::vector<Acquisition> acquisitions;
     acquisitions.reserve(config.reducer_control_routes.size());
     for (const auto& route : config.reducer_control_routes) {
       auto owned_authority = decode_distributed_vector_grouped_aggregate_shuffle_authority_exact(
           encoded_authority->bytes(), config.carrier_limits.request.authority);
       if (!owned_authority.has_value())
         return common::make_unexpected(owned_authority.error());
-      auto acquisition = DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition::create(
-          {.route = route,
-           .authenticator = config.authenticator,
-           .node_authorizer = config.node_authorizer,
-           .request =
-               DistributedVectorGroupedAggregateShuffleJobControlRequest{
-                   DistributedVectorGroupedAggregateShuffleJobPrepare{
-                       .coordinator_node_id = config.coordinator_node_id,
-                       .target_node_id = route.node_id,
-                       .coordinator_result_endpoint = result_endpoint,
-                       .execution_timeout = config.reducer_execution_timeout,
-                       .authority = std::move(*owned_authority),
-                       .result_schema = finalization_authority.result_schema()}},
-           .carrier_limits = config.carrier_limits,
-           .connect_timeout = config.connect_timeout,
-           .retry = config.prepare_retry,
-           .execution_deadline = config.execution_deadline});
+      auto acquisition =
+          create_acquisition(config, route,
+                             DistributedVectorGroupedAggregateShuffleJobControlRequest{
+                                 DistributedVectorGroupedAggregateShuffleJobPrepare{
+                                     .coordinator_node_id = config.coordinator_node_id,
+                                     .target_node_id = route.node_id,
+                                     .coordinator_result_endpoint = result_endpoint,
+                                     .execution_timeout = config.reducer_execution_timeout,
+                                     .authority = std::move(*owned_authority),
+                                     .result_schema = finalization_authority.result_schema()}},
+                             config.prepare_retry, config.execution_deadline);
       if (!acquisition.has_value())
         return common::make_unexpected(acquisition.error());
       acquisitions.push_back(std::move(*acquisition));
@@ -828,22 +1042,15 @@ common::Status DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::
   if (Impl::TimePoint::clock::now() >= impl.config_.execution_deadline)
     return impl.expire();
   try {
-    std::vector<DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition> seals;
+    std::vector<Acquisition> seals;
     seals.reserve(impl.config_.reducer_control_routes.size());
     for (const auto& route : impl.config_.reducer_control_routes) {
-      auto acquisition = DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition::create(
-          {.route = route,
-           .authenticator = impl.config_.authenticator,
-           .node_authorizer = impl.config_.node_authorizer,
-           .request =
-               DistributedVectorGroupedAggregateShuffleJobControlRequest{
-                   DistributedVectorGroupedAggregateShuffleJobSeal{
-                       impl.query_id_, impl.config_.coordinator_node_id, route.node_id}},
-           .carrier_limits = impl.config_.carrier_limits,
-           .connect_timeout = impl.config_.connect_timeout,
-           .retry = impl.config_.seal_retry,
-           .execution_deadline = impl.config_.execution_deadline,
-           .retry_unavailable_response = true});
+      auto acquisition = create_acquisition(
+          impl.config_, route,
+          DistributedVectorGroupedAggregateShuffleJobControlRequest{
+              DistributedVectorGroupedAggregateShuffleJobSeal{
+                  impl.query_id_, impl.config_.coordinator_node_id, route.node_id}},
+          impl.config_.seal_retry, impl.config_.execution_deadline, true);
       if (!acquisition.has_value())
         return impl.fail(acquisition.error());
       seals.push_back(std::move(*acquisition));
@@ -884,7 +1091,7 @@ common::Status DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::
 }
 
 std::optional<std::chrono::steady_clock::time_point>
-DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::wake_deadline() const noexcept {
+DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::wake_deadline() const {
   if (!implementation_)
     return std::nullopt;
   const auto state = implementation_->state_;

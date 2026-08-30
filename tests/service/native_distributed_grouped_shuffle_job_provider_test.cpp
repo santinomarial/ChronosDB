@@ -114,7 +114,7 @@ TEST(NativeDistributedGroupedShuffleJobProviderTest,
 }
 
 TEST(NativeDistributedGroupedShuffleJobProviderTest,
-     LeavesAnyCoordinatorLocalQueryOnDirectGroupedLifecycle) {
+     LeavesCoordinatorLocalQueryOnDirectLifecycleWithoutLocalReducerService) {
   Security security;
   auto configured = provider(security);
   const std::vector fragments{fragment(1U, 2U), fragment(2U, 9U)};
@@ -123,6 +123,32 @@ TEST(NativeDistributedGroupedShuffleJobProviderTest,
   ASSERT_TRUE(plan.has_value()) << plan.error().to_string();
   EXPECT_FALSE(plan->selected);
   EXPECT_FALSE(plan->reducer_jobs.has_value());
+}
+
+TEST(NativeDistributedGroupedShuffleJobProviderTest,
+     SelectsCoordinatorLocalQueryWithExplicitInProcessReducerService) {
+  Security security;
+  cluster::DistributedVectorGroupedAggregateShuffleJobService local_service;
+  auto configured = NativeDistributedGroupedShuffleJobProvider::create(
+                        {.coordinator_node_id = 9U,
+                         .authenticator = &security.authenticator,
+                         .node_authorizer = &security.authorizer,
+                         .local_reducer_job_service = &local_service})
+                        .value();
+  network::TlsClientContext node_two_tls;
+  network::TlsClientContext node_nine_tls;
+  const std::vector fragments{fragment(1U, 2U), fragment(2U, 9U)};
+  const std::vector<cluster::DistributedQueryNodeRoute> routes{
+      {.node_id = 2U, .endpoints = {{{127U, 0U, 0U, 1U}, 2002U}}, .tls_context = &node_two_tls},
+      {.node_id = 9U, .endpoints = {{{127U, 0U, 0U, 1U}, 2009U}}, .tls_context = &node_nine_tls}};
+  auto plan = configured.prepare(fragments, keys(), aggregates(), routes,
+                                 std::chrono::steady_clock::now() + std::chrono::seconds{1});
+  ASSERT_TRUE(plan.has_value()) << plan.error().to_string();
+  ASSERT_TRUE(plan->selected);
+  ASSERT_TRUE(plan->reducer_jobs.has_value());
+  EXPECT_EQ(plan->reducer_jobs->local_reducer_job_service, &local_service);
+  ASSERT_EQ(plan->reducer_jobs->reducer_control_routes.size(), 2U);
+  EXPECT_EQ(plan->reducer_jobs->reducer_control_routes[1].node_id, 9U);
 }
 
 TEST(NativeDistributedGroupedShuffleJobProviderTest,

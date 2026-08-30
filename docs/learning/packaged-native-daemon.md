@@ -60,6 +60,13 @@ grouped workers, listener, and borrowed Native config address-stable. Its releas
 the same publication argument as the existing worker threads: stop is visible before loop exit, and
 failure is visible before the main thread reports termination.
 
+The same bundle exposes its installed grouped reducer-job service to the Native provider for a
+coordinator-owned reducer. This is an in-process endpoint, not a loopback peer: it accepts only an
+exact local coordinator/target tuple, while all frozen control and result protocols continue to
+reject self-routes. A service mutex serializes local query-thread control/source/result handoff with
+the private listener's poll thread. Mutex unlock/lock supplies the cross-thread happens-before edge,
+and every contained TLS, reducer, retry, and resource owner remains exclusively progressed.
+
 The packaged owner constructs both mutable workers and the per-group replicated authority adapter
 before their receivers, and constructs the shared listener last. Destruction therefore closes TLS
 and TCP ownership before any borrowed receiver dependency disappears. The daemon passes its existing

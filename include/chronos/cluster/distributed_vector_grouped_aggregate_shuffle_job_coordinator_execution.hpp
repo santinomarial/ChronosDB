@@ -15,11 +15,14 @@
 
 namespace chronos::cluster {
 
+class DistributedVectorGroupedAggregateShuffleJobService;
+
 struct DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionConfig {
   raft::NodeId coordinator_node_id{};
   std::vector<DistributedQueryNodeRoute> reducer_control_routes;
   network::ConnectionAuthenticator* authenticator{};
   const ClusterNodePrincipalAuthorizer* node_authorizer{};
+  DistributedVectorGroupedAggregateShuffleJobService* local_reducer_job_service{};
   DistributedVectorGroupedAggregateShuffleJobControlTlsLimits carrier_limits;
   std::chrono::milliseconds connect_timeout{5000};
   DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits prepare_retry;
@@ -70,7 +73,8 @@ enum class DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState 
 
 // Owns one coordinator-side reducer set. It starts every PREPARE before blocking, publishes no
 // remote shuffle route until every authority destination node has acknowledged, omits listeners
-// for all-local destinations, activates and renews every reducer's relative coordinator lease,
+// for all-local destinations, uses an explicit in-process service for a coordinator-owned reducer,
+// activates and renews every reducer's relative coordinator lease,
 // accepts one explicit seal transition after source delivery closes, and publishes Native output
 // only after every reducer's receipt-proven partition result arrives.
 // Failure and explicit cancellation enter a finite authenticated remote-cancellation phase; the
@@ -102,7 +106,7 @@ public:
   [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait);
   [[nodiscard]] common::Status seal();
   [[nodiscard]] common::Status cancel();
-  [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> wake_deadline() const noexcept;
+  [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> wake_deadline() const;
   [[nodiscard]] std::span<const DistributedQueryNodeRoute> prepared_routes() const noexcept;
   [[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2> take_result();
   [[nodiscard]] DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState

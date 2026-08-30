@@ -98,9 +98,10 @@ NativeDistributedGroupedShuffleJobProvider::prepare(
         invalid("Native grouped shuffle job request is invalid or expired"));
   }
   const NativeDistributedGroupedShuffleJobProviderConfig& config = implementation_->config;
-  if (std::ranges::any_of(fragments, [&](const auto& fragment) {
-        return fragment.serving_node == config.coordinator_node_id;
-      })) {
+  const bool has_local_fragment = std::ranges::any_of(fragments, [&](const auto& fragment) {
+    return fragment.serving_node == config.coordinator_node_id;
+  });
+  if (has_local_fragment && config.local_reducer_job_service == nullptr) {
     return NativeDistributedGroupedShufflePlan{.selected = false};
   }
 
@@ -142,6 +143,7 @@ NativeDistributedGroupedShuffleJobProvider::prepare(
         .reducer_control_routes = std::move(selected_routes),
         .authenticator = config.authenticator,
         .node_authorizer = config.node_authorizer,
+        .local_reducer_job_service = config.local_reducer_job_service,
         .carrier_limits = config.carrier_limits,
         .connect_timeout = config.connect_timeout,
         .prepare_retry = config.prepare_retry,

@@ -360,10 +360,14 @@ use the finite receipt-gated scheduler. A missing matching job remains a no-op f
 
 One whole-query owner now drives PREPARE, route installation, workers, source closure, SEAL, result
 collection, and final Native ownership in that order. The Native provider receives routes resolved
-from the same committed query snapshot. It selects this independent-process path only on a gateway
-coordinator with no local fragment; the current protocols require authenticated source/target node
-identity and intentionally reject network self routes. Queries with a coordinator-local fragment
-therefore retain the direct grouped lifecycle. Failure or explicit client cancellation now closes
+from the same committed query snapshot. Remote reducers retain finite authenticated control
+acquisitions. A coordinator-owned reducer instead uses the stable packaged in-process job service,
+which accepts only an exact local coordinator/target identity. Its partition result exact-validates
+authority, schema, canonical Native batches, and equivalent encoded extent before entering the same
+all-partition collector as remote results. The wire protocols continue to reject network self
+routes. The reducer service mutex serializes the Native query thread's local control/source/result
+calls with query-control polling; no contained owner progresses concurrently. Failure or explicit
+client cancellation now closes
 workers and enters Job Control v3 cancellation for every reducer. The service installs a bounded
 expiring tombstone when CANCEL wins the cross-connection race with PREPARE, so a delayed PREPARE
 cannot recreate the job after acknowledged cleanup. Unreachable reducers retain their relative
@@ -372,8 +376,8 @@ coordinator lease at every reducer before workers start. The whole-query owner r
 during worker, SEAL, and result phases and caps its other waits by the next maintenance deadline.
 If coordinator progress disappears, each reducer cancels its job after its last acknowledged lease
 duration without requiring synchronized clocks. Pre-activation loss retains the original PREPARE
-deadline. Durable job recovery, self-role protocol support, and complete packaged multi-daemon
-process-loss qualification remain open.
+deadline. Durable job recovery and complete packaged multi-daemon split-leader/process-loss
+qualification remain open.
 
 ### Portable sufficient-state execution boundary
 

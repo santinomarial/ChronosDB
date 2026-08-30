@@ -1,5 +1,7 @@
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_result_stream.hpp"
 
+#include "chronos/common/checked_math.hpp"
+
 #include <algorithm>
 #include <limits>
 #include <memory>
@@ -26,7 +28,127 @@ namespace {
   return {common::StatusCode::kResourceExhausted, message};
 }
 
+[[nodiscard]] bool descriptors_match(const network::QueryResultBatchView& batch,
+                                     const query::DistributedVectorResultSchema& result_schema) {
+  const auto columns = batch.columns();
+  if (columns.size() != result_schema.columns.size())
+    return false;
+  for (std::size_t index = 0U; index < columns.size(); ++index) {
+    const auto& expected = result_schema.columns[index];
+    if (columns[index].name != expected.name || columns[index].type != expected.type ||
+        columns[index].nullable != expected.nullable) {
+      return false;
+    }
+  }
+  return true;
+}
+
+struct LocalResultExtent {
+  std::uint32_t frame_count{};
+  std::size_t encoded_bytes{};
+};
+
+struct LocalResultIdentity {
+  std::uint32_t partition_id{};
+  raft::NodeId node_id{};
+};
+
+[[nodiscard]] common::Result<LocalResultExtent>
+local_result_extent(const DistributedVectorGroupedAggregateShuffleAuthority& authority,
+                    const query::DistributedVectorResultSchema& result_schema,
+                    const LocalResultIdentity identity,
+                    const std::span<const std::vector<std::byte>> encoded_result_batches,
+                    const DistributedVectorGroupedAggregateShuffleResultStreamLimits limits) {
+  const std::size_t frame_count = std::max<std::size_t>(1U, encoded_result_batches.size());
+  const auto destination = authority.destination_node(identity.partition_id);
+  if (identity.node_id == 0U || !destination.has_value() || *destination != identity.node_id ||
+      !validate_distributed_vector_grouped_aggregate_shuffle_result_stream_limits(limits) ||
+      frame_count > limits.maximum_frames ||
+      frame_count > std::numeric_limits<std::uint32_t>::max()) {
+    return common::make_unexpected(invalid("local grouped shuffle result input is invalid"));
+  }
+  std::size_t encoded_bytes{};
+  for (const auto& encoded : encoded_result_batches) {
+    if (encoded.empty())
+      return common::make_unexpected(invalid("local grouped shuffle result batch is empty"));
+    auto decoded = network::decode_query_result_batch(encoded, limits.frame.result_batch);
+    if (!decoded.has_value())
+      return common::make_unexpected(decoded.error());
+    if (!descriptors_match(*decoded, result_schema)) {
+      return common::make_unexpected(
+          invalid("local grouped shuffle result schema differs from authority"));
+    }
+    const auto header_and_payload = common::checked_add(
+        distributed_vector_grouped_aggregate_shuffle_result_format::kHeaderLength, encoded.size());
+    const auto frame_bytes =
+        header_and_payload.has_value()
+            ? common::checked_add(
+                  *header_and_payload,
+                  distributed_vector_grouped_aggregate_shuffle_result_format::kTrailerLength)
+            : std::optional<std::size_t>{};
+    if (!frame_bytes.has_value() || *frame_bytes > limits.maximum_encoded_bytes - encoded_bytes) {
+      return common::make_unexpected(exhausted("local grouped shuffle result bytes exhausted"));
+    }
+    encoded_bytes += *frame_bytes;
+  }
+  if (encoded_result_batches.empty()) {
+    encoded_bytes = distributed_vector_grouped_aggregate_shuffle_result_format::kHeaderLength +
+                    distributed_vector_grouped_aggregate_shuffle_result_format::kTrailerLength;
+    if (encoded_bytes > limits.maximum_encoded_bytes)
+      return common::make_unexpected(exhausted("local grouped shuffle result bytes exhausted"));
+  }
+  return LocalResultExtent{.frame_count = static_cast<std::uint32_t>(frame_count),
+                           .encoded_bytes = encoded_bytes};
+}
+
 } // namespace
+
+common::Result<DistributedVectorGroupedAggregateShuffleCompleteResultStream>
+create_distributed_vector_grouped_aggregate_shuffle_local_result_stream(
+    const DistributedVectorGroupedAggregateShuffleAuthority& authority,
+    const query::DistributedVectorResultSchema& result_schema, const std::uint32_t partition_id,
+    const raft::NodeId local_node_id, std::vector<std::vector<std::byte>> encoded_result_batches,
+    const DistributedVectorGroupedAggregateShuffleResultStreamLimits limits) {
+  try {
+    auto extent = local_result_extent(authority, result_schema,
+                                      {.partition_id = partition_id, .node_id = local_node_id},
+                                      encoded_result_batches, limits);
+    if (!extent.has_value())
+      return common::make_unexpected(extent.error());
+    return DistributedVectorGroupedAggregateShuffleCompleteResultStream{
+        .query_id = authority.query_id(),
+        .source_node_id = local_node_id,
+        .target_node_id = local_node_id,
+        .partition_id = partition_id,
+        .encoded_result_batches = std::move(encoded_result_batches),
+        .frame_count = extent->frame_count,
+        .encoded_bytes = extent->encoded_bytes};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("local grouped shuffle result allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("local grouped shuffle result exceeds limits"));
+  }
+}
+
+common::Status validate_distributed_vector_grouped_aggregate_shuffle_local_result_stream(
+    const DistributedVectorGroupedAggregateShuffleAuthority& authority,
+    const query::DistributedVectorResultSchema& result_schema,
+    const DistributedVectorGroupedAggregateShuffleCompleteResultStream& stream,
+    const DistributedVectorGroupedAggregateShuffleResultStreamLimits limits) {
+  if (stream.query_id != authority.query_id() || stream.source_node_id == 0U ||
+      stream.source_node_id != stream.target_node_id) {
+    return invalid("local grouped shuffle result identity is invalid");
+  }
+  auto extent =
+      local_result_extent(authority, result_schema,
+                          {.partition_id = stream.partition_id, .node_id = stream.source_node_id},
+                          stream.encoded_result_batches, limits);
+  if (!extent.has_value())
+    return extent.error();
+  return extent->frame_count == stream.frame_count && extent->encoded_bytes == stream.encoded_bytes
+             ? common::Status::ok()
+             : invalid("local grouped shuffle result extent is not canonical");
+}
 
 bool validate_distributed_vector_grouped_aggregate_shuffle_result_stream_limits(
     const DistributedVectorGroupedAggregateShuffleResultStreamLimits& limits) noexcept {

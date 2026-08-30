@@ -42,6 +42,23 @@ struct DistributedVectorGroupedAggregateShuffleCompleteResultStream {
   std::size_t encoded_bytes{};
 };
 
+// Constructs the in-process representation of a reducer result when the reducer and coordinator
+// are the same node. The wire format deliberately rejects this self-route; this helper applies the
+// same authority, schema, frame-count, payload, and equivalent encoded-extent limits without
+// manufacturing a peer identity or network frame.
+[[nodiscard]] common::Result<DistributedVectorGroupedAggregateShuffleCompleteResultStream>
+create_distributed_vector_grouped_aggregate_shuffle_local_result_stream(
+    const DistributedVectorGroupedAggregateShuffleAuthority& authority,
+    const query::DistributedVectorResultSchema& result_schema, std::uint32_t partition_id,
+    raft::NodeId local_node_id, std::vector<std::vector<std::byte>> encoded_result_batches,
+    DistributedVectorGroupedAggregateShuffleResultStreamLimits limits = {});
+[[nodiscard]] common::Status
+validate_distributed_vector_grouped_aggregate_shuffle_local_result_stream(
+    const DistributedVectorGroupedAggregateShuffleAuthority& authority,
+    const query::DistributedVectorResultSchema& result_schema,
+    const DistributedVectorGroupedAggregateShuffleCompleteResultStream& stream,
+    DistributedVectorGroupedAggregateShuffleResultStreamLimits limits = {});
+
 struct DistributedVectorGroupedAggregateShuffleResultStreamReadStep {
   std::size_t consumed_bytes{};
   bool complete{};

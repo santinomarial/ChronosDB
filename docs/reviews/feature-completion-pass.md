@@ -1381,6 +1381,16 @@ were deliberately not run.
   tuple, authorization, retry, and all-reducer response gates prevent partial liveness claims.
   Reducer polling cancels active work after the last acknowledged lease expires without synchronized
   clocks; the original PREPARE deadline remains the pre-activation and hard fallback bound.
+- Mixed-role grouped reducer jobs: the reducer-set owner now uses an explicit in-process control
+  acquisition when the coordinator is also a canonical reducer, while all remote operations retain
+  their authenticated wire paths and every protocol still rejects self-routes. Local partition
+  results revalidate exact authority, schema, Native batches, and equivalent encoded extent before
+  joining remote partitions in the existing atomic collector/finalizer. The packaged service mutex
+  serializes query-thread source/control/result calls with listener polling. Focused all-local and
+  two-node mixed-role tests cover local and remote workers, opposite shuffle edges, lease/control
+  completion, local plus mTLS result collection, and merged output; local cancellation identity,
+  provider selection, and allocation classification are separate assertions. Multi-daemon
+  split-leader process-loss and measurement qualification remain open.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

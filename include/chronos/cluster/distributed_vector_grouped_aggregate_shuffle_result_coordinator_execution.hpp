@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace chronos::cluster {
 
@@ -75,6 +76,10 @@ public:
       const DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2& finalization_authority,
       DistributedVectorGroupedAggregateShuffleResultCoordinatorExecutionConfig config);
   [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait);
+  // Transfers same-process reducer results into the coordinator without constructing the result
+  // protocol's invalid self-route. Ownership is retained across retryable admission exhaustion.
+  [[nodiscard]] common::Status accept_local_streams(
+      std::vector<DistributedVectorGroupedAggregateShuffleCompleteResultStream> streams);
   [[nodiscard]] common::Status cancel();
   [[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2> take_result();
 

@@ -9,7 +9,8 @@ namespace chronos::cluster {
 // Borrowed decorator for the packaged mutable grouped worker. Direct grouped queries pass through
 // unchanged. When the query ID names a prepared reducer/source job with installed routes, the
 // complete canonical tablet result is atomically handed to that local job before a worker response
-// becomes visible. One query-control event-loop thread serializes worker and job-service calls.
+// becomes visible. The reducer-job service serializes this query-thread publication with its
+// query-control poll owner.
 class DistributedMutableVectorGroupedAggregateShuffleSourceWorker final
     : public DistributedMutableVectorGroupedAggregateQueryWorkerService {
 public:

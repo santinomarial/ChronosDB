@@ -65,12 +65,6 @@ DistributedVectorGroupedAggregateShuffleResultCollector::create(
     return common::make_unexpected(
         invalid("grouped shuffle result collector configuration is invalid"));
   }
-  for (const auto& destination : authority.destinations()) {
-    if (destination.node_id == coordinator_node_id) {
-      return common::make_unexpected(
-          invalid("grouped shuffle result collector coordinator is a reducer"));
-    }
-  }
   try {
     std::vector<std::optional<DistributedVectorGroupedAggregateShuffleCompleteResultStream>>
         streams(authority.partition_count());
@@ -99,14 +93,22 @@ common::Status DistributedVectorGroupedAggregateShuffleResultCollector::accept_s
   auto source = authority_.get().destination_node(stream.partition_id);
   if (!source.has_value() || *source != stream.source_node_id)
     return invalid("grouped shuffle result stream source is invalid");
-  auto canonical = DistributedVectorGroupedAggregateShuffleResultStreamSender::create(
-      authority_.get(), result_schema_.get(), stream.partition_id, stream.source_node_id,
-      coordinator_node_id_, stream.encoded_result_batches, limits_.stream);
-  if (!canonical.has_value())
-    return canonical.error();
-  if (canonical->frame_count() != stream.frame_count ||
-      canonical->encoded_bytes() != stream.encoded_bytes) {
-    return invalid("grouped shuffle result stream extent is not canonical");
+  if (stream.source_node_id == coordinator_node_id_) {
+    const common::Status canonical =
+        validate_distributed_vector_grouped_aggregate_shuffle_local_result_stream(
+            authority_.get(), result_schema_.get(), stream, limits_.stream);
+    if (!canonical.is_ok())
+      return canonical;
+  } else {
+    auto sender = DistributedVectorGroupedAggregateShuffleResultStreamSender::create(
+        authority_.get(), result_schema_.get(), stream.partition_id, stream.source_node_id,
+        coordinator_node_id_, stream.encoded_result_batches, limits_.stream);
+    if (!sender.has_value())
+      return sender.error();
+    if (sender->frame_count() != stream.frame_count ||
+        sender->encoded_bytes() != stream.encoded_bytes) {
+      return invalid("grouped shuffle result stream extent is not canonical");
+    }
   }
 
   auto& retained = streams_[stream.partition_id];
