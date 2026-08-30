@@ -410,8 +410,13 @@ encrypted TLS records remain distinct. Another exact gate stops the production s
 then makes the coordinator reset visible. The server now observes readable peer failure before
 writing, fails the abandoned session, retains exactly one job, accepts the same PREPARE as one
 duplicate through the same listener, and completes authenticated cancellation plus original-deadline
-reclamation. Resets racing buffered bytes, durable job recovery, delay, duplication, reordering,
-probabilistic loss, and larger-set campaigns remain open.
+reclamation. A raw two-leg loopback proxy now preserves the production mutual-TLS endpoints while
+capturing their exact encrypted request and response records. At each direction it forwards only two
+header bytes, the complete five-byte header plus one ciphertext byte, or every record byte except the
+last, then resets the forwarding leg. No request prefix dispatches, no response prefix publishes a
+result, exact response retries retain one job, and the same backend listener completes authenticated
+cleanup. Handshake-record cuts, multi-record frames, resets racing buffered suffixes, durable job
+recovery, delay, duplication, reordering, probabilistic loss, and larger-set campaigns remain open.
 
 ### Portable sufficient-state execution boundary
 

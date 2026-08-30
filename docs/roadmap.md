@@ -1670,9 +1670,14 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   complete PREPARE admission and response encoding but before the server's first response write. The
   server observes the already-readable peer failure, retains one admitted job, and accepts an exact
   retry as one duplicate before bounded authenticated cleanup through the same listener. Durable
-  query recovery, controlled partial encrypted TLS records, resets racing buffered bytes,
-  delay/duplication/reordering/probabilistic loss, larger-set skew, broader fault campaigns, and
-  measurement remain; the separate packaged Native split-leader process gate is also qualified.
+  TLS-record qualification now inserts a raw two-leg loopback proxy without replacing either
+  production mutual-TLS endpoint. It tears both encrypted PREPARE and response records inside the
+  record header, after one ciphertext byte, and immediately before the final byte. Request cuts
+  dispatch nothing, response cuts publish no result and retry as one retained job, and the backend
+  listener heals for authenticated cleanup. Durable query recovery, TLS handshake and multi-record
+  cuts, resets racing buffered bytes, delay/duplication/reordering/probabilistic loss, larger-set
+  skew, broader fault campaigns, and measurement remain; the separate packaged Native split-leader
+  process gate is also qualified.
   The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives
