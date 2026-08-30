@@ -1377,8 +1377,10 @@ were deliberately not run.
   lifecycle together. Authenticated partial request prefixes at three framing boundaries time out
   before service dispatch, reclaim shared-endpoint capacity, and permit a fresh complete
   acquisition; a correlated partial response never becomes a client result. Partial TLS records,
-  packet-level partition/fault and healing, larger-set skew, and measurement qualification remain
-  open.
+  established-stream interruption, delay/duplication/reordering/probabilistic loss, larger-set
+  skew, and measurement qualification remain open. A distinct opt-in Linux netfilter gate now
+  qualifies both directions of a one-reducer packet black hole and healing while preserving
+  reachable-peer cancellation and isolated-peer lease expiry.
 - Authenticated grouped reducer-job cancellation: fixed Job Control v3 CANCEL frames now flow
   through header-first transport, finite retry, mutual TLS, and the shared packaged endpoint.
   Reducers retain bounded expiring tombstones when cancellation arrives before PREPARE, preventing
@@ -1405,8 +1407,10 @@ were deliberately not run.
   post-activation coordinator process loss plus fresh replacement now pass independently. Partial
   two-reducer PREPARE, route, and lease acknowledgement plus asymmetric cleanup also pass.
   Authenticated partial application frames fail closed in both directions; partial TLS records,
-  packet-level partitions, larger-set skew, and measurement remain open. The separate Native
-  split-leader process gate also passes.
+  established-stream interruption, packet delay/duplication/reordering/probabilistic loss,
+  larger-set skew, and measurement remain open. Port-scoped Linux netfilter gates pass for both
+  directional one-reducer partitions, cleanup, healing, and fresh two-reducer reuse. The separate
+  Native split-leader process gate also passes.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

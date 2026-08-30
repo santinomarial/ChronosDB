@@ -387,8 +387,13 @@ job, and both retained services then admit, renew, and cancel a fresh query iden
 The shared production endpoint now also times out authenticated request prefixes before protocol
 magic, within the fixed header, and immediately after the validated header without dispatching a
 job, then accepts a fresh complete acquisition. The production client withholds a correlated result
-when its peer stalls after a valid response prefix. Durable job recovery, partial TLS records,
-packet-level loss and healing, larger-set skew, and broader fault campaigns remain open.
+when its peer stalls after a valid response prefix. A distinct opt-in Linux process gate now adds
+kernel-owned directional black holes after both reducers activate and renew: dropping packets to
+one reducer or dropping its response direction forces that reducer's lease expiry, authenticated
+cancellation of the reachable peer, and coordinator failure. Removing
+the exact port-scoped rule lets both retained reducers activate, renew, and cancel a fresh identity.
+Durable job recovery, established-stream/TLS-record interruption, delay, duplication, reordering,
+probabilistic loss, and larger-set campaigns remain open.
 
 ### Portable sufficient-state execution boundary
 

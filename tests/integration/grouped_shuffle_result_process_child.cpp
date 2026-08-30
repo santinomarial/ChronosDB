@@ -452,6 +452,10 @@ enum class JobReducerPauseBoundary : std::uint8_t {
       std::cout << "ACTIVE " << current.lease_activations << '\n' << std::flush;
     if (current.lease_renewals != observed.lease_renewals)
       std::cout << "RENEWED " << current.lease_renewals << '\n' << std::flush;
+    if (current.cancel_requests != observed.cancel_requests)
+      std::cout << "CANCEL_REQUESTS " << current.cancel_requests << '\n' << std::flush;
+    if (current.cancelled_jobs != observed.cancelled_jobs)
+      std::cout << "CANCELLED_JOBS " << current.cancelled_jobs << '\n' << std::flush;
     if (current.lease_expirations != observed.lease_expirations)
       std::cout << "EXPIRED " << current.lease_expirations << '\n' << std::flush;
     if (current.execution_expirations != observed.execution_expirations)
@@ -576,6 +580,8 @@ struct JobCoordinatorInvocation {
     for (;;) {
       const common::Status progress = coordinator->poll_once(std::chrono::milliseconds{5});
       if (!progress.is_ok()) {
+        std::cout << "FAILED " << static_cast<unsigned int>(invocation.query_seed) << '\n'
+                  << std::flush;
         std::cerr << progress.to_string() << '\n';
         return 6;
       }

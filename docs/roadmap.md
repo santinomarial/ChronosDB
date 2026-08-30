@@ -1655,9 +1655,13 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   together. Real mutual-TLS gates now prove that partial request prefixes at the protocol-magic,
   fixed-header, and post-header payload boundaries time out without reducer dispatch and leave the
   shared endpoint reusable; a valid correlated partial response cannot publish a client result.
-  Durable query recovery, partial TLS records, packet-level loss/healing, larger-set skew, broader
-  fault campaigns, and measurement remain; the separate packaged Native split-leader process gate
-  is also qualified.
+  An opt-in Linux netfilter gate now drops either packets to one exact reducer port or packets from
+  it after lease renewal. The isolated reducer expires its lease, the reachable peer receives
+  authenticated cancellation, the coordinator fails, and deleting the rule lets both retained
+  reducers complete a fresh lifecycle. Durable query recovery, established-stream/TLS-record
+  interruption, delay/duplication/reordering/probabilistic loss, larger-set skew, broader fault
+  campaigns, and measurement remain; the separate packaged Native split-leader process gate is
+  also qualified.
   The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives
