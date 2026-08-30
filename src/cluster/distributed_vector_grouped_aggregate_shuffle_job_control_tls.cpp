@@ -524,6 +524,23 @@ public:
   [[nodiscard]] common::Status write_response(const bool readable, const bool writable) {
     if ((!interest_.want_read || !readable) && (!interest_.want_write || !writable))
       return common::Status::ok();
+    if (readable) {
+      auto peer = socket_.read(request_scratch_);
+      if (!peer.has_value())
+        return fail(peer.error());
+      if (peer->state == network::TlsIoState::kClosed) {
+        return fail(status(common::StatusCode::kUnavailable,
+                           "grouped shuffle reducer-job response peer closed"));
+      }
+      if (peer->state == network::TlsIoState::kComplete) {
+        return fail(status(common::StatusCode::kCorruption,
+                           "grouped shuffle reducer-job request has a trailing suffix"));
+      }
+      if (peer->state == network::TlsIoState::kWantWrite) {
+        interest_ = {.want_write = true};
+        return common::Status::ok();
+      }
+    }
     auto* writer = response_writer_.transform([](auto& value) { return &value; }).value_or(nullptr);
     if (writer == nullptr) {
       return fail(status(common::StatusCode::kInternal,

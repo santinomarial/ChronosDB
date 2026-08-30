@@ -405,8 +405,13 @@ boundary, then closes the owning socket with `SO_LINGER(0)` after destroying its
 production server dispatches no partial request, the production client publishes no partial
 response, both fail on the immediate transport event, and the same listener/service completes a
 fresh PREPARE, authenticated CANCEL, and execution-deadline reclamation. Controlled partial
-encrypted TLS records, reset after complete admission before the first response byte, durable job
-recovery, delay, duplication, reordering, probabilistic loss, and larger-set campaigns remain open.
+encrypted TLS records remain distinct. Another exact gate stops the production server in
+`WritingResponse`, after complete PREPARE admission and response encoding but before its first write,
+then makes the coordinator reset visible. The server now observes readable peer failure before
+writing, fails the abandoned session, retains exactly one job, accepts the same PREPARE as one
+duplicate through the same listener, and completes authenticated cancellation plus original-deadline
+reclamation. Resets racing buffered bytes, durable job recovery, delay, duplication, reordering,
+probabilistic loss, and larger-set campaigns remain open.
 
 ### Portable sufficient-state execution boundary
 
