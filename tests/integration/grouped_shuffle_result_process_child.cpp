@@ -1,4 +1,7 @@
+#include "chronos/cluster/distributed_mutable_query_control_tcp.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_authority_codec.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_coordinator_execution.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_service.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_result_coordinator_execution.hpp"
 #include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_result_tcp_execution.hpp"
 
@@ -8,6 +11,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -63,8 +67,9 @@ template <typename Id> [[nodiscard]] Id id(const std::uint8_t seed) {
 }
 
 [[nodiscard]] query::DistributedMutableVectorFragment fragment(const std::uint8_t tablet_seed,
-                                                               const raft::NodeId node_id) {
-  return {.query_id = uuid(1U),
+                                                               const raft::NodeId node_id,
+                                                               const std::uint8_t query_seed = 1U) {
+  return {.query_id = uuid(query_seed),
           .database_id = id<manifest::DatabaseId>(8U),
           .table_id = id<schema::TableId>(9U),
           .tablet_id = id<schema::TabletId>(tablet_seed),
@@ -87,26 +92,48 @@ template <typename Id> [[nodiscard]] Id id(const std::uint8_t seed) {
 }
 
 struct Proofs {
-  Proofs() = default;
+  explicit Proofs(const std::uint8_t query_seed = 1U)
+      : fragments{fragment(2U, 3U, query_seed), fragment(3U, 4U, query_seed)}, authority([&] {
+          auto derived =
+              cluster::DistributedVectorGroupedAggregateShuffleAuthority::
+                  create_from_mutable_fragments(
+                      fragments,
+                      std::array{query::VectorGroupKeyDefinition{0U, string_type(), false}},
+                      std::array{query::VectorAggregateDefinition{
+                          query::VectorAggregateOperation::kCountStar, std::nullopt}})
+                      .value();
+          auto encoded =
+              cluster::encode_distributed_vector_grouped_aggregate_shuffle_authority(derived)
+                  .value();
+          return cluster::decode_distributed_vector_grouped_aggregate_shuffle_authority_exact(
+                     encoded.bytes())
+              .value();
+        }()),
+        finalization(
+            *cluster::DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2::create(
+                authority, fragments)) {}
 
-  std::vector<query::DistributedMutableVectorFragment> fragments{fragment(2U, 3U),
-                                                                 fragment(3U, 4U)};
-  cluster::DistributedVectorGroupedAggregateShuffleAuthority authority{[&] {
-    auto derived =
-        cluster::DistributedVectorGroupedAggregateShuffleAuthority::create_from_mutable_fragments(
-            fragments, std::array{query::VectorGroupKeyDefinition{0U, string_type(), false}},
-            std::array{query::VectorAggregateDefinition{query::VectorAggregateOperation::kCountStar,
-                                                        std::nullopt}})
-            .value();
-    auto encoded =
-        cluster::encode_distributed_vector_grouped_aggregate_shuffle_authority(derived).value();
-    return cluster::decode_distributed_vector_grouped_aggregate_shuffle_authority_exact(
-               encoded.bytes())
-        .value();
-  }()};
-  cluster::DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2 finalization{
-      *cluster::DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2::create(authority,
-                                                                                        fragments)};
+  std::vector<query::DistributedMutableVectorFragment> fragments;
+  cluster::DistributedVectorGroupedAggregateShuffleAuthority authority;
+  cluster::DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2 finalization;
+};
+
+struct LeaseProofs {
+  explicit LeaseProofs(const std::uint8_t query_seed)
+      : fragments{fragment(2U, 2U, query_seed)},
+        authority(*cluster::DistributedVectorGroupedAggregateShuffleAuthority::
+                      create_from_mutable_fragments(
+                          fragments,
+                          std::array{query::VectorGroupKeyDefinition{0U, string_type(), false}},
+                          std::array{query::VectorAggregateDefinition{
+                              query::VectorAggregateOperation::kCountStar, std::nullopt}})),
+        finalization(
+            *cluster::DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2::create(
+                authority, fragments)) {}
+
+  std::vector<query::DistributedMutableVectorFragment> fragments;
+  cluster::DistributedVectorGroupedAggregateShuffleAuthority authority;
+  cluster::DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2 finalization;
 };
 
 [[nodiscard]] std::array<std::byte, sizeof(std::uint64_t)> encoded_u64(std::uint64_t value) {
@@ -131,6 +158,18 @@ struct Proofs {
           .stream = {.maximum_frames = 1U, .maximum_encoded_bytes = 1U << 20U}};
 }
 
+[[nodiscard]] cluster::DistributedVectorGroupedAggregateShuffleTlsLimits shuffle_limits() {
+  return {.handshake_timeout = std::chrono::milliseconds{1000},
+          .exchange_timeout = std::chrono::milliseconds{1000},
+          .stream = {.maximum_frames = 1U, .maximum_encoded_bytes = 1U << 20U}};
+}
+
+[[nodiscard]] cluster::DistributedVectorGroupedAggregateShuffleJobControlTlsLimits
+job_control_limits() {
+  return {.handshake_timeout = std::chrono::milliseconds{1000},
+          .exchange_timeout = std::chrono::milliseconds{1000}};
+}
+
 class Authenticator final : public network::ConnectionAuthenticator {
 public:
   explicit Authenticator(const std::uint64_t principal) : principal_(principal) {}
@@ -149,9 +188,70 @@ public:
   // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
   common::Result<bool> authorize_node(const std::uint64_t principal,
                                       const raft::NodeId node) const override {
-    return common::Result<bool>{(principal == 91U && (node == 3U || node == 4U)) ||
-                                (principal == 92U && node == kCoordinatorNode)};
+    return common::Result<bool>{
+        (principal == 91U && (node == 3U || node == 4U || node == kCoordinatorNode)) ||
+        (principal == 92U && (node == 2U || node == kCoordinatorNode))};
   }
+};
+
+class UnusedMutableWorker final : public cluster::DistributedMutableVectorQueryWorkerService {
+public:
+  common::Result<std::vector<cluster::DistributedVectorResultExchangeMessage>>
+  // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+  execute(const query::DistributedMutableVectorFragment&) override {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInternal, "unused mutable worker was called"});
+  }
+};
+
+class UnusedGroupedWorker final
+    : public cluster::DistributedMutableVectorGroupedAggregateQueryWorkerService {
+public:
+  common::Result<query::DistributedVectorGroupedAggregateAuthority>
+  // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+  bind_authority(const query::DistributedMutableVectorFragment&) override {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInternal, "unused grouped worker was called"});
+  }
+
+  common::Result<query::DistributedVectorGroupedAggregateWorkerResultV2>
+  // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+  execute(const query::DistributedMutableVectorFragment&) override {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInternal, "unused grouped worker was called"});
+  }
+};
+
+class UnusedAuthorityService final : public cluster::RaftReadAuthorityService {
+public:
+  // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+  common::Result<cluster::RaftReadAuthority> acquire(const raft::GroupId&) override {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInternal, "unused authority service was called"});
+  }
+};
+
+struct UnusedReceivers {
+  explicit UnusedReceivers(Authorizer& authorizer)
+      : mutable_receiver(
+            cluster::DistributedMutableVectorQueryReceiver::create(
+                {.local_node_id = 2U, .authorizer = &authorizer, .worker = &mutable_worker})
+                .value()),
+        grouped_receiver(
+            cluster::DistributedMutableVectorGroupedAggregateQueryReceiver::create(
+                {.local_node_id = 2U, .authorizer = &authorizer, .worker = &grouped_worker})
+                .value()),
+        authority_receiver(
+            cluster::RaftReadAuthorityReceiver::create(
+                {.local_node_id = 2U, .authorizer = &authorizer, .service = &authority_service})
+                .value()) {}
+
+  UnusedMutableWorker mutable_worker;
+  UnusedGroupedWorker grouped_worker;
+  UnusedAuthorityService authority_service;
+  cluster::DistributedMutableVectorQueryReceiver mutable_receiver;
+  cluster::DistributedMutableVectorGroupedAggregateQueryReceiver grouped_receiver;
+  cluster::RaftReadAuthorityReceiver authority_receiver;
 };
 
 template <typename Integer>
@@ -220,6 +320,183 @@ template <typename Integer>
     return 7;
   }
   std::cout << "RESULT west 2\n" << std::flush;
+  return 0;
+}
+
+[[nodiscard]] int run_job_reducer() {
+  Authenticator coordinator_authenticator{91U};
+  Authorizer authorizer;
+  UnusedReceivers receivers{authorizer};
+  auto client_context = network::TlsClientContext::create(client_tls());
+  if (!client_context.has_value()) {
+    std::cerr << client_context.error().to_string() << '\n';
+    return 2;
+  }
+  const std::array result_contexts{
+      cluster::DistributedQueryNodeTlsContext{kCoordinatorNode, &*client_context}};
+  auto job_config = cluster::DistributedVectorGroupedAggregateShuffleJobServiceConfig{};
+  job_config.local_node_id = 2U;
+  job_config.shuffle_tls = server_tls();
+  job_config.shuffle_authenticator = &coordinator_authenticator;
+  job_config.result_authenticator = &coordinator_authenticator;
+  job_config.node_authorizer = &authorizer;
+  job_config.result_tls_contexts = result_contexts;
+  job_config.shuffle_carrier_limits = shuffle_limits();
+  job_config.result_retry_limits = {.retry = {.maximum_attempts = 2U,
+                                              .initial_backoff = std::chrono::milliseconds{1},
+                                              .maximum_backoff = std::chrono::milliseconds{2}},
+                                    .stream = carrier_limits().stream};
+  job_config.result_carrier_limits = carrier_limits();
+  job_config.maximum_jobs = 2U;
+  job_config.maximum_job_query_memory_bytes = 16U << 20U;
+  job_config.maximum_retained_streams_per_job = 1U;
+  job_config.maximum_accepts_per_job_poll = 1U;
+  job_config.maximum_reducer_admissions_per_job_poll = 1U;
+  auto jobs =
+      cluster::DistributedVectorGroupedAggregateShuffleJobService::create(std::move(job_config));
+  if (!jobs.has_value()) {
+    std::cerr << jobs.error().to_string() << '\n';
+    return 3;
+  }
+  auto server_config = cluster::DistributedMutableQueryControlTcpServerConfig{};
+  server_config.tls = server_tls();
+  server_config.authenticator = &coordinator_authenticator;
+  server_config.mutable_receiver = &receivers.mutable_receiver;
+  server_config.mutable_grouped_receiver = &receivers.grouped_receiver;
+  server_config.read_authority_receiver = &receivers.authority_receiver;
+  server_config.grouped_shuffle_job_service = &*jobs;
+  server_config.carrier_limits.handshake_timeout = std::chrono::milliseconds{1000};
+  server_config.carrier_limits.exchange_timeout = std::chrono::milliseconds{1000};
+  server_config.maximum_connections = 4U;
+  server_config.maximum_accepts_per_poll = 4U;
+  auto server = cluster::DistributedMutableQueryControlTcpServer::start(std::move(server_config));
+  if (!server.has_value()) {
+    std::cerr << server.error().to_string() << '\n';
+    return 4;
+  }
+  std::cout << "JOB_REDUCER_READY " << server->bound_endpoint().port << '\n' << std::flush;
+  cluster::DistributedVectorGroupedAggregateShuffleJobServiceMetrics observed;
+  for (;;) {
+    const common::Status progress = server->poll_once(std::chrono::milliseconds{5});
+    if (!progress.is_ok()) {
+      std::cerr << progress.to_string() << '\n';
+      return 5;
+    }
+    const auto current = jobs->metrics();
+    if (current.lease_activations != observed.lease_activations)
+      std::cout << "ACTIVE " << current.lease_activations << '\n' << std::flush;
+    if (current.lease_renewals != observed.lease_renewals)
+      std::cout << "RENEWED " << current.lease_renewals << '\n' << std::flush;
+    if (current.lease_expirations != observed.lease_expirations)
+      std::cout << "EXPIRED " << current.lease_expirations << '\n' << std::flush;
+    observed = current;
+  }
+}
+
+struct JobCoordinatorInvocation {
+  std::uint16_t reducer_port{};
+  std::uint8_t query_seed{};
+  std::chrono::milliseconds lease_duration{};
+  bool cancel_after_renewal{};
+};
+
+[[nodiscard]] int run_job_coordinator(const JobCoordinatorInvocation& invocation) {
+  LeaseProofs proofs{invocation.query_seed};
+  Authenticator reducer_authenticator{92U};
+  Authorizer authorizer;
+  auto client_context = network::TlsClientContext::create(client_tls());
+  if (!client_context.has_value()) {
+    std::cerr << client_context.error().to_string() << '\n';
+    return 2;
+  }
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+  const cluster::DistributedQueryNodeRoute reducer_route{
+      .node_id = 2U,
+      .endpoints = {{{127U, 0U, 0U, 1U}, invocation.reducer_port}},
+      .tls_context = &*client_context};
+  const cluster::DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits retry{
+      .maximum_attempts = 4U,
+      .initial_backoff = std::chrono::milliseconds{1},
+      .maximum_backoff = std::chrono::milliseconds{4}};
+  auto result_config =
+      cluster::DistributedVectorGroupedAggregateShuffleResultCoordinatorExecutionConfig{};
+  result_config.tls = server_tls();
+  result_config.authenticator = &reducer_authenticator;
+  result_config.node_authorizer = &authorizer;
+  result_config.coordinator_node_id = kCoordinatorNode;
+  result_config.carrier_limits = carrier_limits();
+  result_config.maximum_retained_server_streams = 1U;
+  result_config.maximum_accepts_per_poll = 1U;
+  result_config.execution_deadline = deadline;
+
+  auto coordinator_config =
+      cluster::DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionConfig{};
+  coordinator_config.coordinator_node_id = kCoordinatorNode;
+  coordinator_config.reducer_control_routes = {reducer_route};
+  coordinator_config.authenticator = &reducer_authenticator;
+  coordinator_config.node_authorizer = &authorizer;
+  coordinator_config.carrier_limits = job_control_limits();
+  coordinator_config.connect_timeout = std::chrono::milliseconds{1000};
+  coordinator_config.prepare_retry = retry;
+  coordinator_config.route_install_retry = retry;
+  coordinator_config.seal_retry = retry;
+  coordinator_config.cancel_retry = retry;
+  coordinator_config.lease_retry = retry;
+  coordinator_config.reducer_execution_timeout = std::chrono::seconds{5};
+  coordinator_config.lease_duration = invocation.lease_duration;
+  coordinator_config.lease_renew_interval = std::chrono::milliseconds{20};
+  coordinator_config.execution_deadline = deadline;
+  coordinator_config.result = std::move(result_config);
+  auto coordinator =
+      cluster::DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::create(
+          proofs.authority, proofs.finalization, std::move(coordinator_config));
+  if (!coordinator.has_value()) {
+    std::cerr << coordinator.error().to_string() << '\n';
+    return 3;
+  }
+  while (coordinator->metrics().lease_rounds_completed < 2U) {
+    const common::Status progress = coordinator->poll_once(std::chrono::milliseconds{5});
+    if (!progress.is_ok()) {
+      std::cerr << progress.to_string() << '\n';
+      return 4;
+    }
+    if (coordinator->state() ==
+        cluster::DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kFailed) {
+      std::cerr << coordinator->failure().to_string() << '\n';
+      return 5;
+    }
+  }
+  std::cout << "LEASED " << static_cast<unsigned int>(invocation.query_seed) << '\n' << std::flush;
+  if (!invocation.cancel_after_renewal) {
+    for (;;) {
+      const common::Status progress = coordinator->poll_once(std::chrono::milliseconds{5});
+      if (!progress.is_ok()) {
+        std::cerr << progress.to_string() << '\n';
+        return 6;
+      }
+    }
+  }
+  const common::Status requested = coordinator->cancel();
+  if (!requested.is_ok()) {
+    std::cerr << requested.to_string() << '\n';
+    return 7;
+  }
+  while (
+      coordinator->state() ==
+      cluster::DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling) {
+    const common::Status progress = coordinator->poll_once(std::chrono::milliseconds{5});
+    if (!progress.is_ok()) {
+      std::cerr << progress.to_string() << '\n';
+      return 8;
+    }
+  }
+  if (coordinator->state() !=
+      cluster::DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelled) {
+    std::cerr << coordinator->failure().to_string() << '\n';
+    return 9;
+  }
+  std::cout << "CANCELLED " << static_cast<unsigned int>(invocation.query_seed) << '\n'
+            << std::flush;
   return 0;
 }
 
@@ -307,30 +584,54 @@ template <typename Integer>
 } // namespace chronos::integration
 
 int main(const int argc, char** argv) {
-  using namespace chronos::integration;
-  if (argc == 3 && std::string_view{argv[1]} == "stall-reducer") {
-    const auto partition = parse_integer<std::uint32_t>(argv[2]);
-    if (partition.has_value())
-      return run_stalled_reducer(*partition);
-  }
-  if (argc == 4 && std::string_view{argv[1]} == "coordinator") {
-    const auto port = parse_integer<std::uint16_t>(argv[2]);
-    const auto timeout = parse_integer<std::uint64_t>(argv[3]);
-    if (port.has_value() && timeout.has_value())
-      return run_coordinator(*port, std::chrono::milliseconds{*timeout});
-  }
-  if (argc == 7 && std::string_view{argv[1]} == "reducer") {
-    const auto coordinator_port = parse_integer<std::uint16_t>(argv[2]);
-    const auto refused_port = parse_integer<std::uint16_t>(argv[3]);
-    const auto partition = parse_integer<std::uint32_t>(argv[4]);
-    const auto count = parse_integer<std::uint64_t>(argv[6]);
-    if (coordinator_port.has_value() && refused_port.has_value() && partition.has_value() &&
-        count.has_value()) {
-      return run_reducer(*coordinator_port, *refused_port, *partition, argv[5], *count);
+  try {
+    using namespace chronos::integration;
+    if (argc == 2 && std::string_view{argv[1]} == "job-reducer")
+      return run_job_reducer();
+    if (argc == 6 && std::string_view{argv[1]} == "job-coordinator") {
+      const auto port = parse_integer<std::uint16_t>(argv[2]);
+      const auto query_seed = parse_integer<std::uint32_t>(argv[3]);
+      const auto lease = parse_integer<std::uint64_t>(argv[4]);
+      const std::string_view mode{argv[5]};
+      if (port.has_value() && query_seed.has_value() && *query_seed != 0U && *query_seed <= 255U &&
+          lease.has_value() && (mode == "hold" || mode == "cancel")) {
+        return run_job_coordinator({.reducer_port = *port,
+                                    .query_seed = static_cast<std::uint8_t>(*query_seed),
+                                    .lease_duration = std::chrono::milliseconds{*lease},
+                                    .cancel_after_renewal = mode == "cancel"});
+      }
     }
+    if (argc == 3 && std::string_view{argv[1]} == "stall-reducer") {
+      const auto partition = parse_integer<std::uint32_t>(argv[2]);
+      if (partition.has_value())
+        return run_stalled_reducer(*partition);
+    }
+    if (argc == 4 && std::string_view{argv[1]} == "coordinator") {
+      const auto port = parse_integer<std::uint16_t>(argv[2]);
+      const auto timeout = parse_integer<std::uint64_t>(argv[3]);
+      if (port.has_value() && timeout.has_value())
+        return run_coordinator(*port, std::chrono::milliseconds{*timeout});
+    }
+    if (argc == 7 && std::string_view{argv[1]} == "reducer") {
+      const auto coordinator_port = parse_integer<std::uint16_t>(argv[2]);
+      const auto refused_port = parse_integer<std::uint16_t>(argv[3]);
+      const auto partition = parse_integer<std::uint32_t>(argv[4]);
+      const auto count = parse_integer<std::uint64_t>(argv[6]);
+      if (coordinator_port.has_value() && refused_port.has_value() && partition.has_value() &&
+          count.has_value()) {
+        return run_reducer(*coordinator_port, *refused_port, *partition, argv[5], *count);
+      }
+    }
+    std::cerr << "usage: grouped_shuffle_result_process_child "
+                 "coordinator PORT TIMEOUT_MS | reducer PORT REFUSED_PORT PARTITION VALUE COUNT | "
+                 "stall-reducer PARTITION | job-reducer | "
+                 "job-coordinator REDUCER_PORT QUERY_SEED LEASE_MS hold|cancel\n";
+    return 64;
+  } catch (const std::exception& error) {
+    std::cerr << "grouped shuffle process child failed: " << error.what() << '\n';
+    return 70;
+  } catch (...) {
+    std::cerr << "grouped shuffle process child failed with an unknown exception\n";
+    return 71;
   }
-  std::cerr << "usage: grouped_shuffle_result_process_child "
-               "coordinator PORT TIMEOUT_MS | reducer PORT REFUSED_PORT PARTITION VALUE COUNT | "
-               "stall-reducer PARTITION\n";
-  return 64;
 }

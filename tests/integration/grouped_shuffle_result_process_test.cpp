@@ -87,6 +87,22 @@ public:
     }
   }
 
+  [[nodiscard]] std::optional<std::string> read_until(const std::string_view expected,
+                                                      const std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    for (;;) {
+      const auto now = std::chrono::steady_clock::now();
+      if (now >= deadline)
+        return std::nullopt;
+      const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+      auto line = read_line(remaining);
+      if (!line.has_value())
+        return std::nullopt;
+      if (*line == expected)
+        return line;
+    }
+  }
+
   [[nodiscard]] int wait_for_exit(const std::chrono::milliseconds timeout) noexcept {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     int status{};
@@ -164,6 +180,15 @@ private:
   return port <= 65'535UL ? static_cast<std::uint16_t>(port) : 0U;
 }
 
+[[nodiscard]] std::uint16_t job_reducer_port(const std::string_view line) {
+  constexpr std::string_view prefix{"JOB_REDUCER_READY "};
+  if (!line.starts_with(prefix))
+    return 0U;
+  const std::string value{line.substr(prefix.size())};
+  const unsigned long port = std::strtoul(value.c_str(), nullptr, 10);
+  return port <= 65'535UL ? static_cast<std::uint16_t>(port) : 0U;
+}
+
 void expect_successful_query() {
   ChildProcess coordinator;
   ASSERT_TRUE(coordinator.start({"coordinator", "0", "5000"}));
@@ -227,6 +252,43 @@ TEST(GroupedShuffleResultProcessTest,
   EXPECT_EQ(coordinator.wait_for_exit(std::chrono::seconds{5}), 3);
 
   expect_successful_query();
+}
+
+TEST(GroupedShuffleResultProcessTest,
+     CoordinatorKillExpiresReducerLeaseAndAllowsAFreshReplacement) {
+  ChildProcess reducer;
+  ASSERT_TRUE(reducer.start({"job-reducer"}));
+  const auto reducer_ready = reducer.read_line(std::chrono::seconds{5});
+  ASSERT_TRUE(reducer_ready.has_value());
+  const std::uint16_t reducer_port = job_reducer_port(*reducer_ready);
+  ASSERT_NE(reducer_port, 0U) << *reducer_ready;
+
+  ChildProcess lost_coordinator;
+  ASSERT_TRUE(lost_coordinator.start(
+      {"job-coordinator", std::to_string(reducer_port), "1", "200", "hold"}));
+  const auto first_leased = lost_coordinator.read_line(std::chrono::seconds{5});
+  ASSERT_TRUE(first_leased.has_value());
+  EXPECT_EQ(*first_leased, "LEASED 1");
+  EXPECT_TRUE(reducer.read_until("ACTIVE 1", std::chrono::seconds{5}).has_value());
+  EXPECT_TRUE(reducer.read_until("RENEWED 1", std::chrono::seconds{5}).has_value());
+
+  const auto killed_at = std::chrono::steady_clock::now();
+  ASSERT_TRUE(lost_coordinator.kill_abruptly());
+  EXPECT_TRUE(reducer.read_until("EXPIRED 1", std::chrono::seconds{2}).has_value());
+  EXPECT_LT(std::chrono::steady_clock::now() - killed_at, std::chrono::seconds{2});
+
+  ChildProcess replacement;
+  ASSERT_TRUE(
+      replacement.start({"job-coordinator", std::to_string(reducer_port), "2", "200", "cancel"}));
+  const auto replacement_leased = replacement.read_line(std::chrono::seconds{5});
+  ASSERT_TRUE(replacement_leased.has_value());
+  EXPECT_EQ(*replacement_leased, "LEASED 2");
+  EXPECT_TRUE(reducer.read_until("ACTIVE 2", std::chrono::seconds{5}).has_value());
+  const auto replacement_cancelled = replacement.read_line(std::chrono::seconds{5});
+  ASSERT_TRUE(replacement_cancelled.has_value());
+  EXPECT_EQ(*replacement_cancelled, "CANCELLED 2");
+  EXPECT_EQ(replacement.wait_for_exit(std::chrono::seconds{5}), 0);
+  EXPECT_TRUE(reducer.kill_abruptly());
 }
 
 } // namespace

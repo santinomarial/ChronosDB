@@ -1646,9 +1646,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   coordinator lease after route installation and before workers start. The whole-query owner
   renews every reducer during worker, SEAL, and result phases while reducer polling expires missing
   coordinators without synchronized clocks; the original PREPARE deadline remains the
-  pre-activation fallback. Reducer process-kill qualification and fresh replacement, durable query
-  recovery, fault campaigns, and measurement remain; the separate packaged Native split-leader
-  process gate is qualified.
+  pre-activation fallback. A standalone real-process gate now observes activation and renewal,
+  kills the coordinator, requires the surviving reducer to expire its job before the five-second
+  fallback, and admits, renews, and cancels a fresh query identity. Pre-activation process loss,
+  durable query recovery, partitions, broader fault campaigns, and measurement remain; the separate
+  packaged Native split-leader process gate is also qualified.
   The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives

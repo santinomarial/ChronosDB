@@ -376,8 +376,11 @@ coordinator lease at every reducer before workers start. The whole-query owner r
 during worker, SEAL, and result phases and caps its other waits by the next maintenance deadline.
 If coordinator progress disappears, each reducer cancels its job after its last acknowledged lease
 duration without requiring synchronized clocks. Pre-activation loss retains the original PREPARE
-deadline. Durable job recovery and complete packaged multi-daemon split-leader/process-loss
-qualification remain open.
+deadline. A standalone multi-process gate now runs the production coordinator and shared-endpoint
+reducer owners in separate children, observes activation plus renewal, kills the coordinator, and
+requires the surviving reducer to expire the job before admitting and cancelling a fresh query
+identity. Durable job recovery, pre-activation process loss, network partitions, and broader fault
+campaigns remain open.
 
 ### Portable sufficient-state execution boundary
 

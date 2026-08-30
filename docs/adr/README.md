@@ -582,3 +582,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0545](0545-authenticated-grouped-reducer-coordinator-leases.md) | Authenticated grouped reducer coordinator leases | accepted |
 | [0546](0546-mixed-role-grouped-reducer-job-composition.md) | Mixed-role grouped reducer-job composition | accepted |
 | [0547](0547-split-leader-three-daemon-process-qualification.md) | Split-leader three-daemon process qualification | accepted |
+| [0548](0548-coordinator-process-loss-reducer-lease-qualification.md) | Coordinator process-loss reducer-lease qualification | accepted |
