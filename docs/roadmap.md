@@ -1630,8 +1630,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   provider consumes routes from the same committed query snapshot and selects the lifecycle for
   gateway coordinators. Coordinator-local fragments explicitly retain the direct grouped path
   because current authenticated protocols forbid self routes. A replicated Native service fixture
-  proves the gateway path through real mTLS and mutable storage. Immediate remote cancellation,
-  durable query recovery, self-role job control, full multi-daemon split-leader qualification,
+  proves the gateway path through real mTLS and mutable storage. A distinct fixed Job Control v3
+  CANCEL now authenticates and exact-correlates reducer cleanup. Bounded expiring service
+  tombstones close the cancel-before-PREPARE race; reducer and whole-query owners remain in an
+  explicit finite cancellation phase until all reachable destinations acknowledge or the query
+  deadline ends. Coordinator-crash detection, durable query recovery, self-role job control, full multi-daemon split-leader qualification,
   fault campaigns, and measurement remain. The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives

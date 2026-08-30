@@ -90,3 +90,6 @@ unchanged. The shared stream reader selects the decoder from exact magic and ver
 reinterpret either version. Unknown versions are unsupported. Malformed or noncanonical bytes are
 corruption, caller-limit excess and allocation failure are resource exhaustion, and new action or
 route semantics require another version.
+
+The additive [Job Control v3](distributed-vector-grouped-aggregate-shuffle-job-control-v3.md)
+defines only authenticated CANCEL; v2 bytes and route semantics remain unchanged.

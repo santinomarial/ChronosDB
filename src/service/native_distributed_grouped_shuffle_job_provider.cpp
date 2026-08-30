@@ -142,6 +142,7 @@ NativeDistributedGroupedShuffleJobProvider::prepare(
         .prepare_retry = config.prepare_retry,
         .route_install_retry = config.route_install_retry,
         .seal_retry = config.seal_retry,
+        .cancel_retry = config.cancel_retry,
         .reducer_execution_timeout = reducer_timeout,
         .execution_deadline = execution_deadline,
         .maximum_reducer_nodes = config.maximum_reducer_nodes,

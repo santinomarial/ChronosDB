@@ -24,6 +24,7 @@ struct DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionConfig {
   DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits prepare_retry;
   DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits route_install_retry;
   DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits seal_retry;
+  DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits cancel_retry;
   std::chrono::milliseconds reducer_execution_timeout{30000};
   std::chrono::steady_clock::time_point execution_deadline;
   std::size_t maximum_reducer_nodes{4096U};
@@ -35,6 +36,8 @@ struct DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionMetrics {
   std::size_t prepared_reducers{};
   std::size_t route_installed_reducers{};
   std::size_t sealed_reducers{};
+  std::size_t cancelled_reducers{};
+  std::uint64_t cancel_delivery_failures{};
   std::uint64_t control_attempts_started{};
   std::uint64_t control_retries_started{};
   std::uint64_t control_failed_attempts{};
@@ -51,12 +54,16 @@ enum class DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState 
   kResultTaken = 7,
   kFailed = 8,
   kCancelled = 9,
+  kCancelling = 10,
 };
 
 // Owns one coordinator-side reducer set. It starts every PREPARE before blocking, publishes no
 // remote shuffle route until every authority destination node has acknowledged, omits listeners
 // for all-local destinations, accepts one explicit seal transition after source delivery closes,
 // and publishes Native output only after every reducer's receipt-proven partition result arrives.
+// Failure and explicit cancellation enter a finite authenticated remote-cancellation phase; the
+// caller must keep polling while state is kCancelling so admitted jobs or cancel-before-prepare
+// tombstones are acknowledged before this owner becomes terminal.
 // Authority, finalization proof, TLS contexts, and security dependencies are borrowed and must
 // outlive this single-thread-affine owner.
 class DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution {

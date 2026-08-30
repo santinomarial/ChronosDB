@@ -341,16 +341,14 @@ exact borrowed TLS client context before admission. `chronosd` installs those st
 the same canonical peer set used by distributed queries.
 
 Coordinator-side control now has two explicit levels. A single-route acquisition freezes canonical
-request bytes, exact-decodes a fresh owned PREPARE or SEAL for each attempt, rotates only authorized
-addresses, and keeps the whole operation under one deadline. Only SEAL may treat a correlated
+request bytes, exact-decodes a fresh owned PREPARE, INSTALL_ROUTES, SEAL, or CANCEL for each attempt,
+rotates only authorized addresses, and keeps the whole operation under one deadline. Only SEAL may treat a correlated
 `UNAVAILABLE` as transient readiness. The reducer-set coordinator starts every PREPARE before a
 bounded wait and withholds every remote shuffle route until all destination nodes accept. It
 requires an endpoint only when a destination has a nonlocal source. After explicit source closure,
 it seals the complete reducer set and enters the existing lossless result coordinator only after
 all SEAL responses succeed. Result bytes remain unavailable until every partition is receipt-proven
-and the global Native finalizer succeeds. Failure clears unpublished routes and cancels local
-control/result owners; already admitted remote jobs expire at their relative deadline because
-control v1 has no CANCEL action.
+and the global Native finalizer succeeds.
 
 The packaged continuation inserts one route-install phase between PREPARE and worker scheduling.
 Job Control v2 broadcasts the same sorted destination listener map to every reducer; each reducer
@@ -365,8 +363,12 @@ collection, and final Native ownership in that order. The Native provider receiv
 from the same committed query snapshot. It selects this independent-process path only on a gateway
 coordinator with no local fragment; the current protocols require authenticated source/target node
 identity and intentionally reject network self routes. Queries with a coordinator-local fragment
-therefore retain the direct grouped lifecycle. Immediate remote cancellation, durable job recovery,
-self-role protocol support, and complete packaged multi-daemon qualification remain open.
+therefore retain the direct grouped lifecycle. Failure or explicit client cancellation now closes
+workers and enters Job Control v3 cancellation for every reducer. The service installs a bounded
+expiring tombstone when CANCEL wins the cross-connection race with PREPARE, so a delayed PREPARE
+cannot recreate the job after acknowledged cleanup. Unreachable reducers retain their relative
+deadline fallback. Coordinator-crash detection, durable job recovery, self-role protocol support,
+and complete packaged multi-daemon qualification remain open.
 
 ### Portable sufficient-state execution boundary
 

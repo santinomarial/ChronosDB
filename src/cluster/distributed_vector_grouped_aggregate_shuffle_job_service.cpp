@@ -178,6 +178,12 @@ enum class JobState : std::uint8_t {
 
 class DistributedVectorGroupedAggregateShuffleJobService::Impl {
 public:
+  struct CancelTombstone {
+    common::Uuid query_id;
+    raft::NodeId coordinator_node_id{};
+    std::chrono::steady_clock::time_point deadline;
+  };
+
   struct Job {
     struct SourceSubmission {
       schema::TabletId tablet_id;
@@ -210,13 +216,26 @@ public:
   };
 
   Impl(DistributedVectorGroupedAggregateShuffleJobServiceConfig configured,
-       std::vector<std::unique_ptr<Job>> owned_jobs) noexcept
-      : config(std::move(configured)), jobs(std::move(owned_jobs)) {}
+       std::vector<std::unique_ptr<Job>> owned_jobs,
+       std::vector<CancelTombstone> owned_cancel_tombstones) noexcept
+      : config(std::move(configured)), jobs(std::move(owned_jobs)),
+        cancel_tombstones(std::move(owned_cancel_tombstones)) {}
 
   [[nodiscard]] Job* find(const common::Uuid& query_id) noexcept {
     const auto found = std::ranges::find_if(
         jobs, [&](const auto& job) { return job->prepare.authority.query_id() == query_id; });
     return found == jobs.end() ? nullptr : found->get();
+  }
+
+  [[nodiscard]] CancelTombstone* find_cancel_tombstone(const common::Uuid& query_id) noexcept {
+    const auto found = std::ranges::find(cancel_tombstones, query_id, &CancelTombstone::query_id);
+    return found == cancel_tombstones.end() ? nullptr : std::addressof(*found);
+  }
+
+  void prune_cancel_tombstones(const std::chrono::steady_clock::time_point now) noexcept {
+    std::erase_if(cancel_tombstones,
+                  [now](const auto& tombstone) { return now >= tombstone.deadline; });
+    service_metrics.cancel_tombstones = cancel_tombstones.size();
   }
 
   [[nodiscard]] static DistributedVectorGroupedAggregateShuffleJobControlResponse
@@ -245,6 +264,25 @@ public:
     job.failure = std::move(failure);
     job.state = JobState::kFailed;
     increment_saturated(service_metrics.failed_jobs);
+  }
+
+  void cancel_job(Job& job) noexcept {
+    if (job.state == JobState::kCancelled) {
+      increment_saturated(service_metrics.duplicate_cancels);
+      return;
+    }
+    if (job.state == JobState::kComplete || job.state == JobState::kFailed)
+      return;
+    static_cast<void>(job.destination.cancel());
+    if (job.source_transport.has_value())
+      static_cast<void>(job.source_transport->cancel());
+    if (job.result_sender.has_value())
+      static_cast<void>(job.result_sender->cancel());
+    if (job.state == JobState::kTransmitting && service_metrics.transmitting_jobs != 0U)
+      --service_metrics.transmitting_jobs;
+    job.failure = {common::StatusCode::kCancelled, "grouped shuffle reducer job was cancelled"};
+    job.state = JobState::kCancelled;
+    increment_saturated(service_metrics.cancelled_jobs);
   }
 
   [[nodiscard]] common::Result<bool>
@@ -363,6 +401,7 @@ public:
 
   DistributedVectorGroupedAggregateShuffleJobServiceConfig config;
   std::vector<std::unique_ptr<Job>> jobs;
+  std::vector<CancelTombstone> cancel_tombstones;
   DistributedVectorGroupedAggregateShuffleJobServiceMetrics service_metrics;
 };
 
@@ -402,6 +441,11 @@ DistributedVectorGroupedAggregateShuffleJobService::create(
           kMaximumDistributedVectorGroupedAggregateShuffleJobQueryMemoryBytes ||
       config.maximum_retained_streams_per_job == 0U || config.maximum_accepts_per_job_poll == 0U ||
       config.maximum_reducer_admissions_per_job_poll == 0U ||
+      config.maximum_cancel_tombstones == 0U || config.maximum_cancel_tombstones > 65'536U ||
+      config.cancel_tombstone_retention.count() <= 0 ||
+      config.cancel_tombstone_retention >
+          distributed_vector_grouped_aggregate_shuffle_job_control_format::
+              kMaximumExecutionTimeout ||
       config.result_connect_timeout.count() <= 0 ||
       config.result_connect_timeout.count() > INT_MAX ||
       config.shuffle_connect_timeout.count() <= 0 ||
@@ -412,8 +456,10 @@ DistributedVectorGroupedAggregateShuffleJobService::create(
   try {
     std::vector<std::unique_ptr<Impl::Job>> jobs;
     jobs.reserve(config.maximum_jobs);
+    std::vector<Impl::CancelTombstone> cancel_tombstones;
+    cancel_tombstones.reserve(config.maximum_cancel_tombstones);
     return DistributedVectorGroupedAggregateShuffleJobService{
-        std::make_unique<Impl>(std::move(config), std::move(jobs))};
+        std::make_unique<Impl>(std::move(config), std::move(jobs), std::move(cancel_tombstones))};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(
         exhausted("grouped shuffle reducer-job service allocation failed"));
@@ -431,6 +477,7 @@ DistributedVectorGroupedAggregateShuffleJobService::receive(
   if (!implementation_)
     return common::make_unexpected(invalid("grouped shuffle reducer-job service is empty"));
   Impl& impl = *implementation_;
+  impl.prune_cancel_tombstones(now);
   if (auto* prepare = std::get_if<DistributedVectorGroupedAggregateShuffleJobPrepare>(&request)) {
     increment_saturated(impl.service_metrics.prepare_requests);
     const common::Uuid query_id = prepare->authority.query_id();
@@ -445,6 +492,14 @@ DistributedVectorGroupedAggregateShuffleJobService::receive(
       return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kPrepare,
                             common::StatusCode::kInvalidArgument, query_id,
                             prepare->coordinator_node_id, prepare->target_node_id);
+    if (const Impl::CancelTombstone* tombstone = impl.find_cancel_tombstone(query_id);
+        tombstone != nullptr) {
+      return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kPrepare,
+                            tombstone->coordinator_node_id == prepare->coordinator_node_id
+                                ? common::StatusCode::kCancelled
+                                : common::StatusCode::kAlreadyExists,
+                            query_id, prepare->coordinator_node_id, prepare->target_node_id);
+    }
     if (Impl::Job* existing = impl.find(query_id); existing != nullptr) {
       if (!same_prepare(existing->prepare, *prepare)) {
         increment_saturated(impl.service_metrics.conflicting_prepares);
@@ -633,6 +688,66 @@ DistributedVectorGroupedAggregateShuffleJobService::receive(
     }
   }
 
+  if (const auto* cancel =
+          std::get_if<DistributedVectorGroupedAggregateShuffleJobCancel>(&request)) {
+    increment_saturated(impl.service_metrics.cancel_requests);
+    auto authorized = impl.authorize(authenticated_peer, cancel->coordinator_node_id);
+    if (!authorized.has_value())
+      return common::make_unexpected(authorized.error());
+    if (!*authorized) {
+      return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kCancel,
+                            common::StatusCode::kUnauthenticated, cancel->query_id,
+                            cancel->coordinator_node_id, cancel->target_node_id);
+    }
+    if (cancel->target_node_id != impl.config.local_node_id) {
+      return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kCancel,
+                            common::StatusCode::kInvalidArgument, cancel->query_id,
+                            cancel->coordinator_node_id, cancel->target_node_id);
+    }
+    if (Impl::Job* job = impl.find(cancel->query_id); job != nullptr) {
+      if (job->prepare.coordinator_node_id != cancel->coordinator_node_id) {
+        return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kCancel,
+                              common::StatusCode::kInvalidArgument, cancel->query_id,
+                              cancel->coordinator_node_id, cancel->target_node_id);
+      }
+      impl.cancel_job(*job);
+      return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kCancel,
+                            common::StatusCode::kOk, cancel->query_id, cancel->coordinator_node_id,
+                            cancel->target_node_id);
+    }
+    if (Impl::CancelTombstone* tombstone = impl.find_cancel_tombstone(cancel->query_id);
+        tombstone != nullptr) {
+      if (tombstone->coordinator_node_id != cancel->coordinator_node_id) {
+        return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kCancel,
+                              common::StatusCode::kAlreadyExists, cancel->query_id,
+                              cancel->coordinator_node_id, cancel->target_node_id);
+      }
+      increment_saturated(impl.service_metrics.duplicate_cancels);
+      return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kCancel,
+                            common::StatusCode::kOk, cancel->query_id, cancel->coordinator_node_id,
+                            cancel->target_node_id);
+    }
+    if (impl.cancel_tombstones.size() == impl.config.maximum_cancel_tombstones) {
+      return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kCancel,
+                            common::StatusCode::kResourceExhausted, cancel->query_id,
+                            cancel->coordinator_node_id, cancel->target_node_id);
+    }
+    try {
+      impl.cancel_tombstones.push_back(
+          {.query_id = cancel->query_id,
+           .coordinator_node_id = cancel->coordinator_node_id,
+           .deadline = saturating_deadline(now, impl.config.cancel_tombstone_retention)});
+      impl.service_metrics.cancel_tombstones = impl.cancel_tombstones.size();
+      return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kCancel,
+                            common::StatusCode::kOk, cancel->query_id, cancel->coordinator_node_id,
+                            cancel->target_node_id);
+    } catch (const std::bad_alloc&) {
+      return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kCancel,
+                            common::StatusCode::kResourceExhausted, cancel->query_id,
+                            cancel->coordinator_node_id, cancel->target_node_id);
+    }
+  }
+
   const auto& seal = std::get<DistributedVectorGroupedAggregateShuffleJobSeal>(request);
   increment_saturated(impl.service_metrics.seal_requests);
   auto authorized = impl.authorize(authenticated_peer, seal.coordinator_node_id);
@@ -780,6 +895,7 @@ common::Status DistributedVectorGroupedAggregateShuffleJobService::poll_once(
   if (maximum_wait.count() < 0 || maximum_wait.count() > INT_MAX)
     return invalid("grouped shuffle reducer-job service poll timeout is invalid");
   Impl& impl = *implementation_;
+  impl.prune_cancel_tombstones(now);
   bool waited{};
   for (auto& owner : impl.jobs) {
     Impl::Job& job = *owner;
@@ -862,21 +978,9 @@ DistributedVectorGroupedAggregateShuffleJobService::cancel(const common::Uuid& q
   Impl::Job* job = implementation_->find(query_id);
   if (job == nullptr)
     return invalid("grouped shuffle reducer job was not found");
-  if (job->state == JobState::kCancelled)
-    return job->failure;
   if (job->state == JobState::kComplete || job->state == JobState::kFailed)
     return common::Status::ok();
-  static_cast<void>(job->destination.cancel());
-  if (job->source_transport.has_value())
-    static_cast<void>(job->source_transport->cancel());
-  if (job->result_sender.has_value())
-    static_cast<void>(job->result_sender->cancel());
-  if (job->state == JobState::kTransmitting &&
-      implementation_->service_metrics.transmitting_jobs != 0U)
-    --implementation_->service_metrics.transmitting_jobs;
-  job->failure = {common::StatusCode::kCancelled, "grouped shuffle reducer job was cancelled"};
-  job->state = JobState::kCancelled;
-  increment_saturated(implementation_->service_metrics.cancelled_jobs);
+  implementation_->cancel_job(*job);
   return job->failure;
 }
 

@@ -329,5 +329,70 @@ TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
   EXPECT_EQ(service.metrics().active_jobs, 0U);
 }
 
+TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
+     RetainsIdempotentCancellationTombstoneAndCancelsAnInstalledJob) {
+  Authenticator authenticator{93U};
+  Authorizer authorizer;
+  auto result_context = network::TlsClientContext::create(client_tls()).value();
+  const std::array result_contexts{DistributedQueryNodeTlsContext{9U, &result_context}};
+  auto service = DistributedVectorGroupedAggregateShuffleJobService::create(
+                     {.local_node_id = 3U,
+                      .shuffle_tls = server_tls(),
+                      .shuffle_authenticator = &authenticator,
+                      .result_authenticator = &authenticator,
+                      .node_authorizer = &authorizer,
+                      .result_tls_contexts = result_contexts,
+                      .maximum_jobs = 1U,
+                      .maximum_job_query_memory_bytes = 16U << 20U,
+                      .maximum_cancel_tombstones = 1U,
+                      .cancel_tombstone_retention = std::chrono::milliseconds{5}})
+                     .value();
+  const network::PeerAuthenticationResult peer{.authorized = true, .principal_id = 93U};
+  const DistributedVectorGroupedAggregateShuffleJobCancel cancel{
+      .query_id = uuid(1U), .coordinator_node_id = 9U, .target_node_id = 3U};
+  const auto now = std::chrono::steady_clock::now();
+  auto cancelled =
+      service.receive(DistributedVectorGroupedAggregateShuffleJobControlRequest{cancel}, peer, now);
+  ASSERT_TRUE(cancelled.has_value()) << cancelled.error().to_string();
+  EXPECT_EQ(cancelled->status_code, common::StatusCode::kOk);
+  auto duplicate =
+      service.receive(DistributedVectorGroupedAggregateShuffleJobControlRequest{cancel}, peer, now);
+  ASSERT_TRUE(duplicate.has_value());
+  EXPECT_EQ(duplicate->status_code, common::StatusCode::kOk);
+  auto other_cancel = cancel;
+  other_cancel.query_id = uuid(4U);
+  auto exhausted = service.receive(
+      DistributedVectorGroupedAggregateShuffleJobControlRequest{other_cancel}, peer, now);
+  ASSERT_TRUE(exhausted.has_value());
+  EXPECT_EQ(exhausted->status_code, common::StatusCode::kResourceExhausted);
+  auto blocked = service.receive(DistributedVectorGroupedAggregateShuffleJobControlRequest{prepare(
+                                     {{127U, 0U, 0U, 1U}, 9123U})},
+                                 peer, now);
+  ASSERT_TRUE(blocked.has_value());
+  EXPECT_EQ(blocked->status_code, common::StatusCode::kCancelled);
+  EXPECT_EQ(service.metrics().cancel_tombstones, 1U);
+  EXPECT_EQ(service.metrics().active_jobs, 0U);
+
+  const auto after_retention = now + std::chrono::milliseconds{6};
+  ASSERT_TRUE(service.poll_once(std::chrono::milliseconds{0}, after_retention).is_ok());
+  EXPECT_EQ(service.metrics().cancel_tombstones, 0U);
+  auto prepared = service.receive(DistributedVectorGroupedAggregateShuffleJobControlRequest{prepare(
+                                      {{127U, 0U, 0U, 1U}, 9123U})},
+                                  peer, after_retention);
+  ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
+  ASSERT_EQ(prepared->status_code, common::StatusCode::kOk);
+  auto installed_cancel = service.receive(
+      DistributedVectorGroupedAggregateShuffleJobControlRequest{cancel}, peer, after_retention);
+  ASSERT_TRUE(installed_cancel.has_value()) << installed_cancel.error().to_string();
+  EXPECT_EQ(installed_cancel->status_code, common::StatusCode::kOk);
+  auto installed_duplicate = service.receive(
+      DistributedVectorGroupedAggregateShuffleJobControlRequest{cancel}, peer, after_retention);
+  ASSERT_TRUE(installed_duplicate.has_value());
+  EXPECT_EQ(installed_duplicate->status_code, common::StatusCode::kOk);
+  EXPECT_EQ(service.metrics().cancel_requests, 5U);
+  EXPECT_EQ(service.metrics().duplicate_cancels, 2U);
+  EXPECT_EQ(service.metrics().cancelled_jobs, 1U);
+}
+
 } // namespace
 } // namespace chronos::cluster

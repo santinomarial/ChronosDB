@@ -49,9 +49,10 @@ Add one move-only whole-query owner with this order:
 5. SEAL every reducer only after source transport closes;
 6. collect receipt-proven reduced partitions and atomically take the Native result.
 
-Failure or cancellation tears down workers and coordinator-side reducer/result owners. Admitted
-remote jobs still use their relative deadline because the wire protocol has no CANCEL action. Jobs
-are in-memory execution state, not acknowledged writes, and make no durability guarantee.
+Failure or cancellation tears down workers and enters the authenticated remote CANCEL lifecycle
+added by [ADR 0544](0544-authenticated-grouped-reducer-job-cancellation.md). An unreachable remote
+job still uses its relative deadline as the bounded fallback. Jobs and cancellation tombstones are
+in-memory execution state, not acknowledged writes, and make no durability guarantee.
 
 The Native deployment provider receives the exact worker routes resolved from the same committed
 query snapshot. It selects reducer jobs only when the coordinator is a gateway with no local source
@@ -67,7 +68,7 @@ topologies. Route authority cannot become stale relative to the prepared query s
 streams originate at their authenticated nodes, and Native bytes remain unavailable until every
 reducer result is acknowledged and globally finalized.
 
-This is not a claim of durable query recovery, immediate remote cancellation, or arbitrary
+This is not a claim of durable query recovery, coordinator-crash detection, or arbitrary
 relational shuffle. Packaged Linux split-leader qualification, abrupt daemon faults during each new
 phase, skew/loss campaigns, and scale measurements remain required. Coordinator-local queries use
 the direct sufficient-state merge path until a future protocol explicitly supports self roles.
@@ -130,7 +131,7 @@ partial rollback that leaves workers publishing to jobs without route installati
 
 ## Unresolved questions
 
-- Add a separately versioned authenticated CANCEL action and qualify coordinator loss.
+- Add coordinator-liveness detection and qualify coordinator loss.
 - Support a coordinator that is also a source/destination without weakening principal-to-node
   authorization or constructing a network self route.
 - Run packaged multi-daemon split-leader, partition/loss, skew, and measurement gates.
@@ -139,5 +140,7 @@ partial rollback that leaves workers publishing to jobs without route installati
 
 - [Job Control v1](../formats/distributed-vector-grouped-aggregate-shuffle-job-control-v1.md)
 - [Job Control v2](../formats/distributed-vector-grouped-aggregate-shuffle-job-control-v2.md)
+- [Job Control v3](../formats/distributed-vector-grouped-aggregate-shuffle-job-control-v3.md)
+- [Authenticated grouped reducer-job cancellation](0544-authenticated-grouped-reducer-job-cancellation.md)
 - [Distributed grouped SQL execution](../learning/distributed-grouped-sql-execution.md)
 - [Implementation roadmap](../roadmap.md)

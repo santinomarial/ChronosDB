@@ -60,8 +60,9 @@ answer. All-local execution avoids opening an unused shuffle listener.
 
 [ADR 0543](0543-packaged-grouped-shuffle-job-lifecycle.md) now constructs source plans on their
 authenticated worker nodes and installs the coordinator in packaged Native SQL for gateway
-topologies. Immediate remote cancellation still requires a separately versioned wire action. A
-coordinator crash still retries the whole query with fresh in-memory jobs.
+topologies. [ADR 0544](0544-authenticated-grouped-reducer-job-cancellation.md) adds the separately
+versioned authenticated CANCEL phase and cancel-before-prepare tombstones. A coordinator crash still
+relies on reducer deadlines and retries the whole query with fresh in-memory jobs.
 
 ## Affected invariants
 
@@ -101,14 +102,13 @@ the immutable-attempt retry contract.
 
 ## Unresolved questions
 
-- Add an explicitly versioned authenticated remote CANCEL action if deadline cleanup is
-  insufficient operationally.
-- Qualify the complete lifecycle across packaged independent daemons under process and network
+- Qualify the complete lifecycle and v3 cancellation across packaged independent daemons under process and network
   faults.
 
 ## References
 
 - [Grouped reducer-job control format](../formats/distributed-vector-grouped-aggregate-shuffle-job-control-v1.md)
 - [Packaged grouped shuffle job lifecycle](0543-packaged-grouped-shuffle-job-lifecycle.md)
+- [Authenticated grouped reducer-job cancellation](0544-authenticated-grouped-reducer-job-cancellation.md)
 - [Distributed grouped SQL execution](../learning/distributed-grouped-sql-execution.md)
 - [Implementation roadmap](../roadmap.md)

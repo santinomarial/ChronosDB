@@ -44,6 +44,9 @@ struct DistributedVectorGroupedAggregateShuffleJobServiceConfig {
   std::size_t maximum_retained_streams_per_job{1024U};
   std::size_t maximum_accepts_per_job_poll{32U};
   std::size_t maximum_reducer_admissions_per_job_poll{1024U};
+  std::size_t maximum_cancel_tombstones{4096U};
+  std::chrono::milliseconds cancel_tombstone_retention{
+      distributed_vector_grouped_aggregate_shuffle_job_control_format::kMaximumExecutionTimeout};
 };
 
 struct DistributedVectorGroupedAggregateShuffleJobServiceMetrics {
@@ -53,6 +56,8 @@ struct DistributedVectorGroupedAggregateShuffleJobServiceMetrics {
   std::uint64_t seal_requests{};
   std::uint64_t route_install_requests{};
   std::uint64_t duplicate_route_installs{};
+  std::uint64_t cancel_requests{};
+  std::uint64_t duplicate_cancels{};
   std::uint64_t submitted_source_tablets{};
   std::uint64_t duplicate_source_submissions{};
   std::uint64_t completed_source_transports{};
@@ -61,6 +66,7 @@ struct DistributedVectorGroupedAggregateShuffleJobServiceMetrics {
   std::uint64_t cancelled_jobs{};
   std::size_t active_jobs{};
   std::size_t transmitting_jobs{};
+  std::size_t cancel_tombstones{};
 };
 
 // Owns a finite set of reducer jobs after an authenticated control carrier has decoded a request.

@@ -240,6 +240,64 @@ distributed_vector_grouped_aggregate_shuffle_job_control_request_frame_length_v2
   return frame_size;
 }
 
+common::Result<std::size_t>
+distributed_vector_grouped_aggregate_shuffle_job_control_request_frame_length_v3(
+    const common::ByteView header,
+    const DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits limits) {
+  namespace v3 = distributed_vector_grouped_aggregate_shuffle_job_control_v3_format;
+  const common::Status valid_limits =
+      validate_distributed_vector_grouped_aggregate_shuffle_job_control_decode_limits(limits);
+  if (!valid_limits.is_ok())
+    return common::make_unexpected(valid_limits);
+  if (header.size() != v3::kHeaderLength ||
+      !std::ranges::equal(header.first(v3::kRequestMagic.size()), v3::kRequestMagic)) {
+    return common::make_unexpected(
+        corruption("grouped shuffle cancellation stream header framing is invalid"));
+  }
+  common::ByteReader crc_reader{header.subspan(kHeaderCrcOffset, sizeof(std::uint32_t))};
+  const auto header_crc = crc_reader.read_u32_le();
+  if (!header_crc.has_value() || *header_crc != common::crc32c(header.first(kHeaderCrcOffset))) {
+    return common::make_unexpected(
+        corruption("grouped shuffle cancellation stream header checksum differs"));
+  }
+  common::ByteReader reader{header};
+  static_cast<void>(reader.skip(v3::kRequestMagic.size()));
+  const auto major = reader.read_u16_le();
+  const auto minor = reader.read_u16_le();
+  const auto header_length = reader.read_u32_le();
+  const auto frame_length = reader.read_u64_le();
+  const auto action = reader.read_u8();
+  const auto action_reserved = reader.read_exact(7U);
+  const auto coordinator = reader.read_u64_le();
+  const auto target = reader.read_u64_le();
+  const auto query = reader.read_exact(common::Uuid::kSize);
+  const auto reserved = reader.read_exact(60U);
+  static_cast<void>(reader.skip(4U));
+  if (!major.has_value() || !minor.has_value() || !header_length.has_value() ||
+      !frame_length.has_value() || !action.has_value() || !action_reserved.has_value() ||
+      !coordinator.has_value() || !target.has_value() || !query.has_value() ||
+      !reserved.has_value()) {
+    return common::make_unexpected(
+        corruption("grouped shuffle cancellation stream header is truncated"));
+  }
+  if (*major != v3::kMajor || *minor != v3::kMinor)
+    return common::make_unexpected(
+        unsupported("grouped shuffle cancellation stream version is unsupported"));
+  common::Uuid::Bytes query_bytes{};
+  std::ranges::copy(*query, query_bytes.begin());
+  if (*header_length != v3::kHeaderLength || *frame_length != v3::kFrameLength ||
+      *action != static_cast<std::uint8_t>(
+                     DistributedVectorGroupedAggregateShuffleJobControlAction::kCancel) ||
+      !zero(*action_reserved) || !zero(*reserved) || *coordinator == 0U || *target == 0U ||
+      *coordinator == *target || common::Uuid{query_bytes}.is_nil()) {
+    return common::make_unexpected(
+        corruption("grouped shuffle cancellation stream header is invalid"));
+  }
+  if (v3::kFrameLength > limits.maximum_frame_length)
+    return common::make_unexpected(exhausted("grouped shuffle cancellation stream exceeds limits"));
+  return v3::kFrameLength;
+}
+
 DistributedVectorGroupedAggregateShuffleJobControlRequestReader::
     DistributedVectorGroupedAggregateShuffleJobControlRequestReader(
         DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits limits) noexcept
@@ -251,7 +309,7 @@ DistributedVectorGroupedAggregateShuffleJobControlRequestReader::
     : limits_(other.limits_), header_(other.header_), header_bytes_(other.header_bytes_),
       frame_(std::move(other.frame_)), frame_bytes_(other.frame_bytes_),
       expected_frame_bytes_(other.expected_frame_bytes_), failure_(std::move(other.failure_)),
-      version_two_(other.version_two_) {
+      version_(other.version_) {
   other.reset_frame();
   other.failure_.reset();
 }
@@ -267,7 +325,7 @@ DistributedVectorGroupedAggregateShuffleJobControlRequestReader::operator=(
     frame_bytes_ = other.frame_bytes_;
     expected_frame_bytes_ = other.expected_frame_bytes_;
     failure_ = std::move(other.failure_);
-    version_two_ = other.version_two_;
+    version_ = other.version_;
     other.reset_frame();
     other.failure_.reset();
   }
@@ -295,7 +353,7 @@ void DistributedVectorGroupedAggregateShuffleJobControlRequestReader::reset_fram
   frame_.clear();
   frame_bytes_ = 0U;
   expected_frame_bytes_.reset();
-  version_two_ = false;
+  version_ = 1U;
 }
 
 common::Result<DistributedVectorGroupedAggregateShuffleJobControlRequestReadStep>
@@ -313,14 +371,24 @@ DistributedVectorGroupedAggregateShuffleJobControlRequestReader::consume(
     if (header_bytes_ != header_.size())
       return DistributedVectorGroupedAggregateShuffleJobControlRequestReadStep{.consumed_bytes =
                                                                                    consumed};
-    version_two_ = std::ranges::equal(
-        common::ByteView{header_}.first(
-            distributed_vector_grouped_aggregate_shuffle_job_control_v2_format::kRequestMagic
-                .size()),
-        distributed_vector_grouped_aggregate_shuffle_job_control_v2_format::kRequestMagic);
+    const auto magic = common::ByteView{header_}.first(
+        distributed_vector_grouped_aggregate_shuffle_job_control_format::kRequestMagic.size());
+    version_ =
+        std::ranges::equal(
+            magic,
+            distributed_vector_grouped_aggregate_shuffle_job_control_v2_format::kRequestMagic)
+            ? 2U
+        : std::ranges::equal(
+              magic,
+              distributed_vector_grouped_aggregate_shuffle_job_control_v3_format::kRequestMagic)
+            ? 3U
+            : 1U;
     auto expected =
-        version_two_
+        version_ == 2U
             ? distributed_vector_grouped_aggregate_shuffle_job_control_request_frame_length_v2(
+                  header_, limits_)
+        : version_ == 3U
+            ? distributed_vector_grouped_aggregate_shuffle_job_control_request_frame_length_v3(
                   header_, limits_)
             : distributed_vector_grouped_aggregate_shuffle_job_control_request_frame_length_v1(
                   header_, limits_);
@@ -347,8 +415,11 @@ DistributedVectorGroupedAggregateShuffleJobControlRequestReader::consume(
     return DistributedVectorGroupedAggregateShuffleJobControlRequestReadStep{.consumed_bytes =
                                                                                  consumed};
   auto decoded =
-      version_two_
+      version_ == 2U
           ? decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v2_exact(
+                frame_, limits_)
+      : version_ == 3U
+          ? decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v3_exact(
                 frame_, limits_)
           : decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v1_exact(
                 frame_, limits_);
@@ -409,14 +480,17 @@ DistributedVectorGroupedAggregateShuffleJobControlResponseReader::consume(
   if (buffered_bytes_ != frame_.size())
     return DistributedVectorGroupedAggregateShuffleJobControlResponseReadStep{.consumed_bytes =
                                                                                   copied};
-  const bool version_two = std::ranges::equal(
-      common::ByteView{frame_}.first(
-          distributed_vector_grouped_aggregate_shuffle_job_control_v2_format::kResponseMagic
-              .size()),
-      distributed_vector_grouped_aggregate_shuffle_job_control_v2_format::kResponseMagic);
+  const auto magic = common::ByteView{frame_}.first(
+      distributed_vector_grouped_aggregate_shuffle_job_control_format::kResponseMagic.size());
   auto decoded =
-      version_two
+      std::ranges::equal(
+          magic, distributed_vector_grouped_aggregate_shuffle_job_control_v2_format::kResponseMagic)
           ? decode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v2_exact(
+                frame_)
+      : std::ranges::equal(
+            magic,
+            distributed_vector_grouped_aggregate_shuffle_job_control_v3_format::kResponseMagic)
+          ? decode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v3_exact(
                 frame_)
           : decode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1_exact(
                 frame_);

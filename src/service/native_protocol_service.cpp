@@ -1261,6 +1261,12 @@ NativeProtocolService::execute_query(network::NetworkTask request,
                             kCancelled) {
                   if (cancellation != nullptr && cancellation->requested()) {
                     static_cast<void>(scheduler->cancel());
+                    while (
+                        scheduler->state() ==
+                        cluster::DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::
+                            kCancelling) {
+                      static_cast<void>(scheduler->poll_once(config.maximum_poll_wait));
+                    }
                     return query_error(
                         target, {common::StatusCode::kCancelled, "native query was cancelled"},
                         limits_.protocol);

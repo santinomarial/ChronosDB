@@ -90,3 +90,5 @@ requires a new version.
 
 The additive [Job Control v2](distributed-vector-grouped-aggregate-shuffle-job-control-v2.md)
 defines only the subsequent INSTALL_ROUTES action. PREPARE and SEAL remain canonical v1 frames.
+The additive [Job Control v3](distributed-vector-grouped-aggregate-shuffle-job-control-v3.md)
+defines only CANCEL.

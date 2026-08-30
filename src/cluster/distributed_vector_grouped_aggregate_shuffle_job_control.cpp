@@ -153,6 +153,7 @@ action_code(const DistributedVectorGroupedAggregateShuffleJobControlAction actio
   case DistributedVectorGroupedAggregateShuffleJobControlAction::kSeal:
     return 2U;
   case DistributedVectorGroupedAggregateShuffleJobControlAction::kInstallRoutes:
+  case DistributedVectorGroupedAggregateShuffleJobControlAction::kCancel:
     break;
   }
   return common::make_unexpected(invalid("grouped shuffle reducer-job action is invalid"));

@@ -194,13 +194,17 @@ public:
       if (consumed->consumed_bytes != magic.size() || consumed->request.has_value())
         return fail(status(common::StatusCode::kCorruption,
                            "read-authority query-control magic prefix is invalid"));
-    } else if (config_.grouped_shuffle_job_service != nullptr &&
-               (std::ranges::equal(magic,
-                                   distributed_vector_grouped_aggregate_shuffle_job_control_format::
-                                       kRequestMagic) ||
-                std::ranges::equal(
-                    magic, distributed_vector_grouped_aggregate_shuffle_job_control_v2_format::
-                               kRequestMagic))) {
+    } else if (
+        config_.grouped_shuffle_job_service != nullptr &&
+        (std::ranges::equal(
+             magic,
+             distributed_vector_grouped_aggregate_shuffle_job_control_format::kRequestMagic) ||
+         std::ranges::equal(
+             magic,
+             distributed_vector_grouped_aggregate_shuffle_job_control_v2_format::kRequestMagic) ||
+         std::ranges::equal(
+             magic,
+             distributed_vector_grouped_aggregate_shuffle_job_control_v3_format::kRequestMagic))) {
       protocol_ = DistributedMutableQueryControlProtocol::kGroupedShuffleJobControl;
       auto consumed = job_reader_.consume(magic);
       if (!consumed.has_value())
@@ -429,10 +433,13 @@ public:
           config_.grouped_shuffle_job_service->receive(std::move(request), *authenticated, now);
       if (!response.has_value())
         return fail(response.error());
-      auto encoded =
+      common::Result<EncodedDistributedVectorGroupedAggregateShuffleJobControlResponse> encoded =
           response->action ==
                   DistributedVectorGroupedAggregateShuffleJobControlAction::kInstallRoutes
               ? encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v2(
+                    *response)
+          : response->action == DistributedVectorGroupedAggregateShuffleJobControlAction::kCancel
+              ? encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v3(
                     *response)
               : encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1(
                     *response);

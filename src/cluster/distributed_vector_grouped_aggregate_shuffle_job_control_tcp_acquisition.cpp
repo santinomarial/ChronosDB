@@ -67,7 +67,10 @@ target_node(const DistributedVectorGroupedAggregateShuffleJobControlRequest& req
     return seal->target_node_id;
   const auto* routes =
       std::get_if<DistributedVectorGroupedAggregateShuffleJobInstallRoutes>(&request);
-  return routes == nullptr ? 0U : routes->target_node_id;
+  if (routes != nullptr)
+    return routes->target_node_id;
+  const auto* cancel = std::get_if<DistributedVectorGroupedAggregateShuffleJobCancel>(&request);
+  return cancel == nullptr ? 0U : cancel->target_node_id;
 }
 
 [[nodiscard]] bool
@@ -83,8 +86,12 @@ encode_request(const DistributedVectorGroupedAggregateShuffleJobControlRequest& 
   }
   if (const auto* seal = std::get_if<DistributedVectorGroupedAggregateShuffleJobSeal>(&request))
     return encode_distributed_vector_grouped_aggregate_shuffle_job_seal_v1(*seal);
-  return encode_distributed_vector_grouped_aggregate_shuffle_job_install_routes_v2(
-      std::get<DistributedVectorGroupedAggregateShuffleJobInstallRoutes>(request));
+  if (const auto* routes =
+          std::get_if<DistributedVectorGroupedAggregateShuffleJobInstallRoutes>(&request)) {
+    return encode_distributed_vector_grouped_aggregate_shuffle_job_install_routes_v2(*routes);
+  }
+  return encode_distributed_vector_grouped_aggregate_shuffle_job_cancel_v3(
+      std::get<DistributedVectorGroupedAggregateShuffleJobCancel>(request));
 }
 
 } // namespace
@@ -162,14 +169,18 @@ public:
       ++acquisition_metrics.retries_started;
     next_attempt_not_before.reset();
     const common::ByteView frozen{request_bytes};
-    const bool version_two = std::ranges::equal(
-        frozen.first(
-            distributed_vector_grouped_aggregate_shuffle_job_control_v2_format::kRequestMagic
-                .size()),
-        distributed_vector_grouped_aggregate_shuffle_job_control_v2_format::kRequestMagic);
+    const auto magic = frozen.first(
+        distributed_vector_grouped_aggregate_shuffle_job_control_format::kRequestMagic.size());
     auto request =
-        version_two
+        std::ranges::equal(
+            magic,
+            distributed_vector_grouped_aggregate_shuffle_job_control_v2_format::kRequestMagic)
             ? decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v2_exact(
+                  frozen, config.carrier_limits.request)
+        : std::ranges::equal(
+              magic,
+              distributed_vector_grouped_aggregate_shuffle_job_control_v3_format::kRequestMagic)
+            ? decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v3_exact(
                   frozen, config.carrier_limits.request)
             : decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v1_exact(
                   frozen, config.carrier_limits.request);

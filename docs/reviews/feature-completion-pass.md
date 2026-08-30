@@ -1369,6 +1369,12 @@ were deliberately not run.
   Pinned LLVM 18 static analysis reaches only the known macOS 26 libc++ builtin incompatibility
   after its one actionable move finding was corrected. Packaged Linux split-leader, fault, skew,
   and measurement qualification remain open.
+- Authenticated grouped reducer-job cancellation: fixed Job Control v3 CANCEL frames now flow
+  through header-first transport, finite retry, mutual TLS, and the shared packaged endpoint.
+  Reducers retain bounded expiring tombstones when cancellation arrives before PREPARE, preventing
+  a delayed in-flight PREPARE from recreating acknowledged work. Failure and explicit Native
+  cancellation keep the whole-query owner nonterminal until every reachable reducer acknowledges or
+  the existing absolute deadline ends; unreachable jobs retain their relative deadline fallback.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

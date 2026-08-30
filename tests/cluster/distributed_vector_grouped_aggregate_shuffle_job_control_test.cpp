@@ -282,5 +282,44 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTest,
       common::StatusCode::kCorruption);
 }
 
+TEST(DistributedVectorGroupedAggregateShuffleJobControlTest,
+     RoundTripsVersionThreeCancellationAndCorrelatedResponse) {
+  const DistributedVectorGroupedAggregateShuffleJobCancel expected{
+      .query_id = uuid(1U), .coordinator_node_id = 9U, .target_node_id = 7U};
+  auto encoded = encode_distributed_vector_grouped_aggregate_shuffle_job_cancel_v3(expected);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  EXPECT_EQ(encoded->bytes().size(),
+            distributed_vector_grouped_aggregate_shuffle_job_control_v3_format::kFrameLength);
+  auto decoded = decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v3_exact(
+      encoded->bytes());
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  const auto* actual = std::get_if<DistributedVectorGroupedAggregateShuffleJobCancel>(&*decoded);
+  ASSERT_NE(actual, nullptr);
+  EXPECT_EQ(*actual, expected);
+
+  const DistributedVectorGroupedAggregateShuffleJobControlResponse response{
+      .action = DistributedVectorGroupedAggregateShuffleJobControlAction::kCancel,
+      .status_code = common::StatusCode::kOk,
+      .query_id = uuid(1U),
+      .coordinator_node_id = 9U,
+      .target_node_id = 7U};
+  auto encoded_response =
+      encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v3(response);
+  ASSERT_TRUE(encoded_response.has_value()) << encoded_response.error().to_string();
+  auto decoded_response =
+      decode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v3_exact(
+          encoded_response->bytes());
+  ASSERT_TRUE(decoded_response.has_value()) << decoded_response.error().to_string();
+  EXPECT_EQ(*decoded_response, response);
+
+  std::vector<std::byte> damaged(encoded->bytes().begin(), encoded->bytes().end());
+  damaged[80U] ^= std::byte{1U};
+  EXPECT_EQ(
+      decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v3_exact(damaged)
+          .error()
+          .code(),
+      common::StatusCode::kCorruption);
+}
+
 } // namespace
 } // namespace chronos::cluster

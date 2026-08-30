@@ -10,6 +10,7 @@
 #include <functional>
 #include <limits>
 #include <new>
+#include <optional>
 #include <poll.h>
 #include <ranges>
 #include <set>
@@ -63,6 +64,11 @@ class DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::Impl {
 public:
   using TimePoint = std::chrono::steady_clock::time_point;
 
+  enum class TerminalAfterCancel : std::uint8_t {
+    kFailed = 1,
+    kCancelled = 2,
+  };
+
   Impl(const DistributedVectorGroupedAggregateShuffleAuthority& authority,
        DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionConfig configured,
        std::vector<DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition>
@@ -104,17 +110,72 @@ public:
     refresh_control_metrics();
   }
 
-  [[nodiscard]] common::Status fail(common::Status failure) {
-    if (state_ != DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kFailed &&
-        state_ !=
-            DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelled) {
-      cancel_controls();
-      static_cast<void>(result_.cancel());
-      prepared_routes_.clear();
-      failure_ = std::move(failure);
-      state_ = DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kFailed;
+  void finish_cancellation() noexcept {
+    state_ = terminal_after_cancel_ == TerminalAfterCancel::kCancelled
+                 ? DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelled
+                 : DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kFailed;
+    terminal_after_cancel_.reset();
+  }
+
+  [[nodiscard]] common::Status cancellation_delivery_failed() {
+    cancel_controls();
+    if (metrics_.cancel_delivery_failures != std::numeric_limits<std::uint64_t>::max())
+      ++metrics_.cancel_delivery_failures;
+    acquisitions_.clear();
+    finish_cancellation();
+    return common::Status::ok();
+  }
+
+  [[nodiscard]] common::Status begin_cancellation(common::Status terminal_failure,
+                                                  const TerminalAfterCancel terminal) {
+    cancel_controls();
+    static_cast<void>(result_.cancel());
+    prepared_routes_.clear();
+    failure_ = std::move(terminal_failure);
+    terminal_after_cancel_ = terminal;
+    commit_control_metrics();
+    acquisitions_.clear();
+    try {
+      std::vector<DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition> cancels;
+      cancels.reserve(config_.reducer_control_routes.size());
+      for (const auto& route : config_.reducer_control_routes) {
+        auto acquisition = DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition::create(
+            {.route = route,
+             .authenticator = config_.authenticator,
+             .node_authorizer = config_.node_authorizer,
+             .request =
+                 DistributedVectorGroupedAggregateShuffleJobControlRequest{
+                     DistributedVectorGroupedAggregateShuffleJobCancel{
+                         query_id_, config_.coordinator_node_id, route.node_id}},
+             .carrier_limits = config_.carrier_limits,
+             .connect_timeout = config_.connect_timeout,
+             .retry = config_.cancel_retry,
+             .execution_deadline = config_.execution_deadline});
+        if (!acquisition.has_value())
+          return cancellation_delivery_failed();
+        cancels.push_back(std::move(*acquisition));
+      }
+      acquisitions_ = std::move(cancels);
+      state_ = DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling;
+      return common::Status::ok();
+    } catch (const std::bad_alloc&) {
+      return cancellation_delivery_failed();
+    } catch (const std::length_error&) {
+      return cancellation_delivery_failed();
     }
-    return failure_;
+  }
+
+  [[nodiscard]] common::Status fail(common::Status failure) {
+    if (state_ == DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kFailed ||
+        state_ ==
+            DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelled) {
+      return failure_;
+    }
+    if (state_ ==
+        DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling) {
+      return cancellation_delivery_failed();
+    }
+    return begin_cancellation(std::move(failure), TerminalAfterCancel::kFailed);
   }
 
   [[nodiscard]] common::Status expire() {
@@ -130,16 +191,33 @@ public:
         if (!progress.is_ok() &&
             acquisition.state() !=
                 DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kFailed) {
+          if (state_ ==
+              DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling) {
+            static_cast<void>(acquisition.cancel());
+            ++completed;
+            continue;
+          }
           return fail(progress);
         }
       }
       if (acquisition.state() ==
           DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kFailed) {
+        if (state_ ==
+            DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling) {
+          ++completed;
+          continue;
+        }
         return fail(acquisition.failure());
       }
       completed +=
           acquisition.state() ==
-                  DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kComplete
+                      DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::
+                          kComplete ||
+                  (state_ == DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::
+                                 kCancelling &&
+                   acquisition.state() ==
+                       DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::
+                           kCancelled)
               ? 1U
               : 0U;
     }
@@ -151,6 +229,8 @@ public:
     if (state_ ==
         DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kInstallingRoutes)
       return publish_routes_installed();
+    if (state_ == DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling)
+      return publish_cancelled();
     return publish_sealed();
   }
 
@@ -177,8 +257,10 @@ public:
           }
           continue;
         }
+        const network::Ipv4Endpoint reducer_shuffle_endpoint =
+            response->reducer_shuffle_endpoint.value_or(network::Ipv4Endpoint{});
         prepared.push_back({.node_id = config_.reducer_control_routes[index].node_id,
-                            .endpoints = {*response->reducer_shuffle_endpoint},
+                            .endpoints = {reducer_shuffle_endpoint},
                             .tls_context = config_.reducer_control_routes[index].tls_context});
       }
       prepared_routes_ = std::move(prepared);
@@ -270,6 +352,34 @@ public:
     return common::Status::ok();
   }
 
+  [[nodiscard]] common::Status publish_cancelled() {
+    std::size_t acknowledged{};
+    bool delivery_failed{};
+    for (auto& acquisition : acquisitions_) {
+      if (acquisition.state() !=
+          DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kComplete) {
+        delivery_failed = true;
+        continue;
+      }
+      auto response = acquisition.result();
+      if (!response.has_value() || response->status_code != common::StatusCode::kOk ||
+          response->reducer_shuffle_endpoint.has_value()) {
+        delivery_failed = true;
+        continue;
+      }
+      ++acknowledged;
+    }
+    metrics_.cancelled_reducers = acknowledged;
+    if (delivery_failed &&
+        metrics_.cancel_delivery_failures != std::numeric_limits<std::uint64_t>::max()) {
+      ++metrics_.cancel_delivery_failures;
+    }
+    commit_control_metrics();
+    acquisitions_.clear();
+    finish_cancellation();
+    return common::Status::ok();
+  }
+
   std::reference_wrapper<const DistributedVectorGroupedAggregateShuffleAuthority> authority_;
   common::Uuid query_id_;
   DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionConfig config_;
@@ -283,6 +393,7 @@ public:
   std::uint64_t committed_control_failed_attempts_{};
   DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState state_{
       DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kPreparing};
+  std::optional<TerminalAfterCancel> terminal_after_cancel_;
   common::Status failure_{common::StatusCode::kInternal,
                           "grouped shuffle reducer-job coordinator has not failed"};
 };
@@ -318,7 +429,8 @@ DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::create(
           distributed_vector_grouped_aggregate_shuffle_job_control_format::
               kMaximumExecutionTimeout ||
       !valid_retry(config.prepare_retry) || !valid_retry(config.route_install_retry) ||
-      !valid_retry(config.seal_retry) || config.execution_deadline <= now ||
+      !valid_retry(config.seal_retry) || !valid_retry(config.cancel_retry) ||
+      config.execution_deadline <= now ||
       config.result.coordinator_node_id != config.coordinator_node_id ||
       config.result.authenticator != config.authenticator ||
       config.result.node_authorizer != config.node_authorizer ||
@@ -434,7 +546,9 @@ common::Status DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::
       impl.state_ ==
           DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kInstallingRoutes ||
       impl.state_ ==
-          DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kSealing) {
+          DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kSealing ||
+      impl.state_ ==
+          DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling) {
     common::Status progress = impl.drive_controls();
     if (!progress.is_ok() ||
         (impl.state_ !=
@@ -442,7 +556,9 @@ common::Status DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::
          impl.state_ != DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::
                             kInstallingRoutes &&
          impl.state_ !=
-             DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kSealing))
+             DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kSealing &&
+         impl.state_ !=
+             DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling))
       return progress;
 
     std::size_t count{};
@@ -536,17 +652,16 @@ common::Status DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::
           DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelled)
     return impl.failure_;
   if (impl.state_ ==
+      DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling)
+    return common::Status::ok();
+  if (impl.state_ ==
           DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kComplete ||
       impl.state_ ==
           DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kResultTaken)
     return common::Status::ok();
-  impl.cancel_controls();
-  static_cast<void>(impl.result_.cancel());
-  impl.prepared_routes_.clear();
-  impl.failure_ = status(common::StatusCode::kCancelled,
-                         "grouped shuffle reducer-job coordinator was cancelled");
-  impl.state_ = DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelled;
-  return impl.failure_;
+  return impl.begin_cancellation(status(common::StatusCode::kCancelled,
+                                        "grouped shuffle reducer-job coordinator was cancelled"),
+                                 Impl::TerminalAfterCancel::kCancelled);
 }
 
 std::span<const DistributedQueryNodeRoute>

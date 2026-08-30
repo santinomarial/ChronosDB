@@ -124,5 +124,28 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlAllocationFailureTest,
   EXPECT_TRUE(saw_success);
 }
 
+TEST(DistributedVectorGroupedAggregateShuffleJobControlAllocationFailureTest,
+     ClassifiesVersionThreeCancellationEncodingAllocations) {
+  const DistributedVectorGroupedAggregateShuffleJobCancel cancel{
+      .query_id = uuid(1U), .coordinator_node_id = 9U, .target_node_id = 7U};
+  auto request_failure = run_failure(0U, [&] {
+    return encode_distributed_vector_grouped_aggregate_shuffle_job_cancel_v3(cancel);
+  });
+  ASSERT_FALSE(request_failure.has_value());
+  EXPECT_EQ(request_failure.error().code(), common::StatusCode::kResourceExhausted);
+
+  const DistributedVectorGroupedAggregateShuffleJobControlResponse response{
+      .action = DistributedVectorGroupedAggregateShuffleJobControlAction::kCancel,
+      .status_code = common::StatusCode::kOk,
+      .query_id = uuid(1U),
+      .coordinator_node_id = 9U,
+      .target_node_id = 7U};
+  auto response_failure = run_failure(0U, [&] {
+    return encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v3(response);
+  });
+  ASSERT_FALSE(response_failure.has_value());
+  EXPECT_EQ(response_failure.error().code(), common::StatusCode::kResourceExhausted);
+}
+
 } // namespace
 } // namespace chronos::cluster

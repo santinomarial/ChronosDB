@@ -31,9 +31,16 @@ public:
             DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kCancelled) {
       if (workers.has_value())
         static_cast<void>(workers->cancel());
-      if (reducers.has_value())
-        static_cast<void>(reducers->cancel());
       execution_failure = std::move(failure);
+      if (reducers.has_value()) {
+        static_cast<void>(reducers->cancel());
+        if (reducers->state() ==
+            DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling) {
+          execution_state =
+              DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kCancelling;
+          return common::Status::ok();
+        }
+      }
       execution_state = DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kFailed;
     }
     return execution_failure;
@@ -129,10 +136,32 @@ common::Status DistributedMutableVectorGroupedAggregateShuffleJobExecution::poll
       impl.execution_state ==
           DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kResultTaken)
     return common::Status::ok();
+  if (impl.execution_state ==
+      DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kCancelling) {
+    const common::Status progress = impl.reducers->poll_once(maximum_wait);
+    if (impl.reducers->state() ==
+        DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling) {
+      return progress.is_ok() ? common::Status::ok() : progress;
+    }
+    impl.execution_state =
+        impl.reducers->state() ==
+                DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelled
+            ? DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kCancelled
+            : DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kFailed;
+    return common::Status::ok();
+  }
 
   if (impl.execution_state ==
       DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kPreparingReducers) {
     common::Status progress = impl.reducers->poll_once(maximum_wait);
+    if (impl.reducers->state() ==
+        DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling) {
+      static_cast<void>(impl.workers->cancel());
+      impl.execution_failure = impl.reducers->failure();
+      impl.execution_state =
+          DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kCancelling;
+      return common::Status::ok();
+    }
     if (!progress.is_ok())
       return impl.fail(std::move(progress));
     if (impl.reducers->state() ==
@@ -171,6 +200,14 @@ common::Status DistributedMutableVectorGroupedAggregateShuffleJobExecution::poll
   }
 
   const common::Status progress = impl.reducers->poll_once(maximum_wait);
+  if (impl.reducers->state() ==
+      DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling) {
+    static_cast<void>(impl.workers->cancel());
+    impl.execution_failure = impl.reducers->failure();
+    impl.execution_state =
+        DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kCancelling;
+    return common::Status::ok();
+  }
   if (!progress.is_ok())
     return impl.fail(progress);
   const auto reducer_state = impl.reducers->state();
@@ -195,18 +232,27 @@ common::Status DistributedMutableVectorGroupedAggregateShuffleJobExecution::canc
       impl.execution_state ==
           DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kResultTaken)
     return common::Status::ok();
+  if (impl.execution_state ==
+      DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kCancelling)
+    return common::Status::ok();
   if (impl.execution_state !=
           DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kFailed &&
       impl.execution_state !=
           DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kCancelled) {
     static_cast<void>(impl.workers->cancel());
-    static_cast<void>(impl.reducers->cancel());
     impl.execution_failure = {common::StatusCode::kCancelled,
                               "mutable grouped shuffle job execution was cancelled"};
+    static_cast<void>(impl.reducers->cancel());
     impl.execution_state =
-        DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kCancelled;
+        impl.reducers->state() ==
+                DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling
+            ? DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kCancelling
+            : DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kCancelled;
   }
-  return impl.execution_failure;
+  return impl.execution_state ==
+                 DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kCancelling
+             ? common::Status::ok()
+             : impl.execution_failure;
 }
 
 common::Result<DistributedVectorRowsFinalizedResultV2>

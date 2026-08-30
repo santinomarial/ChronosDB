@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -20,6 +21,11 @@ distributed_vector_grouped_aggregate_shuffle_job_control_request_frame_length_v1
 
 [[nodiscard]] common::Result<std::size_t>
 distributed_vector_grouped_aggregate_shuffle_job_control_request_frame_length_v2(
+    common::ByteView header,
+    DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits limits = {});
+
+[[nodiscard]] common::Result<std::size_t>
+distributed_vector_grouped_aggregate_shuffle_job_control_request_frame_length_v3(
     common::ByteView header,
     DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits limits = {});
 
@@ -65,7 +71,7 @@ private:
   std::size_t frame_bytes_{};
   std::optional<std::size_t> expected_frame_bytes_;
   std::optional<common::Status> failure_;
-  bool version_two_{};
+  std::uint8_t version_{1U};
 };
 
 struct DistributedVectorGroupedAggregateShuffleJobControlResponseReadStep {
