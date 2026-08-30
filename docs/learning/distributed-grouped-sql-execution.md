@@ -398,9 +398,15 @@ stays zero, and the retained listener accepts a healed lifecycle. A second case 
 admission but before response writing, drops the response direction, and proves the client cannot
 publish success. An exact retry after healing succeeds against the retained job as one duplicate
 PREPARE, followed by authenticated cancellation and original-execution-deadline reclamation.
-These are whole-application-frame black holes; controlled partial TLS-record/application-frame
-interruption, TCP reset, durable job recovery, delay, duplication, reordering, probabilistic loss,
-and larger-set campaigns remain open.
+These are whole-application-frame black holes; controlled partial encrypted TLS-record interruption
+remains distinct. A real-loopback abortive-close gate now sends authenticated
+application-frame prefixes at three PREPARE boundaries and one exactly correlated response
+boundary, then closes the owning socket with `SO_LINGER(0)` after destroying its TLS borrower. The
+production server dispatches no partial request, the production client publishes no partial
+response, both fail on the immediate transport event, and the same listener/service completes a
+fresh PREPARE, authenticated CANCEL, and execution-deadline reclamation. Controlled partial
+encrypted TLS records, reset after complete admission before the first response byte, durable job
+recovery, delay, duplication, reordering, probabilistic loss, and larger-set campaigns remain open.
 
 ### Portable sufficient-state execution boundary
 
