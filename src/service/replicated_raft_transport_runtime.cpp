@@ -17,6 +17,7 @@
 #include <new>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -30,12 +31,19 @@ namespace {
 
 class SystemElectionDeadlines final : public raft::RaftElectionDeadlineSource {
 public:
-  explicit SystemElectionDeadlines(const ReplicatedRaftTransportLimits& limits) noexcept
-      : minimum_(limits.minimum_election_timeout), maximum_(limits.maximum_election_timeout) {}
+  SystemElectionDeadlines(
+      const ReplicatedRaftTransportLimits& limits,
+      std::vector<ReplicatedRaftGroupElectionTimeout> configured_group_timeouts) noexcept
+      : minimum_(limits.minimum_election_timeout), maximum_(limits.maximum_election_timeout),
+        group_timeouts_(std::move(configured_group_timeouts)) {}
 
   [[nodiscard]] common::Result<raft::RaftTimerRuntime::TimePoint>
-  next_election_deadline(const raft::GroupId&, raft::Term,
+  next_election_deadline(const raft::GroupId& group_id, raft::Term,
                          const raft::RaftTimerRuntime::TimePoint now) override {
+    const auto configured = std::ranges::lower_bound(group_timeouts_, group_id, {},
+                                                     &ReplicatedRaftGroupElectionTimeout::group_id);
+    if (configured != group_timeouts_.end() && configured->group_id == group_id)
+      return deadline_after(now, configured->timeout);
     auto entropy = entropy_.generate();
     if (!entropy.has_value())
       return common::make_unexpected(entropy.error());
@@ -44,16 +52,23 @@ public:
       random = (random << 8U) | std::to_integer<std::uint8_t>(entropy->bytes()[index]);
     const auto range = static_cast<std::uint64_t>((maximum_ - minimum_).count());
     const auto delay = minimum_ + std::chrono::milliseconds{random % (range + 1U)};
-    const auto converted =
-        std::chrono::duration_cast<raft::RaftTimerRuntime::TimePoint::duration>(delay);
-    if (now > raft::RaftTimerRuntime::TimePoint::max() - converted)
-      return raft::RaftTimerRuntime::TimePoint::max();
-    return now + converted;
+    return deadline_after(now, delay);
   }
 
 private:
+  [[nodiscard]] static raft::RaftTimerRuntime::TimePoint
+  deadline_after(const raft::RaftTimerRuntime::TimePoint now,
+                 const std::chrono::milliseconds delay) noexcept {
+    const auto converted =
+        std::chrono::duration_cast<raft::RaftTimerRuntime::TimePoint::duration>(delay);
+    return now > raft::RaftTimerRuntime::TimePoint::max() - converted
+               ? raft::RaftTimerRuntime::TimePoint::max()
+               : now + converted;
+  }
+
   std::chrono::milliseconds minimum_;
   std::chrono::milliseconds maximum_;
+  std::vector<ReplicatedRaftGroupElectionTimeout> group_timeouts_;
   common::SystemUuidGenerator entropy_;
 };
 
@@ -63,6 +78,24 @@ private:
          limits.minimum_election_timeout > limits.timers.timers.heartbeat_interval &&
          limits.maximum_election_timeout >= limits.minimum_election_timeout &&
          limits.maximum_election_timeout <= maximum_election && limits.connect_timeout.count() > 0;
+}
+
+[[nodiscard]] bool
+valid_group_timeouts(const std::span<const ReplicatedRaftGroupElectionTimeout> group_timeouts,
+                     const std::span<const raft::GroupId> resident_groups,
+                     const ReplicatedRaftTransportLimits& limits) noexcept {
+  constexpr std::chrono::milliseconds maximum_election{60'000};
+  for (const auto& configured : group_timeouts) {
+    if (configured.group_id.is_nil() ||
+        configured.timeout <= limits.timers.timers.heartbeat_interval ||
+        configured.timeout > maximum_election ||
+        !std::ranges::binary_search(resident_groups, configured.group_id)) {
+      return false;
+    }
+  }
+  return std::ranges::adjacent_find(group_timeouts, {},
+                                    &ReplicatedRaftGroupElectionTimeout::group_id) ==
+         group_timeouts.end();
 }
 
 [[nodiscard]] bool valid_path(const std::string& path) noexcept {
@@ -90,8 +123,10 @@ class ReplicatedRaftTransportRuntime::Impl {
 public:
   Impl(ReplicatedPeerAuthority configured_authority,
        raft::AsyncDurableMultiRaftRuntime* configured_durable,
-       const ReplicatedRaftTransportLimits& configured_limits) noexcept
-      : authority(std::move(configured_authority)), deadlines(configured_limits),
+       const ReplicatedRaftTransportLimits& configured_limits,
+       std::vector<ReplicatedRaftGroupElectionTimeout> configured_group_timeouts) noexcept
+      : authority(std::move(configured_authority)),
+        deadlines(configured_limits, std::move(configured_group_timeouts)),
         durable(configured_durable) {}
 
   [[nodiscard]] common::Status initialize(const ReplicatedRaftTransportRuntimeConfig& config) {
@@ -231,12 +266,20 @@ ReplicatedRaftTransportRuntime::create(ReplicatedRaftTransportRuntimeConfig conf
   if (std::ranges::adjacent_find(config.resident_groups) != config.resident_groups.end())
     return common::make_unexpected(status(common::StatusCode::kAlreadyExists,
                                           "replicated Raft transport group is duplicated"));
+  std::ranges::sort(config.group_election_timeouts, {},
+                    &ReplicatedRaftGroupElectionTimeout::group_id);
+  if (!valid_group_timeouts(config.group_election_timeouts, config.resident_groups,
+                            config.limits)) {
+    return common::make_unexpected(
+        status(common::StatusCode::kInvalidArgument,
+               "replicated Raft group election timeout configuration is invalid"));
+  }
   auto authority = ReplicatedPeerAuthority::create(config.local_node_id, std::move(config.peers));
   if (!authority.has_value())
     return common::make_unexpected(authority.error());
   try {
-    auto impl =
-        std::make_unique<Impl>(std::move(*authority), config.durable_runtime, config.limits);
+    auto impl = std::make_unique<Impl>(std::move(*authority), config.durable_runtime, config.limits,
+                                       std::move(config.group_election_timeouts));
     const common::Status initialized = impl->initialize(config);
     if (!initialized.is_ok())
       return common::make_unexpected(initialized);

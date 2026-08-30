@@ -163,6 +163,12 @@ accepted only with the complete peer-transport bundle. It exists for determinist
 and measured topology controls. Do not set the same fixed value on all voters: synchronized fixed
 deadlines can repeatedly collide. Prefer the randomized default in ordinary deployments.
 
+The repeatable `--raft-group-election-timeout GROUP_UUID=MILLISECONDS` sets an exact local timeout
+for one resident group and takes precedence over that global selection. The UUID must be canonical
+lowercase, the timeout must be 101 through 60000, and duplicate or nonresident groups reject startup.
+Groups without an override retain the global fixed value or randomized default. This narrow control
+exists to qualify independently led groups; prefer randomized defaults in ordinary deployments.
+
 The [Replicated Peer Configuration](replicated-peer-config.md) must include the local node and every
 voter of every resident group. The key file must not be accessible to group or other. All four
 options are atomic at startup; partial configuration is rejected. `raft_transport=configured` in
@@ -196,12 +202,12 @@ is unchanged. Set `maximum_authority_rebindings` to zero in an embedding for one
 endpoint failure, or resource pressure and should be investigated.
 
 The repository's Linux process qualification uses one CA, a distinct certificate/key for each of
-three loopback nodes, and distinct fixed local election timeouts. It proves authenticated election,
-QUORUM_SYNC application, safe common-leader redirect, mutable row/global-aggregate/expression/
-predicate/multi-key grouped SQL, abrupt common-leader loss, higher-term retry deduplication, the same
-SQL surface through the replacement leader, orderly survivor shutdown, and identical recovery from
-all retained roots. Both resident groups deliberately share one leader in this gate; independently
-led groups still require future cross-process authority coordination.
+three loopback nodes, and exact per-group local election timeouts. Node 1 initially leads metadata
+while node 2 leads the tablet group. The gate proves authenticated election, QUORUM_SYNC application,
+direct no-redirect mutable row/global-aggregate/expression/predicate/multi-key grouped SQL through
+local plus remote authority, abrupt tablet-leader loss, higher-term retry deduplication, the same SQL
+surface after whole-attempt rebinding, orderly survivor shutdown, persistent split-leader votes, and
+recovery from all retained roots.
 It does not qualify deployment DNS, certificate rotation, packet faults, failover latency, snapshot
 transfer, rolling upgrades, globally atomic cross-group time, or dynamic endpoint replacement.
 Operators must not treat `raft_transport=configured` as evidence that those broader gates passed.

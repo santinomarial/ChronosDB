@@ -58,6 +58,12 @@ private:
   return raft::GroupId{bytes};
 }
 
+[[nodiscard]] raft::GroupId other_group() {
+  common::Uuid::Bytes bytes{};
+  bytes.fill(std::byte{43U});
+  return raft::GroupId{bytes};
+}
+
 [[nodiscard]] ReplicatedPeer peer(const raft::NodeId node_id, const network::Ipv4Endpoint endpoint,
                                   const std::uint8_t fingerprint) {
   ReplicatedPeer value{
@@ -163,6 +169,46 @@ TEST(ReplicatedRaftTransportRuntimeTest, DrivesTransportedSingleVoterReadBarrier
   EXPECT_TRUE(durable->shutdown().is_ok());
 }
 
+TEST(ReplicatedRaftTransportRuntimeTest, AppliesExactResidentGroupElectionTimeoutOverride) {
+  TemporaryDirectory directory;
+  auto remote_listener = network::TcpListener::bind({});
+  auto local_reservation = network::TcpListener::bind({});
+  if (!remote_listener.has_value() || !local_reservation.has_value())
+    GTEST_SKIP() << "workspace does not permit loopback listener creation";
+  const network::Ipv4Endpoint local_endpoint = local_reservation->bound_endpoint();
+  ASSERT_TRUE(local_reservation->close().is_ok());
+  auto durable = raft::AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group(), {1U, 2U}}});
+  ASSERT_TRUE(durable.has_value()) << durable.error().to_string();
+  auto transport = ReplicatedRaftTransportRuntime::create(
+      {.local_node_id = 1U,
+       .durable_runtime = &*durable,
+       .peers = {peer(1U, local_endpoint, 11U), peer(2U, remote_listener->bound_endpoint(), 22U)},
+       .resident_groups = {group()},
+       .group_election_timeouts = {{group(), std::chrono::milliseconds{150}}},
+       .tls = {.pem_credentials = server_pem_credentials()},
+       .limits = {.minimum_election_timeout = std::chrono::seconds{5},
+                  .maximum_election_timeout = std::chrono::seconds{5},
+                  .peer_pool = {.maximum_peers = 1U}}});
+  ASSERT_TRUE(transport.has_value()) << transport.error().to_string();
+
+  raft::Term observed_term{};
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+  while (observed_term == 0U && std::chrono::steady_clock::now() < deadline) {
+    ASSERT_TRUE(transport->poll_once(std::chrono::milliseconds{10}).is_ok());
+    auto observation = durable->try_observe_group(group());
+    ASSERT_TRUE(observation.has_value());
+    auto result = observation->wait();
+    ASSERT_TRUE(result.has_value());
+    ASSERT_EQ(result->size(), 1U);
+    ASSERT_TRUE(result->front().observation.has_value());
+    observed_term = result->front().observation->current_term;
+  }
+  EXPECT_EQ(observed_term, 1U);
+  EXPECT_TRUE(transport->shutdown().is_ok());
+  EXPECT_TRUE(durable->shutdown().is_ok());
+}
+
 TEST(ReplicatedRaftTransportRuntimeTest, RejectsMissingRemoteAndDuplicateGroups) {
   TemporaryDirectory directory;
   auto durable = raft::AsyncDurableMultiRaftRuntime::create_new(
@@ -201,6 +247,29 @@ TEST(ReplicatedRaftTransportRuntimeTest, RejectsMissingRemoteAndDuplicateGroups)
   auto unsafe_timeout = ReplicatedRaftTransportRuntime::create(std::move(config));
   ASSERT_FALSE(unsafe_timeout.has_value());
   EXPECT_EQ(unsafe_timeout.error().code(), common::StatusCode::kInvalidArgument);
+
+  config = {.local_node_id = 1U,
+            .durable_runtime = &*durable,
+            .peers = {peer(1U, {{127U, 0U, 0U, 1U}, 7001U}, 11U),
+                      peer(2U, {{127U, 0U, 0U, 1U}, 7002U}, 22U)},
+            .resident_groups = {group()},
+            .group_election_timeouts = {{group(), std::chrono::milliseconds{200}},
+                                        {group(), std::chrono::milliseconds{300}}},
+            .tls = {.pem_credentials = server_pem_credentials()}};
+  auto duplicate_timeout = ReplicatedRaftTransportRuntime::create(std::move(config));
+  ASSERT_FALSE(duplicate_timeout.has_value());
+  EXPECT_EQ(duplicate_timeout.error().code(), common::StatusCode::kInvalidArgument);
+
+  config = {.local_node_id = 1U,
+            .durable_runtime = &*durable,
+            .peers = {peer(1U, {{127U, 0U, 0U, 1U}, 7001U}, 11U),
+                      peer(2U, {{127U, 0U, 0U, 1U}, 7002U}, 22U)},
+            .resident_groups = {group()},
+            .group_election_timeouts = {{other_group(), std::chrono::milliseconds{200}}},
+            .tls = {.pem_credentials = server_pem_credentials()}};
+  auto nonresident_timeout = ReplicatedRaftTransportRuntime::create(std::move(config));
+  ASSERT_FALSE(nonresident_timeout.has_value());
+  EXPECT_EQ(nonresident_timeout.error().code(), common::StatusCode::kInvalidArgument);
   EXPECT_TRUE(durable->shutdown().is_ok());
 }
 

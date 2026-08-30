@@ -479,17 +479,16 @@ endpoint without inferred ports.
 ## Process qualification boundary
 
 The Linux packaged gate executes this row-backed grouped path in a three-daemon, two-Raft-group
-topology before and after abrupt common-leader loss. It checks a computed nullable STRING key, a
-Boolean key, COUNT, global ordering, LIMIT, safe follower redirect, replacement election, exact
-ingest retry, orderly survivor shutdown, and retained-root recovery. Distinct fixed local election
-timeouts make both groups choose the same leader for this deterministic qualification.
+topology with metadata initially led by node 1 and the tablet group by node 2. It checks a computed
+nullable STRING key, a Boolean key, COUNT, global ordering, LIMIT, direct no-redirect coordination
+across local and authenticated remote authority, abrupt tablet-leader loss, whole-attempt rebinding,
+higher-term exact ingest retry, orderly survivor shutdown, persistent initial votes, and retained-root
+recovery. Exact per-group local election timeouts make that split deterministic.
 
-That evidence does not prove arbitrary split-leader process coordination because it deliberately
-elects one common leader. The Native coordinator now combines local and authenticated remote
-per-group authority in focused in-process coverage. A replicated Native gateway fixture additionally
+This evidence qualifies the controlled packaged split-leader topology, not arbitrary cluster
+schedules or a globally atomic cross-group instant. A replicated Native gateway fixture additionally
 qualifies the packaged mutable worker, reducer job, route installation, result return, and final SQL
-path through real mTLS, but it is not a separate daemon process test. Linux multi-daemon
-split-leader qualification remains separate. The standalone result-return process gate qualifies
+path through real mTLS. The standalone result-return process gate qualifies
 distinct reducer/coordinator address spaces, finite route retry, missing-reducer cancellation, and
 a fresh whole-query retry. Multi-process real-CSEG scans, network partitions, and skew/scale
 measurement remain separate gates.

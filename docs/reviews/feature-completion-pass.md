@@ -1095,12 +1095,12 @@ were deliberately not run.
 
 - The feature graph is not completely process-integrated. A three-daemon Linux gate now covers the
   packaged mutable row, global aggregate, expression/predicate, and row-backed grouped SQL surfaces
-  before and after common-leader loss. A canonical authenticated remote read-authority codec and
-  receiver, bounded stream owners, mutual-TLS sessions, deadline/admission-bound TCP endpoints, and
-  finite immutable-route retry now feed the packaged daemon service and all-group Native attempt
-  coordination. Focused in-process coverage proves local-metadata/remote-tablet SQL; Linux
-  multi-daemon split-leader qualification, multi-process real-CSEG execution, and partition
-  schedules remain absent.
+  across split metadata/tablet leaders and after abrupt tablet-leader loss. A canonical authenticated
+  remote read-authority codec and receiver, bounded stream owners, mutual-TLS sessions,
+  deadline/admission-bound TCP endpoints, and finite immutable-route retry now feed the packaged
+  daemon service and all-group Native attempt coordination. Packaged Linux coverage now proves
+  local-metadata/remote-tablet SQL across three daemons; multi-process real-CSEG execution and
+  partition schedules remain absent.
 - Temporal corrections have durable WAL/CSEG v2/Manifest v2 composition; direct vector winner
   lowering and mixed WAL/Raft-source composition remain incomplete.
 - Distributed Native execution covers bounded row-backed multi-key/all-type grouping, global
@@ -1148,10 +1148,11 @@ were deliberately not run.
   packaged. Replicated query snapshots pin one committed binder catalog, fail closed for partial
   table residency, and now require every metadata/tablet publication to cover an exactly correlated
   current-term quorum read barrier before bounded native SELECT dispatch. Bounded Linux evidence now
-  covers three authenticated daemon processes, quorum ingest, common-leader loss, a higher-term
-  matching retry, mutable row/global-aggregate/expression/predicate/multi-key grouped SQL before and
-  after failover, and identical retained-root recovery. This is a controlled common-leader topology;
-  a globally atomic cross-group instant, independently led group coordination, and broader
+  covers three authenticated daemon processes, quorum ingest, split metadata/tablet leadership,
+  remote tablet-leader loss, a higher-term matching retry, mutable
+  row/global-aggregate/expression/predicate/multi-key grouped SQL before and
+  after failover, and identical retained-root recovery. This is a controlled split-leader topology;
+  a globally atomic cross-group instant, arbitrary election/partition schedules, and broader
   distributed relational execution remain absent. Strict native
   endpoint/certificate-principal configuration, secure TLS-route/context ownership, redirect
   selection, exact QUORUM_SYNC body/session replay, the deadline-bound authenticated TCP/TLS
@@ -1217,8 +1218,8 @@ were deliberately not run.
   replicated barrier and listener thread in explicit deadlock-safe lifetime order; Native outbound
   authority acquisition now observes every group, combines locally led barriers with an
   all-or-nothing batch to observed authenticated remote leaders, and re-observes the whole attempt
-  under one deadline. A focused local-metadata/remote-tablet SQL gate passes; Linux multi-daemon
-  split-leader qualification remains absent.
+  under one deadline. Both a focused local-metadata/remote-tablet SQL gate and the three-daemon
+  packaged Linux split-leader gate pass.
   The packaged daemon now binds the committed local private query endpoint, reuses the immutable
   authenticated peer bundle for inbound/outbound query TLS, polls synchronous workers separately
   from Raft, and extends its three-process gate through remote SELECT before and after tablet-leader
@@ -1367,8 +1368,8 @@ were deliberately not run.
   cluster allocation-failure, 113 service, 7 service allocation-failure, 1 feature-smoke, and 2
   result-process tests; focused ASan/UBSan and TSan; formatting; workflow pins; and whitespace pass.
   Pinned LLVM 18 static analysis reaches only the known macOS 26 libc++ builtin incompatibility
-  after its one actionable move finding was corrected. Packaged Linux split-leader, fault, skew,
-  and measurement qualification remain open.
+  after its one actionable move finding was corrected. Packaged Linux reducer process-loss, fault,
+  skew, and measurement qualification remain open; Native split-leader process loss is qualified.
 - Authenticated grouped reducer-job cancellation: fixed Job Control v3 CANCEL frames now flow
   through header-first transport, finite retry, mutual TLS, and the shared packaged endpoint.
   Reducers retain bounded expiring tombstones when cancellation arrives before PREPARE, preventing
@@ -1389,8 +1390,8 @@ were deliberately not run.
   serializes query-thread source/control/result calls with listener polling. Focused all-local and
   two-node mixed-role tests cover local and remote workers, opposite shuffle edges, lease/control
   completion, local plus mTLS result collection, and merged output; local cancellation identity,
-  provider selection, and allocation classification are separate assertions. Multi-daemon
-  split-leader process-loss and measurement qualification remain open.
+  provider selection, and allocation classification are separate assertions. Reducer process-loss
+  and measurement qualification remain open; the separate Native split-leader process gate passes.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

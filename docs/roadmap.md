@@ -1523,11 +1523,13 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   checksummed learner-first movement and externally committed promotion/removal milestones, rebinds
   it to the target, and proves the complete aggregate state is identical before and after. A
   bounded Linux process gate now additionally starts three mutually authenticated daemons with
-  deterministic distinct local election deadlines, commits and exactly retries one replicated
-  batch, executes mutable row, global aggregate, scalar/predicate, and row-backed multi-key/all-type
-  grouped SQL through safe common-leader redirect, kills that leader, repeats the retry and query
-  surface through the two-node replacement quorum, shuts down cleanly, and verifies all retained
-  roots. Strict cross-source durable completion FIFO, connected-peer election routing, terminal
+  deterministic exact per-group election deadlines so metadata and tablet leadership initially
+  split across nodes 1 and 2. It commits and exactly retries one replicated batch, executes mutable
+  row, global aggregate, scalar/predicate, and row-backed multi-key/all-type grouped SQL directly
+  through local metadata plus authenticated remote tablet authority, kills the tablet leader,
+  repeats the retry and query surface without redirect through the two-node replacement quorum,
+  verifies the persistent initial votes, shuts down cleanly, and recovers all retained roots. Strict
+  cross-source durable completion FIFO, connected-peer election routing, terminal
   Native result framing, and advisory placement hints are exercised by that composition. A distinct
   canonical remote read-authority protocol and authenticated receiver now return one exact
   quorum-confirmed barrier with its correlated stable-leader observation. Bounded stream ownership
@@ -1544,9 +1546,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   production receivers in reverse-safe lifetime order, and polls them off the Raft thread. Native
   outbound authority integration now observes each local group, combines local barriers with one
   all-or-nothing remote batch, and re-observes the whole attempt under the Native deadline. A
-  focused two-group gate completes SQL with local metadata leadership and remote tablet leadership.
-  Linux multi-daemon split-leader process qualification remains. Partitions, multi-process real-CSEG
-  scans, and destination-routed sufficient-state multi-key shuffle also remain open. The shuffle
+  focused two-group gate completes SQL with local metadata leadership and remote tablet leadership;
+  the packaged Linux gate now qualifies the same split across three daemon processes through abrupt
+  tablet-leader loss. Partitions, multi-process real-CSEG scans, and destination-routed
+  sufficient-state multi-key shuffle remain open. The shuffle
   now has a distinct bounded checksummed multi-key/all-type group-state frame with exact
   fragmented-read and short-write ownership plus a shared query-accounted
   local/worker/coordinator group-state owner. Equal-key
@@ -1643,8 +1646,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   coordinator lease after route installation and before workers start. The whole-query owner
   renews every reducer during worker, SEAL, and result phases while reducer polling expires missing
   coordinators without synchronized clocks; the original PREPARE deadline remains the
-  pre-activation fallback. Packaged process-kill qualification and fresh replacement, durable query
-  recovery, full multi-daemon split-leader qualification, fault campaigns, and measurement remain.
+  pre-activation fallback. Reducer process-kill qualification and fresh replacement, durable query
+  recovery, fault campaigns, and measurement remain; the separate packaged Native split-leader
+  process gate is qualified.
   The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives

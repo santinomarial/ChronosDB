@@ -64,6 +64,37 @@ if(NOT help_stdout MATCHES "--native-client-principals FILE" OR
    NOT help_stdout MATCHES "--native-tls-ca FILE")
   message(FATAL_ERROR "chronosd --help omits the native TLS option bundle")
 endif()
+if(NOT help_stdout MATCHES "--raft-group-election-timeout GROUP_UUID=MILLISECONDS")
+  message(FATAL_ERROR "chronosd --help omits the per-group Raft election timeout option")
+endif()
+
+execute_process(
+  COMMAND "${CHRONOSD}" --raft-group-election-timeout invalid
+  RESULT_VARIABLE malformed_group_timeout_result
+  OUTPUT_VARIABLE malformed_group_timeout_stdout
+  ERROR_VARIABLE malformed_group_timeout_stderr
+)
+if(NOT malformed_group_timeout_result EQUAL 2 OR
+   NOT malformed_group_timeout_stdout STREQUAL "" OR
+   NOT malformed_group_timeout_stderr MATCHES
+     "Raft group election timeout must be GROUP_UUID=MILLISECONDS")
+  message(FATAL_ERROR "malformed per-group Raft election timeout did not fail closed")
+endif()
+
+execute_process(
+  COMMAND
+    "${CHRONOSD}"
+    --raft-group-election-timeout 90909090-9090-9090-9090-909090909090=300
+  RESULT_VARIABLE unbound_group_timeout_result
+  OUTPUT_VARIABLE unbound_group_timeout_stdout
+  ERROR_VARIABLE unbound_group_timeout_stderr
+)
+if(NOT unbound_group_timeout_result EQUAL 2 OR
+   NOT unbound_group_timeout_stdout STREQUAL "" OR
+   NOT unbound_group_timeout_stderr MATCHES
+     "Raft election timeout configuration requires peer transport configuration")
+  message(FATAL_ERROR "unbound per-group Raft election timeout did not fail closed")
+endif()
 
 execute_process(
   COMMAND "${CHRONOSD}" --native-tls-cert server.pem

@@ -196,6 +196,7 @@ struct Options {
   std::string raft_tls_private_key_file;
   std::string raft_tls_trust_store_file;
   std::uint64_t raft_election_timeout_ms{};
+  std::vector<chronos::service::ReplicatedRaftGroupElectionTimeout> raft_group_election_timeouts;
   std::string native_client_principals_file;
   std::string native_tls_certificate_file;
   std::string native_tls_private_key_file;
@@ -213,6 +214,7 @@ void print_usage(const std::string_view program, std::ostream& stream) {
             " [--replicated-groups FILE]"
             " [--replicated-peers FILE --raft-tls-cert FILE --raft-tls-key FILE"
             " --raft-tls-ca FILE] [--raft-election-timeout-ms MILLISECONDS]"
+            " [--raft-group-election-timeout GROUP_UUID=MILLISECONDS]..."
             " [--native-client-principals FILE --native-tls-cert FILE --native-tls-key FILE"
             " --native-tls-ca FILE]"
             " [--subscription-sql SQL --subscription-key-file PATH]\n"
@@ -231,6 +233,56 @@ template <typename Integer>
     return false;
   value = parsed;
   return true;
+}
+
+[[nodiscard]] std::optional<std::uint8_t> parse_hex_digit(const char value) noexcept {
+  if (value >= '0' && value <= '9')
+    return static_cast<std::uint8_t>(value - '0');
+  if (value >= 'a' && value <= 'f')
+    return static_cast<std::uint8_t>(value - 'a' + 10);
+  return std::nullopt;
+}
+
+[[nodiscard]] std::optional<chronos::raft::GroupId>
+parse_group_id(const std::string_view text) noexcept {
+  if (text.size() != 36U || text[8U] != '-' || text[13U] != '-' || text[18U] != '-' ||
+      text[23U] != '-') {
+    return std::nullopt;
+  }
+  chronos::common::Uuid::Bytes bytes{};
+  std::size_t output{};
+  for (std::size_t input{}; input < text.size();) {
+    if (input == 8U || input == 13U || input == 18U || input == 23U) {
+      ++input;
+      continue;
+    }
+    const auto high = parse_hex_digit(text[input]);
+    const auto low = parse_hex_digit(text[input + 1U]);
+    if (!high.has_value() || !low.has_value())
+      return std::nullopt;
+    bytes[output++] = static_cast<std::byte>((*high << 4U) | *low);
+    input += 2U;
+  }
+  chronos::raft::GroupId group_id{bytes};
+  return group_id.is_nil() ? std::nullopt : std::optional<chronos::raft::GroupId>{group_id};
+}
+
+[[nodiscard]] std::optional<chronos::service::ReplicatedRaftGroupElectionTimeout>
+parse_group_election_timeout(const std::string_view text) noexcept {
+  const std::size_t equals = text.find('=');
+  if (equals == std::string_view::npos || equals == 0U || equals + 1U == text.size() ||
+      text.find('=', equals + 1U) != std::string_view::npos) {
+    return std::nullopt;
+  }
+  const auto group_id = parse_group_id(text.substr(0U, equals));
+  std::uint64_t milliseconds{};
+  if (!group_id.has_value() || !parse_integer(text.substr(equals + 1U), milliseconds) ||
+      milliseconds <= 100U || milliseconds > 60'000U) {
+    return std::nullopt;
+  }
+  return chronos::service::ReplicatedRaftGroupElectionTimeout{
+      .group_id = *group_id,
+      .timeout = std::chrono::milliseconds{static_cast<std::int64_t>(milliseconds)}};
 }
 
 // C++ process entry points supply the conventional C argv array.
@@ -332,6 +384,14 @@ template <typename Integer>
         error = "Raft election timeout must be from 101 through 60000 milliseconds";
         return std::nullopt;
       }
+    } else if (argument == "--raft-group-election-timeout") {
+      auto configured = parse_group_election_timeout(value);
+      if (!configured.has_value()) {
+        error = "Raft group election timeout must be GROUP_UUID=MILLISECONDS with a timeout from "
+                "101 through 60000";
+        return std::nullopt;
+      }
+      options.raft_group_election_timeouts.push_back(*configured);
     } else if (argument == "--native-client-principals") {
       if (value.empty()) {
         error = "native client principal configuration path must be nonempty";
@@ -394,8 +454,9 @@ template <typename Integer>
     error = "Raft peer transport requires replicated group configuration";
     return std::nullopt;
   }
-  if (options.raft_election_timeout_ms != 0U && transport_field_count == 0U) {
-    error = "Raft election timeout requires peer transport configuration";
+  if ((options.raft_election_timeout_ms != 0U || !options.raft_group_election_timeouts.empty()) &&
+      transport_field_count == 0U) {
+    error = "Raft election timeout configuration requires peer transport configuration";
     return std::nullopt;
   }
   const std::array<bool, 4U> native_security_fields{
@@ -1567,6 +1628,7 @@ int run_daemon(const int argc, const char* const argv[]) {
              .durable_runtime = replicated_database->ingest_runtime()->runtime(),
              .peers = *replicated_peers,
              .resident_groups = std::move(resident_groups),
+             .group_election_timeouts = options->raft_group_election_timeouts,
              .tls = {.pem_credentials = raft_tls_credentials},
              .limits = transport_limits});
         if (!transport.has_value()) {

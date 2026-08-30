@@ -163,13 +163,18 @@ public:
     return true;
   }
 
-  [[nodiscard]] bool start_replicated_transport(const std::string& data_directory,
-                                                const std::string& replicated_groups_file,
-                                                const std::string& replicated_peers_file,
-                                                const std::string& certificate_file,
-                                                const std::string& private_key_file,
-                                                const std::string& trust_store_file,
-                                                const std::uint64_t election_timeout_ms) {
+  [[nodiscard]] bool start_replicated_transport(
+      const std::string& data_directory, const std::string& replicated_groups_file,
+      const std::string& replicated_peers_file, const std::string& certificate_file,
+      const std::string& private_key_file, const std::string& trust_store_file,
+      const std::uint64_t election_timeout_ms,
+      const std::array<std::uint64_t, 2U> group_election_timeouts = {}) {
+    if ((group_election_timeouts[0] == 0U) != (group_election_timeouts[1] == 0U))
+      return false;
+    const std::string metadata_election_timeout =
+        "90909090-9090-9090-9090-909090909090=" + std::to_string(group_election_timeouts[0]);
+    const std::string tablet_election_timeout =
+        "91919191-9191-9191-9191-919191919191=" + std::to_string(group_election_timeouts[1]);
     std::array<int, 2U> output{};
     if (::pipe(output.data()) != 0)
       return false;
@@ -185,11 +190,22 @@ public:
       static_cast<void>(::dup2(output[1], STDOUT_FILENO));
       ::close(output[0]);
       ::close(output[1]);
-      ::execl(CHRONOSD_PATH, CHRONOSD_PATH, "--port", "0", "--data-dir", data_directory.c_str(),
-              "--replicated-groups", replicated_groups_file.c_str(), "--replicated-peers",
-              replicated_peers_file.c_str(), "--raft-tls-cert", certificate_file.c_str(),
-              "--raft-tls-key", private_key_file.c_str(), "--raft-tls-ca", trust_store_file.c_str(),
-              "--raft-election-timeout-ms", election_timeout.c_str(), nullptr);
+      if (group_election_timeouts[0] == 0U && group_election_timeouts[1] == 0U) {
+        ::execl(CHRONOSD_PATH, CHRONOSD_PATH, "--port", "0", "--data-dir", data_directory.c_str(),
+                "--replicated-groups", replicated_groups_file.c_str(), "--replicated-peers",
+                replicated_peers_file.c_str(), "--raft-tls-cert", certificate_file.c_str(),
+                "--raft-tls-key", private_key_file.c_str(), "--raft-tls-ca",
+                trust_store_file.c_str(), "--raft-election-timeout-ms", election_timeout.c_str(),
+                nullptr);
+      } else {
+        ::execl(CHRONOSD_PATH, CHRONOSD_PATH, "--port", "0", "--data-dir", data_directory.c_str(),
+                "--replicated-groups", replicated_groups_file.c_str(), "--replicated-peers",
+                replicated_peers_file.c_str(), "--raft-tls-cert", certificate_file.c_str(),
+                "--raft-tls-key", private_key_file.c_str(), "--raft-tls-ca",
+                trust_store_file.c_str(), "--raft-group-election-timeout",
+                metadata_election_timeout.c_str(), "--raft-group-election-timeout",
+                tablet_election_timeout.c_str(), nullptr);
+      }
       std::_Exit(127);
     }
     ::close(output[1]);
@@ -1066,6 +1082,26 @@ void expect_recovered_replicated_cluster(const std::array<std::string, 3U>& root
   }
 }
 
+void expect_recovered_group_votes(const std::string& root, const raft::NodeId metadata_candidate,
+                                  const raft::NodeId tablet_candidate) {
+  auto bootstrap = runtime::DatabaseBootstrap::open_or_create({.database_root = root});
+  ASSERT_TRUE(bootstrap.has_value()) << bootstrap.error().to_string();
+  auto durable = raft::DurableMultiRaftRuntime::open_existing(
+      bootstrap->descriptor().local_node_id,
+      {.directory_path = bootstrap->raft_directory_path(),
+       .target_segment_size = bootstrap->descriptor().raft_segment_target_bytes},
+      {}, replicated_cluster_groups());
+  ASSERT_TRUE(durable.has_value()) << durable.error().to_string();
+  const raft::RaftNode* metadata = durable->find_group(replicated_metadata_group());
+  const raft::RaftNode* tablet = durable->find_group(replicated_tablet_group());
+  ASSERT_NE(metadata, nullptr);
+  ASSERT_NE(tablet, nullptr);
+  EXPECT_EQ(metadata->persistent_state().voted_for, metadata_candidate);
+  EXPECT_EQ(tablet->persistent_state().voted_for, tablet_candidate);
+  EXPECT_TRUE(durable->close().is_ok());
+  EXPECT_TRUE(bootstrap->close().is_ok());
+}
+
 [[nodiscard]] network::Frame send_replicated_query(const int client, const std::uint64_t request_id,
                                                    const std::string_view sql) {
   const auto payload = network::encode_query_request(sql).value();
@@ -1082,11 +1118,16 @@ void expect_recovered_replicated_cluster(const std::array<std::string, 3U>& root
 }
 
 void expect_replicated_rows(const int redirect_client, const int leader_client,
-                            const raft::NodeId leader_node_id, const std::uint64_t request_id) {
+                            const raft::NodeId leader_node_id, const std::uint64_t request_id,
+                            const bool permit_redirect = true) {
   constexpr std::string_view rows_sql{"SELECT ts, tag FROM events ORDER BY ts ASC, tag ASC"};
   auto response = send_replicated_query(redirect_client, request_id, rows_sql);
   int client = redirect_client;
   if (response.header.message_type == network::MessageType::kLeaderRedirect) {
+    if (!permit_redirect) {
+      ADD_FAILURE() << "split-leader distributed query unexpectedly redirected";
+      return;
+    }
     auto redirect = network::decode_leader_redirect(response.payload);
     ASSERT_TRUE(redirect.has_value()) << redirect.error().to_string();
     EXPECT_EQ(redirect->group_id, replicated_tablet_group());
@@ -1237,13 +1278,15 @@ void expect_replicated_rows(const int redirect_client, const int leader_client,
 }
 
 [[nodiscard]] network::Frame send_query(const int client, const std::uint64_t request_id,
-                                        const std::string_view sql) {
+                                        const std::string_view sql,
+                                        const std::uint16_t protocol_minor = 0U) {
   const auto payload = network::encode_query_request(sql).value();
-  EXPECT_TRUE(send_all(
-      client,
-      network::encode_frame(
-          {.message_type = network::MessageType::kQueryRequest, .request_id = request_id}, payload)
-          .value()));
+  EXPECT_TRUE(
+      send_all(client, network::encode_frame({.protocol_minor = protocol_minor,
+                                              .message_type = network::MessageType::kQueryRequest,
+                                              .request_id = request_id},
+                                             payload)
+                           .value()));
   auto response = network::decode_frame(receive_frame(client));
   EXPECT_TRUE(response.has_value());
   return response.value_or(network::Frame{});
@@ -1711,7 +1754,7 @@ TEST(ChronosdProcessTest, RejectsCorruptCompleteWalRecordWithoutTruncatingSegmen
       "CREATE TABLE trades (ts TIMESTAMP_NS NOT NULL, symbol SYMBOL NOT NULL, price "
       "DECIMAL(20, 8) NOT NULL, note STRING) EVENT TIME ts ORDER KEY (symbol, ts) "
       "PARTITION BY time_bucket(INTERVAL '1 day', ts) SHARD KEY (symbol) DEDUP KEY "
-      "(symbol, ts) RETENTION INTERVAL '30 days' SYSTEM HISTORY RETENTION INTERVAL "
+      "(symbol, ts) RETENTION INTERVAL '36500 days' SYSTEM HISTORY RETENTION INTERVAL "
       "'7 days' ALLOWED LATENESS INTERVAL '0 seconds'";
   TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
@@ -1731,8 +1774,13 @@ TEST(ChronosdProcessTest, RejectsCorruptCompleteWalRecordWithoutTruncatingSegmen
   response = send_query(client, 2U,
                         "INSERT INTO trades VALUES "
                         "(TIMESTAMP '1970-01-01 00:00:00.000000001Z', "
-                        "CAST('A' AS SYMBOL), 1, NULL)");
-  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
+                        "CAST('A' AS SYMBOL), CAST(1 AS DECIMAL(20, 8)), NULL)");
+  std::string insert_failure;
+  if (response.header.message_type == network::MessageType::kError) {
+    auto error = network::decode_error_message(response.payload);
+    insert_failure = error.has_value() ? byte_string(error->message) : error.error().to_string();
+  }
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult) << insert_failure;
   response = network::decode_frame(receive_frame(client)).value();
   ASSERT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
   ::close(client);
@@ -2216,7 +2264,7 @@ TEST(ChronosdProcessTest, PackagesMutualTlsQuorumSyncAndRotatesNativeSecurity) {
   EXPECT_EQ(child.stop(), 0);
 }
 
-TEST(ChronosdProcessTest, ReplicatesRetriesAndFailsOverAcrossThreeAuthenticatedDaemons) {
+TEST(ChronosdProcessTest, QueriesAcrossSplitLeadersAndFailsOverThreeAuthenticatedDaemons) {
   TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const std::array<std::string, 3U> roots{
@@ -2246,11 +2294,15 @@ TEST(ChronosdProcessTest, ReplicatesRetriesAndFailsOverAcrossThreeAuthenticatedD
   std::array<std::uint16_t, 3U> native_ports{};
   std::array<bool, 3U> active{true, true, true};
   std::array<std::uint64_t, 3U> request_ids{1U, 1U, 1U};
+  constexpr std::array<std::array<std::uint64_t, 2U>, 3U> election_timeouts{{
+      {300U, 600U},
+      {600U, 300U},
+      {900U, 900U},
+  }};
   for (std::size_t index = 0U; index < children.size(); ++index) {
-    const std::uint64_t election_timeout_ms = 300U + index * 300U;
     ASSERT_TRUE(children[index].start_replicated_transport(
         roots[index], files.groups, files.peers, files.certificates[index],
-        files.private_keys[index], files.trust_store, election_timeout_ms));
+        files.private_keys[index], files.trust_store, 0U, election_timeouts[index]));
     const std::string startup = children[index].read_startup_line();
     EXPECT_NE(startup.find("data_plane=replicated"), std::string::npos) << startup;
     EXPECT_NE(startup.find("raft_transport=configured"), std::string::npos) << startup;
@@ -2269,16 +2321,17 @@ TEST(ChronosdProcessTest, ReplicatesRetriesAndFailsOverAcrossThreeAuthenticatedD
     return;
   }
   const ClusterIngestAcknowledgement first_result = *first;
+  ASSERT_EQ(first_result.node_index, 1U);
   EXPECT_EQ(first_result.acknowledgement.outcome, network::IngestOutcome::kApplied);
   EXPECT_EQ(first_result.acknowledgement.group_id, replicated_tablet_group());
   EXPECT_EQ(first_result.acknowledgement.leader_node_id, first_result.node_index + 1U);
   EXPECT_GT(first_result.acknowledgement.leader_term, 0U);
   EXPECT_GT(first_result.acknowledgement.log_index, 0U);
 
-  const std::size_t first_remote_query_node = (first_result.node_index + 1U) % clients.size();
-  ASSERT_NE(first_remote_query_node, first_result.node_index);
-  expect_replicated_rows(clients[first_remote_query_node], clients[first_result.node_index],
-                         first_result.node_index + 1U, 10'000U);
+  constexpr std::size_t metadata_leader = 0U;
+  ASSERT_NE(metadata_leader, first_result.node_index);
+  expect_replicated_rows(clients[metadata_leader], clients[first_result.node_index],
+                         first_result.node_index + 1U, 10'000U, false);
 
   const std::size_t failed_leader = first_result.node_index;
   ::close(clients[failed_leader]);
@@ -2300,6 +2353,7 @@ TEST(ChronosdProcessTest, ReplicatesRetriesAndFailsOverAcrossThreeAuthenticatedD
     return;
   }
   const ClusterIngestAcknowledgement retry_result = *retried;
+  EXPECT_EQ(retry_result.node_index, metadata_leader);
   EXPECT_NE(retry_result.node_index, failed_leader);
   EXPECT_EQ(retry_result.acknowledgement.outcome, network::IngestOutcome::kMatchingRetry);
   EXPECT_EQ(retry_result.acknowledgement.group_id, replicated_tablet_group());
@@ -2318,7 +2372,7 @@ TEST(ChronosdProcessTest, ReplicatesRetriesAndFailsOverAcrossThreeAuthenticatedD
   }
   ASSERT_LT(remote_after_failover, clients.size());
   expect_replicated_rows(clients[remote_after_failover], clients[retry_result.node_index],
-                         retry_result.node_index + 1U, 20'000U);
+                         retry_result.node_index + 1U, 20'000U, false);
 
   for (std::size_t index = 0U; index < children.size(); ++index) {
     if (!active[index])
@@ -2327,6 +2381,7 @@ TEST(ChronosdProcessTest, ReplicatesRetriesAndFailsOverAcrossThreeAuthenticatedD
     clients[index] = -1;
     EXPECT_EQ(children[index].stop(), 0);
   }
+  expect_recovered_group_votes(roots[failed_leader], 1U, 2U);
   expect_recovered_replicated_cluster(roots);
 }
 
@@ -2335,9 +2390,31 @@ TEST(ChronosdProcessTest, StreamsAcknowledgesAndResumesAConfiguredSubscription) 
       "CREATE TABLE trades (ts TIMESTAMP_NS NOT NULL, symbol SYMBOL NOT NULL, price "
       "DECIMAL(20, 8) NOT NULL, note STRING) EVENT TIME ts ORDER KEY (symbol, ts) "
       "PARTITION BY time_bucket(INTERVAL '1 day', ts) SHARD KEY (symbol) DEDUP KEY "
-      "(symbol, ts) RETENTION INTERVAL '30 days' SYSTEM HISTORY RETENTION INTERVAL "
+      "(symbol, ts) RETENTION INTERVAL '36500 days' SYSTEM HISTORY RETENTION INTERVAL "
       "'7 days' ALLOWED LATENESS INTERVAL '0 seconds'";
   constexpr std::string_view subscription_sql = "SUBSCRIBE SELECT ts FROM trades";
+  const auto receive_response = [](const int socket) {
+    auto decoded = network::decode_frame(receive_frame(socket));
+    EXPECT_TRUE(decoded.has_value());
+    return decoded.value_or(network::Frame{});
+  };
+  const auto receive_snapshot = [&receive_response](const int socket) {
+    std::size_t rows{};
+    bool ended{};
+    for (std::size_t output = 0U; output < 16U && !ended; ++output) {
+      const network::Frame frame = receive_response(socket);
+      EXPECT_EQ(frame.header.message_type, network::MessageType::kQueryResult);
+      auto batch = network::decode_query_result_batch(frame.payload);
+      EXPECT_TRUE(batch.has_value());
+      if (batch.has_value())
+        rows += batch->row_count();
+      ended = (frame.header.flags & network::kFrameFlagEndStream) != 0U;
+    }
+    EXPECT_TRUE(ended);
+    const network::Frame ready = receive_response(socket);
+    EXPECT_EQ(ready.header.message_type, network::MessageType::kSubscriptionReady);
+    return rows;
+  };
   TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   ChildProcess child;
@@ -2349,7 +2426,14 @@ TEST(ChronosdProcessTest, StreamsAcknowledgesAndResumesAConfiguredSubscription) 
   handshake(client);
   auto response = send_query(client, 1U, create_sql);
   ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
-  response = network::decode_frame(receive_frame(client)).value();
+  response = receive_response(client);
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
+  response = send_query(client, 2U,
+                        "INSERT INTO trades VALUES "
+                        "(TIMESTAMP '1970-01-01 00:00:00.000000001Z', "
+                        "CAST('seed' AS SYMBOL), CAST(1 AS DECIMAL(20, 8)), NULL)");
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
+  response = receive_response(client);
   ASSERT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
   ::close(client);
   ASSERT_EQ(child.stop(), 0);
@@ -2380,25 +2464,31 @@ TEST(ChronosdProcessTest, StreamsAcknowledgesAndResumesAConfiguredSubscription) 
        .subscription_id = subscription_id,
        .body = std::as_bytes(std::span{subscription_sql.data(), subscription_sql.size()})});
   ASSERT_TRUE(subscribe.has_value());
-  ASSERT_TRUE(send_all(
-      client,
-      network::encode_frame(
-          {.message_type = network::MessageType::kSubscribeRequest, .request_id = 10U}, *subscribe)
-          .value()));
-  response = network::decode_frame(receive_frame(client)).value();
-  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
-  EXPECT_NE(response.header.flags & network::kFrameFlagEndStream, 0U);
-  response = network::decode_frame(receive_frame(client)).value();
-  ASSERT_EQ(response.header.message_type, network::MessageType::kSubscriptionReady);
+  auto subscribe_frame =
+      network::encode_frame({.protocol_minor = 1U,
+                             .message_type = network::MessageType::kSubscribeRequest,
+                             .request_id = 10U},
+                            *subscribe);
+  ASSERT_TRUE(subscribe_frame.has_value()) << subscribe_frame.error().to_string();
+  ASSERT_TRUE(send_all(client, *subscribe_frame));
+  EXPECT_EQ(receive_snapshot(client), 1U);
 
   response = send_query(client, 11U,
                         "INSERT INTO trades VALUES "
-                        "(TIMESTAMP '1970-01-01 00:00:00.000000001Z', "
-                        "CAST('A' AS SYMBOL), 1, NULL)");
-  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
-  response = network::decode_frame(receive_frame(client)).value();
+                        "(TIMESTAMP '1970-01-01 00:00:00.000000002Z', "
+                        "CAST('A' AS SYMBOL), CAST(1 AS DECIMAL(20, 8)), NULL)",
+                        1U);
+  std::string change_insert_failure;
+  if (response.header.message_type == network::MessageType::kError) {
+    auto error = network::decode_error_message(response.payload);
+    change_insert_failure =
+        error.has_value() ? byte_string(error->message) : error.error().to_string();
+  }
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult)
+      << change_insert_failure;
+  response = receive_response(client);
   ASSERT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
-  response = network::decode_frame(receive_frame(client)).value();
+  response = receive_response(client);
   ASSERT_EQ(response.header.message_type, network::MessageType::kSubscriptionChange);
   auto change = network::decode_subscription_change(response.payload);
   ASSERT_TRUE(change.has_value()) << change.error().to_string();
@@ -2410,11 +2500,12 @@ TEST(ChronosdProcessTest, StreamsAcknowledgesAndResumesAConfiguredSubscription) 
   auto acknowledgement = network::encode_subscription_acknowledgement({1U});
   ASSERT_TRUE(acknowledgement.has_value());
   ASSERT_TRUE(send_all(
-      client, network::encode_frame({.message_type = network::MessageType::kSubscriptionAcknowledge,
+      client, network::encode_frame({.protocol_minor = 1U,
+                                     .message_type = network::MessageType::kSubscriptionAcknowledge,
                                      .request_id = 10U},
                                     *acknowledgement)
                   .value()));
-  response = network::decode_frame(receive_frame(client)).value();
+  response = receive_response(client);
   ASSERT_EQ(response.header.message_type, network::MessageType::kSubscriptionCheckpoint);
   auto checkpoint = network::decode_subscription_checkpoint(response.payload);
   ASSERT_TRUE(checkpoint.has_value());
@@ -2435,15 +2526,12 @@ TEST(ChronosdProcessTest, StreamsAcknowledgesAndResumesAConfiguredSubscription) 
                                             .body = resume_token});
   ASSERT_TRUE(resume.has_value());
   ASSERT_TRUE(send_all(
-      client,
-      network::encode_frame(
-          {.message_type = network::MessageType::kSubscribeRequest, .request_id = 20U}, *resume)
-          .value()));
-  response = network::decode_frame(receive_frame(client)).value();
-  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
-  EXPECT_NE(response.header.flags & network::kFrameFlagEndStream, 0U);
-  response = network::decode_frame(receive_frame(client)).value();
-  EXPECT_EQ(response.header.message_type, network::MessageType::kSubscriptionReady);
+      client, network::encode_frame({.protocol_minor = 1U,
+                                     .message_type = network::MessageType::kSubscribeRequest,
+                                     .request_id = 20U},
+                                    *resume)
+                  .value()));
+  EXPECT_EQ(receive_snapshot(client), 0U);
   ::close(client);
   EXPECT_EQ(child.stop(), 0);
 }

@@ -22,6 +22,14 @@ struct ReplicatedRaftTransportTlsCredentials {
   std::shared_ptr<const network::TlsPemCredentials> pem_credentials;
 };
 
+struct ReplicatedRaftGroupElectionTimeout {
+  raft::GroupId group_id;
+  std::chrono::milliseconds timeout{};
+
+  friend bool operator==(const ReplicatedRaftGroupElectionTimeout&,
+                         const ReplicatedRaftGroupElectionTimeout&) = default;
+};
+
 struct ReplicatedRaftTransportLimits {
   std::chrono::milliseconds minimum_election_timeout{300};
   std::chrono::milliseconds maximum_election_timeout{600};
@@ -42,6 +50,9 @@ struct ReplicatedRaftTransportRuntimeConfig {
   raft::AsyncDurableMultiRaftRuntime* durable_runtime{};
   std::vector<ReplicatedPeer> peers;
   std::vector<raft::GroupId> resident_groups;
+  // Optional exact local overrides. Creation canonicalizes by group, rejects duplicates and
+  // nonresident groups, and applies the ordinary randomized limits to every omitted group.
+  std::vector<ReplicatedRaftGroupElectionTimeout> group_election_timeouts;
   ReplicatedRaftTransportTlsCredentials tls;
   ReplicatedRaftTransportLimits limits;
 };
