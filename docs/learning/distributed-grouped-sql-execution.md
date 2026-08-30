@@ -384,8 +384,11 @@ fallback; the third proves relative lease expiry. Two-reducer gates also stop pe
 PREPARE, route, and activation prefixes before coordinator loss. Each admitted reducer selects its
 own execution-deadline or lease cleanup, a reducer that accepted no control retains no abandoned
 job, and both retained services then admit, renew, and cancel a fresh query identity together.
-Durable job recovery, partial frames, packet-level partitions, larger-set skew, and broader fault
-campaigns remain open.
+The shared production endpoint now also times out authenticated request prefixes before protocol
+magic, within the fixed header, and immediately after the validated header without dispatching a
+job, then accepts a fresh complete acquisition. The production client withholds a correlated result
+when its peer stalls after a valid response prefix. Durable job recovery, partial TLS records,
+packet-level loss and healing, larger-set skew, and broader fault campaigns remain open.
 
 ### Portable sufficient-state execution boundary
 

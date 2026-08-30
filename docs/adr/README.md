@@ -585,3 +585,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0548](0548-coordinator-process-loss-reducer-lease-qualification.md) | Coordinator process-loss reducer-lease qualification | accepted |
 | [0549](0549-pre-activation-coordinator-process-loss-qualification.md) | Pre-activation coordinator process-loss qualification | accepted |
 | [0550](0550-partial-multi-reducer-coordinator-loss-qualification.md) | Partial multi-reducer coordinator-loss qualification | accepted |
+| [0551](0551-authenticated-partial-job-control-frame-qualification.md) | Authenticated partial job-control frame qualification | accepted |

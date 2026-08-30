@@ -327,6 +327,63 @@ job_control_client(std::vector<network::Ipv4Endpoint> endpoints,
       .value();
 }
 
+void send_authenticated_partial_job_control(DistributedMutableQueryControlTcpServer& server,
+                                            const network::TlsClientContext& client_context,
+                                            const common::ByteView frame,
+                                            const std::size_t prefix_bytes) {
+  ASSERT_GT(prefix_bytes, 0U);
+  ASSERT_LT(prefix_bytes, frame.size());
+  const std::uint64_t failures_before = server.metrics().failed_connections;
+  auto connecting = network::TcpSocket::begin_connect(server.bound_endpoint());
+  ASSERT_TRUE(connecting.has_value()) << connecting.error().to_string();
+  network::TcpSocket socket = std::move(*connecting);
+  for (std::size_t iteration = 0U;
+       iteration < 4096U && socket.connect_state() == network::TcpConnectState::kInProgress;
+       ++iteration) {
+    pollfd descriptor{.fd = socket.descriptor(), .events = POLLOUT, .revents = 0};
+    ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
+    if ((descriptor.revents & (POLLOUT | POLLERR | POLLHUP)) != 0) {
+      auto connected = socket.finish_connect();
+      ASSERT_TRUE(connected.has_value()) << connected.error().to_string();
+    }
+    ASSERT_TRUE(server.poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(socket.connect_state(), network::TcpConnectState::kConnected);
+  ASSERT_TRUE(server.poll_once(std::chrono::milliseconds{1}).is_ok());
+
+  auto connected_tls = network::TlsSocket::connect(client_context, socket.descriptor());
+  ASSERT_TRUE(connected_tls.has_value()) << connected_tls.error().to_string();
+  network::TlsSocket tls = std::move(*connected_tls);
+  for (std::size_t iteration = 0U; iteration < 4096U && !tls.handshake_complete(); ++iteration) {
+    auto progress = tls.handshake();
+    ASSERT_TRUE(progress.has_value()) << progress.error().to_string();
+    ASSERT_NE(progress->state, network::TlsIoState::kClosed);
+    ASSERT_TRUE(server.poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_TRUE(tls.handshake_complete());
+  ASSERT_TRUE(server.poll_once(std::chrono::milliseconds{1}).is_ok());
+
+  std::size_t written{};
+  for (std::size_t iteration = 0U; iteration < 4096U && written != prefix_bytes; ++iteration) {
+    auto progress = tls.write(frame.subspan(written, prefix_bytes - written));
+    ASSERT_TRUE(progress.has_value()) << progress.error().to_string();
+    ASSERT_NE(progress->state, network::TlsIoState::kClosed);
+    if (progress->state == network::TlsIoState::kComplete) {
+      ASSERT_GT(progress->bytes_transferred, 0U);
+      written += progress->bytes_transferred;
+    }
+    ASSERT_TRUE(server.poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(written, prefix_bytes);
+
+  for (std::size_t iteration = 0U;
+       iteration < 4096U && server.metrics().failed_connections == failures_before; ++iteration) {
+    ASSERT_TRUE(server.poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  EXPECT_EQ(server.metrics().failed_connections, failures_before + 1U);
+  EXPECT_EQ(server.metrics().active_connections, 0U);
+}
+
 TEST(DistributedMutableQueryControlTcpTest, RoutesAllProtocolsAfterOneAuthenticatedTlsBoundary) {
   Authorizer authorizer;
   ReceiverOwner receiver_owner{authorizer};
@@ -550,6 +607,76 @@ TEST(DistributedMutableQueryControlTcpTest, RetriesOnlyFiniteCorrelatedUnavailab
   EXPECT_EQ(seal->metrics().failed_attempts, 2U);
   EXPECT_EQ(job_service.metrics().seal_requests, 2U);
   EXPECT_EQ(job_service.metrics().active_jobs, 1U);
+}
+
+TEST(DistributedMutableQueryControlTcpTest,
+     TimesOutAuthenticatedPartialJobControlPrefixesWithoutDispatchAndRemainsReusable) {
+  Authorizer authorizer;
+  ReceiverOwner receiver_owner{authorizer};
+  Authenticator client_authenticator{91U};
+  auto client_context = network::TlsClientContext::create(client_tls());
+  ASSERT_TRUE(client_context.has_value());
+  const std::array result_contexts{DistributedQueryNodeTlsContext{1U, &*client_context}};
+  Authenticator server_authenticator{92U};
+  auto job_service = DistributedVectorGroupedAggregateShuffleJobService::create(
+                         {.local_node_id = 2U,
+                          .shuffle_tls = server_tls(),
+                          .shuffle_authenticator = &client_authenticator,
+                          .result_authenticator = &server_authenticator,
+                          .node_authorizer = &authorizer,
+                          .result_tls_contexts = result_contexts})
+                         .value();
+  auto partial_limits = limits();
+  partial_limits.exchange_timeout = std::chrono::milliseconds{100};
+  auto server = DistributedMutableQueryControlTcpServer::start(
+      {.listener = {},
+       .tls = server_tls(),
+       .authenticator = &client_authenticator,
+       .mutable_receiver = &receiver_owner.mutable_receiver,
+       .mutable_grouped_receiver = &receiver_owner.mutable_grouped_receiver,
+       .read_authority_receiver = &receiver_owner.authority_receiver,
+       .grouped_shuffle_job_service = &job_service,
+       .carrier_limits = partial_limits,
+       .maximum_connections = 1U,
+       .maximum_accepts_per_poll = 1U});
+  ASSERT_TRUE(server.has_value()) << server.error().to_string();
+  auto encoded = encode_distributed_vector_grouped_aggregate_shuffle_job_prepare_v1(job_prepare());
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  constexpr std::size_t kHeaderLength =
+      distributed_vector_grouped_aggregate_shuffle_job_control_format::kHeaderLength;
+
+  for (const std::size_t prefix_bytes : std::array<std::size_t, 3U>{3U, 25U, kHeaderLength + 1U}) {
+    send_authenticated_partial_job_control(*server, *client_context, encoded->bytes(),
+                                           prefix_bytes);
+  }
+  EXPECT_EQ(client_authenticator.calls, 3U);
+  EXPECT_TRUE(client_authenticator.saw_fingerprint);
+  EXPECT_EQ(job_service.metrics().prepare_requests, 0U);
+  EXPECT_EQ(job_service.metrics().active_jobs, 0U);
+  EXPECT_EQ(server->metrics().accepted_connections, 3U);
+  EXPECT_EQ(server->metrics().failed_connections, 3U);
+  EXPECT_EQ(server->metrics().completed_grouped_shuffle_job_controls, 0U);
+
+  auto fresh = job_control_client({server->bound_endpoint()}, *client_context, server_authenticator,
+                                  authorizer);
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       fresh.state() ==
+           DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kRunning;
+       ++iteration) {
+    ASSERT_TRUE(fresh.poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(fresh.state(),
+            DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kComplete)
+      << fresh.failure().to_string();
+  auto prepared = fresh.result();
+  ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
+  EXPECT_EQ(prepared->status_code, common::StatusCode::kOk);
+  EXPECT_EQ(job_service.metrics().prepare_requests, 1U);
+  EXPECT_EQ(job_service.metrics().active_jobs, 1U);
+  EXPECT_EQ(server->metrics().completed_grouped_shuffle_job_controls, 1U);
+  EXPECT_EQ(server->metrics().failed_connections, 3U);
 }
 
 TEST(DistributedMutableQueryControlTcpTest, RejectsPrincipalBeforeProtocolOrReceiverDispatch) {

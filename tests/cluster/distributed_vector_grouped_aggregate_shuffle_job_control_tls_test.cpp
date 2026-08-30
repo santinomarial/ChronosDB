@@ -290,5 +290,82 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTlsTest,
   EXPECT_TRUE(server_authenticator.saw_fingerprint);
 }
 
+TEST(DistributedVectorGroupedAggregateShuffleJobControlTlsTest,
+     TimesOutAfterAnAuthenticatedCorrelatedPartialResponse) {
+  Authenticator server_authenticator{94U};
+  Authorizer authorizer;
+  auto server_context = network::TlsServerContext::create(server_tls()).value();
+  auto client_context = network::TlsClientContext::create(client_tls()).value();
+  SocketPair pair = sockets();
+  auto server_socket = network::TlsSocket::accept(server_context, pair.sockets[0]).value();
+  auto client_socket = network::TlsSocket::connect(client_context, pair.sockets[1]).value();
+  const auto start = DistributedVectorGroupedAggregateShuffleJobControlTlsClient::TimePoint{};
+  auto client =
+      DistributedVectorGroupedAggregateShuffleJobControlTlsClient::create(
+          std::move(client_socket),
+          {.authenticator = &server_authenticator,
+           .node_authorizer = &authorizer,
+           .peer_ipv4_address = {127U, 0U, 0U, 1U},
+           .request = DistributedVectorGroupedAggregateShuffleJobControlRequest{prepare()},
+           .limits = {.handshake_timeout = std::chrono::milliseconds{100},
+                      .exchange_timeout = std::chrono::milliseconds{20}}},
+          start)
+          .value();
+
+  for (std::size_t iteration = 0U;
+       iteration < 1024U &&
+       client.state() !=
+           DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kReadingResponse;
+       ++iteration) {
+    const common::Status progress =
+        client.on_ready(true, true, start + std::chrono::milliseconds{1});
+    ASSERT_TRUE(progress.is_ok()) << progress.to_string();
+    if (!server_socket.handshake_complete()) {
+      auto handshake = server_socket.handshake();
+      ASSERT_TRUE(handshake.has_value()) << handshake.error().to_string();
+      ASSERT_NE(handshake->state, network::TlsIoState::kClosed);
+    }
+  }
+  ASSERT_EQ(client.state(),
+            DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kReadingResponse);
+  ASSERT_TRUE(server_socket.handshake_complete());
+  EXPECT_TRUE(server_authenticator.saw_fingerprint);
+
+  auto encoded = encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1(
+      {.action = DistributedVectorGroupedAggregateShuffleJobControlAction::kPrepare,
+       .status_code = common::StatusCode::kOk,
+       .query_id = uuid(1U),
+       .coordinator_node_id = 9U,
+       .target_node_id = 3U});
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  constexpr std::size_t kPartialResponseBytes = 37U;
+  static_assert(
+      kPartialResponseBytes <
+      distributed_vector_grouped_aggregate_shuffle_job_control_format::kResponseFrameLength);
+  std::size_t written{};
+  for (std::size_t iteration = 0U; iteration < 1024U && written != kPartialResponseBytes;
+       ++iteration) {
+    auto progress =
+        server_socket.write(encoded->bytes().subspan(written, kPartialResponseBytes - written));
+    ASSERT_TRUE(progress.has_value()) << progress.error().to_string();
+    ASSERT_NE(progress->state, network::TlsIoState::kClosed);
+    if (progress->state == network::TlsIoState::kComplete) {
+      ASSERT_GT(progress->bytes_transferred, 0U);
+      written += progress->bytes_transferred;
+    }
+  }
+  ASSERT_EQ(written, kPartialResponseBytes);
+
+  ASSERT_TRUE(client.on_ready(true, false, start + std::chrono::milliseconds{2}).is_ok());
+  EXPECT_EQ(client.state(),
+            DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kReadingResponse);
+  EXPECT_FALSE(client.result().has_value());
+  const common::Status timeout = client.on_ready(false, false, client.deadline());
+  EXPECT_EQ(timeout.code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(client.state(),
+            DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kFailed);
+  EXPECT_FALSE(client.result().has_value());
+}
+
 } // namespace
 } // namespace chronos::cluster

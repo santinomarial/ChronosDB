@@ -1364,7 +1364,7 @@ were deliberately not run.
   and atomic Native output. A deployment provider consumes the exact committed query routes and
   selects jobs only for gateway coordinators, leaving coordinator-local queries on the direct path
   required by current self-route restrictions. Codec, service, whole-lifecycle, replicated Native,
-  header, and allocation tests cover this boundary. The current warning-as-error build, all 362
+  header, and allocation tests cover this boundary. The current warning-as-error build, all 364
   cluster tests, all 80 cluster allocation-failure tests, and all 8 result-process tests pass. The
   process suite also passes under focused ASan/UBSan, TSan, and GCC 13 Ubuntu 24.04 qualification;
   formatting, workflow pins, and whitespace pass.
@@ -1374,8 +1374,11 @@ were deliberately not run.
   lease, and after lease activation plus renewal. Two-reducer gates now stop peers at asymmetric
   PREPARE, route, and lease prefixes before coordinator kill. Each reducer uses its own exact
   execution-deadline or lease cleanup, and both retained services pass a fresh replacement
-  lifecycle together. Partial frames, packet-level partition/fault, larger-set skew, and
-  measurement qualification remain open.
+  lifecycle together. Authenticated partial request prefixes at three framing boundaries time out
+  before service dispatch, reclaim shared-endpoint capacity, and permit a fresh complete
+  acquisition; a correlated partial response never becomes a client result. Partial TLS records,
+  packet-level partition/fault and healing, larger-set skew, and measurement qualification remain
+  open.
 - Authenticated grouped reducer-job cancellation: fixed Job Control v3 CANCEL frames now flow
   through header-first transport, finite retry, mutual TLS, and the shared packaged endpoint.
   Reducers retain bounded expiring tombstones when cancellation arrives before PREPARE, preventing
@@ -1400,9 +1403,10 @@ were deliberately not run.
   completion, local plus mTLS result collection, and merged output; local cancellation identity,
   provider selection, and allocation classification are separate assertions. Pre-activation and
   post-activation coordinator process loss plus fresh replacement now pass independently. Partial
-  two-reducer PREPARE, route, and lease acknowledgement plus asymmetric cleanup also pass; partial
-  frames, packet-level partitions, larger-set skew, and measurement remain open. The separate
-  Native split-leader process gate also passes.
+  two-reducer PREPARE, route, and lease acknowledgement plus asymmetric cleanup also pass.
+  Authenticated partial application frames fail closed in both directions; partial TLS records,
+  packet-level partitions, larger-set skew, and measurement remain open. The separate Native
+  split-leader process gate also passes.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
