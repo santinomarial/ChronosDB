@@ -1,0 +1,10 @@
+#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_coordinator_execution.hpp"
+
+#include <type_traits>
+
+static_assert(std::is_default_constructible_v<
+              chronos::cluster::DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution>);
+static_assert(!std::is_copy_constructible_v<
+              chronos::cluster::DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution>);
+static_assert(std::is_nothrow_move_constructible_v<
+              chronos::cluster::DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution>);

@@ -338,10 +338,20 @@ the job magic after mutual authentication and polls installed jobs alongside its
 connections. The replicated service package owns that optional reducer service before the
 listener, requires one shared peer authority, and joins every authorized coordinator node to its
 exact borrowed TLS client context before admission. `chronosd` installs those stable routes from
-the same canonical peer set used by distributed queries. Coordinator-side PREPARE/SEAL lifecycle
-now has a validation-before-connect, deadline-bound single-attempt TCP/mTLS client with exact
-response correlation. Finite reducer-set orchestration, whole-query cancellation, and complete
-multi-daemon qualification remain the next boundary.
+the same canonical peer set used by distributed queries.
+
+Coordinator-side control now has two explicit levels. A single-route acquisition freezes canonical
+request bytes, exact-decodes a fresh owned PREPARE or SEAL for each attempt, rotates only authorized
+addresses, and keeps the whole operation under one deadline. Only SEAL may treat a correlated
+`UNAVAILABLE` as transient readiness. The reducer-set coordinator starts every PREPARE before a
+bounded wait and withholds every remote shuffle route until all destination nodes accept. It
+requires an endpoint only when a destination has a nonlocal source. After explicit source closure,
+it seals the complete reducer set and enters the existing lossless result coordinator only after
+all SEAL responses succeed. Result bytes remain unavailable until every partition is receipt-proven
+and the global Native finalizer succeeds. Failure clears unpublished routes and cancels local
+control/result owners; already admitted remote jobs expire at their relative deadline because
+control v1 has no CANCEL action. Worker-source composition, immediate remote cancellation, and
+complete packaged multi-daemon qualification remain the next boundary.
 
 ### Portable sufficient-state execution boundary
 

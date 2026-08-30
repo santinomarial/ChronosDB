@@ -49,8 +49,9 @@ and poll work retain independent bounds.
 
 The generic shared endpoint still borrows the job service. The replicated package owns it in
 reverse-safe teardown order, and `chronosd` now supplies stable per-node result identities without
-inventing another committed port. Coordinator-side PREPARE/SEAL scheduling and multi-daemon
-qualification remain.
+inventing another committed port. [ADR 0542](0542-finite-grouped-reducer-job-coordinator.md) now
+owns finite coordinator-side PREPARE/SEAL scheduling; packaged lifecycle composition and
+multi-daemon qualification remain.
 
 ## Affected invariants
 
@@ -84,7 +85,7 @@ compatible.
 
 ## Unresolved questions
 
-- Compose coordinator-side PREPARE/SEAL scheduling with the packaged query lifecycle.
+- Compose the finite coordinator with worker source delivery in the packaged query lifecycle.
 - Qualify complete grouped shuffle across independent daemon processes and failure cases.
 
 ## References

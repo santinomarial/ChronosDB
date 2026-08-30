@@ -1342,6 +1342,18 @@ were deliberately not run.
   into one global query resource context before the existing checked projection, ORDER BY, LIMIT,
   and atomic Native encoding pipeline. Cross-process partition-result transport and joint lifecycle
   ownership remain open.
+- Finite grouped reducer-job coordination: one immutable-request acquisition now reconstructs a
+  fresh move-only PREPARE or SEAL for each finite address-rotating TCP/mTLS attempt under the outer
+  query deadline. The reducer-set owner starts every PREPARE before waiting, withholds all routes
+  after partial admission, accepts endpoint-free all-local reducers, retries only correlated
+  `UNAVAILABLE` SEAL readiness, and enters receipt-preserving result collection only after every
+  reducer seals. A real shared-endpoint lifecycle reaches take-once Native output; a stalled second
+  reducer proves an accepted first PREPARE cannot leak routes or output. Immediate remote cancel,
+  packaged worker/source composition, and full multi-daemon qualification remain open. The
+  warning-as-error build, all 346 cluster tests, all 76 cluster allocation-failure tests, and ten
+  focused ASan/UBSan cases pass; formatting, workflow pins, and whitespace pass, while LLVM 18
+  static analysis stops only at the known macOS 26 libc++ builtin incompatibility after local
+  findings were corrected.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

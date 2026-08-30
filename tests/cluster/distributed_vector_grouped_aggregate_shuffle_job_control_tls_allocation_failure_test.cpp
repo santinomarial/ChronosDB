@@ -1,4 +1,5 @@
-#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_tcp_client.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_tcp_acquisition.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_coordinator_execution.hpp"
 #include "support/failing_allocator.hpp"
 
 #include <array>
@@ -10,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace chronos::cluster {
 namespace {
@@ -40,6 +42,12 @@ public:
           .expected_server_identity = "127.0.0.1"};
 }
 
+[[nodiscard]] network::TlsServerConfig server_tls() {
+  return {.certificate_chain_file = fixture("server.pem").string(),
+          .private_key_file = fixture("server-key.pem").string(),
+          .trust_store_file = fixture("ca.pem").string()};
+}
+
 [[nodiscard]] common::Uuid uuid(const std::uint8_t seed) {
   common::Uuid::Bytes bytes{};
   bytes.back() = static_cast<std::byte>(seed);
@@ -58,6 +66,32 @@ public:
                            {{0U, 3U}}, {{0U, string, false}},
                            {{query::VectorAggregateOperation::kCountStar, std::nullopt}})
                            .value(),
+          .result_schema = {.columns = {{"region", string, false}, {"count", count, false}}}};
+}
+
+template <typename Id> [[nodiscard]] Id id(const std::uint8_t seed) {
+  return Id::from_uuid(uuid(seed)).value();
+}
+
+[[nodiscard]] query::DistributedMutableVectorFragment fragment() {
+  const auto string = schema::LogicalType::create(schema::LogicalTypeKind::kString).value();
+  const auto count = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  return {.query_id = uuid(1U),
+          .database_id = id<manifest::DatabaseId>(8U),
+          .table_id = id<schema::TableId>(9U),
+          .tablet_id = id<schema::TabletId>(2U),
+          .destination_schema_id = id<schema::SchemaId>(10U),
+          .raft_group_id = uuid(11U),
+          .serving_node = 3U,
+          .applied_position = 10U,
+          .observed_leader_commit_position = 10U,
+          .placement_epoch = 3U,
+          .read_policy = {.consistency = query::DistributedReadConsistency::kLeaderLinearizable},
+          .linearizable_barrier = raft::ReadBarrier{2U, 3U, 10U},
+          .destination_column_ordinals = {0U},
+          .plan = {.mode = query::DistributedVectorPlanMode::kGroupedAggregate,
+                   .group_key_input_indices = {0U},
+                   .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}}},
           .result_schema = {.columns = {{"region", string, false}, {"count", count, false}}}};
 }
 
@@ -133,6 +167,55 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTlsAllocationFailureTest,
   failure.disable();
   ASSERT_FALSE(client.has_value());
   EXPECT_EQ(client.error().code(), common::StatusCode::kResourceExhausted);
+}
+
+TEST(DistributedVectorGroupedAggregateShuffleJobControlTlsAllocationFailureTest,
+     ClassifiesRetryOwnerRequestAllocation) {
+  Authenticator authenticator;
+  Authorizer authorizer;
+  auto context = network::TlsClientContext::create(client_tls()).value();
+  auto config = DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionConfig{
+      .route = {.node_id = 3U, .endpoints = {{{127U, 0U, 0U, 1U}, 9U}}, .tls_context = &context},
+      .authenticator = &authenticator,
+      .node_authorizer = &authorizer,
+      .request = DistributedVectorGroupedAggregateShuffleJobControlRequest{prepare()}};
+  ::chronos::test::ScopedAllocationFailure failure{0U};
+  auto acquisition =
+      DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition::create(std::move(config));
+  failure.disable();
+  ASSERT_FALSE(acquisition.has_value());
+  EXPECT_EQ(acquisition.error().code(), common::StatusCode::kResourceExhausted);
+}
+
+TEST(DistributedVectorGroupedAggregateShuffleJobControlTlsAllocationFailureTest,
+     ClassifiesCoordinatorOwnershipAllocation) {
+  Authenticator authenticator;
+  Authorizer authorizer;
+  auto context = network::TlsClientContext::create(client_tls()).value();
+  auto prepared = prepare();
+  auto authority = std::move(prepared.authority);
+  const std::vector fragments{fragment()};
+  auto finalization =
+      DistributedVectorGroupedAggregateShuffleFinalizationAuthorityV2::create(authority, fragments)
+          .value();
+  auto config = DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionConfig{
+      .coordinator_node_id = 9U,
+      .reducer_control_routes = {{.node_id = 3U,
+                                  .endpoints = {{{127U, 0U, 0U, 1U}, 9U}},
+                                  .tls_context = &context}},
+      .authenticator = &authenticator,
+      .node_authorizer = &authorizer,
+      .execution_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{1},
+      .result = {.tls = server_tls(),
+                 .authenticator = &authenticator,
+                 .node_authorizer = &authorizer,
+                 .coordinator_node_id = 9U}};
+  ::chronos::test::ScopedAllocationFailure failure{0U};
+  auto coordinator = DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::create(
+      authority, finalization, std::move(config));
+  failure.disable();
+  ASSERT_FALSE(coordinator.has_value());
+  EXPECT_EQ(coordinator.error().code(), common::StatusCode::kResourceExhausted);
 }
 
 } // namespace

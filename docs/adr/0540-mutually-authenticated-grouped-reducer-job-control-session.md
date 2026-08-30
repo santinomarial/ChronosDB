@@ -48,7 +48,8 @@ A coordinator-side composite now validates the complete request, deployment limi
 timeouts, TLS context, authenticator, and authorizer before opening one nonblocking TCP socket. It
 owns the connect deadline and `SO_ERROR` completion, then transfers the descriptor to this TLS
 session while retaining teardown order. This is a single-attempt building block; reducer-set
-PREPARE/SEAL scheduling and retry policy remain above it.
+PREPARE/SEAL scheduling and retry policy remain above it. [ADR 0542](0542-finite-grouped-reducer-job-coordinator.md)
+subsequently supplies that finite owner.
 
 ## Affected invariants
 
@@ -82,8 +83,8 @@ unauthenticated control.
 
 ## Unresolved questions
 
-- Compose finite reducer-set PREPARE/SEAL scheduling and whole-query cancellation above the
-  single-attempt TCP client.
+- Compose the finite reducer-set coordinator with packaged worker delivery and immediate remote
+  cancellation policy.
 
 [ADR 0541](0541-shared-grouped-reducer-job-control-endpoint.md) now owns bounded multi-connection
 dispatch and job progress under the committed query endpoint.

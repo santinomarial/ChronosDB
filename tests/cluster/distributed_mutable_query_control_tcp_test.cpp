@@ -1,7 +1,7 @@
 #include "chronos/cluster/distributed_mutable_query_control_tcp.hpp"
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_query_tcp_client.hpp"
 #include "chronos/cluster/distributed_mutable_vector_query_tcp.hpp"
-#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_tcp_client.hpp"
+#include "chronos/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_tcp_acquisition.hpp"
 #include "chronos/cluster/raft_read_authority_tcp_client.hpp"
 
 #include <array>
@@ -306,23 +306,24 @@ mutable_grouped_client(const network::Ipv4Endpoint endpoint,
       .value();
 }
 
-[[nodiscard]] DistributedVectorGroupedAggregateShuffleJobControlTcpClient
-job_control_client(const network::Ipv4Endpoint endpoint,
+[[nodiscard]] DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition
+job_control_client(std::vector<network::Ipv4Endpoint> endpoints,
                    const network::TlsClientContext& client_context, Authenticator& authenticator,
                    Authorizer& authorizer) {
-  return DistributedVectorGroupedAggregateShuffleJobControlTcpClient::begin(
-             {.remote_endpoint = endpoint,
-              .tls_context = &client_context,
-              .carrier = {.authenticator = &authenticator,
-                          .node_authorizer = &authorizer,
-                          .peer_ipv4_address = endpoint.address,
-                          .request =
-                              DistributedVectorGroupedAggregateShuffleJobControlRequest{
-                                  job_prepare()},
-                          .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
-                                     .exchange_timeout = std::chrono::milliseconds{1000}}},
-              .connect_timeout = std::chrono::milliseconds{1000}},
-             std::chrono::steady_clock::now())
+  return DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition::create(
+             {.route = {.node_id = 2U,
+                        .endpoints = std::move(endpoints),
+                        .tls_context = &client_context},
+              .authenticator = &authenticator,
+              .node_authorizer = &authorizer,
+              .request = DistributedVectorGroupedAggregateShuffleJobControlRequest{job_prepare()},
+              .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                                 .exchange_timeout = std::chrono::milliseconds{1000}},
+              .connect_timeout = std::chrono::milliseconds{1000},
+              .retry = {.maximum_attempts = 2U,
+                        .initial_backoff = std::chrono::milliseconds{1},
+                        .maximum_backoff = std::chrono::milliseconds{1}},
+              .execution_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10}})
       .value();
 }
 
@@ -433,31 +434,30 @@ TEST(DistributedMutableQueryControlTcpTest, RoutesAllProtocolsAfterOneAuthentica
   EXPECT_EQ(*read_authority->result(), authority());
   EXPECT_EQ(receiver_owner.authority_service.calls, 1U);
 
-  auto job_control = job_control_client(server->bound_endpoint(), *client_context,
-                                        server_authenticator, authorizer);
+  auto refused_listener = network::TcpListener::bind();
+  ASSERT_TRUE(refused_listener.has_value());
+  const auto refused_endpoint = refused_listener->bound_endpoint();
+  ASSERT_TRUE(refused_listener->close().is_ok());
+  auto job_control = job_control_client({refused_endpoint, server->bound_endpoint()},
+                                        *client_context, server_authenticator, authorizer);
   for (std::size_t iteration = 0U;
        iteration < 4096U &&
        job_control.state() !=
-           DistributedVectorGroupedAggregateShuffleJobControlTcpClientState::kComplete;
+           DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kComplete;
        ++iteration) {
-    const auto interest = job_control.interest();
-    pollfd descriptor{.fd = job_control.descriptor(),
-                      .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                   (interest.want_write ? POLLOUT : 0))};
-    ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
-    const auto progress =
-        job_control.on_ready((descriptor.revents & POLLIN) != 0,
-                             (descriptor.revents & POLLOUT) != 0, std::chrono::steady_clock::now());
+    const auto progress = job_control.poll_once(std::chrono::milliseconds{1});
     ASSERT_TRUE(progress.is_ok()) << progress.to_string();
     ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{1}).is_ok());
   }
   ASSERT_EQ(job_control.state(),
-            DistributedVectorGroupedAggregateShuffleJobControlTcpClientState::kComplete)
+            DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kComplete)
       << job_control.failure().to_string();
   auto prepared = job_control.result();
   ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
   EXPECT_EQ(prepared->status_code, common::StatusCode::kOk);
   EXPECT_EQ(prepared->query_id, uuid(31U));
+  EXPECT_EQ(job_control.metrics().attempts_started, 2U);
+  EXPECT_EQ(job_control.metrics().retries_started, 1U);
   EXPECT_EQ(job_service.metrics().active_jobs, 1U);
 
   EXPECT_EQ(client_authenticator.calls, 4U);
@@ -471,6 +471,85 @@ TEST(DistributedMutableQueryControlTcpTest, RoutesAllProtocolsAfterOneAuthentica
   EXPECT_EQ(metrics.completed_grouped_shuffle_job_controls, 1U);
   EXPECT_EQ(metrics.failed_connections, 0U);
   EXPECT_EQ(metrics.active_connections, 0U);
+}
+
+TEST(DistributedMutableQueryControlTcpTest, RetriesOnlyFiniteCorrelatedUnavailableSealResponses) {
+  Authorizer authorizer;
+  ReceiverOwner receiver_owner{authorizer};
+  Authenticator client_authenticator{91U};
+  auto client_context = network::TlsClientContext::create(client_tls());
+  ASSERT_TRUE(client_context.has_value());
+  const std::array result_contexts{DistributedQueryNodeTlsContext{1U, &*client_context}};
+  Authenticator server_authenticator{92U};
+  auto job_service = DistributedVectorGroupedAggregateShuffleJobService::create(
+                         {.local_node_id = 2U,
+                          .shuffle_tls = server_tls(),
+                          .shuffle_authenticator = &client_authenticator,
+                          .result_authenticator = &server_authenticator,
+                          .node_authorizer = &authorizer,
+                          .result_tls_contexts = result_contexts})
+                         .value();
+  auto server = DistributedMutableQueryControlTcpServer::start(
+      {.listener = {},
+       .tls = server_tls(),
+       .authenticator = &client_authenticator,
+       .mutable_receiver = &receiver_owner.mutable_receiver,
+       .mutable_grouped_receiver = &receiver_owner.mutable_grouped_receiver,
+       .read_authority_receiver = &receiver_owner.authority_receiver,
+       .grouped_shuffle_job_service = &job_service,
+       .carrier_limits = limits(),
+       .maximum_connections = 4U,
+       .maximum_accepts_per_poll = 4U});
+  ASSERT_TRUE(server.has_value()) << server.error().to_string();
+
+  auto prepared = job_control_client({server->bound_endpoint()}, *client_context,
+                                     server_authenticator, authorizer);
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       prepared.state() ==
+           DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kRunning;
+       ++iteration) {
+    ASSERT_TRUE(prepared.poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(prepared.state(),
+            DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kComplete);
+
+  auto seal = DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition::create(
+      {.route = {.node_id = 2U,
+                 .endpoints = {server->bound_endpoint()},
+                 .tls_context = &*client_context},
+       .authenticator = &server_authenticator,
+       .node_authorizer = &authorizer,
+       .request =
+           DistributedVectorGroupedAggregateShuffleJobControlRequest{
+               DistributedVectorGroupedAggregateShuffleJobSeal{uuid(31U), 1U, 2U}},
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000}},
+       .connect_timeout = std::chrono::milliseconds{1000},
+       .retry = {.maximum_attempts = 2U,
+                 .initial_backoff = std::chrono::milliseconds{1},
+                 .maximum_backoff = std::chrono::milliseconds{1}},
+       .execution_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10},
+       .retry_unavailable_response = true});
+  ASSERT_TRUE(seal.has_value()) << seal.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       seal->state() ==
+           DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kRunning;
+       ++iteration) {
+    const auto progress = seal->poll_once(std::chrono::milliseconds{1});
+    if (!progress.is_ok())
+      EXPECT_EQ(progress.code(), common::StatusCode::kUnavailable);
+    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  EXPECT_EQ(seal->state(),
+            DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kFailed);
+  EXPECT_EQ(seal->failure().code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(seal->metrics().attempts_started, 2U);
+  EXPECT_EQ(seal->metrics().failed_attempts, 2U);
+  EXPECT_EQ(job_service.metrics().seal_requests, 2U);
+  EXPECT_EQ(job_service.metrics().active_jobs, 1U);
 }
 
 TEST(DistributedMutableQueryControlTcpTest, RejectsPrincipalBeforeProtocolOrReceiverDispatch) {
