@@ -76,6 +76,8 @@ socket carrier may remain if it depends on these readers or cursors.
 authentication, target-node authorization, exact response correlation, and session deadlines.
 [ADR 0541](0541-shared-grouped-reducer-job-control-endpoint.md) dispatches those requests through the
 committed private endpoint and retains bounded connection/job polling ownership.
+Additive Job Control v2-v4 magics now reuse the same header-first owner for route installation,
+cancellation, and lease renewal without changing v1 bytes.
 
 ## References
 

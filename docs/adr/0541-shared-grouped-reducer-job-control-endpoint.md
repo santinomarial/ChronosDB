@@ -40,6 +40,11 @@ authorized coordinator with `NOT_FOUND` before job admission when its exact TLS 
 `chronosd` installs this owner with its committed peer authority and per-peer TLS contexts, while
 the job's shuffle data listener remains an ephemeral endpoint published only by successful PREPARE.
 
+Additive exact magics `CHDVGJC2`, `CHDVGJC3`, and `CHDVGJC4` subsequently select route installation,
+cancellation, and lease renewal through the same authenticated dispatcher. Their fixed response
+versions are selected from the decoded action; v1 dispatch and every unrelated protocol remain
+unchanged.
+
 ## Consequences
 
 Mutable rows, mutable grouped sufficient state, Raft read authority, and grouped reducer-job

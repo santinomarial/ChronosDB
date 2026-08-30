@@ -88,6 +88,8 @@ unauthenticated control.
 
 [ADR 0541](0541-shared-grouped-reducer-job-control-endpoint.md) now owns bounded multi-connection
 dispatch and job progress under the committed query endpoint.
+Additive Job Control v2-v4 actions now reuse the same mutual-authentication and exact-correlation
+boundary for route installation, cancellation, and coordinator-lease renewal.
 
 ## References
 

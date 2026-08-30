@@ -208,6 +208,8 @@ public:
     std::optional<DistributedVectorGroupedAggregateShuffleTcpExecution> source_transport;
     std::optional<DistributedVectorGroupedAggregateShuffleResultTcpExecution> result_sender;
     std::chrono::steady_clock::time_point deadline;
+    std::optional<std::chrono::milliseconds> lease_duration;
+    std::optional<std::chrono::steady_clock::time_point> lease_deadline;
     JobState state{JobState::kReceiving};
     common::Status failure{common::StatusCode::kInternal,
                            "grouped shuffle reducer job has not failed"};
@@ -281,6 +283,43 @@ public:
     if (job.state == JobState::kTransmitting && service_metrics.transmitting_jobs != 0U)
       --service_metrics.transmitting_jobs;
     job.failure = {common::StatusCode::kCancelled, "grouped shuffle reducer job was cancelled"};
+    job.state = JobState::kCancelled;
+    increment_saturated(service_metrics.cancelled_jobs);
+  }
+
+  void expire_lease(Job& job) noexcept {
+    if (job.state == JobState::kComplete || job.state == JobState::kFailed ||
+        job.state == JobState::kCancelled) {
+      return;
+    }
+    static_cast<void>(job.destination.cancel());
+    if (job.source_transport.has_value())
+      static_cast<void>(job.source_transport->cancel());
+    if (job.result_sender.has_value())
+      static_cast<void>(job.result_sender->cancel());
+    if (job.state == JobState::kTransmitting && service_metrics.transmitting_jobs != 0U)
+      --service_metrics.transmitting_jobs;
+    job.failure = {common::StatusCode::kCancelled,
+                   "grouped shuffle reducer-job coordinator lease expired"};
+    job.state = JobState::kCancelled;
+    increment_saturated(service_metrics.cancelled_jobs);
+    increment_saturated(service_metrics.lease_expirations);
+  }
+
+  void expire_execution(Job& job) noexcept {
+    if (job.state == JobState::kComplete || job.state == JobState::kFailed ||
+        job.state == JobState::kCancelled) {
+      return;
+    }
+    static_cast<void>(job.destination.cancel());
+    if (job.source_transport.has_value())
+      static_cast<void>(job.source_transport->cancel());
+    if (job.result_sender.has_value())
+      static_cast<void>(job.result_sender->cancel());
+    if (job.state == JobState::kTransmitting && service_metrics.transmitting_jobs != 0U)
+      --service_metrics.transmitting_jobs;
+    job.failure = {common::StatusCode::kCancelled,
+                   "grouped shuffle reducer-job execution deadline expired"};
     job.state = JobState::kCancelled;
     increment_saturated(service_metrics.cancelled_jobs);
   }
@@ -748,6 +787,72 @@ DistributedVectorGroupedAggregateShuffleJobService::receive(
     }
   }
 
+  if (const auto* renewal =
+          std::get_if<DistributedVectorGroupedAggregateShuffleJobRenewLease>(&request)) {
+    increment_saturated(impl.service_metrics.lease_renew_requests);
+    auto authorized = impl.authorize(authenticated_peer, renewal->coordinator_node_id);
+    if (!authorized.has_value())
+      return common::make_unexpected(authorized.error());
+    if (!*authorized) {
+      return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kRenewLease,
+                            common::StatusCode::kUnauthenticated, renewal->query_id,
+                            renewal->coordinator_node_id, renewal->target_node_id);
+    }
+    Impl::Job* job = impl.find(renewal->query_id);
+    if (job == nullptr || renewal->target_node_id != impl.config.local_node_id ||
+        (job != nullptr && renewal->coordinator_node_id != job->prepare.coordinator_node_id)) {
+      return Impl::response(
+          DistributedVectorGroupedAggregateShuffleJobControlAction::kRenewLease,
+          job == nullptr ? common::StatusCode::kNotFound : common::StatusCode::kInvalidArgument,
+          renewal->query_id, renewal->coordinator_node_id, renewal->target_node_id);
+    }
+    if (job->state == JobState::kFailed || job->state == JobState::kCancelled) {
+      return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kRenewLease,
+                            job->failure.code(), renewal->query_id, renewal->coordinator_node_id,
+                            renewal->target_node_id);
+    }
+    if (job->state == JobState::kComplete) {
+      return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kRenewLease,
+                            common::StatusCode::kOk, renewal->query_id,
+                            renewal->coordinator_node_id, renewal->target_node_id);
+    }
+    const bool execution_expired = now >= job->deadline;
+    const bool lease_expired = job->lease_deadline.has_value() && now >= *job->lease_deadline &&
+                               (!execution_expired || *job->lease_deadline <= job->deadline);
+    if (lease_expired) {
+      impl.expire_lease(*job);
+      return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kRenewLease,
+                            common::StatusCode::kCancelled, renewal->query_id,
+                            renewal->coordinator_node_id, renewal->target_node_id);
+    }
+    if (execution_expired) {
+      impl.expire_execution(*job);
+      return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kRenewLease,
+                            common::StatusCode::kCancelled, renewal->query_id,
+                            renewal->coordinator_node_id, renewal->target_node_id);
+    }
+    if (!job->source_routes.has_value()) {
+      return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kRenewLease,
+                            common::StatusCode::kUnavailable, renewal->query_id,
+                            renewal->coordinator_node_id, renewal->target_node_id);
+    }
+    if (job->lease_duration.has_value() && *job->lease_duration != renewal->lease_duration) {
+      return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kRenewLease,
+                            common::StatusCode::kAlreadyExists, renewal->query_id,
+                            renewal->coordinator_node_id, renewal->target_node_id);
+    }
+    const bool activation = !job->lease_duration.has_value();
+    job->lease_duration = renewal->lease_duration;
+    job->lease_deadline = saturating_deadline(now, renewal->lease_duration);
+    if (activation)
+      increment_saturated(impl.service_metrics.lease_activations);
+    else
+      increment_saturated(impl.service_metrics.lease_renewals);
+    return Impl::response(DistributedVectorGroupedAggregateShuffleJobControlAction::kRenewLease,
+                          common::StatusCode::kOk, renewal->query_id, renewal->coordinator_node_id,
+                          renewal->target_node_id);
+  }
+
   const auto& seal = std::get<DistributedVectorGroupedAggregateShuffleJobSeal>(request);
   increment_saturated(impl.service_metrics.seal_requests);
   auto authorized = impl.authorize(authenticated_peer, seal.coordinator_node_id);
@@ -899,19 +1004,17 @@ common::Status DistributedVectorGroupedAggregateShuffleJobService::poll_once(
   bool waited{};
   for (auto& owner : impl.jobs) {
     Impl::Job& job = *owner;
-    if ((job.state == JobState::kReceiving || job.state == JobState::kTransmitting) &&
-        now >= job.deadline) {
-      static_cast<void>(job.destination.cancel());
-      if (job.source_transport.has_value())
-        static_cast<void>(job.source_transport->cancel());
-      if (job.result_sender.has_value())
-        static_cast<void>(job.result_sender->cancel());
-      job.failure = {common::StatusCode::kCancelled,
-                     "grouped shuffle reducer-job execution deadline expired"};
-      job.state = JobState::kCancelled;
-      increment_saturated(impl.service_metrics.cancelled_jobs);
-      if (impl.service_metrics.transmitting_jobs != 0U && job.result_sender.has_value())
-        --impl.service_metrics.transmitting_jobs;
+    const bool active = job.state == JobState::kReceiving || job.state == JobState::kTransmitting;
+    const bool execution_expired = active && now >= job.deadline;
+    const bool lease_expired = active && job.lease_deadline.has_value() &&
+                               now >= *job.lease_deadline &&
+                               (!execution_expired || *job.lease_deadline <= job.deadline);
+    if (lease_expired) {
+      impl.expire_lease(job);
+      continue;
+    }
+    if (execution_expired) {
+      impl.expire_execution(job);
       continue;
     }
     if (job.state == JobState::kReceiving) {

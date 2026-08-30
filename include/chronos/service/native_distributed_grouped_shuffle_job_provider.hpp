@@ -26,8 +26,11 @@ struct NativeDistributedGroupedShuffleJobProviderConfig {
   cluster::DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits route_install_retry;
   cluster::DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits seal_retry;
   cluster::DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits cancel_retry;
+  cluster::DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits lease_retry;
   std::chrono::milliseconds connect_timeout{5000};
   std::chrono::milliseconds reducer_execution_timeout{30000};
+  std::chrono::milliseconds lease_duration{5000};
+  std::chrono::milliseconds lease_renew_interval{1000};
   std::size_t maximum_reducer_nodes{4096U};
   std::size_t maximum_retained_result_streams{1024U};
   std::size_t maximum_result_accepts_per_poll{32U};

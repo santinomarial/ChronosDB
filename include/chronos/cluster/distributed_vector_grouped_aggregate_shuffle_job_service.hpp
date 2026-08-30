@@ -58,6 +58,10 @@ struct DistributedVectorGroupedAggregateShuffleJobServiceMetrics {
   std::uint64_t duplicate_route_installs{};
   std::uint64_t cancel_requests{};
   std::uint64_t duplicate_cancels{};
+  std::uint64_t lease_renew_requests{};
+  std::uint64_t lease_activations{};
+  std::uint64_t lease_renewals{};
+  std::uint64_t lease_expirations{};
   std::uint64_t submitted_source_tablets{};
   std::uint64_t duplicate_source_submissions{};
   std::uint64_t completed_source_transports{};
@@ -70,8 +74,8 @@ struct DistributedVectorGroupedAggregateShuffleJobServiceMetrics {
 };
 
 // Owns a finite set of reducer jobs after an authenticated control carrier has decoded a request.
-// One caller thread serializes receive, local delivery, polling, and cancellation. Configuration
-// security/TLS dependencies are borrowed and must outlive the service.
+// One caller thread serializes receive, local delivery, lease renewal/expiry, polling, and
+// cancellation. Configuration security/TLS dependencies are borrowed and must outlive the service.
 class DistributedVectorGroupedAggregateShuffleJobService {
 public:
   DistributedVectorGroupedAggregateShuffleJobService() noexcept;

@@ -93,3 +93,5 @@ route semantics require another version.
 
 The additive [Job Control v3](distributed-vector-grouped-aggregate-shuffle-job-control-v3.md)
 defines only authenticated CANCEL; v2 bytes and route semantics remain unchanged.
+The additive [Job Control v4](distributed-vector-grouped-aggregate-shuffle-job-control-v4.md)
+defines only authenticated RENEW_LEASE.

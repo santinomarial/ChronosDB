@@ -27,6 +27,8 @@ namespace {
 
 using Acquisition = DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition;
 
+inline constexpr std::chrono::milliseconds kLeaseActivePollInterval{10};
+
 [[nodiscard]] bool acquisition_running(const Acquisition& acquisition) noexcept {
   return acquisition.state() ==
          DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kRunning;
@@ -47,6 +49,13 @@ bounded_wait(const std::chrono::milliseconds maximum_wait,
   return right > std::numeric_limits<std::uint64_t>::max() - left
              ? std::numeric_limits<std::uint64_t>::max()
              : left + right;
+}
+
+[[nodiscard]] std::chrono::steady_clock::time_point
+saturating_deadline(const std::chrono::steady_clock::time_point now,
+                    const std::chrono::milliseconds duration) noexcept {
+  const auto remaining = std::chrono::steady_clock::time_point::max() - now;
+  return duration >= remaining ? std::chrono::steady_clock::time_point::max() : now + duration;
 }
 
 [[nodiscard]] bool valid_retry(
@@ -96,6 +105,21 @@ public:
     }
   }
 
+  void refresh_lease_metrics() noexcept {
+    metrics_.lease_attempts_started = committed_lease_attempts_started_;
+    metrics_.lease_retries_started = committed_lease_retries_started_;
+    metrics_.lease_failed_attempts = committed_lease_failed_attempts_;
+    for (const auto& acquisition : lease_acquisitions_) {
+      const auto current = acquisition.metrics();
+      metrics_.lease_attempts_started =
+          saturated_add(metrics_.lease_attempts_started, current.attempts_started);
+      metrics_.lease_retries_started =
+          saturated_add(metrics_.lease_retries_started, current.retries_started);
+      metrics_.lease_failed_attempts =
+          saturated_add(metrics_.lease_failed_attempts, current.failed_attempts);
+    }
+  }
+
   void commit_control_metrics() noexcept {
     refresh_control_metrics();
     committed_control_attempts_started_ = metrics_.control_attempts_started;
@@ -103,11 +127,22 @@ public:
     committed_control_failed_attempts_ = metrics_.control_failed_attempts;
   }
 
+  void commit_lease_metrics() noexcept {
+    refresh_lease_metrics();
+    committed_lease_attempts_started_ = metrics_.lease_attempts_started;
+    committed_lease_retries_started_ = metrics_.lease_retries_started;
+    committed_lease_failed_attempts_ = metrics_.lease_failed_attempts;
+  }
+
   void cancel_controls() noexcept {
     for (auto& acquisition : acquisitions_)
       if (acquisition_running(acquisition))
         static_cast<void>(acquisition.cancel());
+    for (auto& acquisition : lease_acquisitions_)
+      if (acquisition_running(acquisition))
+        static_cast<void>(acquisition.cancel());
     refresh_control_metrics();
+    refresh_lease_metrics();
   }
 
   void finish_cancellation() noexcept {
@@ -134,7 +169,9 @@ public:
     failure_ = std::move(terminal_failure);
     terminal_after_cancel_ = terminal;
     commit_control_metrics();
+    commit_lease_metrics();
     acquisitions_.clear();
+    lease_acquisitions_.clear();
     try {
       std::vector<DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition> cancels;
       cancels.reserve(config_.reducer_control_routes.size());
@@ -163,6 +200,140 @@ public:
     } catch (const std::length_error&) {
       return cancellation_delivery_failed();
     }
+  }
+
+  [[nodiscard]] common::Status start_lease_round(const TimePoint now, const bool activation) {
+    try {
+      std::vector<DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition> renewals;
+      renewals.reserve(config_.reducer_control_routes.size());
+      const TimePoint round_deadline =
+          std::min(config_.execution_deadline, saturating_deadline(now, config_.lease_duration));
+      for (const auto& route : config_.reducer_control_routes) {
+        auto acquisition = DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition::create(
+            {.route = route,
+             .authenticator = config_.authenticator,
+             .node_authorizer = config_.node_authorizer,
+             .request =
+                 DistributedVectorGroupedAggregateShuffleJobControlRequest{
+                     DistributedVectorGroupedAggregateShuffleJobRenewLease{
+                         .query_id = query_id_,
+                         .coordinator_node_id = config_.coordinator_node_id,
+                         .target_node_id = route.node_id,
+                         .lease_duration = config_.lease_duration}},
+             .carrier_limits = config_.carrier_limits,
+             .connect_timeout = config_.connect_timeout,
+             .retry = config_.lease_retry,
+             .execution_deadline = round_deadline});
+        if (!acquisition.has_value())
+          return fail(acquisition.error());
+        renewals.push_back(std::move(*acquisition));
+      }
+      lease_acquisitions_ = std::move(renewals);
+      next_lease_renewal_ = saturating_deadline(now, config_.lease_renew_interval);
+      activating_lease_ = activation;
+      if (activation) {
+        state_ =
+            DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kActivatingLease;
+      }
+      return common::Status::ok();
+    } catch (const std::bad_alloc&) {
+      return fail(status(common::StatusCode::kResourceExhausted,
+                         "grouped shuffle reducer lease allocation failed"));
+    } catch (const std::length_error&) {
+      return fail(status(common::StatusCode::kResourceExhausted,
+                         "grouped shuffle reducer lease set exceeds container limits"));
+    }
+  }
+
+  [[nodiscard]] common::Status drive_lease_controls() {
+    if (lease_acquisitions_.empty())
+      return common::Status::ok();
+    std::size_t completed{};
+    for (auto& acquisition : lease_acquisitions_) {
+      if (acquisition_running(acquisition)) {
+        const common::Status progress = acquisition.poll_once(std::chrono::milliseconds{0});
+        if (!progress.is_ok() &&
+            acquisition.state() !=
+                DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kFailed) {
+          if (metrics_.lease_failures != std::numeric_limits<std::uint64_t>::max())
+            ++metrics_.lease_failures;
+          return fail(progress);
+        }
+      }
+      if (acquisition.state() ==
+          DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kFailed) {
+        if (metrics_.lease_failures != std::numeric_limits<std::uint64_t>::max())
+          ++metrics_.lease_failures;
+        return fail(acquisition.failure());
+      }
+      completed +=
+          acquisition.state() ==
+                  DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kComplete
+              ? 1U
+              : 0U;
+    }
+    refresh_lease_metrics();
+    if (completed != lease_acquisitions_.size())
+      return common::Status::ok();
+    for (auto& acquisition : lease_acquisitions_) {
+      auto response = acquisition.result();
+      if (!response.has_value() || response->status_code != common::StatusCode::kOk ||
+          response->action !=
+              DistributedVectorGroupedAggregateShuffleJobControlAction::kRenewLease ||
+          response->reducer_shuffle_endpoint.has_value()) {
+        if (metrics_.lease_failures != std::numeric_limits<std::uint64_t>::max())
+          ++metrics_.lease_failures;
+        return fail(response.has_value()
+                        ? status(response->status_code == common::StatusCode::kOk
+                                     ? common::StatusCode::kCorruption
+                                     : response->status_code,
+                                 "grouped shuffle reducer lease renewal was not accepted")
+                        : response.error());
+      }
+    }
+    metrics_.lease_responses_accepted = saturated_add(
+        metrics_.lease_responses_accepted, static_cast<std::uint64_t>(lease_acquisitions_.size()));
+    if (metrics_.lease_rounds_completed != std::numeric_limits<std::uint64_t>::max())
+      ++metrics_.lease_rounds_completed;
+    commit_lease_metrics();
+    lease_acquisitions_.clear();
+    lease_activated_ = true;
+    if (activating_lease_) {
+      activating_lease_ = false;
+      state_ = DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kPrepared;
+    }
+    return common::Status::ok();
+  }
+
+  [[nodiscard]] common::Status maintain_lease(const TimePoint now) {
+    if (!lease_acquisitions_.empty())
+      return drive_lease_controls();
+    if (!lease_activated_ || !next_lease_renewal_.has_value() || now < *next_lease_renewal_) {
+      return common::Status::ok();
+    }
+    const common::Status started = start_lease_round(now, false);
+    return started.is_ok() ? drive_lease_controls() : started;
+  }
+
+  [[nodiscard]] std::optional<TimePoint> lease_wake_deadline(const TimePoint now) const noexcept {
+    if (lease_acquisitions_.empty())
+      return next_lease_renewal_;
+    TimePoint deadline = saturating_deadline(now, kLeaseActivePollInterval);
+    for (const auto& acquisition : lease_acquisitions_)
+      if (const auto wake = acquisition.wake_deadline(); wake.has_value())
+        deadline = std::min(deadline, *wake);
+    return deadline;
+  }
+
+  void stop_lease() noexcept {
+    for (auto& acquisition : lease_acquisitions_)
+      if (acquisition_running(acquisition))
+        static_cast<void>(acquisition.cancel());
+    commit_lease_metrics();
+    lease_acquisitions_.clear();
+    next_lease_renewal_.reset();
+    lease_activated_ = false;
+    activating_lease_ = false;
   }
 
   [[nodiscard]] common::Status fail(common::Status failure) {
@@ -327,8 +498,7 @@ public:
     metrics_.route_installed_reducers = acquisitions_.size();
     commit_control_metrics();
     acquisitions_.clear();
-    state_ = DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kPrepared;
-    return common::Status::ok();
+    return start_lease_round(TimePoint::clock::now(), true);
   }
 
   [[nodiscard]] common::Status publish_sealed() {
@@ -384,6 +554,7 @@ public:
   common::Uuid query_id_;
   DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionConfig config_;
   std::vector<DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition> acquisitions_;
+  std::vector<DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition> lease_acquisitions_;
   std::vector<pollfd> poll_descriptors_;
   DistributedVectorGroupedAggregateShuffleResultCoordinatorExecution result_;
   std::vector<DistributedQueryNodeRoute> prepared_routes_;
@@ -391,9 +562,15 @@ public:
   std::uint64_t committed_control_attempts_started_{};
   std::uint64_t committed_control_retries_started_{};
   std::uint64_t committed_control_failed_attempts_{};
+  std::uint64_t committed_lease_attempts_started_{};
+  std::uint64_t committed_lease_retries_started_{};
+  std::uint64_t committed_lease_failed_attempts_{};
   DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState state_{
       DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kPreparing};
   std::optional<TerminalAfterCancel> terminal_after_cancel_;
+  std::optional<TimePoint> next_lease_renewal_;
+  bool lease_activated_{};
+  bool activating_lease_{};
   common::Status failure_{common::StatusCode::kInternal,
                           "grouped shuffle reducer-job coordinator has not failed"};
 };
@@ -430,7 +607,11 @@ DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::create(
               kMaximumExecutionTimeout ||
       !valid_retry(config.prepare_retry) || !valid_retry(config.route_install_retry) ||
       !valid_retry(config.seal_retry) || !valid_retry(config.cancel_retry) ||
-      config.execution_deadline <= now ||
+      !valid_retry(config.lease_retry) || config.lease_duration.count() <= 0 ||
+      config.lease_duration > distributed_vector_grouped_aggregate_shuffle_job_control_format::
+                                  kMaximumExecutionTimeout ||
+      config.lease_renew_interval.count() <= 0 ||
+      config.lease_renew_interval >= config.lease_duration || config.execution_deadline <= now ||
       config.result.coordinator_node_id != config.coordinator_node_id ||
       config.result.authenticator != config.authenticator ||
       config.result.node_authorizer != config.node_authorizer ||
@@ -501,7 +682,7 @@ DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::create(
         return common::make_unexpected(acquisition.error());
       acquisitions.push_back(std::move(*acquisition));
     }
-    std::vector<pollfd> descriptors(acquisitions.size());
+    std::vector<pollfd> descriptors(acquisitions.size() * 2U);
     return DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution{
         std::make_unique<Impl>(authority, std::move(config), std::move(acquisitions),
                                std::move(descriptors), std::move(*result))};
@@ -533,49 +714,70 @@ common::Status DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::
   if (impl.state_ ==
           DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kComplete ||
       impl.state_ ==
-          DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kResultTaken ||
-      impl.state_ ==
-          DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kPrepared)
+          DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kResultTaken)
     return common::Status::ok();
   auto now = Impl::TimePoint::clock::now();
   if (now >= impl.config_.execution_deadline)
     return impl.expire();
 
-  if (impl.state_ ==
-          DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kPreparing ||
-      impl.state_ ==
-          DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kInstallingRoutes ||
-      impl.state_ ==
-          DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kSealing ||
-      impl.state_ ==
-          DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling) {
-    common::Status progress = impl.drive_controls();
-    if (!progress.is_ok() ||
-        (impl.state_ !=
-             DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kPreparing &&
-         impl.state_ != DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::
-                            kInstallingRoutes &&
-         impl.state_ !=
-             DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kSealing &&
-         impl.state_ !=
-             DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling))
-      return progress;
+  const auto controls_active = [&impl]() noexcept {
+    return impl.state_ ==
+               DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kPreparing ||
+           impl.state_ == DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::
+                              kInstallingRoutes ||
+           impl.state_ ==
+               DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kSealing ||
+           impl.state_ ==
+               DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling;
+  };
 
+  if (controls_active()) {
+    common::Status progress = impl.drive_controls();
+    if (!progress.is_ok())
+      return progress;
+  }
+
+  if (impl.state_ !=
+          DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kPreparing &&
+      impl.state_ !=
+          DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kInstallingRoutes &&
+      impl.state_ !=
+          DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling) {
+    const common::Status lease_progress = impl.maintain_lease(now);
+    if (!lease_progress.is_ok())
+      return lease_progress;
+  }
+
+  if (impl.state_ ==
+          DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kPrepared &&
+      impl.lease_acquisitions_.empty()) {
+    return common::Status::ok();
+  }
+
+  if (controls_active() ||
+      (impl.state_ != DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::
+                          kCollectingResults &&
+       !impl.lease_acquisitions_.empty())) {
     std::size_t count{};
     auto wait = bounded_wait(maximum_wait, now, impl.config_.execution_deadline);
-    for (const auto& acquisition : impl.acquisitions_) {
-      if (!acquisition_running(acquisition))
-        continue;
-      if (const auto deadline = acquisition.wake_deadline(); deadline.has_value())
-        wait = bounded_wait(wait, now, *deadline);
-      if (acquisition.descriptor() < 0)
-        continue;
-      const auto interest = acquisition.interest();
-      impl.poll_descriptors_[count++] = {
-          .fd = acquisition.descriptor(),
-          .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                       (interest.want_write ? POLLOUT : 0))};
-    }
+    const auto append_descriptors = [&](const auto& acquisitions) {
+      for (const auto& acquisition : acquisitions) {
+        if (!acquisition_running(acquisition))
+          continue;
+        if (const auto deadline = acquisition.wake_deadline(); deadline.has_value())
+          wait = bounded_wait(wait, now, *deadline);
+        if (acquisition.descriptor() < 0)
+          continue;
+        const auto interest = acquisition.interest();
+        impl.poll_descriptors_[count++] = {
+            .fd = acquisition.descriptor(),
+            .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
+                                         (interest.want_write ? POLLOUT : 0))};
+      }
+    };
+    append_descriptors(impl.acquisitions_);
+    append_descriptors(impl.lease_acquisitions_);
+
     const int ready = ::poll(impl.poll_descriptors_.data(), static_cast<nfds_t>(count),
                              static_cast<int>(wait.count()));
     if (ready < 0 && errno != EINTR)
@@ -583,17 +785,34 @@ common::Status DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::
                               "polling grouped shuffle reducer-job coordinator failed"));
     if (Impl::TimePoint::clock::now() >= impl.config_.execution_deadline)
       return impl.expire();
-    return impl.drive_controls();
+    common::Status progress = common::Status::ok();
+    if (controls_active())
+      progress = impl.drive_controls();
+    if (!progress.is_ok())
+      return progress;
+    if (impl.state_ !=
+        DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling) {
+      progress = impl.maintain_lease(Impl::TimePoint::clock::now());
+    }
+    return progress;
   }
 
-  const common::Status progress =
-      impl.result_.poll_once(bounded_wait(maximum_wait, now, impl.config_.execution_deadline));
+  auto result_wait = bounded_wait(maximum_wait, now, impl.config_.execution_deadline);
+  if (const auto lease_wake = impl.lease_wake_deadline(now); lease_wake.has_value())
+    result_wait = bounded_wait(result_wait, now, *lease_wake);
+  const common::Status progress = impl.result_.poll_once(result_wait);
   impl.metrics_.result = impl.result_.metrics();
   if (!progress.is_ok())
     return impl.fail(progress);
   if (impl.result_.state() ==
-      DistributedVectorGroupedAggregateShuffleResultCoordinatorExecutionState::kComplete)
+      DistributedVectorGroupedAggregateShuffleResultCoordinatorExecutionState::kComplete) {
+    impl.stop_lease();
     impl.state_ = DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kComplete;
+    return common::Status::ok();
+  }
+  common::Status lease_progress = impl.maintain_lease(Impl::TimePoint::clock::now());
+  if (!lease_progress.is_ok())
+    return lease_progress;
   return common::Status::ok();
 }
 
@@ -662,6 +881,21 @@ common::Status DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::
   return impl.begin_cancellation(status(common::StatusCode::kCancelled,
                                         "grouped shuffle reducer-job coordinator was cancelled"),
                                  Impl::TerminalAfterCancel::kCancelled);
+}
+
+std::optional<std::chrono::steady_clock::time_point>
+DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::wake_deadline() const noexcept {
+  if (!implementation_)
+    return std::nullopt;
+  const auto state = implementation_->state_;
+  if (state == DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kFailed ||
+      state == DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelled ||
+      state == DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kComplete ||
+      state == DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kResultTaken ||
+      state == DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling) {
+    return std::nullopt;
+  }
+  return implementation_->lease_wake_deadline(Impl::TimePoint::clock::now());
 }
 
 std::span<const DistributedQueryNodeRoute>

@@ -317,7 +317,12 @@ TEST(DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionTest,
        .seal_retry = {.maximum_attempts = 3U,
                       .initial_backoff = std::chrono::milliseconds{1},
                       .maximum_backoff = std::chrono::milliseconds{2}},
+       .lease_retry = {.maximum_attempts = 2U,
+                       .initial_backoff = std::chrono::milliseconds{1},
+                       .maximum_backoff = std::chrono::milliseconds{2}},
        .reducer_execution_timeout = std::chrono::seconds{5},
+       .lease_duration = std::chrono::milliseconds{100},
+       .lease_renew_interval = std::chrono::milliseconds{5},
        .execution_deadline = deadline,
        .result = {.listener = {},
                   .tls = server_tls(),
@@ -346,6 +351,16 @@ TEST(DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionTest,
       << coordinator->failure().to_string();
   EXPECT_TRUE(coordinator->prepared_routes().empty());
   EXPECT_EQ(job_service->metrics().active_jobs, 1U);
+  EXPECT_EQ(job_service->metrics().lease_activations, 1U);
+
+  for (std::size_t iteration = 0U; iteration < 4096U && job_service->metrics().lease_renewals == 0U;
+       ++iteration) {
+    ASSERT_TRUE(coordinator->poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(control_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_GE(job_service->metrics().lease_renewals, 1U);
+  ASSERT_EQ(coordinator->state(),
+            DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kPrepared);
 
   auto resources = query::QueryResourceContext::create(16U << 20U).value();
   const auto encoded_input = input(proof.authority);
@@ -381,6 +396,9 @@ TEST(DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionTest,
   EXPECT_EQ(metrics.sealed_reducers, 1U);
   EXPECT_EQ(metrics.control_attempts_started, 3U);
   EXPECT_EQ(metrics.control_retries_started, 0U);
+  EXPECT_GE(metrics.lease_rounds_completed, 2U);
+  EXPECT_GE(metrics.lease_responses_accepted, 2U);
+  EXPECT_EQ(metrics.lease_failures, 0U);
   EXPECT_EQ(metrics.result.collector.accepted_partitions, 1U);
   EXPECT_EQ(metrics.result.finalization_attempts, 1U);
   EXPECT_TRUE(control_server_authenticator.saw_fingerprint);
@@ -519,6 +537,8 @@ TEST(DistributedMutableVectorGroupedAggregateShuffleJobExecutionTest,
   EXPECT_EQ(metrics.reducers.prepared_reducers, 1U);
   EXPECT_EQ(metrics.reducers.route_installed_reducers, 1U);
   EXPECT_EQ(metrics.reducers.sealed_reducers, 1U);
+  EXPECT_EQ(metrics.reducers.lease_rounds_completed, 1U);
+  EXPECT_EQ(job_service.metrics().lease_activations, 1U);
   EXPECT_EQ(job_service.metrics().submitted_source_tablets, 1U);
   auto result = execution->take_result();
   ASSERT_TRUE(result.has_value()) << result.error().to_string();

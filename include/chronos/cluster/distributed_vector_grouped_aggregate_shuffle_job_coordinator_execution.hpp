@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -25,7 +26,10 @@ struct DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionConfig {
   DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits route_install_retry;
   DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits seal_retry;
   DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits cancel_retry;
+  DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits lease_retry;
   std::chrono::milliseconds reducer_execution_timeout{30000};
+  std::chrono::milliseconds lease_duration{5000};
+  std::chrono::milliseconds lease_renew_interval{1000};
   std::chrono::steady_clock::time_point execution_deadline;
   std::size_t maximum_reducer_nodes{4096U};
   DistributedVectorGroupedAggregateShuffleResultCoordinatorExecutionConfig result;
@@ -38,6 +42,12 @@ struct DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionMetrics {
   std::size_t sealed_reducers{};
   std::size_t cancelled_reducers{};
   std::uint64_t cancel_delivery_failures{};
+  std::uint64_t lease_rounds_completed{};
+  std::uint64_t lease_responses_accepted{};
+  std::uint64_t lease_failures{};
+  std::uint64_t lease_attempts_started{};
+  std::uint64_t lease_retries_started{};
+  std::uint64_t lease_failed_attempts{};
   std::uint64_t control_attempts_started{};
   std::uint64_t control_retries_started{};
   std::uint64_t control_failed_attempts{};
@@ -55,15 +65,19 @@ enum class DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState 
   kFailed = 8,
   kCancelled = 9,
   kCancelling = 10,
+  kActivatingLease = 11,
 };
 
 // Owns one coordinator-side reducer set. It starts every PREPARE before blocking, publishes no
 // remote shuffle route until every authority destination node has acknowledged, omits listeners
-// for all-local destinations, accepts one explicit seal transition after source delivery closes,
-// and publishes Native output only after every reducer's receipt-proven partition result arrives.
+// for all-local destinations, activates and renews every reducer's relative coordinator lease,
+// accepts one explicit seal transition after source delivery closes, and publishes Native output
+// only after every reducer's receipt-proven partition result arrives.
 // Failure and explicit cancellation enter a finite authenticated remote-cancellation phase; the
 // caller must keep polling while state is kCancelling so admitted jobs or cancel-before-prepare
 // tombstones are acknowledged before this owner becomes terminal.
+// The caller must also cap unrelated worker waits by wake_deadline() so lease maintenance cannot be
+// starved while the public state remains kPrepared.
 // Authority, finalization proof, TLS contexts, and security dependencies are borrowed and must
 // outlive this single-thread-affine owner.
 class DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution {
@@ -88,6 +102,7 @@ public:
   [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait);
   [[nodiscard]] common::Status seal();
   [[nodiscard]] common::Status cancel();
+  [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> wake_deadline() const noexcept;
   [[nodiscard]] std::span<const DistributedQueryNodeRoute> prepared_routes() const noexcept;
   [[nodiscard]] common::Result<DistributedVectorRowsFinalizedResultV2> take_result();
   [[nodiscard]] DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState

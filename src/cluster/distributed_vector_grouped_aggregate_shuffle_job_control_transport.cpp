@@ -298,6 +298,70 @@ distributed_vector_grouped_aggregate_shuffle_job_control_request_frame_length_v3
   return v3::kFrameLength;
 }
 
+common::Result<std::size_t>
+distributed_vector_grouped_aggregate_shuffle_job_control_request_frame_length_v4(
+    const common::ByteView header,
+    const DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits limits) {
+  namespace v4 = distributed_vector_grouped_aggregate_shuffle_job_control_v4_format;
+  const common::Status valid_limits =
+      validate_distributed_vector_grouped_aggregate_shuffle_job_control_decode_limits(limits);
+  if (!valid_limits.is_ok())
+    return common::make_unexpected(valid_limits);
+  if (header.size() != v4::kHeaderLength ||
+      !std::ranges::equal(header.first(v4::kRequestMagic.size()), v4::kRequestMagic)) {
+    return common::make_unexpected(
+        corruption("grouped shuffle lease-renewal stream header framing is invalid"));
+  }
+  common::ByteReader crc_reader{header.subspan(kHeaderCrcOffset, sizeof(std::uint32_t))};
+  const auto header_crc = crc_reader.read_u32_le();
+  if (!header_crc.has_value() || *header_crc != common::crc32c(header.first(kHeaderCrcOffset))) {
+    return common::make_unexpected(
+        corruption("grouped shuffle lease-renewal stream header checksum differs"));
+  }
+  common::ByteReader reader{header};
+  static_cast<void>(reader.skip(v4::kRequestMagic.size()));
+  const auto major = reader.read_u16_le();
+  const auto minor = reader.read_u16_le();
+  const auto header_length = reader.read_u32_le();
+  const auto frame_length = reader.read_u64_le();
+  const auto action = reader.read_u8();
+  const auto action_reserved = reader.read_exact(7U);
+  const auto coordinator = reader.read_u64_le();
+  const auto target = reader.read_u64_le();
+  const auto query = reader.read_exact(common::Uuid::kSize);
+  const auto lease_duration = reader.read_u64_le();
+  const auto reserved = reader.read_exact(52U);
+  static_cast<void>(reader.skip(4U));
+  if (!major.has_value() || !minor.has_value() || !header_length.has_value() ||
+      !frame_length.has_value() || !action.has_value() || !action_reserved.has_value() ||
+      !coordinator.has_value() || !target.has_value() || !query.has_value() ||
+      !lease_duration.has_value() || !reserved.has_value()) {
+    return common::make_unexpected(
+        corruption("grouped shuffle lease-renewal stream header is truncated"));
+  }
+  if (*major != v4::kMajor || *minor != v4::kMinor)
+    return common::make_unexpected(
+        unsupported("grouped shuffle lease-renewal stream version is unsupported"));
+  common::Uuid::Bytes query_bytes{};
+  std::ranges::copy(*query, query_bytes.begin());
+  if (*header_length != v4::kHeaderLength || *frame_length != v4::kFrameLength ||
+      *action != static_cast<std::uint8_t>(
+                     DistributedVectorGroupedAggregateShuffleJobControlAction::kRenewLease) ||
+      !zero(*action_reserved) || !zero(*reserved) || *coordinator == 0U || *target == 0U ||
+      *coordinator == *target || common::Uuid{query_bytes}.is_nil() || *lease_duration == 0U ||
+      *lease_duration > static_cast<std::uint64_t>(
+                            distributed_vector_grouped_aggregate_shuffle_job_control_format::
+                                kMaximumExecutionTimeout.count())) {
+    return common::make_unexpected(
+        corruption("grouped shuffle lease-renewal stream header is invalid"));
+  }
+  if (v4::kFrameLength > limits.maximum_frame_length) {
+    return common::make_unexpected(
+        exhausted("grouped shuffle lease-renewal stream exceeds limits"));
+  }
+  return v4::kFrameLength;
+}
+
 DistributedVectorGroupedAggregateShuffleJobControlRequestReader::
     DistributedVectorGroupedAggregateShuffleJobControlRequestReader(
         DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits limits) noexcept
@@ -382,6 +446,10 @@ DistributedVectorGroupedAggregateShuffleJobControlRequestReader::consume(
               magic,
               distributed_vector_grouped_aggregate_shuffle_job_control_v3_format::kRequestMagic)
             ? 3U
+        : std::ranges::equal(
+              magic,
+              distributed_vector_grouped_aggregate_shuffle_job_control_v4_format::kRequestMagic)
+            ? 4U
             : 1U;
     auto expected =
         version_ == 2U
@@ -389,6 +457,9 @@ DistributedVectorGroupedAggregateShuffleJobControlRequestReader::consume(
                   header_, limits_)
         : version_ == 3U
             ? distributed_vector_grouped_aggregate_shuffle_job_control_request_frame_length_v3(
+                  header_, limits_)
+        : version_ == 4U
+            ? distributed_vector_grouped_aggregate_shuffle_job_control_request_frame_length_v4(
                   header_, limits_)
             : distributed_vector_grouped_aggregate_shuffle_job_control_request_frame_length_v1(
                   header_, limits_);
@@ -420,6 +491,9 @@ DistributedVectorGroupedAggregateShuffleJobControlRequestReader::consume(
                 frame_, limits_)
       : version_ == 3U
           ? decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v3_exact(
+                frame_, limits_)
+      : version_ == 4U
+          ? decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v4_exact(
                 frame_, limits_)
           : decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v1_exact(
                 frame_, limits_);
@@ -491,6 +565,11 @@ DistributedVectorGroupedAggregateShuffleJobControlResponseReader::consume(
             magic,
             distributed_vector_grouped_aggregate_shuffle_job_control_v3_format::kResponseMagic)
           ? decode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v3_exact(
+                frame_)
+      : std::ranges::equal(
+            magic,
+            distributed_vector_grouped_aggregate_shuffle_job_control_v4_format::kResponseMagic)
+          ? decode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v4_exact(
                 frame_)
           : decode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1_exact(
                 frame_);

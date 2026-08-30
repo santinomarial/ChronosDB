@@ -1,5 +1,6 @@
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_job_execution.hpp"
 
+#include <algorithm>
 #include <climits>
 #include <new>
 #include <optional>
@@ -15,6 +16,16 @@ namespace {
 
 [[nodiscard]] common::Status exhausted(const char* message) {
   return {common::StatusCode::kResourceExhausted, message};
+}
+
+[[nodiscard]] std::chrono::milliseconds
+bounded_wait(const std::chrono::milliseconds maximum_wait,
+             const std::chrono::steady_clock::time_point deadline) noexcept {
+  const auto now = std::chrono::steady_clock::now();
+  if (deadline <= now)
+    return std::chrono::milliseconds{0};
+  return std::min(maximum_wait,
+                  std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now));
 }
 
 } // namespace
@@ -93,7 +104,7 @@ DistributedMutableVectorGroupedAggregateShuffleJobExecution::create(
         implementation->authority, fragments);
     if (!finalization.has_value())
       return common::make_unexpected(finalization.error());
-    implementation->finalization.emplace(std::move(*finalization));
+    auto& retained_finalization = implementation->finalization.emplace(std::move(*finalization));
     auto worker_execution = DistributedMutableVectorGroupedAggregateQueryExecution::create(
         source_node_id, std::move(fragments), std::move(keys), std::move(aggregates),
         config.worker_execution);
@@ -107,7 +118,7 @@ DistributedMutableVectorGroupedAggregateShuffleJobExecution::create(
       return common::make_unexpected(workers.error());
     implementation->workers.emplace(std::move(*workers));
     auto reducers = DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::create(
-        implementation->authority, *implementation->finalization, std::move(config.reducers));
+        implementation->authority, retained_finalization, std::move(config.reducers));
     if (!reducers.has_value())
       return common::make_unexpected(reducers.error());
     implementation->reducers.emplace(std::move(*reducers));
@@ -174,7 +185,21 @@ common::Status DistributedMutableVectorGroupedAggregateShuffleJobExecution::poll
 
   if (impl.execution_state ==
       DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kCollectingSources) {
-    common::Status progress = impl.workers->poll_once(maximum_wait);
+    common::Status progress = impl.reducers->poll_once(std::chrono::milliseconds{0});
+    if (impl.reducers->state() ==
+        DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling) {
+      static_cast<void>(impl.workers->cancel());
+      impl.execution_failure = impl.reducers->failure();
+      impl.execution_state =
+          DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kCancelling;
+      return common::Status::ok();
+    }
+    if (!progress.is_ok())
+      return impl.fail(std::move(progress));
+    auto worker_wait = maximum_wait;
+    if (const auto wake = impl.reducers->wake_deadline(); wake.has_value())
+      worker_wait = bounded_wait(worker_wait, *wake);
+    progress = impl.workers->poll_once(worker_wait);
     if (!progress.is_ok()) {
       const auto worker_state = impl.workers->state();
       if (worker_state ==
@@ -259,11 +284,16 @@ common::Result<DistributedVectorRowsFinalizedResultV2>
 DistributedMutableVectorGroupedAggregateShuffleJobExecution::take_result() {
   if (!implementation_ ||
       implementation_->execution_state !=
-          DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kComplete) {
+          DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kComplete ||
+      !implementation_->reducers.has_value()) {
     return common::make_unexpected(common::Status{
         common::StatusCode::kUnavailable, "mutable grouped shuffle job result is unavailable"});
   }
-  auto result = implementation_->reducers->take_result();
+  auto result =
+      implementation_->reducers.transform([](auto& reducers) { return reducers.take_result(); })
+          .value_or(common::make_unexpected(
+              common::Status{common::StatusCode::kInternal,
+                             "mutable grouped shuffle reducer owner is unavailable"}));
   if (result.has_value())
     implementation_->execution_state =
         DistributedMutableVectorGroupedAggregateShuffleJobExecutionState::kResultTaken;
@@ -279,16 +309,18 @@ DistributedMutableVectorGroupedAggregateShuffleJobExecution::state() const noexc
 
 DistributedMutableVectorGroupedAggregateShuffleJobExecutionMetrics
 DistributedMutableVectorGroupedAggregateShuffleJobExecution::metrics() const noexcept {
-  return implementation_
-             ? DistributedMutableVectorGroupedAggregateShuffleJobExecutionMetrics{.workers =
-                                                                                      implementation_
-                                                                                          ->workers
-                                                                                          ->metrics(),
-                                                                                  .reducers =
-                                                                                      implementation_
-                                                                                          ->reducers
-                                                                                          ->metrics()}
-             : DistributedMutableVectorGroupedAggregateShuffleJobExecutionMetrics{};
+  if (!implementation_ || !implementation_->workers.has_value() ||
+      !implementation_->reducers.has_value()) {
+    return {};
+  }
+  return {
+      .workers =
+          implementation_->workers.transform([](const auto& workers) { return workers.metrics(); })
+              .value_or(DistributedMutableVectorGroupedAggregateQueryTcpExecutionMetrics{}),
+      .reducers =
+          implementation_->reducers
+              .transform([](const auto& reducers) { return reducers.metrics(); })
+              .value_or(DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionMetrics{})};
 }
 
 const common::Status&

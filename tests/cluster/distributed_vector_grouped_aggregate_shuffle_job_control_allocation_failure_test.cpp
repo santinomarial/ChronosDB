@@ -147,5 +147,31 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlAllocationFailureTest,
   EXPECT_EQ(response_failure.error().code(), common::StatusCode::kResourceExhausted);
 }
 
+TEST(DistributedVectorGroupedAggregateShuffleJobControlAllocationFailureTest,
+     ClassifiesVersionFourLeaseRenewalEncodingAllocations) {
+  const DistributedVectorGroupedAggregateShuffleJobRenewLease renewal{
+      .query_id = uuid(1U),
+      .coordinator_node_id = 9U,
+      .target_node_id = 7U,
+      .lease_duration = std::chrono::milliseconds{5000}};
+  auto request_failure = run_failure(0U, [&] {
+    return encode_distributed_vector_grouped_aggregate_shuffle_job_renew_lease_v4(renewal);
+  });
+  ASSERT_FALSE(request_failure.has_value());
+  EXPECT_EQ(request_failure.error().code(), common::StatusCode::kResourceExhausted);
+
+  const DistributedVectorGroupedAggregateShuffleJobControlResponse response{
+      .action = DistributedVectorGroupedAggregateShuffleJobControlAction::kRenewLease,
+      .status_code = common::StatusCode::kOk,
+      .query_id = uuid(1U),
+      .coordinator_node_id = 9U,
+      .target_node_id = 7U};
+  auto response_failure = run_failure(0U, [&] {
+    return encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v4(response);
+  });
+  ASSERT_FALSE(response_failure.has_value());
+  EXPECT_EQ(response_failure.error().code(), common::StatusCode::kResourceExhausted);
+}
+
 } // namespace
 } // namespace chronos::cluster

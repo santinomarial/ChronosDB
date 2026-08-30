@@ -367,8 +367,13 @@ therefore retain the direct grouped lifecycle. Failure or explicit client cancel
 workers and enters Job Control v3 cancellation for every reducer. The service installs a bounded
 expiring tombstone when CANCEL wins the cross-connection race with PREPARE, so a delayed PREPARE
 cannot recreate the job after acknowledged cleanup. Unreachable reducers retain their relative
-deadline fallback. Coordinator-crash detection, durable job recovery, self-role protocol support,
-and complete packaged multi-daemon qualification remain open.
+deadline fallback. After route installation, Job Control v4 activates one authenticated relative
+coordinator lease at every reducer before workers start. The whole-query owner renews all leases
+during worker, SEAL, and result phases and caps its other waits by the next maintenance deadline.
+If coordinator progress disappears, each reducer cancels its job after its last acknowledged lease
+duration without requiring synchronized clocks. Pre-activation loss retains the original PREPARE
+deadline. Durable job recovery, self-role protocol support, and complete packaged multi-daemon
+process-loss qualification remain open.
 
 ### Portable sufficient-state execution boundary
 

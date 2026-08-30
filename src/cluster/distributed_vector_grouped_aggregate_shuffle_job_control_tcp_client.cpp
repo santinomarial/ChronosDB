@@ -42,8 +42,10 @@ encode_request(const DistributedVectorGroupedAggregateShuffleJobControlRequest& 
           std::get_if<DistributedVectorGroupedAggregateShuffleJobInstallRoutes>(&request)) {
     return encode_distributed_vector_grouped_aggregate_shuffle_job_install_routes_v2(*routes);
   }
-  return encode_distributed_vector_grouped_aggregate_shuffle_job_cancel_v3(
-      std::get<DistributedVectorGroupedAggregateShuffleJobCancel>(request));
+  if (const auto* cancel = std::get_if<DistributedVectorGroupedAggregateShuffleJobCancel>(&request))
+    return encode_distributed_vector_grouped_aggregate_shuffle_job_cancel_v3(*cancel);
+  return encode_distributed_vector_grouped_aggregate_shuffle_job_renew_lease_v4(
+      std::get<DistributedVectorGroupedAggregateShuffleJobRenewLease>(request));
 }
 
 } // namespace

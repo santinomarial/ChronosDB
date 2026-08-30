@@ -394,5 +394,94 @@ TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
   EXPECT_EQ(service.metrics().cancelled_jobs, 1U);
 }
 
+TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
+     ActivatesRenewsAndExpiresAnAuthenticatedCoordinatorLease) {
+  Authenticator authenticator{93U};
+  Authorizer authorizer;
+  auto result_context = network::TlsClientContext::create(client_tls()).value();
+  const std::array result_contexts{DistributedQueryNodeTlsContext{3U, &result_context},
+                                   DistributedQueryNodeTlsContext{9U, &result_context}};
+  auto service = DistributedVectorGroupedAggregateShuffleJobService::create(
+                     {.local_node_id = 3U,
+                      .shuffle_tls = server_tls(),
+                      .shuffle_authenticator = &authenticator,
+                      .result_authenticator = &authenticator,
+                      .node_authorizer = &authorizer,
+                      .result_tls_contexts = result_contexts,
+                      .maximum_jobs = 1U,
+                      .maximum_job_query_memory_bytes = 16U << 20U})
+                     .value();
+  const network::PeerAuthenticationResult peer{.authorized = true, .principal_id = 93U};
+  const auto now = std::chrono::steady_clock::now();
+  const network::Ipv4Endpoint result_endpoint{{127U, 0U, 0U, 1U}, 9123U};
+  auto prepared = service.receive(
+      DistributedVectorGroupedAggregateShuffleJobControlRequest{prepare(result_endpoint)}, peer,
+      now);
+  ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
+  ASSERT_EQ(prepared->status_code, common::StatusCode::kOk);
+  ASSERT_TRUE(prepared->reducer_shuffle_endpoint.has_value());
+
+  const DistributedVectorGroupedAggregateShuffleJobRenewLease renewal{
+      .query_id = uuid(1U),
+      .coordinator_node_id = 9U,
+      .target_node_id = 3U,
+      .lease_duration = std::chrono::milliseconds{10}};
+  auto too_early = service.receive(
+      DistributedVectorGroupedAggregateShuffleJobControlRequest{renewal}, peer, now);
+  ASSERT_TRUE(too_early.has_value());
+  EXPECT_EQ(too_early->status_code, common::StatusCode::kUnavailable);
+
+  const DistributedVectorGroupedAggregateShuffleJobInstallRoutes routes{
+      .query_id = uuid(1U),
+      .coordinator_node_id = 9U,
+      .target_node_id = 3U,
+      .routes = {{.node_id = 3U, .endpoint = *prepared->reducer_shuffle_endpoint}}};
+  auto installed =
+      service.receive(DistributedVectorGroupedAggregateShuffleJobControlRequest{routes}, peer, now);
+  ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+  ASSERT_EQ(installed->status_code, common::StatusCode::kOk);
+
+  auto activated = service.receive(
+      DistributedVectorGroupedAggregateShuffleJobControlRequest{renewal}, peer, now);
+  ASSERT_TRUE(activated.has_value()) << activated.error().to_string();
+  EXPECT_EQ(activated->status_code, common::StatusCode::kOk);
+  auto conflict = renewal;
+  conflict.lease_duration = std::chrono::milliseconds{20};
+  auto conflicted =
+      service.receive(DistributedVectorGroupedAggregateShuffleJobControlRequest{conflict}, peer,
+                      now + std::chrono::milliseconds{1});
+  ASSERT_TRUE(conflicted.has_value());
+  EXPECT_EQ(conflicted->status_code, common::StatusCode::kAlreadyExists);
+  auto renewed = service.receive(DistributedVectorGroupedAggregateShuffleJobControlRequest{renewal},
+                                 peer, now + std::chrono::milliseconds{4});
+  ASSERT_TRUE(renewed.has_value());
+  EXPECT_EQ(renewed->status_code, common::StatusCode::kOk);
+
+  ASSERT_TRUE(
+      service.poll_once(std::chrono::milliseconds{0}, now + std::chrono::milliseconds{11}).is_ok());
+  EXPECT_EQ(service.metrics().lease_expirations, 0U);
+  ASSERT_TRUE(
+      service.poll_once(std::chrono::milliseconds{0}, now + std::chrono::milliseconds{15}).is_ok());
+  EXPECT_EQ(service.metrics().lease_renew_requests, 4U);
+  EXPECT_EQ(service.metrics().lease_activations, 1U);
+  EXPECT_EQ(service.metrics().lease_renewals, 1U);
+  EXPECT_EQ(service.metrics().lease_expirations, 1U);
+  EXPECT_EQ(service.metrics().cancelled_jobs, 1U);
+
+  auto late_renewal =
+      service.receive(DistributedVectorGroupedAggregateShuffleJobControlRequest{renewal}, peer,
+                      now + std::chrono::milliseconds{15});
+  ASSERT_TRUE(late_renewal.has_value());
+  EXPECT_EQ(late_renewal->status_code, common::StatusCode::kCancelled);
+  EXPECT_EQ(service.metrics().lease_renew_requests, 5U);
+  EXPECT_EQ(service.metrics().lease_renewals, 1U);
+
+  auto duplicate_prepare = service.receive(
+      DistributedVectorGroupedAggregateShuffleJobControlRequest{prepare(result_endpoint)}, peer,
+      now + std::chrono::milliseconds{15});
+  ASSERT_TRUE(duplicate_prepare.has_value());
+  EXPECT_EQ(duplicate_prepare->status_code, common::StatusCode::kCancelled);
+}
+
 } // namespace
 } // namespace chronos::cluster

@@ -37,11 +37,12 @@ enum class DistributedMutableVectorGroupedAggregateShuffleJobExecutionState : st
 };
 
 // Owns one independent-process mutable grouped query from reducer PREPARE through route
-// installation, worker source publication, receipt-proven source fan-out, reducer SEAL, returned
-// partition collection, and atomic Native finalization. Workers may start only after every reducer
-// has installed the complete route set. The local and remote worker services must use the packaged
-// source-publishing decorator. Failure or explicit cancellation remains nonterminal while reducer
-// CANCEL acknowledgements are pending. One caller thread serializes all progress and cancellation.
+// installation, authenticated lease activation/renewal, worker source publication, receipt-proven
+// source fan-out, reducer SEAL, returned partition collection, and atomic Native finalization.
+// Workers may start only after every reducer has installed the complete route set and accepted its
+// lease. The local and remote worker services must use the packaged source-publishing decorator.
+// Failure or explicit cancellation remains nonterminal while reducer CANCEL acknowledgements are
+// pending. One caller thread serializes all progress, renewal, and cancellation.
 class DistributedMutableVectorGroupedAggregateShuffleJobExecution {
 public:
   DistributedMutableVectorGroupedAggregateShuffleJobExecution() noexcept;

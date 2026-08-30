@@ -46,7 +46,8 @@ enum class DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState
   kCancelled = 4,
 };
 
-// Owns finite whole-exchange retries for one immutable PREPARE, INSTALL_ROUTES, SEAL, or CANCEL.
+// Owns finite whole-exchange retries for one immutable PREPARE, INSTALL_ROUTES, SEAL, CANCEL, or
+// RENEW_LEASE.
 // Address rotation never
 // changes node, TLS, query, coordinator, target, authority, schema, or action. Only SEAL may opt
 // into retrying a correlated UNAVAILABLE response while the reducer drains admitted sources.

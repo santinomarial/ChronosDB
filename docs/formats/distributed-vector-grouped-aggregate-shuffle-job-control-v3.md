@@ -79,3 +79,7 @@ Version 3.0 accepts only CANCEL. Version 1.0 remains the only PREPARE/SEAL encod
 remains the only INSTALL_ROUTES encoding. The shared reader selects by exact magic. Unknown
 versions are unsupported, malformed or noncanonical bytes are corruption, and caller-limit excess
 or allocation failure is resource exhaustion. New action semantics require another version.
+
+The additive [Job Control v4](distributed-vector-grouped-aggregate-shuffle-job-control-v4.md)
+defines only authenticated RENEW_LEASE; v3 cancellation bytes and tombstone semantics remain
+unchanged.

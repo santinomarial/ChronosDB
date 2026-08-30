@@ -28,8 +28,13 @@ valid_config(const NativeDistributedGroupedShuffleJobProviderConfig& config) noe
          config.reducer_execution_timeout <=
              cluster::distributed_vector_grouped_aggregate_shuffle_job_control_format::
                  kMaximumExecutionTimeout &&
-         config.maximum_reducer_nodes > 0U && config.maximum_reducer_nodes <= 4096U &&
-         config.maximum_retained_result_streams > 0U &&
+         config.lease_duration.count() > 0 &&
+         config.lease_duration <=
+             cluster::distributed_vector_grouped_aggregate_shuffle_job_control_format::
+                 kMaximumExecutionTimeout &&
+         config.lease_renew_interval.count() > 0 &&
+         config.lease_renew_interval < config.lease_duration && config.maximum_reducer_nodes > 0U &&
+         config.maximum_reducer_nodes <= 4096U && config.maximum_retained_result_streams > 0U &&
          config.maximum_result_accepts_per_poll > 0U &&
          config.maximum_collected_encoded_bytes > 0U && config.maximum_batch_working_bytes > 0U &&
          config.maximum_working_memory_bytes > 0U;
@@ -143,7 +148,10 @@ NativeDistributedGroupedShuffleJobProvider::prepare(
         .route_install_retry = config.route_install_retry,
         .seal_retry = config.seal_retry,
         .cancel_retry = config.cancel_retry,
+        .lease_retry = config.lease_retry,
         .reducer_execution_timeout = reducer_timeout,
+        .lease_duration = config.lease_duration,
+        .lease_renew_interval = config.lease_renew_interval,
         .execution_deadline = execution_deadline,
         .maximum_reducer_nodes = config.maximum_reducer_nodes,
         .result = {.listener = config.result_listener,

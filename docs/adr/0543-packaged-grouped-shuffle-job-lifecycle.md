@@ -44,15 +44,19 @@ Add one move-only whole-query owner with this order:
 
 1. derive and retain exact shuffle/finalization authority;
 2. PREPARE every reducer and install the complete route set;
-3. start the existing finite local/remote grouped workers;
-4. require complete worker publication and discard their now-internal source payload copies;
-5. SEAL every reducer only after source transport closes;
-6. collect receipt-proven reduced partitions and atomically take the Native result.
+3. activate the authenticated relative coordinator lease at every reducer;
+4. start the existing finite local/remote grouped workers while renewing that lease;
+5. require complete worker publication and discard their now-internal source payload copies;
+6. SEAL every reducer only after source transport closes while lease renewal continues;
+7. collect receipt-proven reduced partitions and atomically take the Native result.
 
 Failure or cancellation tears down workers and enters the authenticated remote CANCEL lifecycle
 added by [ADR 0544](0544-authenticated-grouped-reducer-job-cancellation.md). An unreachable remote
 job still uses its relative deadline as the bounded fallback. Jobs and cancellation tombstones are
 in-memory execution state, not acknowledged writes, and make no durability guarantee.
+Post-route coordinator loss is bounded by the authenticated relative lease added by
+[ADR 0545](0545-authenticated-grouped-reducer-coordinator-leases.md); pre-activation loss retains
+the original deadline because no worker has started.
 
 The Native deployment provider receives the exact worker routes resolved from the same committed
 query snapshot. It selects reducer jobs only when the coordinator is a gateway with no local source
@@ -68,10 +72,11 @@ topologies. Route authority cannot become stale relative to the prepared query s
 streams originate at their authenticated nodes, and Native bytes remain unavailable until every
 reducer result is acknowledged and globally finalized.
 
-This is not a claim of durable query recovery, coordinator-crash detection, or arbitrary
-relational shuffle. Packaged Linux split-leader qualification, abrupt daemon faults during each new
-phase, skew/loss campaigns, and scale measurements remain required. Coordinator-local queries use
-the direct sufficient-state merge path until a future protocol explicitly supports self roles.
+This is not a claim of durable query recovery or arbitrary relational shuffle. Packaged Linux
+split-leader qualification, process-kill proof of lease expiry and fresh replacement, abrupt daemon
+faults during each phase, skew/loss campaigns, and scale measurements remain required.
+Coordinator-local queries use the direct sufficient-state merge path until a future protocol
+explicitly supports self roles.
 
 ## Ownership, threading, and memory ordering
 
@@ -131,7 +136,7 @@ partial rollback that leaves workers publishing to jobs without route installati
 
 ## Unresolved questions
 
-- Add coordinator-liveness detection and qualify coordinator loss.
+- Qualify v4 lease expiry and fresh replacement under packaged coordinator process loss.
 - Support a coordinator that is also a source/destination without weakening principal-to-node
   authorization or constructing a network self route.
 - Run packaged multi-daemon split-leader, partition/loss, skew, and measurement gates.
@@ -141,6 +146,8 @@ partial rollback that leaves workers publishing to jobs without route installati
 - [Job Control v1](../formats/distributed-vector-grouped-aggregate-shuffle-job-control-v1.md)
 - [Job Control v2](../formats/distributed-vector-grouped-aggregate-shuffle-job-control-v2.md)
 - [Job Control v3](../formats/distributed-vector-grouped-aggregate-shuffle-job-control-v3.md)
+- [Job Control v4](../formats/distributed-vector-grouped-aggregate-shuffle-job-control-v4.md)
 - [Authenticated grouped reducer-job cancellation](0544-authenticated-grouped-reducer-job-cancellation.md)
+- [Authenticated grouped reducer coordinator leases](0545-authenticated-grouped-reducer-coordinator-leases.md)
 - [Distributed grouped SQL execution](../learning/distributed-grouped-sql-execution.md)
 - [Implementation roadmap](../roadmap.md)

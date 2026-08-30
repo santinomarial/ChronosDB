@@ -1375,6 +1375,12 @@ were deliberately not run.
   a delayed in-flight PREPARE from recreating acknowledged work. Failure and explicit Native
   cancellation keep the whole-query owner nonterminal until every reachable reducer acknowledges or
   the existing absolute deadline ends; unreachable jobs retain their relative deadline fallback.
+- Authenticated grouped reducer coordinator leases: additive fixed Job Control v4 frames activate
+  a relative lease only after route installation and before workers start, then renew every reducer
+  through the shared mutual-TLS endpoint during worker, SEAL, and result phases. Exact duration,
+  tuple, authorization, retry, and all-reducer response gates prevent partial liveness claims.
+  Reducer polling cancels active work after the last acknowledged lease expires without synchronized
+  clocks; the original PREPARE deadline remains the pre-activation and hard fallback bound.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

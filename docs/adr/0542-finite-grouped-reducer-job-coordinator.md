@@ -61,8 +61,10 @@ answer. All-local execution avoids opening an unused shuffle listener.
 [ADR 0543](0543-packaged-grouped-shuffle-job-lifecycle.md) now constructs source plans on their
 authenticated worker nodes and installs the coordinator in packaged Native SQL for gateway
 topologies. [ADR 0544](0544-authenticated-grouped-reducer-job-cancellation.md) adds the separately
-versioned authenticated CANCEL phase and cancel-before-prepare tombstones. A coordinator crash still
-relies on reducer deadlines and retries the whole query with fresh in-memory jobs.
+versioned authenticated CANCEL phase and cancel-before-prepare tombstones.
+[ADR 0545](0545-authenticated-grouped-reducer-coordinator-leases.md) activates and renews a bounded
+relative lease before workers start, so post-activation coordinator loss closes reducer jobs
+without waiting for the original PREPARE deadline.
 
 ## Affected invariants
 

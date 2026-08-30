@@ -204,7 +204,10 @@ public:
              distributed_vector_grouped_aggregate_shuffle_job_control_v2_format::kRequestMagic) ||
          std::ranges::equal(
              magic,
-             distributed_vector_grouped_aggregate_shuffle_job_control_v3_format::kRequestMagic))) {
+             distributed_vector_grouped_aggregate_shuffle_job_control_v3_format::kRequestMagic) ||
+         std::ranges::equal(
+             magic,
+             distributed_vector_grouped_aggregate_shuffle_job_control_v4_format::kRequestMagic))) {
       protocol_ = DistributedMutableQueryControlProtocol::kGroupedShuffleJobControl;
       auto consumed = job_reader_.consume(magic);
       if (!consumed.has_value())
@@ -440,6 +443,10 @@ public:
                     *response)
           : response->action == DistributedVectorGroupedAggregateShuffleJobControlAction::kCancel
               ? encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v3(
+                    *response)
+          : response->action ==
+                  DistributedVectorGroupedAggregateShuffleJobControlAction::kRenewLease
+              ? encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v4(
                     *response)
               : encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1(
                     *response);

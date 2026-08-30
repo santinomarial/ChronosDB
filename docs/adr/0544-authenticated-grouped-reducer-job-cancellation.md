@@ -5,6 +5,7 @@
 - **Owners:** ChronosDB distributed-query, cluster transport, service, and daemon maintainers
 - **Extends:** [ADR 0542](0542-finite-grouped-reducer-job-coordinator.md) and
   [ADR 0543](0543-packaged-grouped-shuffle-job-lifecycle.md)
+- **Extended by:** [ADR 0545](0545-authenticated-grouped-reducer-coordinator-leases.md)
 
 ## Context
 
@@ -97,13 +98,14 @@ Mixed pre-alpha binaries are not qualified.
 
 ## Unresolved questions
 
-- Add coordinator-liveness detection or leases for crash cleanup without synchronized wall clocks.
+- Qualify coordinator lease expiry and replacement under packaged process loss.
 - Decide whether cancellation tombstones require durable recovery in a future durable-query mode.
 - Qualify cancellation under packaged multi-daemon partitions and abrupt process loss.
 
 ## References
 
 - [Job Control v3](../formats/distributed-vector-grouped-aggregate-shuffle-job-control-v3.md)
+- [Authenticated grouped reducer coordinator leases](0545-authenticated-grouped-reducer-coordinator-leases.md)
 - [Packaged grouped shuffle job lifecycle](0543-packaged-grouped-shuffle-job-lifecycle.md)
 - [Distributed grouped SQL execution](../learning/distributed-grouped-sql-execution.md)
 - [Implementation roadmap](../roadmap.md)

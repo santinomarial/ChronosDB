@@ -321,5 +321,64 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTest,
       common::StatusCode::kCorruption);
 }
 
+TEST(DistributedVectorGroupedAggregateShuffleJobControlTest,
+     RoundTripsVersionFourLeaseRenewalAndCorrelatedResponse) {
+  const DistributedVectorGroupedAggregateShuffleJobRenewLease expected{
+      .query_id = uuid(1U),
+      .coordinator_node_id = 9U,
+      .target_node_id = 7U,
+      .lease_duration = std::chrono::milliseconds{5000}};
+  auto encoded = encode_distributed_vector_grouped_aggregate_shuffle_job_renew_lease_v4(expected);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  EXPECT_EQ(encoded->bytes().size(),
+            distributed_vector_grouped_aggregate_shuffle_job_control_v4_format::kFrameLength);
+  auto decoded = decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v4_exact(
+      encoded->bytes());
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  const auto* actual =
+      std::get_if<DistributedVectorGroupedAggregateShuffleJobRenewLease>(&*decoded);
+  ASSERT_NE(actual, nullptr);
+  EXPECT_EQ(*actual, expected);
+
+  const DistributedVectorGroupedAggregateShuffleJobControlResponse response{
+      .action = DistributedVectorGroupedAggregateShuffleJobControlAction::kRenewLease,
+      .status_code = common::StatusCode::kOk,
+      .query_id = uuid(1U),
+      .coordinator_node_id = 9U,
+      .target_node_id = 7U};
+  auto encoded_response =
+      encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v4(response);
+  ASSERT_TRUE(encoded_response.has_value()) << encoded_response.error().to_string();
+  auto decoded_response =
+      decode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v4_exact(
+          encoded_response->bytes());
+  ASSERT_TRUE(decoded_response.has_value()) << decoded_response.error().to_string();
+  EXPECT_EQ(*decoded_response, response);
+
+  std::vector<std::byte> damaged(encoded->bytes().begin(), encoded->bytes().end());
+  damaged[68U] ^= std::byte{1U};
+  EXPECT_EQ(
+      decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v4_exact(damaged)
+          .error()
+          .code(),
+      common::StatusCode::kCorruption);
+
+  std::vector<std::byte> zero_duration(encoded->bytes().begin(), encoded->bytes().end());
+  std::ranges::fill(zero_duration.begin() + 64, zero_duration.begin() + 72, std::byte{});
+  refresh_checksums(zero_duration);
+  EXPECT_EQ(decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v4_exact(
+                zero_duration)
+                .error()
+                .code(),
+            common::StatusCode::kCorruption);
+
+  auto invalid = expected;
+  invalid.lease_duration = std::chrono::milliseconds{0};
+  EXPECT_EQ(encode_distributed_vector_grouped_aggregate_shuffle_job_renew_lease_v4(invalid)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+}
+
 } // namespace
 } // namespace chronos::cluster

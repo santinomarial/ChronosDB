@@ -684,6 +684,7 @@ add_library(
   src/cluster/distributed_vector_grouped_aggregate_shuffle_job_control.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_v2.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_v3.cpp
+  src/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_v4.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_transport.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_tls.cpp
   src/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_tcp_client.cpp

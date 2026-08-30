@@ -71,11 +71,18 @@ correlation(const DistributedVectorGroupedAggregateShuffleJobControlRequest& req
             .coordinator_node_id = routes->coordinator_node_id,
             .target_node_id = routes->target_node_id};
   }
-  const auto& cancel = std::get<DistributedVectorGroupedAggregateShuffleJobCancel>(request);
-  return {.action = DistributedVectorGroupedAggregateShuffleJobControlAction::kCancel,
-          .query_id = cancel.query_id,
-          .coordinator_node_id = cancel.coordinator_node_id,
-          .target_node_id = cancel.target_node_id};
+  if (const auto* cancel =
+          std::get_if<DistributedVectorGroupedAggregateShuffleJobCancel>(&request)) {
+    return {.action = DistributedVectorGroupedAggregateShuffleJobControlAction::kCancel,
+            .query_id = cancel->query_id,
+            .coordinator_node_id = cancel->coordinator_node_id,
+            .target_node_id = cancel->target_node_id};
+  }
+  const auto& renewal = std::get<DistributedVectorGroupedAggregateShuffleJobRenewLease>(request);
+  return {.action = DistributedVectorGroupedAggregateShuffleJobControlAction::kRenewLease,
+          .query_id = renewal.query_id,
+          .coordinator_node_id = renewal.coordinator_node_id,
+          .target_node_id = renewal.target_node_id};
 }
 
 [[nodiscard]] common::Result<EncodedDistributedVectorGroupedAggregateShuffleJobControlRequest>
@@ -90,8 +97,10 @@ encode_request(const DistributedVectorGroupedAggregateShuffleJobControlRequest& 
           std::get_if<DistributedVectorGroupedAggregateShuffleJobInstallRoutes>(&request)) {
     return encode_distributed_vector_grouped_aggregate_shuffle_job_install_routes_v2(*routes);
   }
-  return encode_distributed_vector_grouped_aggregate_shuffle_job_cancel_v3(
-      std::get<DistributedVectorGroupedAggregateShuffleJobCancel>(request));
+  if (const auto* cancel = std::get_if<DistributedVectorGroupedAggregateShuffleJobCancel>(&request))
+    return encode_distributed_vector_grouped_aggregate_shuffle_job_cancel_v3(*cancel);
+  return encode_distributed_vector_grouped_aggregate_shuffle_job_renew_lease_v4(
+      std::get<DistributedVectorGroupedAggregateShuffleJobRenewLease>(request));
 }
 
 } // namespace
@@ -458,6 +467,8 @@ public:
             ? encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v2(*response)
         : response->action == DistributedVectorGroupedAggregateShuffleJobControlAction::kCancel
             ? encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v3(*response)
+        : response->action == DistributedVectorGroupedAggregateShuffleJobControlAction::kRenewLease
+            ? encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v4(*response)
             : encode_distributed_vector_grouped_aggregate_shuffle_job_control_response_v1(
                   *response);
     if (!encoded.has_value())

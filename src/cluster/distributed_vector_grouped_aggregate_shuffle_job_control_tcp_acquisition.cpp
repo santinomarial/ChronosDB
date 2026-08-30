@@ -70,7 +70,11 @@ target_node(const DistributedVectorGroupedAggregateShuffleJobControlRequest& req
   if (routes != nullptr)
     return routes->target_node_id;
   const auto* cancel = std::get_if<DistributedVectorGroupedAggregateShuffleJobCancel>(&request);
-  return cancel == nullptr ? 0U : cancel->target_node_id;
+  if (cancel != nullptr)
+    return cancel->target_node_id;
+  const auto* renewal =
+      std::get_if<DistributedVectorGroupedAggregateShuffleJobRenewLease>(&request);
+  return renewal == nullptr ? 0U : renewal->target_node_id;
 }
 
 [[nodiscard]] bool
@@ -90,8 +94,10 @@ encode_request(const DistributedVectorGroupedAggregateShuffleJobControlRequest& 
           std::get_if<DistributedVectorGroupedAggregateShuffleJobInstallRoutes>(&request)) {
     return encode_distributed_vector_grouped_aggregate_shuffle_job_install_routes_v2(*routes);
   }
-  return encode_distributed_vector_grouped_aggregate_shuffle_job_cancel_v3(
-      std::get<DistributedVectorGroupedAggregateShuffleJobCancel>(request));
+  if (const auto* cancel = std::get_if<DistributedVectorGroupedAggregateShuffleJobCancel>(&request))
+    return encode_distributed_vector_grouped_aggregate_shuffle_job_cancel_v3(*cancel);
+  return encode_distributed_vector_grouped_aggregate_shuffle_job_renew_lease_v4(
+      std::get<DistributedVectorGroupedAggregateShuffleJobRenewLease>(request));
 }
 
 } // namespace
@@ -181,6 +187,11 @@ public:
               magic,
               distributed_vector_grouped_aggregate_shuffle_job_control_v3_format::kRequestMagic)
             ? decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v3_exact(
+                  frozen, config.carrier_limits.request)
+        : std::ranges::equal(
+              magic,
+              distributed_vector_grouped_aggregate_shuffle_job_control_v4_format::kRequestMagic)
+            ? decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v4_exact(
                   frozen, config.carrier_limits.request)
             : decode_distributed_vector_grouped_aggregate_shuffle_job_control_request_v1_exact(
                   frozen, config.carrier_limits.request);

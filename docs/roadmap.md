@@ -1634,8 +1634,13 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   CANCEL now authenticates and exact-correlates reducer cleanup. Bounded expiring service
   tombstones close the cancel-before-PREPARE race; reducer and whole-query owners remain in an
   explicit finite cancellation phase until all reachable destinations acknowledge or the query
-  deadline ends. Coordinator-crash detection, durable query recovery, self-role job control, full multi-daemon split-leader qualification,
-  fault campaigns, and measurement remain. The computed path now
+  deadline ends. A distinct fixed Job Control v4 RENEW_LEASE now authenticates a relative
+  coordinator lease after route installation and before workers start. The whole-query owner
+  renews every reducer during worker, SEAL, and result phases while reducer polling expires missing
+  coordinators without synchronized clocks; the original PREPARE deadline remains the
+  pre-activation fallback. Packaged process-kill qualification and fresh replacement, durable query
+  recovery, self-role job control, full multi-daemon split-leader qualification, fault campaigns,
+  and measurement remain. The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives
   plan and result shapes from its outputs, and executes it locally before grouping.

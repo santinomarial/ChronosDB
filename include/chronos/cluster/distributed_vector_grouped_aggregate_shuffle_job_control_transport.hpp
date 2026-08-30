@@ -29,6 +29,11 @@ distributed_vector_grouped_aggregate_shuffle_job_control_request_frame_length_v3
     common::ByteView header,
     DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits limits = {});
 
+[[nodiscard]] common::Result<std::size_t>
+distributed_vector_grouped_aggregate_shuffle_job_control_request_frame_length_v4(
+    common::ByteView header,
+    DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits limits = {});
+
 struct DistributedVectorGroupedAggregateShuffleJobControlRequestReadStep {
   std::size_t consumed_bytes{};
   std::optional<DistributedVectorGroupedAggregateShuffleJobControlRequest> request;
