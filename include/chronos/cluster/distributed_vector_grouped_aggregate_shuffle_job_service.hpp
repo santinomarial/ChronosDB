@@ -63,6 +63,7 @@ struct DistributedVectorGroupedAggregateShuffleJobServiceMetrics {
   std::uint64_t lease_activations{};
   std::uint64_t lease_renewals{};
   std::uint64_t lease_expirations{};
+  std::uint64_t execution_expirations{};
   std::uint64_t submitted_source_tablets{};
   std::uint64_t duplicate_source_submissions{};
   std::uint64_t completed_source_transports{};

@@ -120,6 +120,10 @@ public:
     return -1;
   }
 
+  [[nodiscard]] bool resume() const noexcept {
+    return pid_ > 0 && ::kill(pid_, SIGCONT) == 0;
+  }
+
   [[nodiscard]] bool kill_abruptly() noexcept {
     close_output();
     if (pid_ <= 0)
@@ -182,6 +186,15 @@ private:
 
 [[nodiscard]] std::uint16_t job_reducer_port(const std::string_view line) {
   constexpr std::string_view prefix{"JOB_REDUCER_READY "};
+  if (!line.starts_with(prefix))
+    return 0U;
+  const std::string value{line.substr(prefix.size())};
+  const unsigned long port = std::strtoul(value.c_str(), nullptr, 10);
+  return port <= 65'535UL ? static_cast<std::uint16_t>(port) : 0U;
+}
+
+[[nodiscard]] std::uint16_t resumed_job_reducer_port(const std::string_view line) {
+  constexpr std::string_view prefix{"JOB_REDUCER_RESUMED "};
   if (!line.starts_with(prefix))
     return 0U;
   const std::string value{line.substr(prefix.size())};
@@ -257,7 +270,7 @@ TEST(GroupedShuffleResultProcessTest,
 TEST(GroupedShuffleResultProcessTest,
      CoordinatorKillExpiresReducerLeaseAndAllowsAFreshReplacement) {
   ChildProcess reducer;
-  ASSERT_TRUE(reducer.start({"job-reducer"}));
+  ASSERT_TRUE(reducer.start({"job-reducer", "none"}));
   const auto reducer_ready = reducer.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(reducer_ready.has_value());
   const std::uint16_t reducer_port = job_reducer_port(*reducer_ready);
@@ -265,7 +278,7 @@ TEST(GroupedShuffleResultProcessTest,
 
   ChildProcess lost_coordinator;
   ASSERT_TRUE(lost_coordinator.start(
-      {"job-coordinator", std::to_string(reducer_port), "1", "200", "hold"}));
+      {"job-coordinator", std::to_string(reducer_port), "1", "5000", "200", "hold"}));
   const auto first_leased = lost_coordinator.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(first_leased.has_value());
   EXPECT_EQ(*first_leased, "LEASED 1");
@@ -278,8 +291,8 @@ TEST(GroupedShuffleResultProcessTest,
   EXPECT_LT(std::chrono::steady_clock::now() - killed_at, std::chrono::seconds{2});
 
   ChildProcess replacement;
-  ASSERT_TRUE(
-      replacement.start({"job-coordinator", std::to_string(reducer_port), "2", "200", "cancel"}));
+  ASSERT_TRUE(replacement.start(
+      {"job-coordinator", std::to_string(reducer_port), "2", "5000", "200", "cancel"}));
   const auto replacement_leased = replacement.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(replacement_leased.has_value());
   EXPECT_EQ(*replacement_leased, "LEASED 2");
@@ -289,6 +302,58 @@ TEST(GroupedShuffleResultProcessTest,
   EXPECT_EQ(*replacement_cancelled, "CANCELLED 2");
   EXPECT_EQ(replacement.wait_for_exit(std::chrono::seconds{5}), 0);
   EXPECT_TRUE(reducer.kill_abruptly());
+}
+
+struct PreActivationLossCase {
+  std::string reducer_boundary;
+  std::string_view paused_line;
+};
+
+void expect_pre_activation_coordinator_loss(const PreActivationLossCase& loss_case) {
+  ChildProcess reducer;
+  ASSERT_TRUE(reducer.start({"job-reducer", loss_case.reducer_boundary}));
+  const auto reducer_ready = reducer.read_line(std::chrono::seconds{5});
+  ASSERT_TRUE(reducer_ready.has_value());
+  const std::uint16_t initial_port = job_reducer_port(*reducer_ready);
+  ASSERT_NE(initial_port, 0U) << *reducer_ready;
+
+  ChildProcess lost_coordinator;
+  ASSERT_TRUE(lost_coordinator.start(
+      {"job-coordinator", std::to_string(initial_port), "1", "500", "200", "hold"}));
+  ASSERT_TRUE(reducer.read_until(loss_case.paused_line, std::chrono::seconds{5}).has_value());
+  ASSERT_TRUE(lost_coordinator.kill_abruptly());
+  ASSERT_TRUE(reducer.resume());
+
+  const auto resumed = reducer.read_line(std::chrono::seconds{5});
+  ASSERT_TRUE(resumed.has_value());
+  const std::uint16_t resumed_port = resumed_job_reducer_port(*resumed);
+  ASSERT_NE(resumed_port, 0U) << *resumed;
+  ASSERT_TRUE(reducer.read_until("EXECUTION_EXPIRED 1", std::chrono::seconds{2}).has_value());
+
+  ChildProcess replacement;
+  ASSERT_TRUE(replacement.start(
+      {"job-coordinator", std::to_string(resumed_port), "2", "5000", "200", "cancel"}));
+  const auto replacement_leased = replacement.read_line(std::chrono::seconds{5});
+  ASSERT_TRUE(replacement_leased.has_value());
+  EXPECT_EQ(*replacement_leased, "LEASED 2");
+  EXPECT_TRUE(reducer.read_until("ACTIVE 1", std::chrono::seconds{5}).has_value());
+  const auto replacement_cancelled = replacement.read_line(std::chrono::seconds{5});
+  ASSERT_TRUE(replacement_cancelled.has_value());
+  EXPECT_EQ(*replacement_cancelled, "CANCELLED 2");
+  EXPECT_EQ(replacement.wait_for_exit(std::chrono::seconds{5}), 0);
+  EXPECT_TRUE(reducer.kill_abruptly());
+}
+
+TEST(GroupedShuffleResultProcessTest,
+     CoordinatorKillAfterAcknowledgedPrepareFallsBackToExecutionDeadlineAndAllowsReplacement) {
+  expect_pre_activation_coordinator_loss(
+      {.reducer_boundary = "after-prepare", .paused_line = "PAUSED_AFTER_PREPARE"});
+}
+
+TEST(GroupedShuffleResultProcessTest,
+     CoordinatorKillAfterRouteInstallFallsBackToExecutionDeadlineAndAllowsReplacement) {
+  expect_pre_activation_coordinator_loss(
+      {.reducer_boundary = "after-routes", .paused_line = "PAUSED_AFTER_ROUTES"});
 }
 
 } // namespace

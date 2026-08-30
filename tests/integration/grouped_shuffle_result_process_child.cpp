@@ -9,6 +9,7 @@
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -323,7 +324,13 @@ template <typename Integer>
   return 0;
 }
 
-[[nodiscard]] int run_job_reducer() {
+enum class JobReducerPauseBoundary : std::uint8_t {
+  kNone = 0,
+  kAfterPrepare = 1,
+  kAfterRoutes = 2,
+};
+
+[[nodiscard]] int run_job_reducer(const JobReducerPauseBoundary pause_boundary) {
   Authenticator coordinator_authenticator{91U};
   Authorizer authorizer;
   UnusedReceivers receivers{authorizer};
@@ -358,44 +365,87 @@ template <typename Integer>
     std::cerr << jobs.error().to_string() << '\n';
     return 3;
   }
-  auto server_config = cluster::DistributedMutableQueryControlTcpServerConfig{};
-  server_config.tls = server_tls();
-  server_config.authenticator = &coordinator_authenticator;
-  server_config.mutable_receiver = &receivers.mutable_receiver;
-  server_config.mutable_grouped_receiver = &receivers.grouped_receiver;
-  server_config.read_authority_receiver = &receivers.authority_receiver;
-  server_config.grouped_shuffle_job_service = &*jobs;
-  server_config.carrier_limits.handshake_timeout = std::chrono::milliseconds{1000};
-  server_config.carrier_limits.exchange_timeout = std::chrono::milliseconds{1000};
-  server_config.maximum_connections = 4U;
-  server_config.maximum_accepts_per_poll = 4U;
-  auto server = cluster::DistributedMutableQueryControlTcpServer::start(std::move(server_config));
-  if (!server.has_value()) {
-    std::cerr << server.error().to_string() << '\n';
+  const auto make_server_config = [&]() {
+    auto config = cluster::DistributedMutableQueryControlTcpServerConfig{};
+    config.tls = server_tls();
+    config.authenticator = &coordinator_authenticator;
+    config.mutable_receiver = &receivers.mutable_receiver;
+    config.mutable_grouped_receiver = &receivers.grouped_receiver;
+    config.read_authority_receiver = &receivers.authority_receiver;
+    config.grouped_shuffle_job_service = &*jobs;
+    config.carrier_limits.handshake_timeout = std::chrono::milliseconds{1000};
+    config.carrier_limits.exchange_timeout = std::chrono::milliseconds{1000};
+    config.maximum_connections = 4U;
+    config.maximum_accepts_per_poll = 4U;
+    return config;
+  };
+  auto started = cluster::DistributedMutableQueryControlTcpServer::start(make_server_config());
+  if (!started.has_value()) {
+    std::cerr << started.error().to_string() << '\n';
     return 4;
   }
-  std::cout << "JOB_REDUCER_READY " << server->bound_endpoint().port << '\n' << std::flush;
+  auto server = std::move(*started);
+  std::cout << "JOB_REDUCER_READY " << server.bound_endpoint().port << '\n' << std::flush;
   cluster::DistributedVectorGroupedAggregateShuffleJobServiceMetrics observed;
+  bool paused{};
   for (;;) {
-    const common::Status progress = server->poll_once(std::chrono::milliseconds{5});
+    const common::Status progress = server.poll_once(std::chrono::milliseconds{5});
     if (!progress.is_ok()) {
       std::cerr << progress.to_string() << '\n';
       return 5;
     }
     const auto current = jobs->metrics();
+    if (current.prepare_requests != observed.prepare_requests)
+      std::cout << "PREPARED " << current.prepare_requests << '\n' << std::flush;
+    if (current.route_install_requests != observed.route_install_requests)
+      std::cout << "ROUTED " << current.route_install_requests << '\n' << std::flush;
     if (current.lease_activations != observed.lease_activations)
       std::cout << "ACTIVE " << current.lease_activations << '\n' << std::flush;
     if (current.lease_renewals != observed.lease_renewals)
       std::cout << "RENEWED " << current.lease_renewals << '\n' << std::flush;
     if (current.lease_expirations != observed.lease_expirations)
       std::cout << "EXPIRED " << current.lease_expirations << '\n' << std::flush;
+    if (current.execution_expirations != observed.execution_expirations)
+      std::cout << "EXECUTION_EXPIRED " << current.execution_expirations << '\n' << std::flush;
+    const auto server_metrics = server.metrics();
+    const bool prepare_boundary = pause_boundary == JobReducerPauseBoundary::kAfterPrepare &&
+                                  current.prepare_requests == 1U &&
+                                  current.route_install_requests == 0U &&
+                                  server_metrics.completed_grouped_shuffle_job_controls >= 1U;
+    const bool routes_boundary = pause_boundary == JobReducerPauseBoundary::kAfterRoutes &&
+                                 current.route_install_requests == 1U &&
+                                 current.lease_activations == 0U &&
+                                 server_metrics.completed_grouped_shuffle_job_controls >= 2U;
     observed = current;
+    if (!paused && (prepare_boundary || routes_boundary)) {
+      paused = true;
+      std::cout << (prepare_boundary ? "PAUSED_AFTER_PREPARE" : "PAUSED_AFTER_ROUTES") << '\n'
+                << std::flush;
+      if (::raise(SIGSTOP) != 0) {
+        std::cerr << "stopping reducer process at the requested boundary failed\n";
+        return 6;
+      }
+      const common::Status shutdown = server.shutdown();
+      if (!shutdown.is_ok()) {
+        std::cerr << shutdown.to_string() << '\n';
+        return 7;
+      }
+      auto restarted =
+          cluster::DistributedMutableQueryControlTcpServer::start(make_server_config());
+      if (!restarted.has_value()) {
+        std::cerr << restarted.error().to_string() << '\n';
+        return 8;
+      }
+      server = std::move(*restarted);
+      std::cout << "JOB_REDUCER_RESUMED " << server.bound_endpoint().port << '\n' << std::flush;
+    }
   }
 }
 
 struct JobCoordinatorInvocation {
   std::uint16_t reducer_port{};
   std::uint8_t query_seed{};
+  std::chrono::milliseconds reducer_execution_timeout{};
   std::chrono::milliseconds lease_duration{};
   bool cancel_after_renewal{};
 };
@@ -442,7 +492,7 @@ struct JobCoordinatorInvocation {
   coordinator_config.seal_retry = retry;
   coordinator_config.cancel_retry = retry;
   coordinator_config.lease_retry = retry;
-  coordinator_config.reducer_execution_timeout = std::chrono::seconds{5};
+  coordinator_config.reducer_execution_timeout = invocation.reducer_execution_timeout;
   coordinator_config.lease_duration = invocation.lease_duration;
   coordinator_config.lease_renew_interval = std::chrono::milliseconds{20};
   coordinator_config.execution_deadline = deadline;
@@ -485,7 +535,12 @@ struct JobCoordinatorInvocation {
       coordinator->state() ==
       cluster::DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::kCancelling) {
     const common::Status progress = coordinator->poll_once(std::chrono::milliseconds{5});
-    if (!progress.is_ok()) {
+    const bool terminal_cancel =
+        progress.code() == common::StatusCode::kCancelled &&
+        coordinator->state() ==
+            cluster::DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionState::
+                kCancelled;
+    if (!progress.is_ok() && !terminal_cancel) {
       std::cerr << progress.to_string() << '\n';
       return 8;
     }
@@ -586,19 +641,30 @@ struct JobCoordinatorInvocation {
 int main(const int argc, char** argv) {
   try {
     using namespace chronos::integration;
-    if (argc == 2 && std::string_view{argv[1]} == "job-reducer")
-      return run_job_reducer();
-    if (argc == 6 && std::string_view{argv[1]} == "job-coordinator") {
+    if (argc == 3 && std::string_view{argv[1]} == "job-reducer") {
+      const std::string_view boundary{argv[2]};
+      if (boundary == "none")
+        return run_job_reducer(JobReducerPauseBoundary::kNone);
+      if (boundary == "after-prepare")
+        return run_job_reducer(JobReducerPauseBoundary::kAfterPrepare);
+      if (boundary == "after-routes")
+        return run_job_reducer(JobReducerPauseBoundary::kAfterRoutes);
+    }
+    if (argc == 7 && std::string_view{argv[1]} == "job-coordinator") {
       const auto port = parse_integer<std::uint16_t>(argv[2]);
       const auto query_seed = parse_integer<std::uint32_t>(argv[3]);
-      const auto lease = parse_integer<std::uint64_t>(argv[4]);
-      const std::string_view mode{argv[5]};
+      const auto execution = parse_integer<std::uint64_t>(argv[4]);
+      const auto lease = parse_integer<std::uint64_t>(argv[5]);
+      const std::string_view mode{argv[6]};
       if (port.has_value() && query_seed.has_value() && *query_seed != 0U && *query_seed <= 255U &&
-          lease.has_value() && (mode == "hold" || mode == "cancel")) {
-        return run_job_coordinator({.reducer_port = *port,
-                                    .query_seed = static_cast<std::uint8_t>(*query_seed),
-                                    .lease_duration = std::chrono::milliseconds{*lease},
-                                    .cancel_after_renewal = mode == "cancel"});
+          execution.has_value() && *execution != 0U && lease.has_value() && *lease != 0U &&
+          (mode == "hold" || mode == "cancel")) {
+        return run_job_coordinator(
+            {.reducer_port = *port,
+             .query_seed = static_cast<std::uint8_t>(*query_seed),
+             .reducer_execution_timeout = std::chrono::milliseconds{*execution},
+             .lease_duration = std::chrono::milliseconds{*lease},
+             .cancel_after_renewal = mode == "cancel"});
       }
     }
     if (argc == 3 && std::string_view{argv[1]} == "stall-reducer") {
@@ -624,8 +690,9 @@ int main(const int argc, char** argv) {
     }
     std::cerr << "usage: grouped_shuffle_result_process_child "
                  "coordinator PORT TIMEOUT_MS | reducer PORT REFUSED_PORT PARTITION VALUE COUNT | "
-                 "stall-reducer PARTITION | job-reducer | "
-                 "job-coordinator REDUCER_PORT QUERY_SEED LEASE_MS hold|cancel\n";
+                 "stall-reducer PARTITION | "
+                 "job-reducer none|after-prepare|after-routes | "
+                 "job-coordinator REDUCER_PORT QUERY_SEED EXECUTION_MS LEASE_MS hold|cancel\n";
     return 64;
   } catch (const std::exception& error) {
     std::cerr << "grouped shuffle process child failed: " << error.what() << '\n';

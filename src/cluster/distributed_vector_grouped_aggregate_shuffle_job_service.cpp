@@ -325,6 +325,7 @@ public:
                    "grouped shuffle reducer-job execution deadline expired"};
     job.state = JobState::kCancelled;
     increment_saturated(service_metrics.cancelled_jobs);
+    increment_saturated(service_metrics.execution_expirations);
   }
 
   [[nodiscard]] common::Result<bool>
