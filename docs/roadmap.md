@@ -1677,8 +1677,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   listener heals for authenticated cleanup. The proxy now also tears the initial ClientHello and
   first encrypted server-handshake records at the same three boundaries. Both production sessions
   fail before application authentication or dispatch, and the retained backend then authenticates a
-  fresh lifecycle. Durable query recovery, later client-certificate/Finished and unusual handshake
-  fragmentation, multi-record application cuts, resets racing buffered bytes,
+  fresh lifecycle. It now forwards the complete server flight and tears the first encrypted client
+  authentication-flight record too: the coordinator has authenticated the reducer, but invocation
+  counts prove the reducer cannot authenticate the partial client flight or dispatch work. Durable
+  query recovery, later records under unusual handshake fragmentation, multi-record application
+  cuts, resets racing buffered bytes,
   delay/duplication/reordering/probabilistic loss, larger-set skew, broader fault campaigns, and
   measurement remain; the separate packaged Native split-leader process gate is also qualified.
   The computed path now

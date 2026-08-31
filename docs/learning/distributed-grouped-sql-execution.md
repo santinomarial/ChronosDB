@@ -418,10 +418,13 @@ result, exact response retries retain one job, and the same backend listener com
 cleanup. The same proxy now tears the initial ClientHello record and the first encrypted server
 handshake-flight record at the same three boundaries. Both production session owners fail before
 either certificate fingerprint reaches application authentication, no reducer work is dispatched,
-and the retained listener then authenticates a fresh lifecycle. Later encrypted client-certificate
-and Finished cuts, unusually fragmented handshake flights, multi-record application frames, resets
-racing buffered suffixes, durable job recovery, delay, duplication, reordering, probabilistic loss,
-and larger-set campaigns remain open.
+and the retained listener then authenticates a fresh lifecycle. A third campaign forwards the
+complete server flight, lets the coordinator authenticate the reducer, then tears the first
+encrypted client-authentication-flight record at the same boundaries. Invocation counts prove the
+reducer has not authenticated the coordinator; both sessions fail, nothing dispatches, and a direct
+retry authenticates normally. Later records under unusually fragmented client flights, multi-record
+application frames, resets racing buffered suffixes, durable job recovery, delay, duplication,
+reordering, probabilistic loss, and larger-set campaigns remain open.
 
 ### Portable sufficient-state execution boundary
 
