@@ -318,6 +318,16 @@ compaction generation ahead of the in-memory publication, it resumes at publicat
 post-durability mismatch fails closed for startup recovery; pre-Manifest failures retain the old
 selected generation and never authorize input deletion.
 
+The recoverable single-node owner now exposes one synchronous product-path operation above that
+coordinator. It plans at most one deterministic bounded overlap from the acquired aggregate
+publication, rebuilds exact schema bindings, then scans the locked final/temporary namespace and
+requires the publication to select its highest generation. Under one finite per-identity limit it
+allocates a fresh output `PartId`, part nonce, and next-generation Manifest nonce while rejecting
+nil, final/orphan, recognized-temporary, same-operation, and exact candidate-name collisions. All
+three identities are fixed before the coordinator performs I/O, so exhaustion leaves the
+publication and filesystem unchanged. A coordinator failure after a successor becomes durable is
+retained by the database owner and blocks later in-process compaction until restart recovery.
+
 The compaction process-crash matrix covers both installation protocols plus publication. Killing
 after every write/readback/sync/rename boundary recovers only the complete predecessor or complete
 successor, preserves superseded input finals, classifies an installed-but-unreferenced output as an

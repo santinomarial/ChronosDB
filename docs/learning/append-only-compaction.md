@@ -113,6 +113,17 @@ identity if an orphan output was installed); an unexpected failure once a succes
 fails the coordinator closed for restart recovery. Saturating metrics distinguish attempts,
 failures, resumptions, input parts, rows, and output bytes.
 
+`SingleNodeDatabase::compact_append_only_parts()` is the first product owner of that caller side. It
+acquires one aggregate publication, invokes the deterministic bounded planner, and returns a
+successful empty optional without consuming entropy when no candidate exists. For a plan it
+rebuilds all durable tablet/schema bindings, scans the locked Manifest namespace, and requires the
+selected publication to equal the highest final generation. It then uses the database's finite
+storage-ID policy to reject nil, every final or temporary part identity, same-operation reuse, and
+exact temporary output/Manifest names before invoking the coordinator. Collision exhaustion happens
+before output encoding or filesystem mutation. A post-durability coordinator poison is retained in
+the database owner even though each call's coordinator object is local, so another in-process call
+cannot step past a durable-but-unpublished successor; restart recovery remains the only authority.
+
 The subprocess crash matrix runs that complete coordinator against real directories and sends
 `SIGKILL` after the output write, readback, file sync, rename, and directory sync; after the
 Manifest write, readback, file sync, rename, and directory sync; and after aggregate publication.

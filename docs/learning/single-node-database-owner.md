@@ -62,8 +62,18 @@ borrowed for the database lifetime, or the owner uses OS entropy. Before each Ma
 sealed-head flush, it scans the locked namespace and retries nil, same-operation, final-part,
 temporary-part, or exact candidate-name collisions under a nonzero per-identity bound. Exhaustion
 occurs before the coordinator acquires the ready queue item or creates a file, so the selected
-Manifest and work position remain unchanged for retry. This policy does not allocate compaction,
-temporal, movement, WAL, or distributed identities.
+Manifest and work position remain unchanged for retry.
+
+The same finite source now owns append-only compaction output allocation. The synchronous
+`compact_append_only_parts()` path acquires the current aggregate publication, plans at most one
+bounded overlap candidate, rebuilds its exact schema bindings, and scans the locked Manifest
+namespace immediately before allocation. It skips nil, all final/orphan and temporary part
+identities, same-operation values, and exact temporary Manifest names before calling the existing
+compaction coordinator. No candidate is a successful empty optional and consumes no identity.
+Exhaustion consumes no coordinator work and leaves all files and publication state unchanged. If a
+successor becomes durable but cannot be published, the database remembers the coordinator poison
+and rejects later compaction until restart recovery. Temporal, movement, WAL, and distributed
+identity domains retain their separate policies.
 
 For INSERT VALUES, token dispatch selects the INSERT parser/binder, evaluates source-free constant
 rows, and transposes them into canonical immutable columnar ownership. The adapter currently
@@ -86,6 +96,7 @@ database root lock + bootstrap
   -> replay required WAL suffix into bounded RetryDirectory + TabletState publications
   -> aggregate Manifest/part/head publication + retained manifest/LOCK
   -> one bounded sealed-head queue and durable flush coordinator per local tablet
+  -> synchronous bounded append-only compaction planning/allocation/coordinator boundary
   -> live WalCommitCoordinator admission
 ```
 

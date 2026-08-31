@@ -141,3 +141,8 @@ newer checkpoint or publication state exists.
 - [CSEG v1](../formats/cseg-v1.md)
 - [Manifest v1](../formats/manifest-v1.md)
 - [Data model](../product/data-model.md)
+
+**Retrospective note (2026-08-31):**
+[ADR 0566](0566-bounded-single-node-append-only-compaction.md) composes the existing planner and
+coordinator into the recoverable single-node product owner and assigns live output/nonces through
+the locked Manifest namespace. It changes no CSEG v1 or Manifest v1 bytes.

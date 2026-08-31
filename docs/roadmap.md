@@ -54,8 +54,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   mutation on exhaustion. New-history WAL identity allocation now explicitly treats the locked
   empty/`LOCK`-only directory as its complete authority, consumes one nonnil generator result, and
   leaves the namespace unchanged on generator failure or nil; there is no visible identity
-  collision to retry until a future deletion/tombstone policy exists. Compaction/temporal/movement
-  storage installation, retry,
+  collision to retry until a future deletion/tombstone policy exists. The single-node owner now
+  also plans one bounded append-only compaction, allocates its output/nonces against the locked
+  final/temporary Manifest namespace, preserves the namespace on exhaustion, and retains
+  post-durability failure until restart. Temporal/movement storage installation, retry,
   distributed-control, and future deletion/no-reuse identity policies plus broader test utilities
   remain incomplete. The structured
   diagnostic boundary now includes an exclusively locked, bounded rotating JSON-lines file sink
@@ -302,6 +304,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > reload, publication, and exact durable-successor resumption. A subprocess SIGKILL matrix covers
 > every output/Manifest write, readback, sync, rename, directory sync, and publication boundary and
 > proves equivalent old-or-new recovery with conservative input retention.
+> The recoverable single-node owner now adds the missing product composition: it plans at most one
+> deterministic bounded candidate, allocates a fresh output and both install nonces from the locked
+> final/temporary namespace under a finite limit, invokes the coordinator, and retains its
+> post-durability poison until restart. Product-path tests prove no-candidate zero-entropy behavior,
+> nil/final/temporary/same-operation collision skipping, exhaustion without filesystem mutation,
+> complete query equivalence, conservative input retention, and restart recovery.
 > ADR 0019 now accepts the remaining correctness boundary: authenticated CSEG event-time zone maps
 > and granule sparse entries with scan fallback, rebuildable base/delta planning hints, deterministic
 > bounded selection, and exact per-part-pin-gated final-part reclamation. The owned event-time

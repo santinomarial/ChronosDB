@@ -600,3 +600,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0563](0563-authoritative-bounded-create-identity-allocation.md) | Authoritative bounded CREATE identity allocation | accepted |
 | [0564](0564-authoritative-bounded-live-flush-identity-allocation.md) | Authoritative bounded live-flush identity allocation | accepted |
 | [0565](0565-locked-empty-wal-identity-authority.md) | Locked empty WAL identity authority | accepted |
+| [0566](0566-bounded-single-node-append-only-compaction.md) | Bounded single-node append-only compaction | accepted |

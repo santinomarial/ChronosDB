@@ -1194,6 +1194,162 @@ TEST(SingleNodeDatabaseTest, BoundsPartIdentityCollisionsWithoutConsumingFlushWo
   EXPECT_TRUE(database->shutdown().is_ok());
 }
 
+TEST(SingleNodeDatabaseTest, PlansPublishesAndRecoversOneAppendOnlyCompaction) {
+  TemporaryDirectory directory;
+  seed_catalog(directory);
+  ScriptedIdentityGenerator identities{std::vector{
+      uuid(10U), uuid(11U), uuid(12U), uuid(13U), uuid(14U), uuid(15U), uuid(0U), uuid(10U),
+      uuid(20U), uuid(16U), uuid(16U), uuid(17U), uuid(16U), uuid(17U), uuid(40U), uuid(18U)}};
+  SingleNodeDatabaseConfig database_config = config(directory);
+  database_config.storage_identity_generator = &identities;
+  database_config.maximum_storage_identity_attempts = 4U;
+  auto database = SingleNodeDatabase::open_or_create(database_config);
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+
+  auto no_candidate = database->compact_append_only_parts();
+  ASSERT_TRUE(no_candidate.has_value()) << no_candidate.error().to_string();
+  EXPECT_FALSE(no_candidate->has_value());
+  EXPECT_EQ(identities.calls, 0U);
+
+  std::size_t flushed_heads = 0U;
+  for (std::uint8_t seed = 70U; seed < 75U; ++seed) {
+    auto appended = database->execute_append(
+        tablet_id(),
+        {.client_id = ingest::test::request_id<ingest::ClientId>(seed),
+         .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(seed + 32U),
+         .batch = batch(std::byte{7U}),
+         .durability = wal::WalDurabilityMode::kLocalSync});
+    ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
+    auto flushed = database->flush_ready_heads();
+    ASSERT_TRUE(flushed.has_value()) << flushed.error().to_string();
+    flushed_heads += *flushed;
+  }
+  EXPECT_EQ(flushed_heads, 2U);
+  auto before = database->storage_snapshot();
+  ASSERT_TRUE(before.has_value()) << before.error().to_string();
+  ASSERT_EQ(before->parts().size(), 2U);
+  EXPECT_EQ(before->generation(), 3U);
+  NativeProtocolService service{*database};
+  EXPECT_EQ(native_query_count(service, 60U, "events"), 10);
+
+  const cseg::PartId temporary_part_id = cseg::PartId::from_uuid(uuid(20U)).value();
+  const std::filesystem::path retained_part_temporary =
+      directory.path() / manifest::kPartsDirectoryName /
+      manifest::temporary_part_file_name(temporary_part_id, uuid(90U));
+  const std::filesystem::path retained_manifest_temporary =
+      directory.path() / manifest::kManifestDirectoryName /
+      manifest::temporary_manifest_file_name(4U, uuid(40U)).value();
+  {
+    std::ofstream file{retained_part_temporary, std::ios::binary};
+    ASSERT_TRUE(file.good());
+  }
+  {
+    std::ofstream file{retained_manifest_temporary, std::ios::binary};
+    ASSERT_TRUE(file.good());
+  }
+
+  auto compacted =
+      database->compact_append_only_parts({.compression = cseg::PageCompression::kZstd});
+  ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
+  ASSERT_TRUE(compacted->has_value());
+  EXPECT_EQ((**compacted).output_part_id.uuid(), uuid(16U));
+  EXPECT_EQ((**compacted).manifest_generation, 4U);
+  EXPECT_EQ((**compacted).row_count, 8U);
+  EXPECT_FALSE((**compacted).resumed_durable_manifest);
+  EXPECT_EQ(identities.calls, 16U);
+
+  auto after = database->storage_snapshot();
+  ASSERT_TRUE(after.has_value()) << after.error().to_string();
+  ASSERT_EQ(after->parts().size(), 1U);
+  EXPECT_EQ(after->parts().front().part_id.uuid(), uuid(16U));
+  EXPECT_EQ(after->parts().front().row_count, 8U);
+  EXPECT_EQ(after->visible_head_row_count(), 2U);
+  EXPECT_TRUE(std::filesystem::is_regular_file(
+      directory.path() / manifest::kPartsDirectoryName /
+      manifest::part_file_name(cseg::PartId::from_uuid(uuid(10U)).value())));
+  EXPECT_TRUE(std::filesystem::is_regular_file(
+      directory.path() / manifest::kPartsDirectoryName /
+      manifest::part_file_name(cseg::PartId::from_uuid(uuid(13U)).value())));
+  EXPECT_TRUE(std::filesystem::is_regular_file(
+      directory.path() / manifest::kPartsDirectoryName /
+      manifest::part_file_name(cseg::PartId::from_uuid(uuid(16U)).value())));
+  EXPECT_TRUE(std::filesystem::is_regular_file(retained_part_temporary));
+  EXPECT_TRUE(std::filesystem::is_regular_file(retained_manifest_temporary));
+  EXPECT_EQ(native_query_count(service, 61U, "events"), 10);
+  EXPECT_TRUE(database->shutdown().is_ok());
+
+  auto reopened = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  auto recovered = reopened->storage_snapshot();
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  ASSERT_EQ(recovered->parts().size(), 1U);
+  EXPECT_EQ(recovered->parts().front().part_id.uuid(), uuid(16U));
+  EXPECT_EQ(recovered->parts().front().row_count, 8U);
+  NativeProtocolService reopened_service{*reopened};
+  EXPECT_EQ(native_query_count(reopened_service, 62U, "events"), 10);
+  EXPECT_TRUE(reopened->shutdown().is_ok());
+}
+
+TEST(SingleNodeDatabaseTest, BoundsCompactionIdentityCollisionsBeforeFilesystemMutation) {
+  TemporaryDirectory directory;
+  seed_catalog(directory);
+  ScriptedIdentityGenerator identities{std::vector{uuid(10U), uuid(11U), uuid(12U), uuid(13U),
+                                                   uuid(14U), uuid(15U), uuid(10U), uuid(10U),
+                                                   uuid(10U), uuid(16U), uuid(17U), uuid(18U)}};
+  SingleNodeDatabaseConfig database_config = config(directory);
+  database_config.storage_identity_generator = &identities;
+  database_config.maximum_storage_identity_attempts = 3U;
+  auto database = SingleNodeDatabase::open_or_create(database_config);
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+
+  for (std::uint8_t seed = 80U; seed < 85U; ++seed) {
+    auto appended = database->execute_append(
+        tablet_id(),
+        {.client_id = ingest::test::request_id<ingest::ClientId>(seed),
+         .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(seed + 32U),
+         .batch = batch(std::byte{9U}),
+         .durability = wal::WalDurabilityMode::kLocalSync});
+    ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
+    ASSERT_TRUE(database->flush_ready_heads().has_value());
+  }
+  auto before = database->storage_snapshot();
+  ASSERT_TRUE(before.has_value()) << before.error().to_string();
+  ASSERT_EQ(before->parts().size(), 2U);
+  ASSERT_EQ(before->generation(), 3U);
+
+  auto exhausted = database->compact_append_only_parts();
+  ASSERT_FALSE(exhausted.has_value());
+  EXPECT_EQ(exhausted.error().code(), common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(identities.calls, 9U);
+  auto unchanged = database->storage_snapshot();
+  ASSERT_TRUE(unchanged.has_value()) << unchanged.error().to_string();
+  EXPECT_EQ(unchanged->generation(), 3U);
+  EXPECT_EQ(unchanged->parts().size(), 2U);
+  std::size_t final_part_count = 0U;
+  std::size_t temporary_part_count = 0U;
+  for (const auto& entry :
+       std::filesystem::directory_iterator{directory.path() / manifest::kPartsDirectoryName}) {
+    if (manifest::parse_part_file_name(entry.path().filename().string()).has_value())
+      ++final_part_count;
+    if (manifest::parse_temporary_part_file_name(entry.path().filename().string()).has_value())
+      ++temporary_part_count;
+  }
+  EXPECT_EQ(final_part_count, 2U);
+  EXPECT_EQ(temporary_part_count, 0U);
+
+  auto retried = database->compact_append_only_parts();
+  ASSERT_TRUE(retried.has_value()) << retried.error().to_string();
+  ASSERT_TRUE(retried->has_value());
+  EXPECT_EQ((**retried).output_part_id.uuid(), uuid(16U));
+  EXPECT_EQ(identities.calls, 12U);
+  auto completed = database->storage_snapshot();
+  ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
+  EXPECT_EQ(completed->generation(), 4U);
+  ASSERT_EQ(completed->parts().size(), 1U);
+  EXPECT_EQ(completed->parts().front().part_id.uuid(), uuid(16U));
+  EXPECT_TRUE(database->shutdown().is_ok());
+}
+
 TEST(NativeProtocolServiceTest, ExecutesAsofAcrossTheCompleteManifestSnapshotAfterRestart) {
   TemporaryDirectory directory;
   seed_catalog(directory);

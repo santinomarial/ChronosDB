@@ -7,6 +7,8 @@
 #include "chronos/io/posix_io.hpp"
 #include "chronos/manifest/checkpoint_builder.hpp"
 #include "chronos/manifest/codec.hpp"
+#include "chronos/manifest/compaction_coordinator.hpp"
+#include "chronos/manifest/compaction_planner.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/sealed_head_flush_coordinator.hpp"
 #include "chronos/manifest/startup_recovery.hpp"
@@ -289,6 +291,23 @@ public:
     return recovered.has_value() ? std::addressof(*recovered) : nullptr;
   }
 
+  template <typename CollisionPredicate>
+  [[nodiscard]] common::Result<common::Uuid>
+  allocate_storage_identity(const std::string_view kind, CollisionPredicate&& collides) {
+    for (std::size_t attempt = 0U; attempt < maximum_storage_identity_attempts; ++attempt) {
+      auto identity = storage_identities->generate();
+      if (!identity.has_value()) {
+        return common::make_unexpected(
+            with_context(std::string{"generate "}.append(kind), identity.error()));
+      }
+      if (!identity->is_nil() && !collides(*identity))
+        return *identity;
+    }
+    std::string message{kind};
+    message.append(" candidate limit exhausted by nil or colliding identities");
+    return common::make_unexpected(exhausted(std::move(message)));
+  }
+
   runtime::DatabaseBootstrap bootstrap_owner;
   std::unique_ptr<raft::DurableMultiRaftRuntime> raft_runtime;
   raft::DurableMetadataStateMachine metadata;
@@ -303,6 +322,7 @@ public:
   common::SystemUuidGenerator system_storage_identities;
   common::UuidGenerator* storage_identities{};
   std::size_t maximum_storage_identity_attempts{};
+  common::Status compaction_poison_status;
   bool shutdown{};
 };
 
@@ -864,41 +884,25 @@ common::Result<std::size_t> SingleNodeDatabase::flush_ready_heads() {
         if (!next_generation.has_value())
           return common::make_unexpected(exhausted("Manifest generation identity is exhausted"));
 
-        const auto allocate_identity = [&](const std::string_view kind,
-                                           const auto& collides) -> common::Result<common::Uuid> {
-          for (std::size_t attempt = 0U; attempt < impl_->maximum_storage_identity_attempts;
-               ++attempt) {
-            auto identity = impl_->storage_identities->generate();
-            if (!identity.has_value()) {
-              return common::make_unexpected(
-                  with_context(std::string{"generate "}.append(kind), identity.error()));
-            }
-            if (!identity->is_nil() && !collides(*identity))
-              return *identity;
-          }
-          std::string message{kind};
-          message.append(" candidate limit exhausted by nil or colliding identities");
-          return common::make_unexpected(exhausted(std::move(message)));
-        };
-
-        auto part_identity = allocate_identity("CSEG part identity", [&](const common::Uuid& id) {
-          const bool final_collision =
-              std::ranges::any_of(namespace_snapshot->final_parts,
-                                  [&](const cseg::PartId& part) { return part.uuid() == id; });
-          const bool temporary_collision = std::ranges::any_of(
-              namespace_snapshot->temporary_parts, [&](const std::string& name) {
-                const auto parsed = manifest::parse_temporary_part_file_name(name);
-                return parsed.has_value() && parsed->part_id.uuid() == id;
-              });
-          return final_collision || temporary_collision;
-        });
+        auto part_identity =
+            impl_->allocate_storage_identity("CSEG part identity", [&](const common::Uuid& id) {
+              const bool final_collision =
+                  std::ranges::any_of(namespace_snapshot->final_parts,
+                                      [&](const cseg::PartId& part) { return part.uuid() == id; });
+              const bool temporary_collision = std::ranges::any_of(
+                  namespace_snapshot->temporary_parts, [&](const std::string& name) {
+                    const auto parsed = manifest::parse_temporary_part_file_name(name);
+                    return parsed.has_value() && parsed->part_id.uuid() == id;
+                  });
+              return final_collision || temporary_collision;
+            });
         if (!part_identity.has_value())
           return common::make_unexpected(part_identity.error());
         auto part_id = cseg::PartId::from_uuid(*part_identity);
         if (!part_id.has_value())
           return common::make_unexpected(part_id.error());
-        auto part_nonce =
-            allocate_identity("CSEG part installation nonce", [&](const common::Uuid& id) {
+        auto part_nonce = impl_->allocate_storage_identity(
+            "CSEG part installation nonce", [&](const common::Uuid& id) {
               if (id == *part_identity)
                 return true;
               const std::string candidate = manifest::temporary_part_file_name(*part_id, id);
@@ -907,8 +911,8 @@ common::Result<std::size_t> SingleNodeDatabase::flush_ready_heads() {
             });
         if (!part_nonce.has_value())
           return common::make_unexpected(part_nonce.error());
-        auto manifest_nonce =
-            allocate_identity("Manifest installation nonce", [&](const common::Uuid& id) {
+        auto manifest_nonce = impl_->allocate_storage_identity(
+            "Manifest installation nonce", [&](const common::Uuid& id) {
               if (id == *part_identity || id == *part_nonce)
                 return true;
               const auto candidate = manifest::temporary_manifest_file_name(*next_generation, id);
@@ -939,6 +943,126 @@ common::Result<std::size_t> SingleNodeDatabase::flush_ready_heads() {
     return common::make_unexpected(exhausted("sealed-head flush allocation failed"));
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("sealed-head flush exceeds container limits"));
+  }
+}
+
+common::Result<std::optional<manifest::AppendOnlyCompactionCompletion>>
+SingleNodeDatabase::compact_append_only_parts(const SingleNodeAppendOnlyCompactionConfig& config) {
+  auto* recovered = impl_ == nullptr ? nullptr : impl_->recovered_state();
+  if (impl_ == nullptr || impl_->shutdown || recovered == nullptr) {
+    return common::make_unexpected(invalid("database is not accepting append-only compaction"));
+  }
+  if (!impl_->compaction_poison_status.is_ok())
+    return common::make_unexpected(impl_->compaction_poison_status);
+
+  try {
+    auto published = recovered->snapshot();
+    if (!published.has_value())
+      return common::make_unexpected(published.error());
+    auto planned = manifest::plan_append_only_compaction(published->parts(), config.planner_limits);
+    if (!planned.has_value())
+      return common::make_unexpected(planned.error());
+    if (!planned->has_value())
+      return std::optional<manifest::AppendOnlyCompactionCompletion>{};
+    const manifest::PlannedAppendOnlyCompaction& plan = **planned;
+
+    std::vector<manifest::TabletSchemaBinding> schema_bindings;
+    schema_bindings.reserve(published->durable_tablets().size());
+    for (const manifest::TabletDescriptor& tablet : published->durable_tablets()) {
+      const auto table = std::ranges::find_if(impl_->tables, [&](const RecoveredTable& candidate) {
+        return std::ranges::find(candidate.tablets, tablet.tablet_id) != candidate.tablets.end();
+      });
+      if (table == impl_->tables.end()) {
+        return common::make_unexpected(
+            corruption("durable compaction tablet has no retained schema lineage"));
+      }
+      schema_bindings.push_back(
+          {.tablet_id = tablet.tablet_id, .lineage = std::cref(table->lineage)});
+    }
+    std::ranges::sort(schema_bindings, {}, &manifest::TabletSchemaBinding::tablet_id);
+
+    auto namespace_snapshot = recovered->manifest_storage().scan_namespace();
+    if (!namespace_snapshot.has_value())
+      return common::make_unexpected(namespace_snapshot.error());
+    if (namespace_snapshot->generations.empty())
+      return common::make_unexpected(corruption("Manifest namespace has no generation"));
+    if (namespace_snapshot->generations.back() != published->generation()) {
+      return common::make_unexpected(
+          corruption("compaction publication does not select the highest Manifest generation"));
+    }
+    const auto next_generation =
+        common::checked_add(namespace_snapshot->generations.back(), std::uint64_t{1U});
+    if (!next_generation.has_value())
+      return common::make_unexpected(exhausted("Manifest generation identity is exhausted"));
+
+    auto output_identity = impl_->allocate_storage_identity(
+        "compaction output part identity", [&](const common::Uuid& identity) {
+          const bool final_collision =
+              std::ranges::any_of(namespace_snapshot->final_parts, [&](const cseg::PartId& part) {
+                return part.uuid() == identity;
+              });
+          const bool temporary_collision = std::ranges::any_of(
+              namespace_snapshot->temporary_parts, [&](const std::string& name) {
+                const auto parsed = manifest::parse_temporary_part_file_name(name);
+                return parsed.has_value() && parsed->part_id.uuid() == identity;
+              });
+          return final_collision || temporary_collision;
+        });
+    if (!output_identity.has_value())
+      return common::make_unexpected(output_identity.error());
+    auto output_part_id = cseg::PartId::from_uuid(*output_identity);
+    if (!output_part_id.has_value())
+      return common::make_unexpected(output_part_id.error());
+    auto part_nonce = impl_->allocate_storage_identity(
+        "compaction part installation nonce", [&](const common::Uuid& identity) {
+          if (identity == *output_identity)
+            return true;
+          const std::string candidate =
+              manifest::temporary_part_file_name(*output_part_id, identity);
+          return std::ranges::find(namespace_snapshot->temporary_parts, candidate) !=
+                 namespace_snapshot->temporary_parts.end();
+        });
+    if (!part_nonce.has_value())
+      return common::make_unexpected(part_nonce.error());
+    auto manifest_nonce = impl_->allocate_storage_identity(
+        "compaction Manifest installation nonce", [&](const common::Uuid& identity) {
+          if (identity == *output_identity || identity == *part_nonce)
+            return true;
+          const auto candidate = manifest::temporary_manifest_file_name(*next_generation, identity);
+          return candidate.has_value() &&
+                 std::ranges::find(namespace_snapshot->temporary_manifests, *candidate) !=
+                     namespace_snapshot->temporary_manifests.end();
+        });
+    if (!manifest_nonce.has_value())
+      return common::make_unexpected(manifest_nonce.error());
+
+    auto coordinator = manifest::AppendOnlyCompactionCoordinator::create(
+        recovered->manifest_storage(), recovered->storage_publisher());
+    if (!coordinator.has_value())
+      return common::make_unexpected(coordinator.error());
+    auto completed = coordinator->compact({.tablet_id = plan.tablet_id(),
+                                           .input_part_ids = plan.input_part_ids(),
+                                           .output_part_id = *output_part_id,
+                                           .part_nonce = *part_nonce,
+                                           .manifest_nonce = *manifest_nonce,
+                                           .compression = config.compression,
+                                           .schema_bindings = schema_bindings,
+                                           .manifest_decode_limits = config.manifest_decode_limits,
+                                           .part_validation_limits = config.part_validation_limits,
+                                           .compaction_limits = config.compaction_limits});
+    if (!completed.has_value()) {
+      if (!coordinator->is_usable()) {
+        impl_->compaction_poison_status = coordinator->poison_status();
+        if (impl_->compaction_poison_status.is_ok())
+          impl_->compaction_poison_status = completed.error();
+      }
+      return common::make_unexpected(completed.error());
+    }
+    return std::optional<manifest::AppendOnlyCompactionCompletion>{std::move(*completed)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("single-node compaction allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("single-node compaction exceeds container limits"));
   }
 }
 

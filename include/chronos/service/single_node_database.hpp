@@ -7,6 +7,8 @@
 #include "chronos/ingest/columnar_append_executor.hpp"
 #include "chronos/ingest/retry_directory.hpp"
 #include "chronos/ingest/tablet_state.hpp"
+#include "chronos/manifest/compaction_coordinator.hpp"
+#include "chronos/manifest/compaction_planner.hpp"
 #include "chronos/manifest/publication.hpp"
 #include "chronos/manifest/storage.hpp"
 #include "chronos/query/catalog.hpp"
@@ -91,6 +93,14 @@ struct SingleNodeSubscriptionSnapshotContext {
   const schema::SchemaLineage* lineage{};
 };
 
+struct SingleNodeAppendOnlyCompactionConfig {
+  manifest::AppendOnlyCompactionPlannerLimits planner_limits;
+  manifest::AppendOnlyCompactionLimits compaction_limits;
+  cseg::PageCompression compression{cseg::PageCompression::kNone};
+  manifest::ManifestDecodeLimits manifest_decode_limits;
+  manifest::ReferencedPartValidationLimits part_validation_limits;
+};
+
 // Recoverable single-process owner for the current WAL-backed single-node product boundary. The
 // object is thread-affine except for the independently synchronized WAL coordinator and query-safe
 // immutable snapshots returned by TabletState. Metadata Raft, WAL admission, and the database root
@@ -147,6 +157,12 @@ public:
   // Synchronously drains every ready per-tablet sealed-head queue through durable CSEG/Manifest
   // publication. Returns the number of completed replacements; no work is also successful.
   [[nodiscard]] common::Result<std::size_t> flush_ready_heads();
+
+  // Plans and executes at most one deterministic Manifest-v1 append-only compaction. A successful
+  // empty optional means no bounded overlapping candidate exists. Output identities and install
+  // nonces are allocated from the locked live namespace before the coordinator performs any I/O.
+  [[nodiscard]] common::Result<std::optional<manifest::AppendOnlyCompactionCompletion>>
+  compact_append_only_parts(const SingleNodeAppendOnlyCompactionConfig& config = {});
 
   // Publishes one initial schema, complete policy, and local placement through exact-retained
   // metadata Raft proposals. A matching incomplete schema prefix is resumed using its durable

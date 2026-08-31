@@ -1016,8 +1016,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   remain unchanged before the same queue work succeeds with fresh identities. New-history WAL
   allocation is separately closed by its locked empty/`LOCK`-only authority: focused tests prove
   one injected failure or nil candidate leaves that directory unchanged, while the system generator
-  owns bounded nil-entropy retry. Compaction/temporal/movement storage, INSERT retry,
-  distributed-control, deletion tombstone, and
+  owns bounded nil-entropy retry. Single-node append-only compaction now plans one bounded candidate,
+  allocates output/nonces against every final/temporary part and exact Manifest candidate under the
+  same finite source, preserves files/publication on exhaustion, and proves equivalent query/restart
+  state after success. Temporal/movement storage, INSERT retry, distributed-control, deletion
+  tombstone, and
   broader identity-domain fault matrices remain deferred.
 - SQL INSERT columnar materialization allocation-failure sweeps, every logical type and integer
   boundary, hostile maximum-width variable values, exact preflight byte accounting before allocation,
