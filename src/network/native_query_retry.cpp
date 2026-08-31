@@ -136,7 +136,12 @@ common::Result<NativeQueryRetry> NativeQueryRetry::create(NativeQueryRetryConfig
   try {
     auto implementation =
         std::make_unique<Impl>(std::move(*router), config.buffers, config.limits, std::move(sql));
-    implementation->result->encoded_batches.reserve(config.limits.maximum_result_batches);
+    NativeQueryResult* result = optional_pointer(implementation->result);
+    if (result == nullptr) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kInternal, "native query retry result initialization failed"});
+    }
+    result->encoded_batches.reserve(config.limits.maximum_result_batches);
     auto attempt = implementation->make_attempt();
     if (!attempt.has_value())
       return common::make_unexpected(attempt.error());
