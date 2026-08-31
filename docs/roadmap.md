@@ -1685,11 +1685,15 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   three boundaries. It also rejects an encrypted request record with one deterministic interior byte
   duplicated, two adjacent bytes reordered, or one interior byte removed without changing the
   declared record length. Every corruption remains below dispatch and the retained backend still
-  heals through authenticated cleanup. Durable query recovery, later records under unusual handshake
-  fragmentation, multi-record responses, resets racing further buffered bytes, packet-level
-  delay/duplication/reordering/probabilistic loss and bandwidth pressure, larger-set skew, broader
-  fault campaigns, and measurement remain; the separate packaged Native split-leader process gate is
-  also qualified.
+  heals through authenticated cleanup. A valid PREPARE and its correlated response now also traverse
+  the proxy one encrypted record byte per scheduler step: every incomplete request remains below
+  admission, every incomplete response remains unpublished, and both complete on their final
+  required byte under the unchanged exchange deadline. This is byte-stream fragmentation evidence,
+  not kernel packetization or wall-clock bandwidth measurement. Durable query recovery, later records
+  under unusual handshake fragmentation, multi-record responses, resets racing further buffered
+  bytes, packet-level delay/duplication/reordering/probabilistic loss and bandwidth pressure,
+  larger-set skew, broader fault campaigns, and measurement remain; the separate packaged Native
+  split-leader process gate is also qualified.
   The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives

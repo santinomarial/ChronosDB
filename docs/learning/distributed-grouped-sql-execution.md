@@ -430,10 +430,14 @@ fail with no job, and the retained listener heals through a complete PREPARE/CAN
 same record-level proxy now also duplicates one interior ciphertext byte, swaps two adjacent
 ciphertext bytes, or removes one interior byte while preserving the declared TLS record length.
 Integrity failure or reset terminates both owners before dispatch, followed by another healed
-lifecycle. This is encrypted byte-stream corruption evidence, not a kernel packet model. Later
-records under unusually fragmented client flights, multi-record responses, resets racing further
-buffered suffixes, durable job recovery, packet-level delay/duplication/reordering/probabilistic loss
-and bandwidth pressure, and larger-set campaigns remain open.
+lifecycle. The valid PREPARE and correlated response now also cross the proxy one encrypted record
+byte per scheduler step. No request prefix admits a job, no response prefix publishes a result, and
+each side completes when it processes the final required byte before authenticated cleanup. These
+are controlled encrypted byte-stream qualifications, not a kernel packet or wall-clock bandwidth
+model. Later records under unusually fragmented client flights, multi-record responses, resets
+racing further buffered suffixes, durable job recovery, packet-level
+delay/duplication/reordering/probabilistic loss and bandwidth pressure, and larger-set campaigns
+remain open.
 
 ### Portable sufficient-state execution boundary
 
