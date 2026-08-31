@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <functional>
 #include <map>
+#include <memory>
 #include <new>
 #include <optional>
 #include <stdexcept>
@@ -24,6 +25,11 @@ namespace {
 
 [[nodiscard]] common::Status exhausted(const char* message) {
   return {common::StatusCode::kResourceExhausted, message};
+}
+
+template <typename Value>
+[[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
 }
 
 struct CanonicalStreamExtent {
@@ -187,7 +193,13 @@ common::Status DistributedVectorGroupedAggregateShuffleReducer::accept_stream(
     return invalid("grouped shuffle source extent is not canonical or exceeds its limit");
   }
 
-  const bool first_attempt = !progress.encoded_bytes.has_value();
+  const auto* retained_bytes = optional_pointer(progress.encoded_bytes);
+  const auto* retained_messages = optional_pointer(progress.message_count);
+  if ((retained_bytes == nullptr) != (retained_messages == nullptr)) {
+    return {common::StatusCode::kInternal,
+            "grouped shuffle reducer retained source identity is incomplete"};
+  }
+  const bool first_attempt = retained_bytes == nullptr;
   if (first_attempt) {
     if (extent->outer_bytes > limits_.maximum_total_stream_bytes - metrics_.retained_stream_bytes) {
       return exhausted("grouped shuffle reducer total stream bytes are exhausted");
@@ -195,8 +207,8 @@ common::Status DistributedVectorGroupedAggregateShuffleReducer::accept_stream(
     progress.encoded_bytes = extent->outer_bytes;
     progress.message_count = stream.messages.size();
     metrics_.retained_stream_bytes += extent->outer_bytes;
-  } else if (*progress.encoded_bytes != extent->outer_bytes ||
-             *progress.message_count != stream.messages.size()) {
+  } else if (*retained_bytes != extent->outer_bytes ||
+             *retained_messages != stream.messages.size()) {
     return {common::StatusCode::kAlreadyExists,
             "grouped shuffle retry extent conflicts with retained source"};
   }

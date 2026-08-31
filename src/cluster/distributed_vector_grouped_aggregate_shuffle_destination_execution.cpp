@@ -32,6 +32,11 @@ void increment_saturated(std::uint64_t& value) noexcept {
     ++value;
 }
 
+template <typename Value>
+[[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
 } // namespace
 
 class DistributedVectorGroupedAggregateShuffleDestinationExecution::Impl {
@@ -358,9 +363,11 @@ DistributedVectorGroupedAggregateShuffleDestinationExecution::metrics() const no
 
 DistributedVectorGroupedAggregateShuffleTcpServerMetrics
 DistributedVectorGroupedAggregateShuffleDestinationExecution::transport_metrics() const noexcept {
-  return implementation_ && implementation_->server_.has_value()
-             ? implementation_->server_->metrics()
-             : DistributedVectorGroupedAggregateShuffleTcpServerMetrics{};
+  if (!implementation_)
+    return {};
+  const auto* server = optional_pointer(implementation_->server_);
+  return server != nullptr ? server->metrics()
+                           : DistributedVectorGroupedAggregateShuffleTcpServerMetrics{};
 }
 
 common::Result<DistributedVectorGroupedAggregateShuffleReducerMetrics>
@@ -378,9 +385,10 @@ DistributedVectorGroupedAggregateShuffleDestinationExecution::reducer_metrics(
 
 network::Ipv4Endpoint
 DistributedVectorGroupedAggregateShuffleDestinationExecution::bound_endpoint() const noexcept {
-  return implementation_ && implementation_->server_.has_value()
-             ? implementation_->server_->bound_endpoint()
-             : network::Ipv4Endpoint{};
+  if (!implementation_)
+    return {};
+  const auto* server = optional_pointer(implementation_->server_);
+  return server != nullptr ? server->bound_endpoint() : network::Ipv4Endpoint{};
 }
 
 const DistributedVectorGroupedAggregateShuffleAuthority*

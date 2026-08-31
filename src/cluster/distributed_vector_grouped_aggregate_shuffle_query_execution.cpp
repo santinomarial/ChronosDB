@@ -4,7 +4,9 @@
 #include <climits>
 #include <iterator>
 #include <map>
+#include <memory>
 #include <new>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <utility>
@@ -18,6 +20,11 @@ namespace {
 
 [[nodiscard]] common::Status exhausted(const char* message) {
   return {common::StatusCode::kResourceExhausted, message};
+}
+
+template <typename Value>
+[[nodiscard]] Value* optional_pointer(std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
 }
 
 } // namespace
@@ -69,17 +76,23 @@ public:
       if (!sealed.is_ok())
         return fail(sealed);
     }
+    auto owned_destinations = std::exchange(destinations, {});
     auto gathered = DistributedVectorGroupedAggregateShuffleResultExecution::create(
-        authority, std::move(destinations), config.maximum_result_working_memory_bytes);
+        authority, std::move(owned_destinations), config.maximum_result_working_memory_bytes);
     if (!gathered.has_value())
       return fail(gathered.error());
     result_execution.emplace(std::move(*gathered));
-    auto finalized = config.coordinator_projection.has_value()
+    auto* execution = optional_pointer(result_execution);
+    auto* finalization = optional_pointer(finalization_authority);
+    if (execution == nullptr || finalization == nullptr)
+      return fail(
+          {common::StatusCode::kInternal, "grouped shuffle finalization ownership is unavailable"});
+    const auto* projection = optional_pointer(config.coordinator_projection);
+    auto finalized = projection != nullptr
                          ? finalize_distributed_vector_grouped_aggregate_shuffle_with_projection_v2(
-                               *result_execution, *finalization_authority,
-                               *config.coordinator_projection, config.finalization)
+                               *execution, *finalization, *projection, config.finalization)
                          : finalize_distributed_vector_grouped_aggregate_shuffle_v2(
-                               *result_execution, *finalization_authority, config.finalization);
+                               *execution, *finalization, config.finalization);
     if (!finalized.has_value())
       return fail(finalized.error());
     execution_metrics.result = result_execution->metrics();
@@ -218,9 +231,13 @@ DistributedVectorGroupedAggregateShuffleQueryExecution::create(
         return common::make_unexpected(
             invalid("grouped shuffle query remote edges have no transport"));
       }
+      auto* transport_config = optional_pointer(implementation->config.transport);
+      if (transport_config == nullptr) {
+        return common::make_unexpected(
+            invalid("grouped shuffle query remote edges have no transport"));
+      }
       auto transport = DistributedVectorGroupedAggregateShuffleTcpExecution::create(
-          implementation->authority, std::move(retries),
-          std::move(*implementation->config.transport));
+          implementation->authority, std::move(retries), std::move(*transport_config));
       if (!transport.has_value())
         return common::make_unexpected(transport.error());
       implementation->transport.emplace(std::move(*transport));
@@ -312,12 +329,16 @@ common::Result<DistributedVectorRowsFinalizedResultV2>
 DistributedVectorGroupedAggregateShuffleQueryExecution::take_result() {
   if (!implementation_ ||
       implementation_->execution_state !=
-          DistributedVectorGroupedAggregateShuffleQueryExecutionState::kComplete ||
-      !implementation_->finalized_result.has_value()) {
+          DistributedVectorGroupedAggregateShuffleQueryExecutionState::kComplete) {
     return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
                                                   "grouped shuffle query result is unavailable"});
   }
-  auto result = std::move(*implementation_->finalized_result);
+  auto* finalized = optional_pointer(implementation_->finalized_result);
+  if (finalized == nullptr) {
+    return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
+                                                  "grouped shuffle query result is unavailable"});
+  }
+  auto result = std::move(*finalized);
   implementation_->finalized_result.reset();
   return result;
 }

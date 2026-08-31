@@ -3,6 +3,7 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <memory>
 #include <new>
 #include <optional>
 #include <stdexcept>
@@ -17,6 +18,16 @@ inline constexpr std::size_t kResponseScratchBytes = 4096U;
 
 [[nodiscard]] common::Status status(const common::StatusCode code, const char* message) {
   return {code, message};
+}
+
+template <typename Value>
+[[nodiscard]] Value* optional_pointer(std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
+template <typename Value>
+[[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
 }
 
 [[nodiscard]] bool valid_timeout(const std::chrono::milliseconds timeout) noexcept {
@@ -244,18 +255,18 @@ public:
       return fail(status(common::StatusCode::kCorruption,
                          "grouped shuffle reducer-job response has a coalesced suffix"));
     }
-    if (!step->response.has_value()) {
+    const auto* response = optional_pointer(step->response);
+    if (response == nullptr) {
       interest_ = {.want_read = true};
       return common::Status::ok();
     }
-    const auto& response = *step->response;
-    if (response.action != expected_.action || response.query_id != expected_.query_id ||
-        response.coordinator_node_id != expected_.coordinator_node_id ||
-        response.target_node_id != expected_.target_node_id) {
+    if (response->action != expected_.action || response->query_id != expected_.query_id ||
+        response->coordinator_node_id != expected_.coordinator_node_id ||
+        response->target_node_id != expected_.target_node_id) {
       return fail(status(common::StatusCode::kCorruption,
                          "grouped shuffle reducer-job response correlation differs"));
     }
-    response_ = response;
+    response_ = *response;
     state_ = DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kComplete;
     interest_ = {};
     return common::Status::ok();
@@ -365,12 +376,16 @@ common::Result<DistributedVectorGroupedAggregateShuffleJobControlResponse>
 DistributedVectorGroupedAggregateShuffleJobControlTlsClient::result() const {
   if (!implementation_ ||
       implementation_->state_ !=
-          DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kComplete ||
-      !implementation_->response_.has_value()) {
+          DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kComplete) {
     return common::make_unexpected(status(common::StatusCode::kUnavailable,
                                           "grouped shuffle reducer-job response is unavailable"));
   }
-  return *implementation_->response_;
+  const auto* response = optional_pointer(implementation_->response_);
+  if (response == nullptr) {
+    return common::make_unexpected(status(common::StatusCode::kUnavailable,
+                                          "grouped shuffle reducer-job response is unavailable"));
+  }
+  return *response;
 }
 
 const common::Status&
@@ -448,11 +463,16 @@ public:
   [[nodiscard]] common::Status
   accept_request(DistributedVectorGroupedAggregateShuffleJobControlRequest request,
                  const TimePoint now) {
+    const auto* authenticated_peer = optional_pointer(authenticated_peer_);
+    if (authenticated_peer == nullptr) {
+      return fail(status(common::StatusCode::kInternal,
+                         "grouped shuffle reducer-job authenticated peer is unavailable"));
+    }
     common::Result<DistributedVectorGroupedAggregateShuffleJobControlResponse> response =
         common::make_unexpected(status(common::StatusCode::kInternal,
                                        "grouped shuffle reducer-job service did not run"));
     try {
-      response = config_.service->receive(std::move(request), *authenticated_peer_, now);
+      response = config_.service->receive(std::move(request), *authenticated_peer, now);
     } catch (const std::bad_alloc&) {
       return fail(status(common::StatusCode::kResourceExhausted,
                          "grouped shuffle reducer-job service allocation escaped"));
@@ -514,11 +534,12 @@ public:
       return fail(status(common::StatusCode::kCorruption,
                          "grouped shuffle reducer-job request has a coalesced suffix"));
     }
-    if (!step->request.has_value()) {
+    auto* request = optional_pointer(step->request);
+    if (request == nullptr) {
       interest_ = {.want_read = true};
       return common::Status::ok();
     }
-    return accept_request(std::move(*step->request), now);
+    return accept_request(std::move(*request), now);
   }
 
   [[nodiscard]] common::Status write_response(const bool readable, const bool writable) {

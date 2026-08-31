@@ -6,6 +6,7 @@
 #include <chrono>
 #include <climits>
 #include <cstddef>
+#include <memory>
 #include <new>
 #include <optional>
 #include <poll.h>
@@ -21,6 +22,11 @@ namespace {
 
 [[nodiscard]] common::Status status(const common::StatusCode code, const char* message) {
   return {code, message};
+}
+
+template <typename Value>
+[[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
 }
 
 using Acquisition = DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition;
@@ -483,9 +489,9 @@ DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition::wake_deadline(
       deadline = carrier_deadline;
     return deadline;
   }
-  if (implementation_->next_attempt_not_before.has_value() &&
-      (!deadline.has_value() || *implementation_->next_attempt_not_before < *deadline)) {
-    deadline = implementation_->next_attempt_not_before;
+  const auto* next_attempt = optional_pointer(implementation_->next_attempt_not_before);
+  if (next_attempt != nullptr && (!deadline.has_value() || *next_attempt < *deadline)) {
+    deadline = *next_attempt;
   }
   return deadline;
 }
@@ -504,13 +510,18 @@ DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition::result() const
     return common::make_unexpected(implementation_->acquisition_failure);
   }
   if (implementation_->acquisition_state !=
-          DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kComplete ||
-      !implementation_->acquisition_result.has_value()) {
+      DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kComplete) {
     return common::make_unexpected(
         status(common::StatusCode::kInvalidArgument,
                "grouped shuffle reducer-job control response is unavailable"));
   }
-  return *implementation_->acquisition_result;
+  const auto* result = optional_pointer(implementation_->acquisition_result);
+  if (result == nullptr) {
+    return common::make_unexpected(
+        status(common::StatusCode::kInvalidArgument,
+               "grouped shuffle reducer-job control response is unavailable"));
+  }
+  return *result;
 }
 
 const common::Status&
