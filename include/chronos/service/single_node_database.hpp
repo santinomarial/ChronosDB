@@ -105,6 +105,10 @@ public:
   [[nodiscard]] const raft::MetadataCatalogSnapshot& metadata_catalog() const noexcept;
   [[nodiscard]] const std::shared_ptr<const query::QueryCatalogSnapshot>&
   query_catalog() const noexcept;
+  // Returns whether the exact UUID bytes are already owned by the bootstrap or current durable
+  // metadata catalog. This thread-affine authority lets the CREATE allocator reject and retry
+  // collisions before any metadata proposal is admitted; it is not a global storage-ID registry.
+  [[nodiscard]] bool create_identity_in_use(const common::Uuid& identity) const noexcept;
   [[nodiscard]] const schema::SchemaLineage*
   find_lineage(const schema::TableId& table_id) const noexcept;
   [[nodiscard]] ingest::TabletState* find_tablet(const schema::TabletId& tablet_id) noexcept;

@@ -537,6 +537,43 @@ const std::shared_ptr<const query::QueryCatalogSnapshot>&
 SingleNodeDatabase::query_catalog() const noexcept {
   return impl_->query_catalog;
 }
+bool SingleNodeDatabase::create_identity_in_use(const common::Uuid& identity) const noexcept {
+  if (impl_ == nullptr)
+    return false;
+  const runtime::DatabaseBootstrapDescriptor& bootstrap = impl_->bootstrap_owner.descriptor();
+  if (bootstrap.database_id == identity || bootstrap.metadata_group_id == identity)
+    return true;
+  for (const raft::CatalogTableDefinition& definition : impl_->catalog.schema_definitions) {
+    if (definition.schema == nullptr)
+      continue;
+    if (definition.schema->table_id().uuid() == identity ||
+        definition.schema->schema_id().uuid() == identity) {
+      return true;
+    }
+    if (std::ranges::any_of(definition.schema->columns(),
+                            [&](const auto& column) { return column.id().uuid() == identity; })) {
+      return true;
+    }
+  }
+  if (std::ranges::any_of(impl_->catalog.active_schemas, [&](const auto& active) {
+        return active.table_id.uuid() == identity || active.schema_id.uuid() == identity;
+      })) {
+    return true;
+  }
+  if (std::ranges::any_of(impl_->catalog.tablet_placements, [&](const auto& placement) {
+        return placement.table_id.uuid() == identity || placement.tablet_id.uuid() == identity;
+      })) {
+    return true;
+  }
+  if (std::ranges::any_of(impl_->catalog.tablet_group_bindings, [&](const auto& binding) {
+        return binding.tablet_id.uuid() == identity || binding.group_id == identity;
+      })) {
+    return true;
+  }
+  return std::ranges::any_of(impl_->catalog.table_policies, [&](const auto& policy) {
+    return policy.table_id.uuid() == identity;
+  });
+}
 const schema::SchemaLineage*
 SingleNodeDatabase::find_lineage(const schema::TableId& table_id) const noexcept {
   if (impl_ == nullptr)
@@ -1009,6 +1046,51 @@ SingleNodeDatabase::create_table(const query::BoundSqlCreateTable& statement,
     const bool resumed = existing != nullptr;
     schema::TableId table_id = resumed ? existing->schema->table_id() : identities.table_id;
     schema::SchemaId schema_id = resumed ? existing->schema->schema_id() : identities.schema_id;
+
+    std::vector<const raft::TabletPlacementMetadata*> existing_placements;
+    for (const auto& placement : impl_->catalog.tablet_placements) {
+      if (placement.table_id == table_id)
+        existing_placements.push_back(&placement);
+    }
+    if (existing_placements.size() > 1U)
+      return common::make_unexpected(invalid("initial table creation has multiple placements"));
+    schema::TabletId tablet_id =
+        existing_placements.empty() ? identities.tablet_id : existing_placements.front()->tablet_id;
+
+    // All CREATE-owned UUID kinds share one bootstrap/catalog collision authority. For a fresh
+    // table, reject the complete proposed set before the first Raft proposal. During prefix
+    // recovery, only a tablet that has not yet been committed remains proposed; the existing
+    // schema identities win.
+    if (!resumed) {
+      std::vector<common::Uuid> proposed;
+      proposed.reserve(identities.column_ids.size() + 3U);
+      const auto accept = [&](const common::Uuid& candidate) -> common::Status {
+        if (create_identity_in_use(candidate)) {
+          return {common::StatusCode::kAlreadyExists,
+                  "CREATE TABLE durable identity is already in use"};
+        }
+        if (std::ranges::find(proposed, candidate) != proposed.end())
+          return invalid("CREATE TABLE durable identities must be unique");
+        proposed.push_back(candidate);
+        return common::Status::ok();
+      };
+      for (const common::Uuid& candidate :
+           std::array{identities.table_id.uuid(), identities.schema_id.uuid(),
+                      identities.tablet_id.uuid()}) {
+        const common::Status accepted = accept(candidate);
+        if (!accepted.is_ok())
+          return common::make_unexpected(accepted);
+      }
+      for (const schema::ColumnId& column_id : identities.column_ids) {
+        const common::Status accepted = accept(column_id.uuid());
+        if (!accepted.is_ok())
+          return common::make_unexpected(accepted);
+      }
+    } else if (existing_placements.empty() && create_identity_in_use(tablet_id.uuid())) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kAlreadyExists, "CREATE TABLE tablet identity is already in use"});
+    }
+
     std::vector<schema::ColumnId> column_ids;
     if (resumed) {
       column_ids.reserve(existing->schema->columns().size());
@@ -1061,16 +1143,6 @@ SingleNodeDatabase::create_table(const query::BoundSqlCreateTable& statement,
     if (!installed.is_ok())
       return common::make_unexpected(installed);
 
-    schema::TabletId tablet_id = identities.tablet_id;
-    std::vector<const raft::TabletPlacementMetadata*> existing_placements;
-    for (const auto& placement : impl_->catalog.tablet_placements) {
-      if (placement.table_id == table_id)
-        existing_placements.push_back(&placement);
-    }
-    if (existing_placements.size() > 1U)
-      return common::make_unexpected(invalid("initial table creation has multiple placements"));
-    if (!existing_placements.empty())
-      tablet_id = existing_placements.front()->tablet_id;
     const raft::TabletPlacementMetadata placement{
         .table_id = table_id,
         .tablet_id = tablet_id,

@@ -46,13 +46,16 @@ history. Native `FOR SYSTEM_TIME AS OF` therefore fails explicitly before snapsh
 must never reuse the current source and return present rows for a historical request.
 
 For CREATE TABLE, token dispatch selects the DDL parser/binder and requires an injected identity
-generator. The adapter rejects nil or duplicate UUIDs before handing explicit table, schema, tablet,
-and per-column identities to the owner's restartable creation path. Completion is one described row
-containing those durable identities, the applied metadata index, and whether an incomplete prefix
-was resumed. The reusable service does not choose entropy policy; its process owner must inject a
-secure generator. The complete identity vector is generated and validated before the database owner
-receives the operation. An entropy error after any generated prefix therefore emits no metadata
-proposal and cannot create an incomplete durable table prefix.
+generator. For every table, schema, tablet, and per-column identity, the adapter retries nil,
+same-allocation, or already-owned bootstrap/catalog UUIDs under a nonzero finite candidate limit.
+The database owner repeats the complete fresh-set collision preflight before the first Raft
+proposal; on incomplete-prefix recovery, only a not-yet-committed tablet candidate remains subject
+to allocation while durable schema identities win. Completion is one described row containing the
+durable identities, the applied metadata index, and whether an incomplete prefix was resumed. The
+reusable service does not choose entropy policy; its process owner must inject a secure generator.
+The complete identity vector is generated and validated before the database owner receives the
+operation. Entropy failure or bounded collision exhaustion after any generated prefix therefore
+emits no metadata proposal and cannot create an incomplete durable table prefix.
 
 For INSERT VALUES, token dispatch selects the INSERT parser/binder, evaluates source-free constant
 rows, and transposes them into canonical immutable columnar ownership. The adapter currently

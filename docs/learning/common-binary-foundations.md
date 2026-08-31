@@ -132,6 +132,13 @@ sources supply their own synchronization. Successful bytes stay opaque rather th
 invented RFC version semantics. The owning subsystem remains responsible for the identity domain,
 collision checks against its authority, no-reuse policy, and durable installation.
 
+Single-node CREATE is the first concrete owning-domain policy. The database owner scans exact UUID
+bytes across its durable bootstrap and metadata projection; the native adapter retries nil, already
+owned, or same-allocation candidates under a finite per-identity attempt limit. The database repeats
+the complete fresh-set preflight before its first Raft proposal, so a direct caller cannot turn a
+tablet collision into a committed schema/policy prefix. This does not make the common generator a
+global registry or close the separate WAL, part, retry, and distributed-control identity domains.
+
 ## Examples
 
 Encoding and decoding a fixed layout remains explicit:

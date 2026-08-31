@@ -83,6 +83,22 @@ private:
   std::uint8_t next_;
 };
 
+class RepeatingIdentityGenerator final : public NativeIdentityGenerator {
+public:
+  explicit RepeatingIdentityGenerator(common::Uuid identity) noexcept
+      : identity_(std::move(identity)) {}
+
+  [[nodiscard]] common::Result<common::Uuid> generate() override {
+    ++calls;
+    return identity_;
+  }
+
+  std::size_t calls{};
+
+private:
+  common::Uuid identity_;
+};
+
 class FifthCallFailingEntropySource final : public common::UuidEntropySource {
 public:
   [[nodiscard]] common::Result<common::Uuid::Bytes> read() override {
@@ -126,6 +142,13 @@ constexpr std::string_view kCreateSql =
     "PARTITION BY time_bucket(INTERVAL '1 day', ts) SHARD KEY (symbol) DEDUP KEY "
     "(symbol, ts) RETENTION INTERVAL '30 days' SYSTEM HISTORY RETENTION INTERVAL "
     "'7 days' ALLOWED LATENESS INTERVAL '0 seconds'";
+
+[[nodiscard]] std::string create_sql_named(const std::string_view name) {
+  std::string sql{kCreateSql};
+  constexpr std::string_view kOriginalName = "trades";
+  sql.replace(sql.find(kOriginalName), kOriginalName.size(), name);
+  return sql;
+}
 
 [[nodiscard]] runtime::DatabaseBootstrapDescriptor descriptor() {
   return {.database_id = uuid(1U),
@@ -263,8 +286,8 @@ void seed_schema_prefix(const TemporaryDirectory& directory) {
 }
 
 [[nodiscard]] query::SqlResult<query::BoundSqlCreateTable>
-bind_create(SingleNodeDatabase& database) {
-  auto parsed = query::parse_sql_v1_create_table(kCreateSql);
+bind_create(SingleNodeDatabase& database, const std::string_view sql = kCreateSql) {
+  auto parsed = query::parse_sql_v1_create_table(sql);
   if (!parsed.has_value())
     return std::unexpected(parsed.error());
   return query::bind_sql_v1_create_table(std::move(*parsed), database.query_catalog());
@@ -1236,6 +1259,82 @@ TEST(NativeProtocolServiceTest, RejectsSystemEntropyFailureBeforeTableCreation) 
   EXPECT_TRUE(database->shutdown().is_ok());
 }
 
+TEST(NativeProtocolServiceTest, RetriesCatalogIdentityCollisionsBeforeTableCreation) {
+  TemporaryDirectory directory;
+  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  DeterministicIdentityGenerator first_identities{50U};
+  NativeProtocolService first_service{*database, first_identities};
+  auto first = first_service.execute_query(query_task(49U, kCreateSql));
+  ASSERT_TRUE(first.has_value()) << first.error().to_string();
+  ASSERT_EQ(first->responses.size(), 2U);
+
+  // Candidates 50..56 are already distributed across the first table, schema, tablet, and
+  // columns. The second allocation must retry all seven before accepting 57.
+  DeterministicIdentityGenerator colliding_identities{50U};
+  NativeProtocolService second_service{*database, colliding_identities};
+  auto second = second_service.execute_query(query_task(50U, create_sql_named("quotes")));
+  ASSERT_TRUE(second.has_value()) << second.error().to_string();
+  ASSERT_EQ(second->responses.size(), 2U);
+  ASSERT_EQ(second->responses.front().frame.header.message_type,
+            network::MessageType::kQueryResult);
+  auto result = network::decode_query_result_batch(second->responses.front().frame.payload);
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  ASSERT_NE(result->cell(0U, 0U), nullptr);
+  EXPECT_EQ(result->cell(0U, 0U)->value.front(), std::byte{57U});
+  EXPECT_EQ(database->metadata_catalog().schema_definitions.size(), 2U);
+  EXPECT_EQ(database->query_catalog()->tables().size(), 2U);
+  EXPECT_TRUE(database->shutdown().is_ok());
+}
+
+TEST(NativeProtocolServiceTest, RetriesNilAndBootstrapIdentityCandidates) {
+  TemporaryDirectory directory;
+  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  // Candidate 0 is nil; 1 and 2 are the durable database and metadata-group UUIDs.
+  DeterministicIdentityGenerator identities{0U};
+  NativeProtocolService service{*database, identities};
+
+  auto created = service.execute_query(query_task(51U, kCreateSql));
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  ASSERT_EQ(created->responses.size(), 2U);
+  auto result = network::decode_query_result_batch(created->responses.front().frame.payload);
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  ASSERT_NE(result->cell(0U, 0U), nullptr);
+  EXPECT_EQ(result->cell(0U, 0U)->value.front(), std::byte{3U});
+  EXPECT_EQ(database->metadata_catalog().schema_definitions.size(), 1U);
+  EXPECT_TRUE(database->shutdown().is_ok());
+}
+
+TEST(NativeProtocolServiceTest, BoundsCatalogIdentityCollisionExhaustionWithoutMetadataWrites) {
+  TemporaryDirectory directory;
+  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  DeterministicIdentityGenerator first_identities{50U};
+  NativeProtocolService first_service{*database, first_identities};
+  auto first = first_service.execute_query(query_task(51U, kCreateSql));
+  ASSERT_TRUE(first.has_value()) << first.error().to_string();
+  ASSERT_EQ(first->responses.size(), 2U);
+  const raft::LogIndex applied_before = database->metadata_catalog().applied_index;
+
+  RepeatingIdentityGenerator collisions{uuid(50U)};
+  NativeProtocolServiceLimits limits;
+  limits.maximum_ddl_identity_attempts = 3U;
+  NativeProtocolService colliding_service{*database, collisions, limits};
+  auto failed = colliding_service.execute_query(query_task(52U, create_sql_named("quotes")));
+  ASSERT_TRUE(failed.has_value()) << failed.error().to_string();
+  ASSERT_EQ(failed->responses.size(), 1U);
+  ASSERT_EQ(failed->responses.front().frame.header.message_type, network::MessageType::kError);
+  auto error = network::decode_error_message(failed->responses.front().frame.payload);
+  ASSERT_TRUE(error.has_value()) << error.error().to_string();
+  EXPECT_EQ(error->code, network::ProtocolErrorCode::kOverloaded);
+  EXPECT_EQ(collisions.calls, 3U);
+  EXPECT_EQ(database->metadata_catalog().applied_index, applied_before);
+  EXPECT_EQ(database->metadata_catalog().schema_definitions.size(), 1U);
+  EXPECT_EQ(database->query_catalog()->tables().size(), 1U);
+  EXPECT_TRUE(database->shutdown().is_ok());
+}
+
 TEST(NativeProtocolServiceTest, AppliesLocalSyncSqlInsertAndRecoversItsRows) {
   TemporaryDirectory directory;
   seed_catalog(directory);
@@ -1319,6 +1418,44 @@ TEST(SingleNodeDatabaseTest, CreatesACompleteTableAndReopensItsRuntimeCatalog) {
   EXPECT_NE(reopened->find_tablet(created->tablet_id), nullptr);
   EXPECT_EQ(reopened->metadata_catalog().table_policies.front().retry_retention_positions, 64U);
   EXPECT_TRUE(reopened->shutdown().is_ok());
+}
+
+TEST(SingleNodeDatabaseTest, RejectsTabletIdentityCollisionBeforeAnyCreationPrefix) {
+  TemporaryDirectory directory;
+  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  auto first_bound = bind_create(*database);
+  ASSERT_TRUE(first_bound.has_value()) << first_bound.error().status().to_string();
+  auto first =
+      database->create_table(*first_bound,
+                             {.table_id = id<schema::TableId>(11U),
+                              .schema_id = id<schema::SchemaId>(12U),
+                              .column_ids = {id<schema::ColumnId>(13U), id<schema::ColumnId>(14U),
+                                             id<schema::ColumnId>(15U), id<schema::ColumnId>(16U)},
+                              .tablet_id = id<schema::TabletId>(17U)},
+                             64U);
+  ASSERT_TRUE(first.has_value()) << first.error().to_string();
+  const raft::LogIndex applied_before = database->metadata_catalog().applied_index;
+
+  const std::string second_sql = create_sql_named("quotes");
+  auto second_bound = bind_create(*database, second_sql);
+  ASSERT_TRUE(second_bound.has_value()) << second_bound.error().status().to_string();
+  auto collision =
+      database->create_table(*second_bound,
+                             {.table_id = id<schema::TableId>(21U),
+                              .schema_id = id<schema::SchemaId>(22U),
+                              .column_ids = {id<schema::ColumnId>(23U), id<schema::ColumnId>(24U),
+                                             id<schema::ColumnId>(25U), id<schema::ColumnId>(26U)},
+                              .tablet_id = first->tablet_id},
+                             64U);
+  ASSERT_FALSE(collision.has_value());
+  EXPECT_EQ(collision.error().code(), common::StatusCode::kAlreadyExists);
+  EXPECT_EQ(database->metadata_catalog().applied_index, applied_before);
+  EXPECT_EQ(database->metadata_catalog().schema_definitions.size(), 1U);
+  EXPECT_EQ(database->metadata_catalog().table_policies.size(), 1U);
+  EXPECT_EQ(database->metadata_catalog().tablet_placements.size(), 1U);
+  EXPECT_EQ(database->query_catalog()->tables().size(), 1U);
+  EXPECT_TRUE(database->shutdown().is_ok());
 }
 
 TEST(SingleNodeDatabaseTest, ResumesAnIncompleteSchemaPrefixUsingItsDurableIdentities) {

@@ -16,7 +16,9 @@ tablet; deleting it on restart would contradict committed Raft authority.
 
 `SingleNodeDatabase::create_table` accepts DDL already bound against its current immutable query
 catalog, explicit proposed table/schema/column/tablet identities, and a nonzero retry-retention
-position count. It materializes and publishes, in order:
+position count. Under ADR 0563, it first rejects a fresh proposed identity set that contains a
+duplicate or any UUID already owned by the bootstrap/catalog authority. It materializes and
+publishes, in order:
 
 1. one Schema Definition v1 entry;
 2. one Metadata Command v1 complete table-policy entry; and
@@ -31,7 +33,8 @@ re-materializes the DDL using the durable table/schema/column identities and req
 definition equality. It similarly requires any durable policy or placement to equal the requested
 values. A tablet identity proposed after a schema-only/policy prefix may be newly supplied because
 no tablet identity was durable yet; once placement exists its tablet identity wins. Divergence
-returns `ALREADY_EXISTS` and never overwrites committed state.
+returns `ALREADY_EXISTS` and never overwrites committed state. A new tablet collision is checked
+before even the policy proposal, so it cannot add another avoidable prefix.
 
 ## Rationale and alternatives
 
@@ -68,4 +71,5 @@ concurrent DDL, authorization, and multi-process qualification remain deferred.
 - [ADR 0214](0214-durable-complete-schema-definitions.md)
 - [ADR 0215](0215-complete-table-policy-metadata.md)
 - [ADR 0218](0218-recoverable-single-node-database-owner.md)
+- [ADR 0563](0563-authoritative-bounded-create-identity-allocation.md)
 - [SQL v1](../product/sql-v1.md)

@@ -841,9 +841,11 @@ NativeProtocolService::execute_query(network::NetworkTask request,
       if (identities_ == nullptr)
         return query_error(target, unsupported("native CREATE TABLE has no identity source"),
                            limits_.protocol);
-      if (limits_.ddl_retry_retention_positions == 0U)
-        return query_error(target, invalid("DDL retry retention limit is invalid"),
+      if (limits_.ddl_retry_retention_positions == 0U ||
+          limits_.maximum_ddl_identity_attempts == 0U) {
+        return query_error(target, invalid("DDL retry or identity-attempt limit is invalid"),
                            limits_.protocol);
+      }
       auto parsed = query::parse_sql_v1_create_table(sql_text, limits_.sql_parser);
       if (!parsed.has_value())
         return query_error(target, parsed.error().status(), limits_.protocol);
@@ -853,20 +855,26 @@ NativeProtocolService::execute_query(network::NetworkTask request,
         return query_error(target, bound.error().status(), limits_.protocol);
       std::vector<common::Uuid> generated;
       generated.reserve(column_count + 3U);
+      const auto generate_unused = [&]() -> common::Result<common::Uuid> {
+        for (std::size_t attempt = 0U; attempt < limits_.maximum_ddl_identity_attempts; ++attempt) {
+          auto identity = identities_->generate();
+          if (!identity.has_value())
+            return common::make_unexpected(identity.error());
+          if (identity->is_nil() || database_->create_identity_in_use(*identity) ||
+              std::ranges::find(generated, *identity) != generated.end()) {
+            continue;
+          }
+          return *identity;
+        }
+        return common::make_unexpected(
+            exhausted("CREATE TABLE identity source exhausted unique candidate attempts"));
+      };
       for (std::size_t index = 0U; index < column_count + 3U; ++index) {
-        auto identity = identities_->generate();
+        auto identity = generate_unused();
         if (!identity.has_value())
           return query_error(target, identity.error(), limits_.protocol);
-        if (identity->is_nil())
-          return query_error(target, internal("identity source returned a nil UUID"),
-                             limits_.protocol);
         generated.push_back(*identity);
       }
-      auto unique = generated;
-      std::ranges::sort(unique);
-      if (std::ranges::adjacent_find(unique) != unique.end())
-        return query_error(target, internal("identity source returned a duplicate UUID"),
-                           limits_.protocol);
       auto table_id = schema::TableId::from_uuid(generated[0]);
       auto schema_id = schema::SchemaId::from_uuid(generated[1]);
       auto tablet_id = schema::TabletId::from_uuid(generated[2]);

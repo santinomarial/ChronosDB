@@ -46,7 +46,10 @@ converted. Their factories reject a nil UUID, so a valid identifier object is al
 entropy source, while `UuidGenerator` preserves deterministic whole-identity injection and
 `UuidEntropySource` makes the real generator's bounded nil/error policy testable. Assigning those
 bytes to a specific catalog/storage identity and rejecting collisions visible in that authority
-remain the owning subsystem's responsibility under ADR 0014.
+remain the owning subsystem's responsibility under ADR 0014. The single-node CREATE owner now
+implements that responsibility for bootstrap and catalog UUIDs: it checks the complete proposed set
+before Raft admission, while the native adapter retries collisions under a finite limit. Other
+durable identity domains retain separate unfinished policies.
 
 `SchemaVersion` similarly has no zero/default state. Version 1 is the initial value; `next()` checks
 `uint64` exhaustion rather than wrapping.

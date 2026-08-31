@@ -597,3 +597,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0560](0560-controlled-encrypted-record-byte-corruption-qualification.md) | Controlled encrypted-record byte-corruption qualification | accepted |
 | [0561](0561-controlled-one-byte-encrypted-record-forwarding.md) | Controlled one-byte encrypted-record forwarding | accepted |
 | [0562](0562-exclusive-bounded-rotating-json-log-sink.md) | Exclusive bounded rotating JSON log sink | accepted |
+| [0563](0563-authoritative-bounded-create-identity-allocation.md) | Authoritative bounded CREATE identity allocation | accepted |

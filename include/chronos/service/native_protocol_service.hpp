@@ -53,6 +53,9 @@ struct NativeProtocolServiceLimits {
   std::size_t maximum_result_batches{1024U};
   std::size_t maximum_response_payload_bytes{std::size_t{64U} * 1024U * 1024U};
   std::uint64_t ddl_retry_retention_positions{1'000'000U};
+  // Maximum candidates requested for each CREATE TABLE identity before collision exhaustion is
+  // reported. The database catalog is checked after every generated candidate.
+  std::size_t maximum_ddl_identity_attempts{16U};
 };
 
 struct NativeProtocolResponseSequence {

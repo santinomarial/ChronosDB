@@ -19,10 +19,12 @@ query-result batches can represent durable completion data.
 CREATE parsing and binding use the database owner's current immutable catalog.
 
 The adapter receives an optional `NativeIdentityGenerator`. A CREATE-capable caller must inject one.
-The adapter requests one table, schema, tablet, and per-column UUID; every UUID must be nonnil and
-the complete generated set must be unique. These identities and a configured nonzero retry-retention
-position count are passed to `SingleNodeDatabase::create_table`. The database owner remains the sole
-authority for durable proposal ordering, incomplete-prefix recovery, and live publication.
+The adapter requests one table, schema, tablet, and per-column UUID. As refined by ADR 0563, nil,
+same-allocation, and already-owned bootstrap/catalog candidates are retried under a configured
+nonzero per-identity attempt limit. These identities and a configured nonzero retry-retention
+position count are passed to `SingleNodeDatabase::create_table`, which repeats the authoritative
+preflight. The database owner remains the sole authority for collision membership, durable proposal
+ordering, incomplete-prefix recovery, and live publication.
 
 Successful DDL returns one Protocol v1 result row followed by `QUERY_END`. The nonnullable columns
 are `table_id UUID`, `schema_id UUID`, `tablet_id UUID`, `metadata_index UINT64`, and
@@ -47,11 +49,14 @@ Focused tests inject deterministic unique identities, decode all durable result 
 nonzero applied metadata index and non-resumed completion, then execute a vector count against the
 new table. A `SystemUuidGenerator` backed by an injected entropy source now fails on the fifth
 candidate: the adapter returns one execution error, the table remains absent, and the next complete
-identity set creates it with `resumed_incomplete_creation=false`. Existing direct DDL recovery tests
-and native ingest/query tests remain passing.
+identity set creates it with `resumed_incomplete_creation=false`. Catalog-collision coverage retries
+every identity from an existing table before creating another, and exact exhaustion coverage proves
+no metadata index advance. Existing direct DDL recovery tests and native ingest/query tests remain
+passing.
 
 ## References
 
 - [ADR 0219](0219-restartable-single-node-table-creation.md)
 - [ADR 0222](0222-bounded-native-vector-query-results.md)
+- [ADR 0563](0563-authoritative-bounded-create-identity-allocation.md)
 - [SQL v1](../product/sql-v1.md)

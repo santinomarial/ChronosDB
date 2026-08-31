@@ -996,7 +996,7 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   execution, and focused coverage proves a historical aggregate cannot silently return present
   rows. Mixed current/temporal command dispatch, history retention, restart, and protocol-level
   historical result coverage remain deferred.
-- Native CREATE TABLE duplicate/nil generator tests, DDL response boundary tests, client retry
+- Native CREATE TABLE DDL response boundary tests, client retry
   identities, fully complete duplicate-request behavior, concurrent/stale DDL, authorization,
   ALTER/DROP/rename, crash matrices through protocol dispatch, and broader subprocess restart
   qualification. The common Linux/macOS system UUID adapter is now shared by WAL, daemon bootstrap,
@@ -1006,7 +1006,12 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   and Linux process composition now fail the fifth CREATE candidate, preserve an absent table and
   metadata prefix across restart, and prove the subsequent CREATE is fresh rather than resumed.
   Existing service coverage also proves nonnil generation, injected identities, canonical durable
-  completion fields, and immediate queryability.
+  completion fields, and immediate queryability. Catalog-aware allocation now skips nil and both
+  bootstrap UUIDs, retries every UUID from one existing table under a finite per-identity limit,
+  and uses the next available candidates. A repeating collision source proves exact exhaustion
+  without a metadata-index advance, and the database owner rejects a colliding tablet before any
+  schema/policy prefix. WAL, storage, INSERT retry, distributed-control, deletion tombstone, and
+  broader identity-domain fault matrices remain deferred.
 - SQL INSERT columnar materialization allocation-failure sweeps, every logical type and integer
   boundary, hostile maximum-width variable values, exact preflight byte accounting before allocation,
   codec round trips, fuzz/property coverage, and ASan/UBSan. Focused coverage now proves schema-order
