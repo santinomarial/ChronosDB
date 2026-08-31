@@ -16,7 +16,10 @@ public:
   WalLogIdGenerator(WalLogIdGenerator&&) = delete;
   WalLogIdGenerator& operator=(WalLogIdGenerator&&) = delete;
 
-  // Implementations must return a nonzero identity suitable for an independently created history.
+  // Returns one candidate for one independently created history. Implementations must return a
+  // nonzero identity. WalWriter validates that contract but does not retry a rejected candidate:
+  // its locked empty directory contains no prior WAL identity against which a collision can be
+  // detected, while entropy-level nil retries belong inside the production generator.
   [[nodiscard]] virtual common::Result<WalId> generate() = 0;
 };
 

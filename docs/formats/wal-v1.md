@@ -143,8 +143,12 @@ Every segment begins with this 64-byte header:
 | 60 | 4 | `header_crc32c` | CRC32C of stored bytes `[0, 60)`. |
 
 The creator chooses a nonzero `wal_id`; this specification requires uniqueness for independently
-created histories but does not prescribe a random-number API. The identity is compared byte for
-byte and is never interpreted using host UUID layout.
+created histories but does not prescribe a random-number API. Initial creation is authorized only
+in the locked empty/`LOCK`-only directory described above, so that namespace contains no prior
+history identity against which the candidate could collide. The production entropy generator
+performs its own finite nil retry; the WAL owner consumes one returned candidate and rejects nil or
+generation failure before creating `LOCK`. The identity is compared byte for byte and is never
+interpreted using host UUID layout. See [ADR 0565](../adr/0565-locked-empty-wal-identity-authority.md).
 
 The first segment has `segment_number = 1` and `first_record_sequence = 1`. Each later segment's
 `first_record_sequence` MUST equal one plus the final record sequence in the preceding segment. A

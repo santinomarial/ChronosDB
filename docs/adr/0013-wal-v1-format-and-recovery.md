@@ -182,6 +182,12 @@ persistence remain deferred.
 [Manifest v1](../formats/manifest-v1.md) resolve the external single-node checkpoint context and
 safe prefix-removal ordering without changing WAL v1 bytes. Implementation remains Phase 6 work.
 
+**Retrospective note (2026-08-31):**
+[ADR 0565](0565-locked-empty-wal-identity-authority.md) records why new-history creation consumes one
+validated identity candidate rather than adding an owner-level collision loop: the locked
+empty/`LOCK`-only directory contains no prior WAL identity. This changes no WAL v1 bytes or recovery
+behavior.
+
 ## Migration or reversal implications
 
 Format 1.0 bytes and assigned meanings are immutable once written. A future physical format requires

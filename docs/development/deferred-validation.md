@@ -1013,8 +1013,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   schema/policy prefix. Live Manifest-v1 flush allocation now retries nil, same-operation, selected
   final-part, temporary-part, and exact candidate-name collisions under an injected finite limit.
   Exhaustion coverage proves the selected generation, final part count, and temporary namespace
-  remain unchanged before the same queue work succeeds with fresh identities. WAL,
-  compaction/temporal/movement storage, INSERT retry, distributed-control, deletion tombstone, and
+  remain unchanged before the same queue work succeeds with fresh identities. New-history WAL
+  allocation is separately closed by its locked empty/`LOCK`-only authority: focused tests prove
+  one injected failure or nil candidate leaves that directory unchanged, while the system generator
+  owns bounded nil-entropy retry. Compaction/temporal/movement storage, INSERT retry,
+  distributed-control, deletion tombstone, and
   broader identity-domain fault matrices remain deferred.
 - SQL INSERT columnar materialization allocation-failure sweeps, every logical type and integer
   boundary, hostile maximum-width variable values, exact preflight byte accounting before allocation,

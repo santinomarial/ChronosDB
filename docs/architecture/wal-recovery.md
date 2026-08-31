@@ -127,6 +127,14 @@ entries, symlinks, and nonregular entries also fail closed. The creation API nev
 because it does not own the database-root descriptor or the required parent-directory
 synchronization boundary.
 
+That locked empty/`LOCK`-only directory is the complete authority for a new WAL history. It contains
+no installed identity with which the new candidate can be compared, and a directory containing an
+old or interrupted history must be reopened or rejected rather than reset. Consequently the writer
+requests exactly one nonzero candidate, propagates generation failure or rejects nil before lock
+creation, and does not add a second retry policy above the production generator's finite entropy
+retry. Detecting reuse after operator deletion would require a separately durable tombstone or
+history registry and is outside WAL v1; randomness alone cannot prove non-reuse.
+
 ### Rotation
 
 The writer computes the complete next record length before writing. If it would exceed the current

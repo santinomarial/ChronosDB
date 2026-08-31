@@ -62,7 +62,15 @@ complete header write, exact-size verification, file sync, no-replace rename, an
 Only an empty directory or a regular `LOCK` is accepted. Existing history, recognized orphan
 temporaries, malformed reserved names, unrelated entries, symlinks, and nonregular entries are
 rejected without cleanup. The system generator uses platform entropy; deterministic tests inject
-fixed identities. Identity failure occurs before lock creation and leaves the directory unchanged.
+fixed identities. Identity failure or a nil candidate occurs before lock creation and leaves the
+directory unchanged.
+
+The writer intentionally consumes one generator result rather than layering another retry loop on
+top. A valid new-history directory has no existing WAL identity to compare, so no observable
+collision can be retried there. The system UUID generator already bounds retries for nil entropy.
+Avoiding an owner-level loop also keeps an injected generator failure immediate. Proving that an ID
+was never used by a history that an operator deleted would require a separate durable registry or
+tombstone policy; WAL v1 has no reset or deletion-authorized new-history operation.
 
 The caller, not `WalWriter`, creates and durably installs the `wal/` directory under the database
 root. This ownership is deliberate: the writer has no parent-directory descriptor and therefore

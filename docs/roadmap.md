@@ -51,7 +51,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
   configured limit, and fail exhaustion without a metadata prefix. Live single-node Manifest-v1
   flush now likewise scans its locked final/temporary part namespace, retries `PartId` and exact
   candidate-name collisions under a finite injected limit, and preserves ready work without file
-  mutation on exhaustion. WAL, compaction/temporal/movement storage installation, retry,
+  mutation on exhaustion. New-history WAL identity allocation now explicitly treats the locked
+  empty/`LOCK`-only directory as its complete authority, consumes one nonnil generator result, and
+  leaves the namespace unchanged on generator failure or nil; there is no visible identity
+  collision to retry until a future deletion/tombstone policy exists. Compaction/temporal/movement
+  storage installation, retry,
   distributed-control, and future deletion/no-reuse identity policies plus broader test utilities
   remain incomplete. The structured
   diagnostic boundary now includes an exclusively locked, bounded rotating JSON-lines file sink
