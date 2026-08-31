@@ -4,6 +4,7 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <memory>
 #include <new>
 #include <optional>
 #include <ranges>
@@ -18,6 +19,11 @@ inline constexpr std::size_t kScratchSize = std::size_t{16U} * 1024U;
 
 [[nodiscard]] common::Status status(const common::StatusCode code, const char* message) {
   return {code, message};
+}
+
+template <typename Value>
+[[nodiscard]] Value* optional_pointer(std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
 }
 
 [[nodiscard]] bool valid_limits(const DistributedMutableQueryControlTlsServerLimits& limits) {
@@ -350,11 +356,12 @@ public:
         }
         const bool last = index + 1U == bound.encoded_responses.size();
         if (decoded->status_code == common::StatusCode::kOk) {
-          if (!decoded->payload.has_value()) {
+          const auto* payload = optional_pointer(decoded->payload);
+          if (payload == nullptr) {
             return status(common::StatusCode::kCorruption,
                           "query-control mutable grouped success response has no payload");
           }
-          const auto& position = decoded->payload->position();
+          const auto& position = payload->position();
           const bool valid_empty = position.empty && bound.encoded_responses.size() == 1U &&
                                    position.group_count == 0U && position.group_ordinal == 0U &&
                                    position.sequence == 1U && position.terminal;
@@ -520,8 +527,9 @@ public:
       if (step->consumed_bytes != received.size())
         return fail(status(common::StatusCode::kCorruption,
                            "query-control grouped shuffle job request has a coalesced suffix"));
-      if (step->request.has_value())
-        return accept_grouped_shuffle_job_request(std::move(*step->request), now);
+      auto* request = optional_pointer(step->request);
+      if (request != nullptr)
+        return accept_grouped_shuffle_job_request(std::move(*request), now);
     } else {
       return fail(
           status(common::StatusCode::kInternal, "query-control request protocol is unavailable"));
