@@ -114,6 +114,7 @@ add_library(
   src/common/byte_writer.cpp
   src/common/crc32c.cpp
   src/common/log.cpp
+  src/common/rotating_log_sink.cpp
   src/common/status.cpp
   src/common/time_source.cpp
   src/common/uuid_generator.cpp
@@ -962,6 +963,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/common/crc32c_header_self_contained.cpp
     tests/common/log_header_self_contained.cpp
     tests/common/log_test.cpp
+    tests/common/rotating_log_sink_header_self_contained.cpp
+    tests/common/rotating_log_sink_test.cpp
     tests/common/result_header_self_contained.cpp
     tests/common/status_header_self_contained.cpp
     tests/common/status_result_test.cpp

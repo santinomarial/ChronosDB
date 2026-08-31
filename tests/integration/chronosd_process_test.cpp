@@ -27,7 +27,9 @@
 #include <deque>
 #include <fcntl.h>
 #include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
+#include <iterator>
 #include <memory>
 #include <netinet/in.h>
 #include <optional>
@@ -151,6 +153,38 @@ public:
       ::close(output[0]);
       ::close(output[1]);
       ::execl(CHRONOSD_PATH, CHRONOSD_PATH, "--port", "0", "--data-dir", data_directory.c_str(),
+              nullptr);
+      std::_Exit(127);
+    }
+    ::close(output[1]);
+    if (pid_ < 0) {
+      ::close(output[0]);
+      return false;
+    }
+    output_ = output[0];
+    return true;
+  }
+
+  [[nodiscard]] bool start_with_rotating_log(const std::string& log_file,
+                                             const std::uint64_t maximum_file_bytes) {
+    const std::string maximum = std::to_string(maximum_file_bytes);
+    std::array<int, 2U> output{};
+    if (::pipe(output.data()) != 0)
+      return false;
+    if (::fcntl(output[0], F_SETFD, FD_CLOEXEC) != 0 ||
+        ::fcntl(output[1], F_SETFD, FD_CLOEXEC) != 0) {
+      ::close(output[0]);
+      ::close(output[1]);
+      return false;
+    }
+    pid_ = ::fork();
+    if (pid_ == 0) {
+      static_cast<void>(::dup2(output[1], STDOUT_FILENO));
+      static_cast<void>(::dup2(output[1], STDERR_FILENO));
+      ::close(output[0]);
+      ::close(output[1]);
+      ::execl(CHRONOSD_PATH, CHRONOSD_PATH, "--port", "0", "--log-format", "json", "--log-file",
+              log_file.c_str(), "--log-max-bytes", maximum.c_str(), "--log-retained-files", "2",
               nullptr);
       std::_Exit(127);
     }
@@ -383,6 +417,19 @@ private:
   const timeval timeout{.tv_sec = 5, .tv_usec = 0};
   static_cast<void>(::setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)));
   return socket;
+}
+
+[[nodiscard]] bool wait_for_file_text(const std::filesystem::path& path,
+                                      const std::string_view expected) {
+  constexpr std::size_t kMaximumPolls = 500U;
+  for (std::size_t poll = 0U; poll < kMaximumPolls; ++poll) {
+    std::ifstream input{path, std::ios::binary};
+    const std::string text{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+    if (text.find(expected) != std::string::npos)
+      return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds{10});
+  }
+  return false;
 }
 
 [[nodiscard]] bool send_all(const int socket, const std::vector<std::byte>& bytes) {
@@ -1326,6 +1373,26 @@ TEST(ChronosdProcessTest, NegotiatesPongsAndRejectsUnconfiguredDataPlane) {
 
   ::close(client);
   EXPECT_EQ(child.stop(), 0);
+}
+
+TEST(ChronosdProcessTest, WritesAndRotatesAnExclusivelyOwnedStructuredLog) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const std::filesystem::path log_path = std::filesystem::path{directory.path()} / "chronosd.jsonl";
+
+  ChildProcess first;
+  ASSERT_TRUE(first.start_with_rotating_log(log_path.string(), 1U << 20U));
+  ASSERT_TRUE(wait_for_file_text(log_path, "\"event\":\"server_listening\""));
+  EXPECT_EQ(first.stop(), 0);
+  const std::string first_generation = read_text_file(log_path.string());
+  ASSERT_FALSE(first_generation.empty());
+
+  ChildProcess second;
+  ASSERT_TRUE(second.start_with_rotating_log(log_path.string(), first_generation.size()));
+  ASSERT_TRUE(wait_for_file_text(log_path.string() + ".1", "\"event\":\"server_listening\""));
+  ASSERT_TRUE(wait_for_file_text(log_path, "\"event\":\"server_listening\""));
+  EXPECT_EQ(second.stop(), 0);
+  EXPECT_EQ(read_text_file(log_path.string() + ".1"), first_generation);
 }
 
 TEST(ChronosdProcessTest, ChronosctlExecutesSqlAndReadsRowsAfterRestart) {

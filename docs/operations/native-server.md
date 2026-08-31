@@ -17,6 +17,23 @@ the corresponding text event: startup on stdout and errors on stderr. Invalid UT
 one damaged diagnostic cannot corrupt the JSON stream. Option-parse failures honor a requested JSON
 format and do not append human usage text; `--help` remains human-readable stdout.
 
+For an exclusively owned rotating JSON-lines file, pass all four logging options:
+
+```sh
+./build/chronosd --data-dir /path/to/db --log-format json \
+  --log-file /var/log/chronosdb/chronosd.jsonl \
+  --log-max-bytes 67108864 --log-retained-files 5
+```
+
+The parent directory must already exist. The active file is `chronosd.jsonl`; `.1` is the newest
+archive and higher suffixes are older. Rotation happens before a line that would exceed the byte
+bound, retains at most 64 archives (zero discards the replaced generation), and never splits a JSON
+line. One process holds an advisory `chronosd.jsonl.lock` file for the sink lifetime; another
+cooperating owner of the same path is rejected. Active and lock-file symlinks are not followed.
+Any write or rotation failure makes that sink terminal and `chronosd` falls back to a fixed critical
+diagnostic on its original stdout/stderr stream. Successful writes are flushed through stdio but are
+not `fsync` durability and never participate in WAL or Raft acknowledgement guarantees.
+
 Without `--data-dir` it reports `data_plane=unconfigured` and explicitly rejects data work. With
 `--data-dir PATH` it initializes or reopens an existing directory as a durable single-node root and
 reports `data_plane=configured`; native CREATE TABLE, single-local-tablet SQL INSERT VALUES,

@@ -87,6 +87,17 @@ atomic in-process log lines, not durable storage: successful return means the C 
 accepted and flushed the bytes, not that a filesystem or collector persisted them. Logging is not a
 data acknowledgment and cannot participate in WAL or Raft durability claims.
 
+`RotatingJsonLogSink` adds an owning operational file boundary around the same encoder. Its factory
+opens an append-only regular active file and a nonblocking exclusive advisory lock, rejecting
+active/lock symlinks and competing cooperating processes. The owner serializes size accounting,
+rotation, writes, and flushes with one mutex. Before a complete line would cross the configured
+bound it removes the oldest archive, shifts suffixes from oldest to newest, renames the active file
+to `.1`, and opens a fresh active file. A rotation or write error is terminal so later calls cannot
+pretend the archive sequence is still healthy. Encoding/validation errors occur before mutation and
+do not poison the sink. The mutex—not an atomic memory-ordering protocol—establishes the happens-
+before relationship for file ownership and byte counts. Archive files are diagnostic evidence, not
+database state; rotation does not directory-sync or claim crash-durable collection.
+
 ## Injectable time domains
 
 `TimeSource` separates civil wall time from monotonic elapsed time. `wall_now()` is appropriate for

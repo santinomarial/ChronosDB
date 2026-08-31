@@ -1,4 +1,5 @@
 #include "chronos/common/log.hpp"
+#include "chronos/common/rotating_log_sink.hpp"
 #include "chronos/common/uuid_generator.hpp"
 #include "chronos/common/version.hpp"
 #include "chronos/io/posix_io.hpp"
@@ -102,7 +103,9 @@ enum class LogFormat : std::uint8_t {
 
 class DaemonLogger {
 public:
-  explicit DaemonLogger(const LogFormat format) noexcept : format_(format) {}
+  explicit DaemonLogger(const LogFormat format,
+                        chronos::common::RotatingJsonLogSink* const file_sink = nullptr) noexcept
+      : format_(format), file_sink_(file_sink) {}
 
   void info(const std::string_view event, const std::string_view message,
             const std::span<const chronos::common::LogField> fields = {}) const noexcept {
@@ -132,17 +135,19 @@ private:
   };
 
   void emit(std::FILE* const output, const Event& event) const noexcept {
-    if (format_ == LogFormat::kJson) {
+    if (format_ == LogFormat::kJson || file_sink_ != nullptr) {
       bool structured_write_failed = false;
       try {
         const std::string_view bounded_message = event.message.substr(
             0U, std::min(event.message.size(), chronos::common::kMaximumLogMessageBytes));
+        const chronos::common::LogRecord record{.severity = event.severity,
+                                                .component = "chronosd",
+                                                .event = event.name,
+                                                .message = bounded_message,
+                                                .fields = event.fields};
         const chronos::common::Status written =
-            chronos::common::write_json_log(output, {.severity = event.severity,
-                                                     .component = "chronosd",
-                                                     .event = event.name,
-                                                     .message = bounded_message,
-                                                     .fields = event.fields});
+            file_sink_ != nullptr ? file_sink_->write(record)
+                                  : chronos::common::write_json_log(output, record);
         if (written.is_ok())
           return;
         structured_write_failed = true;
@@ -166,6 +171,7 @@ private:
   }
 
   LogFormat format_;
+  chronos::common::RotatingJsonLogSink* file_sink_;
 };
 
 void log_native_security_reload_failure(const DaemonLogger& logger,
@@ -201,6 +207,10 @@ struct Options {
   std::string native_tls_certificate_file;
   std::string native_tls_private_key_file;
   std::string native_tls_trust_store_file;
+  std::string log_file;
+  std::uint64_t log_maximum_file_bytes{std::uint64_t{64U} * 1024U * 1024U};
+  std::size_t log_retained_file_count{5U};
+  bool log_file_limit_configured{};
   LogFormat log_format{LogFormat::kText};
   bool help{};
   bool version{};
@@ -210,7 +220,8 @@ void print_usage(const std::string_view program, std::ostream& stream) {
   stream << "Usage: " << program
          << " [--listen IPV4] [--port PORT] [--backend epoll|io_uring]"
             " [--queue-capacity COUNT] [--data-dir PATH]"
-            " [--log-format text|json]"
+            " [--log-format text|json] [--log-file PATH"
+            " --log-max-bytes BYTES --log-retained-files COUNT]"
             " [--replicated-groups FILE]"
             " [--replicated-peers FILE --raft-tls-cert FILE --raft-tls-key FILE"
             " --raft-tls-ca FILE] [--raft-election-timeout-ms MILLISECONDS]"
@@ -342,6 +353,26 @@ parse_group_election_timeout(const std::string_view text) noexcept {
         error = "log format must be text or json";
         return std::nullopt;
       }
+    } else if (argument == "--log-file") {
+      if (value.empty()) {
+        error = "log file path must be nonempty";
+        return std::nullopt;
+      }
+      options.log_file = value;
+    } else if (argument == "--log-max-bytes") {
+      if (!parse_integer(value, options.log_maximum_file_bytes) ||
+          options.log_maximum_file_bytes == 0U) {
+        error = "log maximum bytes must be a positive integer";
+        return std::nullopt;
+      }
+      options.log_file_limit_configured = true;
+    } else if (argument == "--log-retained-files") {
+      if (!parse_integer(value, options.log_retained_file_count) ||
+          options.log_retained_file_count > chronos::common::kMaximumRetainedLogFiles) {
+        error = "retained log file count must be from 0 through 64";
+        return std::nullopt;
+      }
+      options.log_file_limit_configured = true;
     } else if (argument == "--data-dir") {
       if (value.empty()) {
         error = "data directory must be nonempty";
@@ -475,6 +506,14 @@ parse_group_election_timeout(const std::string_view text) noexcept {
   }
   if (native_security_field_count == 0U && options.listen_address.front() != 127U) {
     error = "plaintext service is restricted to IPv4 loopback";
+    return std::nullopt;
+  }
+  if (options.log_file.empty() && options.log_file_limit_configured) {
+    error = "log rotation options require --log-file";
+    return std::nullopt;
+  }
+  if (!options.log_file.empty() && options.log_format != LogFormat::kJson) {
+    error = "--log-file requires --log-format json";
     return std::nullopt;
   }
   return options;
@@ -1498,11 +1537,11 @@ private:
 int run_daemon(const int argc, const char* const argv[]) {
   const std::string_view program = argc > 0 ? std::string_view{argv[0]} : "chronosd";
   const LogFormat requested_format = requested_log_format(argc, argv);
-  const DaemonLogger logger{requested_format};
+  const DaemonLogger option_logger{requested_format};
   std::string option_error;
   const auto options = parse_options(argc, argv, option_error);
   if (!options.has_value()) {
-    logger.error("invalid_options", option_error);
+    option_logger.error("invalid_options", option_error);
     if (requested_format == LogFormat::kText)
       print_usage(program, std::cerr);
     return 2;
@@ -1515,6 +1554,21 @@ int run_daemon(const int argc, const char* const argv[]) {
     std::cout << chronos::common::version_text() << '\n';
     return 0;
   }
+
+  std::unique_ptr<chronos::common::RotatingJsonLogSink> log_file_sink;
+  if (!options->log_file.empty()) {
+    auto opened = chronos::common::RotatingJsonLogSink::open(
+        {.path = options->log_file,
+         .maximum_file_bytes = options->log_maximum_file_bytes,
+         .retained_file_count = options->log_retained_file_count});
+    if (!opened.has_value()) {
+      option_logger.error("log_file_setup_failed",
+                          "log file setup failed: " + opened.error().to_string());
+      return 1;
+    }
+    log_file_sink = std::move(*opened);
+  }
+  const DaemonLogger logger{options->log_format, log_file_sink.get()};
 
   chronos::common::SystemUuidGenerator identities;
   SingleNodeCommittedAppendRouter append_router;

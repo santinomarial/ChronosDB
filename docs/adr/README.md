@@ -596,3 +596,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0559](0559-controlled-multi-record-job-control-request-qualification.md) | Controlled multi-record Job Control request qualification | accepted |
 | [0560](0560-controlled-encrypted-record-byte-corruption-qualification.md) | Controlled encrypted-record byte-corruption qualification | accepted |
 | [0561](0561-controlled-one-byte-encrypted-record-forwarding.md) | Controlled one-byte encrypted-record forwarding | accepted |
+| [0562](0562-exclusive-bounded-rotating-json-log-sink.md) | Exclusive bounded rotating JSON log sink | accepted |
