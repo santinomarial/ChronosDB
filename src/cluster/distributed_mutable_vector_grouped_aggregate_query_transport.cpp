@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <memory>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -28,6 +30,11 @@ namespace {
 
 [[nodiscard]] common::Status unavailable(const char* message) {
   return {common::StatusCode::kUnavailable, message};
+}
+
+template <typename Value>
+[[nodiscard]] Value* optional_pointer(std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
 }
 
 [[nodiscard]] bool retryable_status(const common::StatusCode code) noexcept {
@@ -659,10 +666,11 @@ common::Status DistributedMutableVectorGroupedAggregateQuerySender::accept_respo
           *encoded, keys_, aggregates_, resources_, limits_.payload);
       if (!decoded.has_value())
         return decoded.error();
-      if (!decoded->payload.has_value())
+      auto* payload = optional_pointer(decoded->payload);
+      if (payload == nullptr)
         return corruption("mutable grouped vector query canonical success payload is absent");
       auto nested = query::encode_distributed_vector_grouped_aggregate_exchange_message(
-          *decoded->payload, keys_, aggregates_);
+          *payload, keys_, aggregates_);
       if (!nested.has_value())
         return nested.error();
       accepted.push_back(std::move(*nested));

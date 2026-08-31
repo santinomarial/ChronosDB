@@ -29,6 +29,11 @@ namespace {
   return {common::StatusCode::kResourceExhausted, message};
 }
 
+template <typename Value>
+[[nodiscard]] Value* optional_pointer(std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
 [[nodiscard]] common::Status poll_error(const int error = errno) {
   return {common::StatusCode::kIoError,
           std::string("polling mutable vector query TCP execution: ") +
@@ -478,14 +483,15 @@ DistributedMutableVectorQueryTcpExecution::take_result() {
     if (!implementation_) {
       return common::make_unexpected(invalid("mutable vector query TCP execution is empty"));
     }
+    auto* execution_result = optional_pointer(implementation_->execution_result);
     if (implementation_->execution_state !=
             DistributedMutableVectorQueryTcpExecutionState::kComplete ||
-        !implementation_->execution_result.has_value()) {
+        execution_result == nullptr) {
       return common::make_unexpected(
           common::Status{common::StatusCode::kUnavailable,
                          "mutable vector query TCP execution result is unavailable"});
     }
-    DistributedVectorQueryExecutionResultV2 result = std::move(*implementation_->execution_result);
+    DistributedVectorQueryExecutionResultV2 result = std::move(*execution_result);
     implementation_->execution_result.reset();
     return result;
   } catch (const std::bad_alloc&) {

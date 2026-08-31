@@ -30,6 +30,16 @@ namespace {
   return {common::StatusCode::kResourceExhausted, message};
 }
 
+template <typename Value>
+[[nodiscard]] Value* optional_pointer(std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
+template <typename Value>
+[[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
 [[nodiscard]] common::Status poll_error(const int error = errno) {
   return {common::StatusCode::kIoError,
           std::string("polling mutable grouped query TCP execution: ") +
@@ -247,7 +257,8 @@ public:
           auto due = execution.next_attempt_not_before(slot.tablet_id);
           if (!due.has_value())
             return due.error();
-          if (!due->has_value() || now < **due)
+          const TimePoint* due_time = optional_pointer(*due);
+          if (due_time == nullptr || now < *due_time)
             continue;
         }
         if (!slot.route_index.has_value()) {
@@ -646,14 +657,18 @@ DistributedMutableVectorGroupedAggregateQueryTcpExecution::result() const noexce
 common::Result<DistributedVectorRowsFinalizedResultV2>
 DistributedMutableVectorGroupedAggregateQueryTcpExecution::take_result() {
   try {
-    if (!implementation_ ||
-        implementation_->execution_state !=
-            DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kComplete ||
-        !implementation_->execution_result.has_value()) {
+    if (!implementation_) {
       return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
                                                     "mutable grouped TCP result is unavailable"});
     }
-    DistributedVectorRowsFinalizedResultV2 result = std::move(*implementation_->execution_result);
+    auto* execution_result = optional_pointer(implementation_->execution_result);
+    if (implementation_->execution_state !=
+            DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kComplete ||
+        execution_result == nullptr) {
+      return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
+                                                    "mutable grouped TCP result is unavailable"});
+    }
+    DistributedVectorRowsFinalizedResultV2 result = std::move(*execution_result);
     implementation_->execution_result.reset();
     return result;
   } catch (const std::bad_alloc&) {
@@ -663,14 +678,18 @@ DistributedMutableVectorGroupedAggregateQueryTcpExecution::take_result() {
 
 common::Result<std::vector<DistributedMutableVectorGroupedAggregateCompletedSource>>
 DistributedMutableVectorGroupedAggregateQueryTcpExecution::take_completed_sources() {
-  if (!implementation_ ||
-      implementation_->execution_state !=
-          DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kComplete ||
-      !implementation_->completed_sources.has_value()) {
+  if (!implementation_) {
     return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
                                                   "mutable grouped TCP sources are unavailable"});
   }
-  auto sources = std::move(*implementation_->completed_sources);
+  auto* completed_sources = optional_pointer(implementation_->completed_sources);
+  if (implementation_->execution_state !=
+          DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kComplete ||
+      completed_sources == nullptr) {
+    return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
+                                                  "mutable grouped TCP sources are unavailable"});
+  }
+  auto sources = std::move(*completed_sources);
   implementation_->completed_sources.reset();
   return sources;
 }

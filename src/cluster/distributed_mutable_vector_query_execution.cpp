@@ -114,8 +114,7 @@ DistributedMutableVectorQueryExecution::create(
     tablets.reserve(fragments.size());
     senders.reserve(fragments.size());
     targets.reserve(fragments.size());
-    for (std::size_t index = 0U; index < fragments.size(); ++index) {
-      query::DistributedMutableVectorFragment& fragment = fragments[index];
+    for (query::DistributedMutableVectorFragment& fragment : fragments) {
       const schema::TabletId tablet_id = fragment.tablet_id;
       const raft::NodeId serving_node = fragment.serving_node;
       auto sender = DistributedMutableVectorQuerySender::create(source_node_id, std::move(fragment),

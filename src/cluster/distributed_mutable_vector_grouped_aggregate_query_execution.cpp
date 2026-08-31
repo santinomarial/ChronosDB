@@ -272,8 +272,9 @@ DistributedMutableVectorGroupedAggregateQueryExecution::publish_terminal_state(S
         "mutable grouped sender reached terminal failure"};
     const common::Status reported = coordinator_.worker_failed(slot.tablet_id, failure);
     slot.coordinator_failure_delivered = true;
-    failure_.emplace(reported.is_ok() ? failure : reported);
-    return *failure_;
+    const common::Status terminal_failure = reported.is_ok() ? failure : reported;
+    failure_.emplace(terminal_failure);
+    return terminal_failure;
   }
   return common::Status::ok();
 }

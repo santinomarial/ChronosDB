@@ -1,7 +1,9 @@
 #include "chronos/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_execution.hpp"
 
 #include <climits>
+#include <memory>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -14,6 +16,16 @@ namespace {
 
 [[nodiscard]] common::Status exhausted(const char* message) {
   return {common::StatusCode::kResourceExhausted, message};
+}
+
+template <typename Value>
+[[nodiscard]] Value* optional_pointer(std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
+template <typename Value>
+[[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
 }
 
 } // namespace
@@ -210,30 +222,36 @@ DistributedMutableVectorGroupedAggregateShuffleExecutionMetrics
 DistributedMutableVectorGroupedAggregateShuffleExecution::metrics() const noexcept {
   if (!implementation_)
     return {};
+  const auto* shuffle = optional_pointer(implementation_->shuffle);
   return {.workers = implementation_->workers.metrics(),
-          .shuffle = implementation_->shuffle.has_value()
-                         ? implementation_->shuffle->metrics()
+          .shuffle = shuffle != nullptr
+                         ? shuffle->metrics()
                          : DistributedVectorGroupedAggregateShuffleQueryExecutionMetrics{}};
 }
 
 const std::optional<DistributedVectorRowsFinalizedResultV2>&
 DistributedMutableVectorGroupedAggregateShuffleExecution::result() const noexcept {
   static const std::optional<DistributedVectorRowsFinalizedResultV2> empty;
-  return implementation_ && implementation_->shuffle.has_value()
-             ? implementation_->shuffle->result()
-             : empty;
+  if (!implementation_)
+    return empty;
+  const auto* shuffle = optional_pointer(implementation_->shuffle);
+  return shuffle != nullptr ? shuffle->result() : empty;
 }
 
 common::Result<DistributedVectorRowsFinalizedResultV2>
 DistributedMutableVectorGroupedAggregateShuffleExecution::take_result() {
-  if (!implementation_ ||
-      implementation_->execution_state !=
-          DistributedMutableVectorGroupedAggregateShuffleExecutionState::kComplete ||
-      !implementation_->shuffle.has_value()) {
+  if (!implementation_) {
     return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
                                                   "mutable grouped shuffle result is unavailable"});
   }
-  return implementation_->shuffle->take_result();
+  auto* shuffle = optional_pointer(implementation_->shuffle);
+  if (implementation_->execution_state !=
+          DistributedMutableVectorGroupedAggregateShuffleExecutionState::kComplete ||
+      shuffle == nullptr) {
+    return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
+                                                  "mutable grouped shuffle result is unavailable"});
+  }
+  return shuffle->take_result();
 }
 
 const common::Status&
