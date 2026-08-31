@@ -225,13 +225,14 @@ instruction_payload_size(const VectorExpressionInstruction& instruction) {
     parameter_1 = input->type.parameter_1();
     operand_0 = static_cast<std::uint32_t>(input->input_column_ordinal);
   } else if (const auto* constant = std::get_if<VectorConstantExpression>(&instruction)) {
-    if (!constant->value.type().has_value())
+    const auto& constant_type = constant->value.type();
+    if (!constant_type.has_value())
       return invalid("distributed pre-group constant is untyped");
     tag = InstructionTag::kConstant;
     flags = constant->value.is_null() ? kFlag : 0U;
-    type_code = constant->value.type()->code();
-    parameter_0 = constant->value.type()->parameter_0();
-    parameter_1 = constant->value.type()->parameter_1();
+    type_code = constant_type->code();
+    parameter_0 = constant_type->parameter_0();
+    parameter_1 = constant_type->parameter_1();
     auto encoded = encode_canonical_scalar_value(constant->value);
     if (!encoded.has_value())
       return encoded.error();
