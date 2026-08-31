@@ -86,6 +86,9 @@ public:
           const Status rotated = rotate();
           if (!rotated.is_ok())
             return fail(rotated);
+          if (output_ == nullptr) {
+            return fail({StatusCode::kInternal, "log rotation completed without an active stream"});
+          }
         }
         const std::size_t written = std::fwrite(encoded->data(), 1U, encoded->size(), output_);
         if (written != encoded->size() || std::fflush(output_) != 0)
