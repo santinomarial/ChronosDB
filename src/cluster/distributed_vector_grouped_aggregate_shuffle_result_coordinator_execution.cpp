@@ -29,6 +29,11 @@ namespace {
   return {common::StatusCode::kResourceExhausted, message};
 }
 
+template <typename Value>
+[[nodiscard]] Value* optional_pointer(std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
 } // namespace
 
 class DistributedVectorGroupedAggregateShuffleResultCoordinatorExecution::Impl {
@@ -362,12 +367,16 @@ common::Result<DistributedVectorRowsFinalizedResultV2>
 DistributedVectorGroupedAggregateShuffleResultCoordinatorExecution::take_result() {
   if (!implementation_ ||
       implementation_->state_ !=
-          DistributedVectorGroupedAggregateShuffleResultCoordinatorExecutionState::kComplete ||
-      !implementation_->result_.has_value()) {
+          DistributedVectorGroupedAggregateShuffleResultCoordinatorExecutionState::kComplete) {
     return common::make_unexpected(
         unavailable("grouped shuffle coordinator finalized result is unavailable"));
   }
-  auto result = std::move(*implementation_->result_);
+  auto* finalized = optional_pointer(implementation_->result_);
+  if (finalized == nullptr) {
+    return common::make_unexpected(
+        unavailable("grouped shuffle coordinator finalized result is unavailable"));
+  }
+  auto result = std::move(*finalized);
   implementation_->result_.reset();
   implementation_->state_ =
       DistributedVectorGroupedAggregateShuffleResultCoordinatorExecutionState::kResultTaken;

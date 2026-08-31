@@ -6,6 +6,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -26,6 +27,11 @@ namespace {
 
 [[nodiscard]] common::Status exhausted(const char* message) {
   return {common::StatusCode::kResourceExhausted, message};
+}
+
+template <typename Value>
+[[nodiscard]] Value* optional_pointer(std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
 }
 
 [[nodiscard]] bool descriptors_match(const network::QueryResultBatchView& batch,
@@ -229,7 +235,11 @@ DistributedVectorGroupedAggregateShuffleResultStreamReceiver::fail(common::Statu
 
 common::Status DistributedVectorGroupedAggregateShuffleResultStreamReceiver::accept_frame(
     DistributedVectorGroupedAggregateShuffleResultFrame frame) {
-  if (!source_node_id_.has_value()) {
+  const auto* retained_source = optional_pointer(source_node_id_);
+  const auto* retained_partition = optional_pointer(partition_id_);
+  if ((retained_source == nullptr) != (retained_partition == nullptr))
+    return fail(corruption("grouped shuffle result stream identity is incomplete"));
+  if (retained_source == nullptr) {
     auto authorized =
         authorizer_.get().authorize_node(authenticated_peer_.principal_id, frame.source_node_id);
     if (!authorized.has_value())
@@ -238,7 +248,8 @@ common::Status DistributedVectorGroupedAggregateShuffleResultStreamReceiver::acc
       return fail(unauthenticated("grouped shuffle result principal cannot claim source node"));
     source_node_id_ = frame.source_node_id;
     partition_id_ = frame.partition_id;
-  } else if (frame.source_node_id != *source_node_id_ || frame.partition_id != *partition_id_) {
+  } else if (frame.source_node_id != *retained_source ||
+             frame.partition_id != *retained_partition) {
     return fail(corruption("grouped shuffle result stream changed source or partition"));
   }
   if (accepted_frames_ == limits_.maximum_frames || frame.sequence != accepted_frames_ + 1U)
@@ -277,8 +288,9 @@ DistributedVectorGroupedAggregateShuffleResultStreamReceiver::consume(
       return common::make_unexpected(fail(exhausted("grouped shuffle result byte limit exceeded")));
     accepted_bytes_ += step->consumed_bytes;
     offset += step->consumed_bytes;
-    if (step->frame.has_value()) {
-      common::Status accepted = accept_frame(std::move(*step->frame));
+    auto* frame = optional_pointer(step->frame);
+    if (frame != nullptr) {
+      common::Status accepted = accept_frame(std::move(*frame));
       if (!accepted.is_ok())
         return common::make_unexpected(std::move(accepted));
       if (complete_ && offset != bytes.size())
@@ -339,12 +351,11 @@ DistributedVectorGroupedAggregateShuffleResultStreamReceiver::accepted_bytes() c
 
 DistributedVectorGroupedAggregateShuffleResultStreamSender::
     DistributedVectorGroupedAggregateShuffleResultStreamSender(
-        const std::uint32_t partition_id, const raft::NodeId source_node_id,
-        const raft::NodeId coordinator_node_id,
+        const StreamIdentity identity,
         std::vector<DistributedVectorGroupedAggregateShuffleResultWriteCursor> writers,
         const std::size_t encoded_bytes) noexcept
-    : partition_id_(partition_id), source_node_id_(source_node_id),
-      coordinator_node_id_(coordinator_node_id), writers_(std::move(writers)),
+    : partition_id_(identity.partition_id), source_node_id_(identity.source_node_id),
+      coordinator_node_id_(identity.coordinator_node_id), writers_(std::move(writers)),
       encoded_bytes_(encoded_bytes) {}
 
 common::Result<DistributedVectorGroupedAggregateShuffleResultStreamSender>
@@ -386,7 +397,11 @@ DistributedVectorGroupedAggregateShuffleResultStreamSender::create(
       writers.push_back(std::move(*writer));
     }
     return DistributedVectorGroupedAggregateShuffleResultStreamSender{
-        partition_id, source_node_id, coordinator_node_id, std::move(writers), encoded_bytes};
+        {.partition_id = partition_id,
+         .source_node_id = source_node_id,
+         .coordinator_node_id = coordinator_node_id},
+        std::move(writers),
+        encoded_bytes};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("grouped shuffle result sender allocation failed"));
   } catch (const std::length_error&) {

@@ -159,8 +159,14 @@ public:
   [[nodiscard]] raft::NodeId coordinator_node_id() const noexcept;
 
 private:
+  struct StreamIdentity {
+    std::uint32_t partition_id{};
+    raft::NodeId source_node_id{};
+    raft::NodeId coordinator_node_id{};
+  };
+
   DistributedVectorGroupedAggregateShuffleResultStreamSender(
-      std::uint32_t partition_id, raft::NodeId source_node_id, raft::NodeId coordinator_node_id,
+      StreamIdentity identity,
       std::vector<DistributedVectorGroupedAggregateShuffleResultWriteCursor> writers,
       std::size_t encoded_bytes) noexcept;
 

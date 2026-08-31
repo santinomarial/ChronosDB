@@ -22,6 +22,11 @@ namespace {
   return {common::StatusCode::kResourceExhausted, message};
 }
 
+template <typename Value>
+[[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
 [[nodiscard]] bool valid_timeout(const std::chrono::milliseconds timeout) noexcept {
   const auto maximum = std::chrono::duration_cast<std::chrono::milliseconds>(
       DistributedVectorGroupedAggregateShuffleResultTcpClient::TimePoint::duration::max());
@@ -200,8 +205,9 @@ DistributedVectorGroupedAggregateShuffleResultTcpClient::deadline() const noexce
       DistributedVectorGroupedAggregateShuffleResultTcpClientState::kConnecting) {
     return implementation_->connect_deadline_;
   }
-  if (implementation_->carrier_.has_value())
-    return implementation_->carrier_->deadline();
+  const auto* carrier = optional_pointer(implementation_->carrier_);
+  if (carrier != nullptr)
+    return carrier->deadline();
   return TimePoint::min();
 }
 

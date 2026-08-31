@@ -33,6 +33,11 @@ inline constexpr std::size_t kTlsScratchSize = std::size_t{16U} * 1024U;
   return {common::StatusCode::kResourceExhausted, message};
 }
 
+template <typename Value>
+[[nodiscard]] Value* optional_pointer(std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
 template <typename TimePoint>
 [[nodiscard]] bool
 valid_limits(const DistributedVectorGroupedAggregateShuffleResultTlsLimits& limits) noexcept {
@@ -171,11 +176,11 @@ public:
         return fail(step.error());
       if (step->consumed_bytes != received.size())
         return fail(corruption("grouped shuffle result TLS acknowledgment has a suffix"));
-      if (step->ack.has_value()) {
-        const auto& ack = *step->ack;
-        if (ack.partition_id != sender_.partition_id() ||
-            ack.accepted_frames != sender_.frame_count() ||
-            ack.accepted_bytes != sender_.encoded_bytes()) {
+      const auto* ack = optional_pointer(step->ack);
+      if (ack != nullptr) {
+        if (ack->partition_id != sender_.partition_id() ||
+            ack->accepted_frames != sender_.frame_count() ||
+            ack->accepted_bytes != sender_.encoded_bytes()) {
           return fail(corruption("grouped shuffle result TLS acknowledgment extent differs"));
         }
         state_ = DistributedVectorGroupedAggregateShuffleResultTlsState::kComplete;
@@ -319,7 +324,10 @@ public:
   [[nodiscard]] common::Status write_ack(const bool readable, const bool writable) {
     if ((!interest_.want_read || !readable) && (!interest_.want_write || !writable))
       return common::Status::ok();
-    auto progress = socket_.write(ack_writer_->pending_write());
+    auto* writer = optional_pointer(ack_writer_);
+    if (writer == nullptr)
+      return fail(corruption("grouped shuffle result acknowledgment writer is unavailable"));
+    auto progress = socket_.write(writer->pending_write());
     if (!progress.has_value())
       return fail(progress.error());
     if (progress->state == network::TlsIoState::kClosed)
@@ -332,10 +340,10 @@ public:
       if (progress->bytes_transferred == 0U)
         return fail(
             unavailable("grouped shuffle result TLS acknowledgment write made no progress"));
-      common::Status consumed = ack_writer_->consume_written(progress->bytes_transferred);
+      common::Status consumed = writer->consume_written(progress->bytes_transferred);
       if (!consumed.is_ok())
         return fail(std::move(consumed));
-      if (ack_writer_->complete()) {
+      if (writer->complete()) {
         state_ = DistributedVectorGroupedAggregateShuffleResultTlsState::kComplete;
         interest_ = {};
       } else {
@@ -528,14 +536,17 @@ DistributedVectorGroupedAggregateShuffleResultTlsServer::deadline() const noexce
 
 common::Result<DistributedVectorGroupedAggregateShuffleCompleteResultStream>
 DistributedVectorGroupedAggregateShuffleResultTlsServer::take_complete_stream() {
-  if (!implementation_ ||
-      implementation_->state_ !=
-          DistributedVectorGroupedAggregateShuffleResultTlsState::kComplete ||
-      !implementation_->stream_.has_value()) {
+  if (!implementation_ || implementation_->state_ !=
+                              DistributedVectorGroupedAggregateShuffleResultTlsState::kComplete) {
     return common::make_unexpected(
         invalid("grouped shuffle result TLS complete stream is unavailable"));
   }
-  auto stream = std::move(*implementation_->stream_);
+  auto* complete_stream = optional_pointer(implementation_->stream_);
+  if (complete_stream == nullptr) {
+    return common::make_unexpected(
+        invalid("grouped shuffle result TLS complete stream is unavailable"));
+  }
+  auto stream = std::move(*complete_stream);
   implementation_->stream_.reset();
   return stream;
 }

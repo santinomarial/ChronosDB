@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -25,6 +26,11 @@ namespace {
 
 [[nodiscard]] common::Status exhausted(const char* message) {
   return {common::StatusCode::kResourceExhausted, message};
+}
+
+template <typename Value>
+[[nodiscard]] Value* optional_pointer(std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
 }
 
 [[nodiscard]] bool valid_payload_limits(
@@ -206,8 +212,9 @@ DistributedVectorGroupedAggregateShuffleStreamReceiver::consume(const common::By
     }
     accepted_bytes_ += step->consumed_bytes;
     offset += step->consumed_bytes;
-    if (step->frame.has_value()) {
-      const common::Status accepted = accept_frame(std::move(step->frame).value());
+    auto* frame = optional_pointer(step->frame);
+    if (frame != nullptr) {
+      const common::Status accepted = accept_frame(std::move(*frame));
       if (!accepted.is_ok())
         return common::make_unexpected(accepted);
       if (complete_ && offset != bytes.size()) {
