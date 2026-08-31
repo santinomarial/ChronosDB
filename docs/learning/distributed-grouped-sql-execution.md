@@ -422,9 +422,14 @@ and the retained listener then authenticates a fresh lifecycle. A third campaign
 complete server flight, lets the coordinator authenticate the reducer, then tears the first
 encrypted client-authentication-flight record at the same boundaries. Invocation counts prove the
 reducer has not authenticated the coordinator; both sessions fail, nothing dispatches, and a direct
-retry authenticates normally. Later records under unusually fragmented client flights, multi-record
-application frames, resets racing buffered suffixes, durable job recovery, delay, duplication,
-reordering, probabilistic loss, and larger-set campaigns remain open.
+retry authenticates normally. A legal 1,024-source PREPARE now forces the production client to emit
+multiple encrypted application records. The proxy forwards and lets the reducer consume the first
+complete record, verifies the application reader remains incomplete with no dispatch, and tears the
+next record inside its header, after one ciphertext byte, or before its final byte. Both sessions
+fail with no job, and the retained listener heals through a complete PREPARE/CANCEL lifecycle. Later
+records under unusually fragmented client flights, multi-record responses, resets racing further
+buffered suffixes, durable job recovery, delay, duplication, reordering, probabilistic loss, and
+larger-set campaigns remain open.
 
 ### Portable sufficient-state execution boundary
 

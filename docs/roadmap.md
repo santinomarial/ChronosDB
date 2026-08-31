@@ -1679,9 +1679,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   fail before application authentication or dispatch, and the retained backend then authenticates a
   fresh lifecycle. It now forwards the complete server flight and tears the first encrypted client
   authentication-flight record too: the coordinator has authenticated the reducer, but invocation
-  counts prove the reducer cannot authenticate the partial client flight or dispatch work. Durable
-  query recovery, later records under unusual handshake fragmentation, multi-record application
-  cuts, resets racing buffered bytes,
+  counts prove the reducer cannot authenticate the partial client flight or dispatch work. A valid
+  1,024-source PREPARE now spans multiple encrypted application records; the reducer consumes one
+  complete record without dispatch, then fails closed when the next record is cut at the same exact
+  three boundaries. The retained backend still heals through authenticated cleanup. Durable query
+  recovery, later records under unusual handshake fragmentation, multi-record responses, resets
+  racing further buffered bytes,
   delay/duplication/reordering/probabilistic loss, larger-set skew, broader fault campaigns, and
   measurement remain; the separate packaged Native split-leader process gate is also qualified.
   The computed path now

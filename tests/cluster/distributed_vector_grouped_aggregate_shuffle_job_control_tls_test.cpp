@@ -292,6 +292,14 @@ receive_tls_record(network::TcpSocket& source) {
   return common::Uuid{bytes};
 }
 
+[[nodiscard]] common::Uuid indexed_uuid(const std::uint64_t value) {
+  common::Uuid::Bytes bytes{};
+  for (std::size_t byte = 0U; byte < sizeof(value); ++byte) {
+    bytes[bytes.size() - 1U - byte] = static_cast<std::byte>((value >> (byte * 8U)) & 0xffU);
+  }
+  return common::Uuid{bytes};
+}
+
 [[nodiscard]] DistributedVectorGroupedAggregateShuffleJobPrepare prepare() {
   const auto string = schema::LogicalType::create(schema::LogicalTypeKind::kString).value();
   const auto count = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
@@ -302,6 +310,28 @@ receive_tls_record(network::TcpSocket& source) {
           .authority = DistributedVectorGroupedAggregateShuffleAuthority::create(
                            uuid(1U), {{schema::TabletId::from_uuid(uuid(2U)).value(), 3U}},
                            {{0U, 3U}}, {{0U, string, false}},
+                           {{query::VectorAggregateOperation::kCountStar, std::nullopt}})
+                           .value(),
+          .result_schema = {.columns = {{"region", string, false}, {"count", count, false}}}};
+}
+
+[[nodiscard]] DistributedVectorGroupedAggregateShuffleJobPrepare multi_record_prepare() {
+  constexpr std::size_t kSourceCount = 1024U;
+  std::vector<DistributedVectorGroupedAggregateShuffleSource> sources;
+  sources.reserve(kSourceCount);
+  for (std::size_t source = 0U; source < kSourceCount; ++source) {
+    sources.push_back({.tablet_id = schema::TabletId::from_uuid(indexed_uuid(source + 1U)).value(),
+                       .node_id = 3U});
+  }
+  const auto string = schema::LogicalType::create(schema::LogicalTypeKind::kString).value();
+  const auto count = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  return {.coordinator_node_id = 9U,
+          .target_node_id = 3U,
+          .coordinator_result_endpoint = {{127U, 0U, 0U, 1U}, 8137U},
+          .execution_timeout = std::chrono::milliseconds{30'000},
+          .authority = DistributedVectorGroupedAggregateShuffleAuthority::create(
+                           indexed_uuid(kSourceCount + 1U), std::move(sources), {{0U, 3U}},
+                           {{0U, string, false}},
                            {{query::VectorAggregateOperation::kCountStar, std::nullopt}})
                            .value(),
           .result_schema = {.columns = {{"region", string, false}, {"count", count, false}}}};
@@ -1287,6 +1317,198 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTlsTest,
   EXPECT_EQ(prepared->status_code, common::StatusCode::kOk);
   EXPECT_EQ(service->metrics().prepare_requests, 4U);
   EXPECT_EQ(service->metrics().duplicate_prepares, 3U);
+  EXPECT_EQ(service->metrics().active_jobs, 1U);
+
+  auto cancelled =
+      exchange_tcp(*server_listener,
+                   DistributedVectorGroupedAggregateShuffleJobControlRequest{
+                       DistributedVectorGroupedAggregateShuffleJobCancel{uuid(1U), 9U, 3U}},
+                   *service, {.client = &client_authenticator, .server = &server_authenticator},
+                   authorizer, *server_context, *client_context);
+  ASSERT_TRUE(cancelled.has_value()) << cancelled.error().to_string();
+  EXPECT_EQ(cancelled->status_code, common::StatusCode::kOk);
+  EXPECT_EQ(service->metrics().cancel_requests, 1U);
+  EXPECT_EQ(service->metrics().cancelled_jobs, 1U);
+  EXPECT_EQ(service->metrics().active_jobs, 1U);
+  const common::Status reaped =
+      service->poll_once(std::chrono::milliseconds{0}, start + std::chrono::milliseconds{30'002});
+  ASSERT_TRUE(reaped.is_ok()) << reaped.to_string();
+  EXPECT_EQ(service->metrics().active_jobs, 0U);
+}
+
+TEST(DistributedVectorGroupedAggregateShuffleJobControlTlsTest,
+     FailsClosedWhenALaterEncryptedRequestRecordIsTorn) {
+  Authenticator client_authenticator{93U};
+  Authenticator server_authenticator{94U};
+  Authorizer authorizer;
+  auto server_context = network::TlsServerContext::create(server_tls());
+  auto client_context = network::TlsClientContext::create(client_tls());
+  ASSERT_TRUE(server_context.has_value()) << server_context.error().to_string();
+  ASSERT_TRUE(client_context.has_value()) << client_context.error().to_string();
+  const std::array result_contexts{DistributedQueryNodeTlsContext{9U, &*client_context}};
+  auto service = DistributedVectorGroupedAggregateShuffleJobService::create(
+      {.local_node_id = 3U,
+       .shuffle_tls = server_tls(),
+       .shuffle_authenticator = &client_authenticator,
+       .result_authenticator = &server_authenticator,
+       .node_authorizer = &authorizer,
+       .result_tls_contexts = result_contexts});
+  ASSERT_TRUE(service.has_value()) << service.error().to_string();
+  auto server_listener = network::TcpListener::bind();
+  ASSERT_TRUE(server_listener.has_value()) << server_listener.error().to_string();
+  const auto start = DistributedVectorGroupedAggregateShuffleJobControlTlsClient::TimePoint{};
+
+  constexpr std::size_t kTlsRecordHeaderBytes = 5U;
+  constexpr std::size_t kTlsMaximumPlaintextBytes = std::size_t{16U} * 1024U;
+  constexpr std::array<std::size_t, 3U> kCutKinds{0U, 1U, 2U};
+  for (const std::size_t cut_kind : kCutKinds) {
+    SCOPED_TRACE(cut_kind);
+    auto large_prepare = multi_record_prepare();
+    auto encoded =
+        encode_distributed_vector_grouped_aggregate_shuffle_job_prepare_v1(large_prepare);
+    ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+    ASSERT_GT(encoded->bytes().size(), kTlsMaximumPlaintextBytes);
+
+    auto proxy_listener = network::TcpListener::bind();
+    ASSERT_TRUE(proxy_listener.has_value()) << proxy_listener.error().to_string();
+    auto client_leg_result = connect_tcp_pair(*proxy_listener);
+    auto server_leg_result = connect_tcp_pair(*server_listener);
+    ASSERT_TRUE(client_leg_result.has_value()) << client_leg_result.error().to_string();
+    ASSERT_TRUE(server_leg_result.has_value()) << server_leg_result.error().to_string();
+    TcpPair client_leg = std::move(*client_leg_result);
+    TcpPair server_leg = std::move(*server_leg_result);
+
+    auto accepted_tls = network::TlsSocket::accept(*server_context, server_leg.server.descriptor());
+    auto connected_tls =
+        network::TlsSocket::connect(*client_context, client_leg.client.descriptor());
+    ASSERT_TRUE(accepted_tls.has_value()) << accepted_tls.error().to_string();
+    ASSERT_TRUE(connected_tls.has_value()) << connected_tls.error().to_string();
+    auto server = DistributedVectorGroupedAggregateShuffleJobControlTlsServer::create(
+        std::move(*accepted_tls),
+        {.authenticator = &client_authenticator,
+         .service = &*service,
+         .peer_ipv4_address = {127U, 0U, 0U, 1U},
+         .limits = limits()},
+        start);
+    auto client = DistributedVectorGroupedAggregateShuffleJobControlTlsClient::create(
+        std::move(*connected_tls),
+        {.authenticator = &server_authenticator,
+         .node_authorizer = &authorizer,
+         .peer_ipv4_address = {127U, 0U, 0U, 1U},
+         .request =
+             DistributedVectorGroupedAggregateShuffleJobControlRequest{std::move(large_prepare)},
+         .limits = limits()},
+        start);
+    ASSERT_TRUE(server.has_value()) << server.error().to_string();
+    ASSERT_TRUE(client.has_value()) << client.error().to_string();
+
+    for (std::size_t iteration = 0U;
+         iteration < 1024U &&
+         (client->state() !=
+              DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kWritingRequest ||
+          server->state() !=
+              DistributedVectorGroupedAggregateShuffleJobControlTlsServerState::kReadingRequest);
+         ++iteration) {
+      if (client->state() ==
+          DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kHandshaking) {
+        const common::Status progress =
+            client->on_ready(true, true, start + std::chrono::milliseconds{1});
+        ASSERT_TRUE(progress.is_ok()) << progress.to_string();
+      }
+      if (server->state() ==
+          DistributedVectorGroupedAggregateShuffleJobControlTlsServerState::kHandshaking) {
+        const common::Status progress =
+            server->on_ready(true, true, start + std::chrono::milliseconds{1});
+        ASSERT_TRUE(progress.is_ok()) << progress.to_string();
+      }
+      const common::Status client_to_server =
+          forward_raw_tcp({.source = client_leg.server, .destination = server_leg.client});
+      const common::Status server_to_client =
+          forward_raw_tcp({.source = server_leg.client, .destination = client_leg.server});
+      ASSERT_TRUE(client_to_server.is_ok()) << client_to_server.to_string();
+      ASSERT_TRUE(server_to_client.is_ok()) << server_to_client.to_string();
+    }
+    ASSERT_EQ(client->state(),
+              DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kWritingRequest);
+    ASSERT_EQ(server->state(),
+              DistributedVectorGroupedAggregateShuffleJobControlTlsServerState::kReadingRequest);
+    ASSERT_TRUE(client_authenticator.saw_fingerprint);
+    ASSERT_TRUE(server_authenticator.saw_fingerprint);
+
+    for (std::size_t iteration = 0U;
+         iteration < 1024U &&
+         client->state() !=
+             DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kReadingResponse;
+         ++iteration) {
+      const common::Status progress =
+          client->on_ready(true, true, start + std::chrono::milliseconds{2});
+      ASSERT_TRUE(progress.is_ok()) << progress.to_string();
+    }
+    ASSERT_EQ(client->state(),
+              DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kReadingResponse);
+
+    auto first_record = receive_tls_record(client_leg.server);
+    ASSERT_TRUE(first_record.has_value()) << first_record.error().to_string();
+    ASSERT_EQ(std::to_integer<std::uint8_t>((*first_record)[0]), 23U);
+    ASSERT_GT(first_record->size(), kTlsRecordHeaderBytes + 1U);
+    const common::Status first_forwarded = send_raw_tcp(server_leg.client, *first_record);
+    ASSERT_TRUE(first_forwarded.is_ok()) << first_forwarded.to_string();
+    const common::Status first_readable = wait_for_raw_tcp(server_leg.server.descriptor(), POLLIN);
+    ASSERT_TRUE(first_readable.is_ok()) << first_readable.to_string();
+    const common::Status first_consumed =
+        server->on_ready(true, true, start + std::chrono::milliseconds{2});
+    ASSERT_TRUE(first_consumed.is_ok()) << first_consumed.to_string();
+    ASSERT_EQ(server->state(),
+              DistributedVectorGroupedAggregateShuffleJobControlTlsServerState::kReadingRequest);
+    ASSERT_EQ(service->metrics().prepare_requests, 0U);
+    ASSERT_EQ(service->metrics().active_jobs, 0U);
+
+    auto later_record = receive_tls_record(client_leg.server);
+    ASSERT_TRUE(later_record.has_value()) << later_record.error().to_string();
+    ASSERT_EQ(std::to_integer<std::uint8_t>((*later_record)[0]), 23U);
+    ASSERT_GT(later_record->size(), kTlsRecordHeaderBytes + 1U);
+    const std::size_t prefix_bytes = cut_kind == 0U   ? 2U
+                                     : cut_kind == 1U ? kTlsRecordHeaderBytes + 1U
+                                                      : later_record->size() - 1U;
+    SCOPED_TRACE(prefix_bytes);
+    ASSERT_LT(prefix_bytes, later_record->size());
+    const common::Status later_prefix =
+        send_raw_tcp(server_leg.client, std::span{*later_record}.first(prefix_bytes));
+    ASSERT_TRUE(later_prefix.is_ok()) << later_prefix.to_string();
+    ASSERT_TRUE(reset_tcp_owner(server_leg.client).is_ok());
+    ASSERT_TRUE(reset_tcp_owner(client_leg.server).is_ok());
+    ASSERT_TRUE(wait_for_tcp_failure(server_leg.server.descriptor()));
+    ASSERT_TRUE(wait_for_tcp_failure(client_leg.client.descriptor()));
+
+    common::Status server_failure = common::Status::ok();
+    common::Status client_failure = common::Status::ok();
+    for (std::size_t iteration = 0U;
+         iteration < 1024U && (server_failure.is_ok() || client_failure.is_ok()); ++iteration) {
+      if (server_failure.is_ok()) {
+        server_failure = server->on_ready(true, true, start + std::chrono::milliseconds{3});
+      }
+      if (client_failure.is_ok()) {
+        client_failure = client->on_ready(true, true, start + std::chrono::milliseconds{3});
+      }
+    }
+    EXPECT_FALSE(server_failure.is_ok());
+    EXPECT_FALSE(client_failure.is_ok());
+    EXPECT_EQ(server->state(),
+              DistributedVectorGroupedAggregateShuffleJobControlTlsServerState::kFailed);
+    EXPECT_EQ(client->state(),
+              DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kFailed);
+    EXPECT_FALSE(client->result().has_value());
+    EXPECT_EQ(service->metrics().prepare_requests, 0U);
+    EXPECT_EQ(service->metrics().active_jobs, 0U);
+  }
+
+  auto prepared = exchange_tcp(
+      *server_listener, DistributedVectorGroupedAggregateShuffleJobControlRequest{prepare()},
+      *service, {.client = &client_authenticator, .server = &server_authenticator}, authorizer,
+      *server_context, *client_context);
+  ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
+  EXPECT_EQ(prepared->status_code, common::StatusCode::kOk);
+  EXPECT_EQ(service->metrics().prepare_requests, 1U);
   EXPECT_EQ(service->metrics().active_jobs, 1U);
 
   auto cancelled =
