@@ -105,13 +105,18 @@ public:
   [[nodiscard]] std::size_t retained_configuration_bytes() const noexcept;
 
 private:
+  struct ConstructionDetails {
+    std::map<schema::TabletId, raft::NodeId> source_nodes;
+    std::uint16_t hash_version{};
+    std::size_t retained_configuration_bytes{};
+  };
+
   DistributedVectorGroupedAggregateShuffleAuthority(
       common::Uuid query_id, std::vector<DistributedVectorGroupedAggregateShuffleSource> sources,
       std::vector<DistributedVectorGroupedAggregateShuffleDestination> destinations,
       std::vector<query::VectorGroupKeyDefinition> keys,
       std::vector<query::VectorAggregateDefinition> aggregates,
-      std::map<schema::TabletId, raft::NodeId> source_nodes, std::uint16_t hash_version,
-      std::size_t retained_configuration_bytes) noexcept;
+      ConstructionDetails details) noexcept;
 
   common::Uuid query_id_;
   std::vector<DistributedVectorGroupedAggregateShuffleSource> sources_;

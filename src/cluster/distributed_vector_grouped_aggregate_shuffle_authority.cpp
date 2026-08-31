@@ -58,12 +58,11 @@ DistributedVectorGroupedAggregateShuffleAuthority::
         std::vector<DistributedVectorGroupedAggregateShuffleDestination> destinations,
         std::vector<query::VectorGroupKeyDefinition> keys,
         std::vector<query::VectorAggregateDefinition> aggregates,
-        std::map<schema::TabletId, raft::NodeId> source_nodes, const std::uint16_t hash_version,
-        const std::size_t retained_configuration_bytes) noexcept
+        ConstructionDetails details) noexcept
     : query_id_(query_id), sources_(std::move(sources)), destinations_(std::move(destinations)),
       keys_(std::move(keys)), aggregates_(std::move(aggregates)),
-      source_nodes_(std::move(source_nodes)), hash_version_(hash_version),
-      retained_configuration_bytes_(retained_configuration_bytes) {}
+      source_nodes_(std::move(details.source_nodes)), hash_version_(details.hash_version),
+      retained_configuration_bytes_(details.retained_configuration_bytes) {}
 
 common::Result<DistributedVectorGroupedAggregateShuffleAuthority>
 DistributedVectorGroupedAggregateShuffleAuthority::create(
@@ -121,9 +120,9 @@ DistributedVectorGroupedAggregateShuffleAuthority::create(
         std::move(destinations),
         std::move(keys),
         std::move(aggregates),
-        std::move(source_nodes),
-        kDistributedVectorGroupedAggregateShuffleHashVersionV1,
-        *configuration};
+        {.source_nodes = std::move(source_nodes),
+         .hash_version = kDistributedVectorGroupedAggregateShuffleHashVersionV1,
+         .retained_configuration_bytes = *configuration}};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("grouped shuffle authority allocation failed"));
   } catch (const std::length_error&) {

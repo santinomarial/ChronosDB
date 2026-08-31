@@ -104,16 +104,17 @@ encode_distributed_vector_grouped_aggregate_shuffle_job_install_routes_v2(
     return common::make_unexpected(valid);
   const auto routes_length =
       common::checked_multiply(request.routes.size(), kRouteDescriptorLength);
+  if (!routes_length.has_value())
+    return common::make_unexpected(exhausted("grouped shuffle route payload is too large"));
+  const auto route_payload_length = *routes_length;
   const auto frame_length =
-      routes_length.has_value()
-          ? common::checked_add(kHeaderLength + kTrailerLength, *routes_length)
-          : std::nullopt;
+      common::checked_add(kHeaderLength + kTrailerLength, route_payload_length);
   if (!frame_length.has_value() || *frame_length > kMaximumFrameLength)
     return common::make_unexpected(exhausted("grouped shuffle route frame is too large"));
   try {
     std::vector<std::byte> bytes(*frame_length);
     common::ByteWriter route_writer{
-        common::MutableByteView{bytes}.subspan(kHeaderLength, *routes_length)};
+        common::MutableByteView{bytes}.subspan(kHeaderLength, route_payload_length)};
     common::Status route_write = common::Status::ok();
     for (const auto& route : request.routes) {
       if (route_write.is_ok())
@@ -151,11 +152,11 @@ encode_distributed_vector_grouped_aggregate_shuffle_job_install_routes_v2(
     if (write.is_ok())
       write = writer.zero_fill(16U);
     if (write.is_ok())
-      write = writer.write_u64_le(*routes_length);
+      write = writer.write_u64_le(route_payload_length);
     if (write.is_ok())
       write = writer.write_u64_le(request.routes.size());
     const common::ByteView route_bytes =
-        common::ByteView{bytes}.subspan(kHeaderLength, *routes_length);
+        common::ByteView{bytes}.subspan(kHeaderLength, route_payload_length);
     if (write.is_ok())
       write = writer.write_u32_le(common::crc32c(route_bytes));
     if (write.is_ok())
