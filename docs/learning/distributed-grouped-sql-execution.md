@@ -426,10 +426,14 @@ retry authenticates normally. A legal 1,024-source PREPARE now forces the produc
 multiple encrypted application records. The proxy forwards and lets the reducer consume the first
 complete record, verifies the application reader remains incomplete with no dispatch, and tears the
 next record inside its header, after one ciphertext byte, or before its final byte. Both sessions
-fail with no job, and the retained listener heals through a complete PREPARE/CANCEL lifecycle. Later
+fail with no job, and the retained listener heals through a complete PREPARE/CANCEL lifecycle. The
+same record-level proxy now also duplicates one interior ciphertext byte, swaps two adjacent
+ciphertext bytes, or removes one interior byte while preserving the declared TLS record length.
+Integrity failure or reset terminates both owners before dispatch, followed by another healed
+lifecycle. This is encrypted byte-stream corruption evidence, not a kernel packet model. Later
 records under unusually fragmented client flights, multi-record responses, resets racing further
-buffered suffixes, durable job recovery, delay, duplication, reordering, probabilistic loss, and
-larger-set campaigns remain open.
+buffered suffixes, durable job recovery, packet-level delay/duplication/reordering/probabilistic loss
+and bandwidth pressure, and larger-set campaigns remain open.
 
 ### Portable sufficient-state execution boundary
 

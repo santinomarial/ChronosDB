@@ -182,6 +182,12 @@ struct RawTcpRecordSources {
 
 enum class RawTcpRecordSource : std::uint8_t { kClient = 1, kServer = 2 };
 
+enum class EncryptedRecordMutation : std::uint8_t {
+  kDuplicateCiphertextByte = 1,
+  kReorderCiphertextBytes = 2,
+  kDropCiphertextByte = 3,
+};
+
 [[nodiscard]] common::Result<RawTcpRecordSource>
 wait_for_raw_tcp_record(const RawTcpRecordSources sources) {
   for (std::size_t attempt = 0U; attempt < 64U; ++attempt) {
@@ -1475,6 +1481,188 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTlsTest,
     const common::Status later_prefix =
         send_raw_tcp(server_leg.client, std::span{*later_record}.first(prefix_bytes));
     ASSERT_TRUE(later_prefix.is_ok()) << later_prefix.to_string();
+    ASSERT_TRUE(reset_tcp_owner(server_leg.client).is_ok());
+    ASSERT_TRUE(reset_tcp_owner(client_leg.server).is_ok());
+    ASSERT_TRUE(wait_for_tcp_failure(server_leg.server.descriptor()));
+    ASSERT_TRUE(wait_for_tcp_failure(client_leg.client.descriptor()));
+
+    common::Status server_failure = common::Status::ok();
+    common::Status client_failure = common::Status::ok();
+    for (std::size_t iteration = 0U;
+         iteration < 1024U && (server_failure.is_ok() || client_failure.is_ok()); ++iteration) {
+      if (server_failure.is_ok()) {
+        server_failure = server->on_ready(true, true, start + std::chrono::milliseconds{3});
+      }
+      if (client_failure.is_ok()) {
+        client_failure = client->on_ready(true, true, start + std::chrono::milliseconds{3});
+      }
+    }
+    EXPECT_FALSE(server_failure.is_ok());
+    EXPECT_FALSE(client_failure.is_ok());
+    EXPECT_EQ(server->state(),
+              DistributedVectorGroupedAggregateShuffleJobControlTlsServerState::kFailed);
+    EXPECT_EQ(client->state(),
+              DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kFailed);
+    EXPECT_FALSE(client->result().has_value());
+    EXPECT_EQ(service->metrics().prepare_requests, 0U);
+    EXPECT_EQ(service->metrics().active_jobs, 0U);
+  }
+
+  auto prepared = exchange_tcp(
+      *server_listener, DistributedVectorGroupedAggregateShuffleJobControlRequest{prepare()},
+      *service, {.client = &client_authenticator, .server = &server_authenticator}, authorizer,
+      *server_context, *client_context);
+  ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
+  EXPECT_EQ(prepared->status_code, common::StatusCode::kOk);
+  EXPECT_EQ(service->metrics().prepare_requests, 1U);
+  EXPECT_EQ(service->metrics().active_jobs, 1U);
+
+  auto cancelled =
+      exchange_tcp(*server_listener,
+                   DistributedVectorGroupedAggregateShuffleJobControlRequest{
+                       DistributedVectorGroupedAggregateShuffleJobCancel{uuid(1U), 9U, 3U}},
+                   *service, {.client = &client_authenticator, .server = &server_authenticator},
+                   authorizer, *server_context, *client_context);
+  ASSERT_TRUE(cancelled.has_value()) << cancelled.error().to_string();
+  EXPECT_EQ(cancelled->status_code, common::StatusCode::kOk);
+  EXPECT_EQ(service->metrics().cancel_requests, 1U);
+  EXPECT_EQ(service->metrics().cancelled_jobs, 1U);
+  EXPECT_EQ(service->metrics().active_jobs, 1U);
+  const common::Status reaped =
+      service->poll_once(std::chrono::milliseconds{0}, start + std::chrono::milliseconds{30'002});
+  ASSERT_TRUE(reaped.is_ok()) << reaped.to_string();
+  EXPECT_EQ(service->metrics().active_jobs, 0U);
+}
+
+TEST(DistributedVectorGroupedAggregateShuffleJobControlTlsTest,
+     FailsClosedOnDuplicatedReorderedAndInteriorLostCiphertext) {
+  Authenticator client_authenticator{93U};
+  Authenticator server_authenticator{94U};
+  Authorizer authorizer;
+  auto server_context = network::TlsServerContext::create(server_tls());
+  auto client_context = network::TlsClientContext::create(client_tls());
+  ASSERT_TRUE(server_context.has_value()) << server_context.error().to_string();
+  ASSERT_TRUE(client_context.has_value()) << client_context.error().to_string();
+  const std::array result_contexts{DistributedQueryNodeTlsContext{9U, &*client_context}};
+  auto service = DistributedVectorGroupedAggregateShuffleJobService::create(
+      {.local_node_id = 3U,
+       .shuffle_tls = server_tls(),
+       .shuffle_authenticator = &client_authenticator,
+       .result_authenticator = &server_authenticator,
+       .node_authorizer = &authorizer,
+       .result_tls_contexts = result_contexts});
+  ASSERT_TRUE(service.has_value()) << service.error().to_string();
+  auto server_listener = network::TcpListener::bind();
+  ASSERT_TRUE(server_listener.has_value()) << server_listener.error().to_string();
+  const auto start = DistributedVectorGroupedAggregateShuffleJobControlTlsClient::TimePoint{};
+
+  constexpr std::size_t kTlsRecordHeaderBytes = 5U;
+  constexpr std::array<EncryptedRecordMutation, 3U> kMutations{
+      EncryptedRecordMutation::kDuplicateCiphertextByte,
+      EncryptedRecordMutation::kReorderCiphertextBytes,
+      EncryptedRecordMutation::kDropCiphertextByte,
+  };
+  for (const EncryptedRecordMutation mutation : kMutations) {
+    SCOPED_TRACE(static_cast<std::uint8_t>(mutation));
+    auto proxy_listener = network::TcpListener::bind();
+    ASSERT_TRUE(proxy_listener.has_value()) << proxy_listener.error().to_string();
+    auto client_leg_result = connect_tcp_pair(*proxy_listener);
+    auto server_leg_result = connect_tcp_pair(*server_listener);
+    ASSERT_TRUE(client_leg_result.has_value()) << client_leg_result.error().to_string();
+    ASSERT_TRUE(server_leg_result.has_value()) << server_leg_result.error().to_string();
+    TcpPair client_leg = std::move(*client_leg_result);
+    TcpPair server_leg = std::move(*server_leg_result);
+
+    auto accepted_tls = network::TlsSocket::accept(*server_context, server_leg.server.descriptor());
+    auto connected_tls =
+        network::TlsSocket::connect(*client_context, client_leg.client.descriptor());
+    ASSERT_TRUE(accepted_tls.has_value()) << accepted_tls.error().to_string();
+    ASSERT_TRUE(connected_tls.has_value()) << connected_tls.error().to_string();
+    auto server = DistributedVectorGroupedAggregateShuffleJobControlTlsServer::create(
+        std::move(*accepted_tls),
+        {.authenticator = &client_authenticator,
+         .service = &*service,
+         .peer_ipv4_address = {127U, 0U, 0U, 1U},
+         .limits = limits()},
+        start);
+    auto client = DistributedVectorGroupedAggregateShuffleJobControlTlsClient::create(
+        std::move(*connected_tls),
+        {.authenticator = &server_authenticator,
+         .node_authorizer = &authorizer,
+         .peer_ipv4_address = {127U, 0U, 0U, 1U},
+         .request = DistributedVectorGroupedAggregateShuffleJobControlRequest{prepare()},
+         .limits = limits()},
+        start);
+    ASSERT_TRUE(server.has_value()) << server.error().to_string();
+    ASSERT_TRUE(client.has_value()) << client.error().to_string();
+
+    for (std::size_t iteration = 0U;
+         iteration < 1024U &&
+         (client->state() !=
+              DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kWritingRequest ||
+          server->state() !=
+              DistributedVectorGroupedAggregateShuffleJobControlTlsServerState::kReadingRequest);
+         ++iteration) {
+      if (client->state() ==
+          DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kHandshaking) {
+        const common::Status progress =
+            client->on_ready(true, true, start + std::chrono::milliseconds{1});
+        ASSERT_TRUE(progress.is_ok()) << progress.to_string();
+      }
+      if (server->state() ==
+          DistributedVectorGroupedAggregateShuffleJobControlTlsServerState::kHandshaking) {
+        const common::Status progress =
+            server->on_ready(true, true, start + std::chrono::milliseconds{1});
+        ASSERT_TRUE(progress.is_ok()) << progress.to_string();
+      }
+      const common::Status client_to_server =
+          forward_raw_tcp({.source = client_leg.server, .destination = server_leg.client});
+      const common::Status server_to_client =
+          forward_raw_tcp({.source = server_leg.client, .destination = client_leg.server});
+      ASSERT_TRUE(client_to_server.is_ok()) << client_to_server.to_string();
+      ASSERT_TRUE(server_to_client.is_ok()) << server_to_client.to_string();
+    }
+    ASSERT_EQ(client->state(),
+              DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kWritingRequest);
+    ASSERT_EQ(server->state(),
+              DistributedVectorGroupedAggregateShuffleJobControlTlsServerState::kReadingRequest);
+
+    for (std::size_t iteration = 0U;
+         iteration < 1024U &&
+         client->state() !=
+             DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kReadingResponse;
+         ++iteration) {
+      const common::Status progress =
+          client->on_ready(true, true, start + std::chrono::milliseconds{2});
+      ASSERT_TRUE(progress.is_ok()) << progress.to_string();
+    }
+    ASSERT_EQ(client->state(),
+              DistributedVectorGroupedAggregateShuffleJobControlTlsClientState::kReadingResponse);
+
+    auto encrypted_record = receive_tls_record(client_leg.server);
+    ASSERT_TRUE(encrypted_record.has_value()) << encrypted_record.error().to_string();
+    ASSERT_EQ(std::to_integer<std::uint8_t>((*encrypted_record)[0]), 23U);
+    ASSERT_GT(encrypted_record->size(), kTlsRecordHeaderBytes + 3U);
+    const std::size_t mutation_index =
+        kTlsRecordHeaderBytes + ((encrypted_record->size() - kTlsRecordHeaderBytes) / 2U);
+    ASSERT_GT(mutation_index, kTlsRecordHeaderBytes);
+    ASSERT_LT(mutation_index + 1U, encrypted_record->size());
+    switch (mutation) {
+    case EncryptedRecordMutation::kDuplicateCiphertextByte:
+      encrypted_record->insert(encrypted_record->begin() +
+                                   static_cast<std::ptrdiff_t>(mutation_index),
+                               (*encrypted_record)[mutation_index]);
+      break;
+    case EncryptedRecordMutation::kReorderCiphertextBytes:
+      std::swap((*encrypted_record)[mutation_index], (*encrypted_record)[mutation_index + 1U]);
+      break;
+    case EncryptedRecordMutation::kDropCiphertextByte:
+      encrypted_record->erase(encrypted_record->begin() +
+                              static_cast<std::ptrdiff_t>(mutation_index));
+      break;
+    }
+    const common::Status forwarded = send_raw_tcp(server_leg.client, *encrypted_record);
+    ASSERT_TRUE(forwarded.is_ok()) << forwarded.to_string();
     ASSERT_TRUE(reset_tcp_owner(server_leg.client).is_ok());
     ASSERT_TRUE(reset_tcp_owner(client_leg.server).is_ok());
     ASSERT_TRUE(wait_for_tcp_failure(server_leg.server.descriptor()));

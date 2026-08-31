@@ -594,3 +594,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0557](0557-controlled-partial-tls-handshake-record-qualification.md) | Controlled partial TLS handshake-record qualification | accepted |
 | [0558](0558-controlled-partial-client-authentication-record-qualification.md) | Controlled partial client-authentication record qualification | accepted |
 | [0559](0559-controlled-multi-record-job-control-request-qualification.md) | Controlled multi-record Job Control request qualification | accepted |
+| [0560](0560-controlled-encrypted-record-byte-corruption-qualification.md) | Controlled encrypted-record byte-corruption qualification | accepted |

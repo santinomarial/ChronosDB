@@ -1682,11 +1682,14 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   counts prove the reducer cannot authenticate the partial client flight or dispatch work. A valid
   1,024-source PREPARE now spans multiple encrypted application records; the reducer consumes one
   complete record without dispatch, then fails closed when the next record is cut at the same exact
-  three boundaries. The retained backend still heals through authenticated cleanup. Durable query
-  recovery, later records under unusual handshake fragmentation, multi-record responses, resets
-  racing further buffered bytes,
-  delay/duplication/reordering/probabilistic loss, larger-set skew, broader fault campaigns, and
-  measurement remain; the separate packaged Native split-leader process gate is also qualified.
+  three boundaries. It also rejects an encrypted request record with one deterministic interior byte
+  duplicated, two adjacent bytes reordered, or one interior byte removed without changing the
+  declared record length. Every corruption remains below dispatch and the retained backend still
+  heals through authenticated cleanup. Durable query recovery, later records under unusual handshake
+  fragmentation, multi-record responses, resets racing further buffered bytes, packet-level
+  delay/duplication/reordering/probabilistic loss and bandwidth pressure, larger-set skew, broader
+  fault campaigns, and measurement remain; the separate packaged Native split-leader process gate is
+  also qualified.
   The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives
