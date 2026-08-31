@@ -1674,10 +1674,13 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   production mutual-TLS endpoint. It tears both encrypted PREPARE and response records inside the
   record header, after one ciphertext byte, and immediately before the final byte. Request cuts
   dispatch nothing, response cuts publish no result and retry as one retained job, and the backend
-  listener heals for authenticated cleanup. Durable query recovery, TLS handshake and multi-record
-  cuts, resets racing buffered bytes, delay/duplication/reordering/probabilistic loss, larger-set
-  skew, broader fault campaigns, and measurement remain; the separate packaged Native split-leader
-  process gate is also qualified.
+  listener heals for authenticated cleanup. The proxy now also tears the initial ClientHello and
+  first encrypted server-handshake records at the same three boundaries. Both production sessions
+  fail before application authentication or dispatch, and the retained backend then authenticates a
+  fresh lifecycle. Durable query recovery, later client-certificate/Finished and unusual handshake
+  fragmentation, multi-record application cuts, resets racing buffered bytes,
+  delay/duplication/reordering/probabilistic loss, larger-set skew, broader fault campaigns, and
+  measurement remain; the separate packaged Native split-leader process gate is also qualified.
   The computed path now
   has a standalone versioned, checksummed, bounded pre-group `VectorExpression` program codec.
   Mutable in-memory binding now owns it, proves every source leaf against the exact schema, derives

@@ -591,3 +591,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0554](0554-authenticated-partial-frame-tcp-reset-qualification.md) | Authenticated partial-frame TCP reset qualification | accepted |
 | [0555](0555-admitted-prepare-pre-response-tcp-reset-qualification.md) | Admitted PREPARE pre-response TCP reset qualification | accepted |
 | [0556](0556-controlled-partial-tls-record-qualification.md) | Controlled partial TLS-record qualification | accepted |
+| [0557](0557-controlled-partial-tls-handshake-record-qualification.md) | Controlled partial TLS handshake-record qualification | accepted |

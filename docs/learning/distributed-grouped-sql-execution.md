@@ -415,8 +415,13 @@ capturing their exact encrypted request and response records. At each direction 
 header bytes, the complete five-byte header plus one ciphertext byte, or every record byte except the
 last, then resets the forwarding leg. No request prefix dispatches, no response prefix publishes a
 result, exact response retries retain one job, and the same backend listener completes authenticated
-cleanup. Handshake-record cuts, multi-record frames, resets racing buffered suffixes, durable job
-recovery, delay, duplication, reordering, probabilistic loss, and larger-set campaigns remain open.
+cleanup. The same proxy now tears the initial ClientHello record and the first encrypted server
+handshake-flight record at the same three boundaries. Both production session owners fail before
+either certificate fingerprint reaches application authentication, no reducer work is dispatched,
+and the retained listener then authenticates a fresh lifecycle. Later encrypted client-certificate
+and Finished cuts, unusually fragmented handshake flights, multi-record application frames, resets
+racing buffered suffixes, durable job recovery, delay, duplication, reordering, probabilistic loss,
+and larger-set campaigns remain open.
 
 ### Portable sufficient-state execution boundary
 
