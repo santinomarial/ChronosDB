@@ -22,7 +22,10 @@ recovery owner.
 publication. When queue work is ready, the owner reads the oldest visible sealed generation,
 derives its distinct WAL record sequences from authenticated row metadata, and requires one matching
 WAL retry outcome per sequence. It supplies those descriptors, all retained tablet lineage bindings,
-and three distinct system-generated UUIDs to the existing durable flush coordinator.
+and three distinct UUIDs to the existing durable flush coordinator. ADR 0564 makes that outer
+allocation injectable and finite: it rejects nil/same-operation values, `PartId` values already
+present as final or temporary namespace entries, and exact operation-temporary collisions before
+the coordinator acquires work or mutates the filesystem.
 
 Native ingest and SQL INSERT drain ready work after successful idempotent WAL application. A flush
 failure is returned as a request error even though WAL application may already be durable; the same
@@ -50,4 +53,5 @@ four-row part and two-row live suffix, then restarts and observes the same durab
 
 - [ADR 0017](0017-manifest-generations-installation-and-checkpoints.md)
 - [ADR 0229](0229-manifest-aware-single-node-startup.md)
+- [ADR 0564](0564-authoritative-bounded-live-flush-identity-allocation.md)
 - [Durable sealed-head flush coordination](../learning/sealed-head-flush-coordinator.md)

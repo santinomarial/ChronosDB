@@ -28,6 +28,7 @@
 #include <ranges>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -245,14 +246,20 @@ public:
        manifest::RecoveredManifestColumnarState configured_recovered,
        std::vector<TabletFlushOwner> configured_flush_owners,
        std::vector<FreshTablet> configured_fresh, wal::WalCommitCoordinator configured_wal,
-       SingleNodeCommittedAppendObserver* configured_observer) noexcept
+       SingleNodeCommittedAppendObserver* configured_observer,
+       common::UuidGenerator* configured_storage_identities,
+       const std::size_t configured_storage_identity_attempts) noexcept
       : bootstrap_owner(std::move(configured_bootstrap)), raft_runtime(std::move(configured_raft)),
         metadata(std::move(configured_metadata)), catalog(std::move(configured_catalog)),
         tables(std::move(configured_tables)), query_catalog(std::move(configured_query_catalog)),
         recovered(std::move(configured_recovered)),
         flush_owners(std::move(configured_flush_owners)),
         fresh_tablets(std::move(configured_fresh)), wal_coordinator(std::move(configured_wal)),
-        committed_append_observer(configured_observer) {}
+        committed_append_observer(configured_observer),
+        storage_identities(configured_storage_identities == nullptr
+                               ? static_cast<common::UuidGenerator*>(&system_storage_identities)
+                               : configured_storage_identities),
+        maximum_storage_identity_attempts(configured_storage_identity_attempts) {}
 
   [[nodiscard]] common::Status refresh_catalog() {
     auto projected = metadata.state().catalog_snapshot();
@@ -293,6 +300,9 @@ public:
   std::vector<FreshTablet> fresh_tablets;
   wal::WalCommitCoordinator wal_coordinator;
   SingleNodeCommittedAppendObserver* committed_append_observer{};
+  common::SystemUuidGenerator system_storage_identities;
+  common::UuidGenerator* storage_identities{};
+  std::size_t maximum_storage_identity_attempts{};
   bool shutdown{};
 };
 
@@ -321,6 +331,9 @@ void SingleNodeDatabase::shutdown_noexcept() noexcept {
 
 common::Result<SingleNodeDatabase>
 SingleNodeDatabase::open_or_create(const SingleNodeDatabaseConfig& config) {
+  if (config.maximum_storage_identity_attempts == 0U) {
+    return common::make_unexpected(invalid("storage identity candidate limit must be nonzero"));
+  }
   auto bootstrap = runtime::DatabaseBootstrap::open_or_create(config.bootstrap);
   if (!bootstrap.has_value())
     return common::make_unexpected(bootstrap.error());
@@ -519,7 +532,8 @@ SingleNodeDatabase::open_or_create(const SingleNodeDatabaseConfig& config) {
         std::move(*bootstrap), std::move(stable_raft), std::move(*metadata), std::move(*catalog),
         std::move(*tables), std::move(query_catalog), std::move(*recovered),
         std::move(flush_owners), std::vector<FreshTablet>{}, std::move(*coordinator),
-        config.committed_append_observer)};
+        config.committed_append_observer, config.storage_identity_generator,
+        config.maximum_storage_identity_attempts)};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("single-node database allocation failed"));
   } catch (const std::length_error&) {
@@ -758,7 +772,6 @@ common::Result<std::size_t> SingleNodeDatabase::flush_ready_heads() {
   if (impl_ == nullptr || impl_->shutdown || recovered == nullptr)
     return common::make_unexpected(invalid("database is not accepting storage maintenance"));
   try {
-    common::SystemUuidGenerator identities;
     std::size_t completed = 0U;
     for (TabletFlushOwner& owner : impl_->flush_owners) {
       ingest::TabletState* const current_tablet = find_tablet(owner.tablet_id);
@@ -841,30 +854,74 @@ common::Result<std::size_t> SingleNodeDatabase::flush_ready_heads() {
           schema_bindings.push_back({.tablet_id = tablet_id, .lineage = std::cref(table->lineage)});
         }
 
-        std::array<common::Uuid, 3U> generated;
-        for (std::size_t index = 0U; index < generated.size(); ++index) {
-          bool unique = false;
-          for (std::size_t attempt = 0U; attempt < 8U && !unique; ++attempt) {
-            auto identity = identities.generate();
-            if (!identity.has_value())
-              return common::make_unexpected(identity.error());
-            unique = std::ranges::find(generated.begin(), generated.begin() + index, *identity) ==
-                     generated.begin() + index;
-            if (unique)
-              generated[index] = *identity;
+        auto namespace_snapshot = recovered->manifest_storage().scan_namespace();
+        if (!namespace_snapshot.has_value())
+          return common::make_unexpected(namespace_snapshot.error());
+        if (namespace_snapshot->generations.empty())
+          return common::make_unexpected(corruption("Manifest namespace has no generation"));
+        const auto next_generation =
+            common::checked_add(namespace_snapshot->generations.back(), std::uint64_t{1U});
+        if (!next_generation.has_value())
+          return common::make_unexpected(exhausted("Manifest generation identity is exhausted"));
+
+        const auto allocate_identity = [&](const std::string_view kind,
+                                           const auto& collides) -> common::Result<common::Uuid> {
+          for (std::size_t attempt = 0U; attempt < impl_->maximum_storage_identity_attempts;
+               ++attempt) {
+            auto identity = impl_->storage_identities->generate();
+            if (!identity.has_value()) {
+              return common::make_unexpected(
+                  with_context(std::string{"generate "}.append(kind), identity.error()));
+            }
+            if (!identity->is_nil() && !collides(*identity))
+              return *identity;
           }
-          if (!unique)
-            return common::make_unexpected(
-                common::Status{common::StatusCode::kUnavailable,
-                               "storage identity source repeatedly returned duplicates"});
-        }
-        auto part_id = cseg::PartId::from_uuid(generated[0U]);
+          std::string message{kind};
+          message.append(" candidate limit exhausted by nil or colliding identities");
+          return common::make_unexpected(exhausted(std::move(message)));
+        };
+
+        auto part_identity = allocate_identity("CSEG part identity", [&](const common::Uuid& id) {
+          const bool final_collision =
+              std::ranges::any_of(namespace_snapshot->final_parts,
+                                  [&](const cseg::PartId& part) { return part.uuid() == id; });
+          const bool temporary_collision = std::ranges::any_of(
+              namespace_snapshot->temporary_parts, [&](const std::string& name) {
+                const auto parsed = manifest::parse_temporary_part_file_name(name);
+                return parsed.has_value() && parsed->part_id.uuid() == id;
+              });
+          return final_collision || temporary_collision;
+        });
+        if (!part_identity.has_value())
+          return common::make_unexpected(part_identity.error());
+        auto part_id = cseg::PartId::from_uuid(*part_identity);
         if (!part_id.has_value())
           return common::make_unexpected(part_id.error());
+        auto part_nonce =
+            allocate_identity("CSEG part installation nonce", [&](const common::Uuid& id) {
+              if (id == *part_identity)
+                return true;
+              const std::string candidate = manifest::temporary_part_file_name(*part_id, id);
+              return std::ranges::find(namespace_snapshot->temporary_parts, candidate) !=
+                     namespace_snapshot->temporary_parts.end();
+            });
+        if (!part_nonce.has_value())
+          return common::make_unexpected(part_nonce.error());
+        auto manifest_nonce =
+            allocate_identity("Manifest installation nonce", [&](const common::Uuid& id) {
+              if (id == *part_identity || id == *part_nonce)
+                return true;
+              const auto candidate = manifest::temporary_manifest_file_name(*next_generation, id);
+              return candidate.has_value() &&
+                     std::ranges::find(namespace_snapshot->temporary_manifests, *candidate) !=
+                         namespace_snapshot->temporary_manifests.end();
+            });
+        if (!manifest_nonce.has_value())
+          return common::make_unexpected(manifest_nonce.error());
         auto flushed =
             owner.coordinator.try_flush_one(*tablet, {.part_id = *part_id,
-                                                      .part_nonce = generated[1U],
-                                                      .manifest_nonce = generated[2U],
+                                                      .part_nonce = *part_nonce,
+                                                      .manifest_nonce = *manifest_nonce,
                                                       .compression = cseg::PageCompression::kNone,
                                                       .new_retries = retries,
                                                       .schema_bindings = schema_bindings,

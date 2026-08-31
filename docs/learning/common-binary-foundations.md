@@ -137,7 +137,13 @@ bytes across its durable bootstrap and metadata projection; the native adapter r
 owned, or same-allocation candidates under a finite per-identity attempt limit. The database repeats
 the complete fresh-set preflight before its first Raft proposal, so a direct caller cannot turn a
 tablet collision into a committed schema/policy prefix. This does not make the common generator a
-global registry or close the separate WAL, part, retry, and distributed-control identity domains.
+global registry.
+
+Live single-node Manifest-v1 flush is the second concrete owner policy. Its database owner scans
+the locked final/temporary part namespace, rejects exact operation-temporary collisions, and bounds
+each `PartId`/nonce allocation before queue acquisition or filesystem mutation. This closes only
+that live sealed-head output path; WAL, compaction, temporal/movement, retry, distributed-control,
+and deletion/no-reuse identity domains remain separate.
 
 ## Examples
 

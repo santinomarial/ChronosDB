@@ -99,6 +99,27 @@ private:
   common::Uuid identity_;
 };
 
+class ScriptedIdentityGenerator final : public common::UuidGenerator {
+public:
+  explicit ScriptedIdentityGenerator(std::vector<common::Uuid> identities) noexcept
+      : identities_(std::move(identities)) {}
+
+  [[nodiscard]] common::Result<common::Uuid> generate() override {
+    ++calls;
+    if (next_ == identities_.size()) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInternal, "scripted identity source is exhausted"});
+    }
+    return identities_[next_++];
+  }
+
+  std::size_t calls{};
+
+private:
+  std::vector<common::Uuid> identities_;
+  std::size_t next_{};
+};
+
 class FifthCallFailingEntropySource final : public common::UuidEntropySource {
 public:
   [[nodiscard]] common::Result<common::Uuid::Bytes> read() override {
@@ -404,6 +425,18 @@ TEST(SingleNodeDatabaseTest, CreatesAndReopensAnEmptyDatabaseWithoutConfiguredTa
   ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
   EXPECT_TRUE(reopened->query_catalog()->tables().empty());
   EXPECT_TRUE(reopened->shutdown().is_ok());
+}
+
+TEST(SingleNodeDatabaseTest, RejectsZeroStorageIdentityAttemptsBeforeCreatingTheRoot) {
+  TemporaryDirectory directory;
+  SingleNodeDatabaseConfig invalid_config = config(directory);
+  invalid_config.maximum_storage_identity_attempts = 0U;
+
+  auto rejected = SingleNodeDatabase::open_or_create(invalid_config);
+
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(std::filesystem::is_empty(directory.path()));
 }
 
 TEST(SingleNodeDatabaseTest, RejectsMissingAuthoritativeRaftAnchorWithoutAdoptingRetainedBase) {
@@ -1002,6 +1035,163 @@ TEST(NativeProtocolServiceTest, FlushesSealedHeadsAndRecoversOnlyTheWalSuffix) {
   NativeProtocolService recovered_service{*recovered};
   EXPECT_EQ(native_query_count(recovered_service, 47U, "events"), 6);
   EXPECT_TRUE(recovered->shutdown().is_ok());
+}
+
+TEST(SingleNodeDatabaseTest, SkipsNilAndSelectedPartIdentitiesDuringFlush) {
+  TemporaryDirectory directory;
+  seed_catalog(directory);
+  ScriptedIdentityGenerator identities{
+      std::vector{common::Uuid{}, uuid(10U), uuid(10U), uuid(11U), uuid(10U), uuid(11U), uuid(12U),
+                  uuid(10U), uuid(13U), uuid(13U), uuid(14U), uuid(14U), uuid(15U)}};
+  SingleNodeDatabaseConfig database_config = config(directory);
+  database_config.storage_identity_generator = &identities;
+  database_config.maximum_storage_identity_attempts = 3U;
+  auto database = SingleNodeDatabase::open_or_create(database_config);
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+
+  const std::array expected_flushes{0U, 0U, 1U, 0U, 1U};
+  for (std::size_t index = 0U; index < expected_flushes.size(); ++index) {
+    const std::uint8_t seed = static_cast<std::uint8_t>(40U + index);
+    auto appended = database->execute_append(
+        tablet_id(),
+        {.client_id = ingest::test::request_id<ingest::ClientId>(seed),
+         .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(seed + 32U),
+         .batch = batch(static_cast<std::byte>(seed)),
+         .durability = wal::WalDurabilityMode::kLocalSync});
+    ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
+    auto flushed = database->flush_ready_heads();
+    ASSERT_TRUE(flushed.has_value()) << flushed.error().to_string();
+    EXPECT_EQ(*flushed, expected_flushes[index]);
+  }
+
+  auto storage = database->storage_snapshot();
+  ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+  ASSERT_EQ(storage->parts().size(), 2U);
+  EXPECT_EQ(storage->generation(), 3U);
+  EXPECT_EQ(storage->parts()[0U].part_id.uuid(), uuid(10U));
+  EXPECT_EQ(storage->parts()[1U].part_id.uuid(), uuid(13U));
+  EXPECT_EQ(identities.calls, 13U);
+  EXPECT_TRUE(database->shutdown().is_ok());
+}
+
+TEST(SingleNodeDatabaseTest, SkipsRetainedPartAndManifestTemporaryIdentitiesDuringFlush) {
+  TemporaryDirectory directory;
+  seed_catalog(directory);
+  ScriptedIdentityGenerator identities{
+      std::vector{uuid(20U), uuid(21U), uuid(22U), uuid(23U), uuid(24U)}};
+  SingleNodeDatabaseConfig database_config = config(directory);
+  database_config.storage_identity_generator = &identities;
+  database_config.maximum_storage_identity_attempts = 3U;
+  auto database = SingleNodeDatabase::open_or_create(database_config);
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+
+  const cseg::PartId retained_part_id = cseg::PartId::from_uuid(uuid(20U)).value();
+  const std::filesystem::path retained_part_temporary =
+      directory.path() / manifest::kPartsDirectoryName /
+      manifest::temporary_part_file_name(retained_part_id, uuid(90U));
+  const std::filesystem::path retained_manifest_temporary =
+      directory.path() / manifest::kManifestDirectoryName /
+      manifest::temporary_manifest_file_name(2U, uuid(23U)).value();
+  {
+    std::ofstream part{retained_part_temporary, std::ios::binary};
+    ASSERT_TRUE(part.good());
+  }
+  {
+    std::ofstream manifest_candidate{retained_manifest_temporary, std::ios::binary};
+    ASSERT_TRUE(manifest_candidate.good());
+  }
+
+  for (std::uint8_t seed = 60U; seed < 63U; ++seed) {
+    auto appended = database->execute_append(
+        tablet_id(),
+        {.client_id = ingest::test::request_id<ingest::ClientId>(seed),
+         .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(seed + 32U),
+         .batch = batch(static_cast<std::byte>(seed)),
+         .durability = wal::WalDurabilityMode::kLocalSync});
+    ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
+    auto flushed = database->flush_ready_heads();
+    ASSERT_TRUE(flushed.has_value()) << flushed.error().to_string();
+  }
+
+  auto storage = database->storage_snapshot();
+  ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+  ASSERT_EQ(storage->parts().size(), 1U);
+  EXPECT_EQ(storage->generation(), 2U);
+  EXPECT_EQ(storage->parts().front().part_id.uuid(), uuid(21U));
+  EXPECT_EQ(identities.calls, 5U);
+  EXPECT_TRUE(std::filesystem::is_regular_file(retained_part_temporary));
+  EXPECT_TRUE(std::filesystem::is_regular_file(retained_manifest_temporary));
+  EXPECT_TRUE(database->shutdown().is_ok());
+}
+
+TEST(SingleNodeDatabaseTest, BoundsPartIdentityCollisionsWithoutConsumingFlushWork) {
+  TemporaryDirectory directory;
+  seed_catalog(directory);
+  ScriptedIdentityGenerator identities{std::vector{uuid(10U), uuid(11U), uuid(12U), uuid(10U),
+                                                   uuid(10U), uuid(10U), uuid(13U), uuid(14U),
+                                                   uuid(15U)}};
+  SingleNodeDatabaseConfig database_config = config(directory);
+  database_config.storage_identity_generator = &identities;
+  database_config.maximum_storage_identity_attempts = 3U;
+  auto database = SingleNodeDatabase::open_or_create(database_config);
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+
+  for (std::uint8_t seed = 50U; seed < 55U; ++seed) {
+    auto appended = database->execute_append(
+        tablet_id(),
+        {.client_id = ingest::test::request_id<ingest::ClientId>(seed),
+         .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(seed + 32U),
+         .batch = batch(static_cast<std::byte>(seed)),
+         .durability = wal::WalDurabilityMode::kLocalSync});
+    ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
+    if (seed < 54U) {
+      auto flushed = database->flush_ready_heads();
+      ASSERT_TRUE(flushed.has_value()) << flushed.error().to_string();
+    }
+  }
+
+  auto exhausted_flush = database->flush_ready_heads();
+  ASSERT_FALSE(exhausted_flush.has_value());
+  EXPECT_EQ(exhausted_flush.error().code(), common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(identities.calls, 6U);
+  auto unchanged = database->storage_snapshot();
+  ASSERT_TRUE(unchanged.has_value()) << unchanged.error().to_string();
+  EXPECT_EQ(unchanged->generation(), 2U);
+  ASSERT_EQ(unchanged->parts().size(), 1U);
+  EXPECT_EQ(unchanged->parts().front().part_id.uuid(), uuid(10U));
+  std::size_t final_part_count = 0U;
+  std::size_t temporary_part_count = 0U;
+  for (const auto& entry :
+       std::filesystem::directory_iterator{directory.path() / manifest::kPartsDirectoryName}) {
+    if (manifest::parse_part_file_name(entry.path().filename().string()).has_value())
+      ++final_part_count;
+    if (manifest::parse_temporary_part_file_name(entry.path().filename().string()).has_value())
+      ++temporary_part_count;
+  }
+  EXPECT_EQ(final_part_count, 1U);
+  EXPECT_EQ(temporary_part_count, 0U);
+  std::size_t final_manifest_count = 0U;
+  std::size_t temporary_manifest_count = 0U;
+  for (const auto& entry :
+       std::filesystem::directory_iterator{directory.path() / manifest::kManifestDirectoryName}) {
+    if (manifest::parse_manifest_file_name(entry.path().filename().string()).has_value())
+      ++final_manifest_count;
+    if (manifest::parse_temporary_manifest_file_name(entry.path().filename().string()).has_value())
+      ++temporary_manifest_count;
+  }
+  EXPECT_EQ(final_manifest_count, 2U);
+  EXPECT_EQ(temporary_manifest_count, 0U);
+
+  auto retried = database->flush_ready_heads();
+  ASSERT_TRUE(retried.has_value()) << retried.error().to_string();
+  EXPECT_EQ(*retried, 1U);
+  EXPECT_EQ(identities.calls, 9U);
+  auto completed = database->storage_snapshot();
+  ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
+  EXPECT_EQ(completed->generation(), 3U);
+  ASSERT_EQ(completed->parts().size(), 2U);
+  EXPECT_EQ(completed->parts()[1U].part_id.uuid(), uuid(13U));
+  EXPECT_TRUE(database->shutdown().is_ok());
 }
 
 TEST(NativeProtocolServiceTest, ExecutesAsofAcrossTheCompleteManifestSnapshotAfterRestart) {

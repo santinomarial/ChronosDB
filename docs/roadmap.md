@@ -48,9 +48,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
   of the production Linux partial-read/error completion loop. The first owning-domain collision
   policy now makes single-node CREATE scan the authoritative bootstrap/catalog UUID namespace,
   preflight every fresh identity before Raft admission, retry colliding candidates under a finite
-  configured limit, and fail exhaustion without a metadata prefix; WAL, storage-installation,
-  retry, distributed-control, and future deletion/no-reuse identity policies plus broader test
-  utilities remain incomplete. The structured
+  configured limit, and fail exhaustion without a metadata prefix. Live single-node Manifest-v1
+  flush now likewise scans its locked final/temporary part namespace, retries `PartId` and exact
+  candidate-name collisions under a finite injected limit, and preserves ready work without file
+  mutation on exhaustion. WAL, compaction/temporal/movement storage installation, retry,
+  distributed-control, and future deletion/no-reuse identity policies plus broader test utilities
+  remain incomplete. The structured
   diagnostic boundary now includes an exclusively locked, bounded rotating JSON-lines file sink
   with terminal failure semantics, retained-generation limits, daemon CLI integration, and a real
   Linux process restart/rotation test; external collector integration remains incomplete. The phase

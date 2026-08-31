@@ -1010,7 +1010,11 @@ security, packaging, or production-deployment work below, and no Phase 18 exit i
   bootstrap UUIDs, retries every UUID from one existing table under a finite per-identity limit,
   and uses the next available candidates. A repeating collision source proves exact exhaustion
   without a metadata-index advance, and the database owner rejects a colliding tablet before any
-  schema/policy prefix. WAL, storage, INSERT retry, distributed-control, deletion tombstone, and
+  schema/policy prefix. Live Manifest-v1 flush allocation now retries nil, same-operation, selected
+  final-part, temporary-part, and exact candidate-name collisions under an injected finite limit.
+  Exhaustion coverage proves the selected generation, final part count, and temporary namespace
+  remain unchanged before the same queue work succeeds with fresh identities. WAL,
+  compaction/temporal/movement storage, INSERT retry, distributed-control, deletion tombstone, and
   broader identity-domain fault matrices remain deferred.
 - SQL INSERT columnar materialization allocation-failure sweeps, every logical type and integer
   boundary, hostile maximum-width variable values, exact preflight byte accounting before allocation,

@@ -57,6 +57,14 @@ The complete identity vector is generated and validated before the database owne
 operation. Entropy failure or bounded collision exhaustion after any generated prefix therefore
 emits no metadata proposal and cannot create an incomplete durable table prefix.
 
+The same owner now supplies a separate live-flush identity policy. A configured generator is
+borrowed for the database lifetime, or the owner uses OS entropy. Before each Manifest-v1
+sealed-head flush, it scans the locked namespace and retries nil, same-operation, final-part,
+temporary-part, or exact candidate-name collisions under a nonzero per-identity bound. Exhaustion
+occurs before the coordinator acquires the ready queue item or creates a file, so the selected
+Manifest and work position remain unchanged for retry. This policy does not allocate compaction,
+temporal, movement, WAL, or distributed identities.
+
 For INSERT VALUES, token dispatch selects the INSERT parser/binder, evaluates source-free constant
 rows, and transposes them into canonical immutable columnar ownership. The adapter currently
 requires exactly one local tablet, allocates distinct nonnil client/batch identities through the

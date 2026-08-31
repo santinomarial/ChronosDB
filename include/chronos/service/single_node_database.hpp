@@ -3,6 +3,7 @@
 
 #include "chronos/common/result.hpp"
 #include "chronos/common/status.hpp"
+#include "chronos/common/uuid_generator.hpp"
 #include "chronos/ingest/columnar_append_executor.hpp"
 #include "chronos/ingest/retry_directory.hpp"
 #include "chronos/ingest/tablet_state.hpp"
@@ -55,6 +56,12 @@ struct SingleNodeDatabaseConfig {
   raft::RaftPersistentLogOpenOptions raft_recovery{};
   wal::WalCommitCoordinatorConfig wal_commit{};
   SingleNodeCommittedAppendObserver* committed_append_observer{};
+  // Optional thread-affine source for live CSEG part identities and installation nonces. A
+  // supplied source is borrowed and must outlive the database; null selects OS entropy.
+  common::UuidGenerator* storage_identity_generator{};
+  // Maximum candidates requested for each storage identity before collision exhaustion is
+  // reported without consuming the ready sealed-head work.
+  std::size_t maximum_storage_identity_attempts{16U};
 };
 
 struct NewTableIdentities {

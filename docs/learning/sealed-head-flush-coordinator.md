@@ -29,9 +29,10 @@ nonces, the exact retry descriptors, and retained schema lineages. Checkpoint pr
 reclamation remain explicit later operations over the newly selected generation.
 
 The single-node owner now performs that outer policy. It uses one queue/coordinator per local tablet,
-projects retry descriptors from the exact sealed generation's WAL row sequences, supplies system
-UUID identities, and drains after native writes and before shutdown. The service currently runs the
-coordinator synchronously and requests uncompressed pages.
+projects retry descriptors from the exact sealed generation's WAL row sequences, supplies bounded
+namespace-screened UUID identities from an injected or default system source, and drains after
+native writes and before shutdown. The service currently runs the coordinator synchronously and
+requests uncompressed pages.
 
 ## Public interface and ownership
 
@@ -56,6 +57,13 @@ Before the Manifest directory synchronization boundary, a failure returns an err
 of the in-flight work lease restores the same queue item. A successfully installed but unselected
 part is a safe immutable orphan. A retry uses a fresh part identity, because ordinary installation
 never treats a final-name collision as success.
+
+The single-node outer owner enforces that freshness before this coordinator acquires the item. It
+scans the locked namespace and requests each `PartId`/nonce under a finite configured attempt limit.
+Final or temporary part identities, nil values, same-operation duplicates, and exact next-generation
+temporary-name collisions are skipped. Source failure or exhaustion therefore leaves this queue
+item ready and performs no candidate-file operation. The coordinator still repeats all durable
+validation and no-replace installation; the preflight is not permission to adopt an existing final.
 
 At the start of every call, the coordinator compares the highest selected on-disk generation with
 the aggregate publication:
