@@ -347,10 +347,13 @@ TEST(ReplicatedDistributedMutableVectorQueryTcpServerTest,
   const auto responses = client->responses();
   ASSERT_TRUE(responses.has_value()) << responses.error().to_string();
   ASSERT_EQ(responses->size(), 1U);
-  ASSERT_TRUE(responses->front().payload.has_value());
-  EXPECT_TRUE(responses->front().payload->terminal);
-  const auto batch =
-      network::decode_query_result_batch(responses->front().payload->encoded_result_batch);
+  const auto& payload = responses->front().payload;
+  if (!payload.has_value()) {
+    ADD_FAILURE() << "completed mutable vector response has no payload";
+    return;
+  }
+  EXPECT_TRUE(payload->terminal);
+  const auto batch = network::decode_query_result_batch(payload->encoded_result_batch);
   ASSERT_TRUE(batch.has_value()) << batch.error().to_string();
   EXPECT_EQ(batch->row_count(), 2U);
   EXPECT_EQ(batch->columns().size(), 1U);
@@ -445,8 +448,12 @@ TEST(ReplicatedDistributedMutableVectorGroupedAggregateQueryTcpServerTest,
   ASSERT_TRUE(responses.has_value()) << responses.error().to_string();
   ASSERT_EQ(responses->size(), 2U);
   for (std::size_t ordinal = 0U; ordinal < responses->size(); ++ordinal) {
-    ASSERT_TRUE((*responses)[ordinal].payload.has_value());
-    const auto& payload = *(*responses)[ordinal].payload;
+    const auto& response_payload = (*responses)[ordinal].payload;
+    if (!response_payload.has_value()) {
+      ADD_FAILURE() << "completed mutable grouped response has no payload";
+      return;
+    }
+    const auto& payload = *response_payload;
     EXPECT_EQ(payload.position().group_ordinal, ordinal);
     EXPECT_EQ(payload.position().group_count, 2U);
     EXPECT_EQ(payload.position().terminal, ordinal == 1U);

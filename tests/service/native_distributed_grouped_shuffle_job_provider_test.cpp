@@ -97,8 +97,12 @@ TEST(NativeDistributedGroupedShuffleJobProviderTest,
   auto plan = configured.prepare(fragments, keys(), aggregates(), routes, deadline);
   ASSERT_TRUE(plan.has_value()) << plan.error().to_string();
   ASSERT_TRUE(plan->selected);
-  ASSERT_TRUE(plan->reducer_jobs.has_value());
-  const auto& reducers = *plan->reducer_jobs;
+  const auto& reducer_jobs = plan->reducer_jobs;
+  if (!reducer_jobs.has_value()) {
+    ADD_FAILURE() << "selected grouped shuffle plan has no reducer jobs";
+    return;
+  }
+  const auto& reducers = *reducer_jobs;
   EXPECT_EQ(reducers.coordinator_node_id, 9U);
   ASSERT_EQ(reducers.reducer_control_routes.size(), 2U);
   EXPECT_EQ(reducers.reducer_control_routes[0].node_id, 2U);
@@ -145,10 +149,14 @@ TEST(NativeDistributedGroupedShuffleJobProviderTest,
                                  std::chrono::steady_clock::now() + std::chrono::seconds{1});
   ASSERT_TRUE(plan.has_value()) << plan.error().to_string();
   ASSERT_TRUE(plan->selected);
-  ASSERT_TRUE(plan->reducer_jobs.has_value());
-  EXPECT_EQ(plan->reducer_jobs->local_reducer_job_service, &local_service);
-  ASSERT_EQ(plan->reducer_jobs->reducer_control_routes.size(), 2U);
-  EXPECT_EQ(plan->reducer_jobs->reducer_control_routes[1].node_id, 9U);
+  const auto& reducer_jobs = plan->reducer_jobs;
+  if (!reducer_jobs.has_value()) {
+    ADD_FAILURE() << "selected local grouped shuffle plan has no reducer jobs";
+    return;
+  }
+  EXPECT_EQ(reducer_jobs->local_reducer_job_service, &local_service);
+  ASSERT_EQ(reducer_jobs->reducer_control_routes.size(), 2U);
+  EXPECT_EQ(reducer_jobs->reducer_control_routes[1].node_id, 9U);
 }
 
 TEST(NativeDistributedGroupedShuffleJobProviderTest,
@@ -178,7 +186,7 @@ TEST(NativeDistributedGroupedShuffleJobProviderTest,
             common::StatusCode::kInvalidArgument);
 }
 
-TEST(NativeDistributedGroupedShuffleJobProviderTest, RejectsInvalidConstructionAndMovedFromUse) {
+TEST(NativeDistributedGroupedShuffleJobProviderTest, RejectsInvalidConstructionAndEmptyUse) {
   Security security;
   EXPECT_EQ(
       NativeDistributedGroupedShuffleJobProvider::create({.coordinator_node_id = 0U,
@@ -188,16 +196,14 @@ TEST(NativeDistributedGroupedShuffleJobProviderTest, RejectsInvalidConstructionA
           .code(),
       common::StatusCode::kInvalidArgument);
 
-  auto configured = provider(security);
-  auto moved = std::move(configured);
+  NativeDistributedGroupedShuffleJobProvider empty;
   const std::vector fragments{fragment(1U, 2U)};
-  EXPECT_EQ(configured
+  EXPECT_EQ(empty
                 .prepare(fragments, keys(), aggregates(), {},
                          std::chrono::steady_clock::now() + std::chrono::seconds{1})
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);
-  static_cast<void>(moved);
 }
 
 } // namespace

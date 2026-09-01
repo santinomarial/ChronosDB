@@ -742,8 +742,12 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
       << grouped_vector_tcp_responses.error().to_string();
   ASSERT_EQ(grouped_vector_tcp_responses->size(), 2U);
   for (std::size_t ordinal = 0U; ordinal < grouped_vector_tcp_responses->size(); ++ordinal) {
-    ASSERT_TRUE((*grouped_vector_tcp_responses)[ordinal].payload.has_value());
-    const auto& payload = *(*grouped_vector_tcp_responses)[ordinal].payload;
+    const auto& response_payload = (*grouped_vector_tcp_responses)[ordinal].payload;
+    if (!response_payload.has_value()) {
+      ADD_FAILURE() << "completed grouped vector response has no payload";
+      return;
+    }
+    const auto& payload = *response_payload;
     EXPECT_EQ(payload.position().group_ordinal, ordinal);
     EXPECT_EQ(payload.position().group_count, 2U);
     EXPECT_EQ(payload.position().terminal, ordinal == 1U);
