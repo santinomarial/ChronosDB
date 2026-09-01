@@ -241,15 +241,21 @@ TEST(DistributedVectorGroupedAggregateQueryTransportV2Test,
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   EXPECT_EQ(decoded->source_node_id, 2U);
   EXPECT_EQ(decoded->target_node_id, 1U);
-  ASSERT_TRUE(decoded->payload.has_value());
-  EXPECT_EQ(std::get<std::string>(decoded->payload->keys().front().storage()), "west");
-  auto states = std::move(*decoded->payload).take_states();
+  auto& decoded_payload = decoded->payload;
+  if (!decoded_payload.has_value()) {
+    FAIL() << "successful grouped response produced no payload";
+  }
+  EXPECT_EQ(std::get<std::string>(decoded_payload->keys().front().storage()), "west");
+  auto states = std::move(decoded_payload).value().take_states();
   ASSERT_EQ(states.size(), 1U);
   auto value = std::move(states.front()).take_result();
   ASSERT_TRUE(value.has_value());
   EXPECT_EQ(std::get<std::int64_t>(value->storage()), 2);
-  ASSERT_TRUE(decoded->leader_hint.has_value());
-  EXPECT_EQ(decoded->leader_hint->node_id, 3U);
+  const auto& leader_hint = decoded->leader_hint;
+  if (!leader_hint.has_value()) {
+    FAIL() << "redirect response produced no leader hint";
+  }
+  EXPECT_EQ(leader_hint->node_id, 3U);
 
   const DistributedVectorGroupedAggregateQueryResponseV2 failure{
       .source_node_id = 2U,
@@ -340,8 +346,9 @@ TEST(DistributedVectorGroupedAggregateQueryTransportV2Test,
     const auto first = reader.consume(common::ByteView{encoded}.first(split));
     ASSERT_TRUE(first.has_value()) << first.error().to_string();
     EXPECT_EQ(first->consumed_bytes, split);
-    if (split != encoded.size())
+    if (split != encoded.size()) {
       EXPECT_FALSE(first->response.has_value());
+    }
     std::array<std::byte, 3U> successor{std::byte{1U}, std::byte{2U}, std::byte{3U}};
     std::vector<std::byte> tail(common::ByteView{encoded}.subspan(split).begin(),
                                 common::ByteView{encoded}.subspan(split).end());
@@ -416,10 +423,14 @@ TEST(DistributedVectorGroupedAggregateQueryReceiverV2Test,
         result->encoded_responses[ordinal], result->authority.keys, result->authority.aggregates,
         resources);
     ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
-    ASSERT_TRUE(decoded->payload.has_value());
-    EXPECT_EQ(decoded->payload->position().group_ordinal, ordinal);
-    EXPECT_EQ(decoded->payload->position().group_count, 2U);
-    EXPECT_EQ(decoded->payload->position().terminal, ordinal == 1U);
+    const auto& decoded_payload = decoded->payload;
+    if (!decoded_payload.has_value()) {
+      ADD_FAILURE() << "successful grouped response produced no payload";
+      return;
+    }
+    EXPECT_EQ(decoded_payload->position().group_ordinal, ordinal);
+    EXPECT_EQ(decoded_payload->position().group_count, 2U);
+    EXPECT_EQ(decoded_payload->position().terminal, ordinal == 1U);
   }
 }
 
@@ -493,8 +504,11 @@ TEST(DistributedVectorGroupedAggregateQueryReceiverV2Test,
       unavailable->front(), keys(), aggregates(), resources);
   ASSERT_TRUE(decoded.has_value());
   EXPECT_EQ(decoded->status_code, common::StatusCode::kUnavailable);
-  ASSERT_TRUE(decoded->leader_hint.has_value());
-  EXPECT_EQ(decoded->leader_hint->node_id, 3U);
+  const auto& leader_hint = decoded->leader_hint;
+  if (!leader_hint.has_value()) {
+    FAIL() << "unavailable grouped response produced no leader hint";
+  }
+  EXPECT_EQ(leader_hint->node_id, 3U);
 
   const auto verify_invalid = [&](GroupedWorker& worker, const char* label) {
     SCOPED_TRACE(label);

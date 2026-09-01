@@ -259,10 +259,13 @@ TEST(DistributedMutableVectorRowsQueryTcpExecutionTest,
   }
   ASSERT_EQ(execution->state(), DistributedMutableVectorRowsQueryTcpExecutionState::kComplete)
       << execution->failure().to_string();
-  ASSERT_TRUE(execution->result().has_value());
-  EXPECT_EQ(execution->result()->row_count, 0U);
-  ASSERT_EQ(execution->result()->encoded_batches.size(), 1U);
-  auto decoded = network::decode_query_result_batch(execution->result()->encoded_batches.front());
+  const auto& execution_result = execution->result();
+  if (!execution_result.has_value()) {
+    FAIL() << "completed mutable query execution produced no result";
+  }
+  EXPECT_EQ(execution_result->row_count, 0U);
+  ASSERT_EQ(execution_result->encoded_batches.size(), 1U);
+  auto decoded = network::decode_query_result_batch(execution_result->encoded_batches.front());
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   EXPECT_EQ(decoded->row_count(), 0U);
   ASSERT_EQ(decoded->columns().size(), 1U);

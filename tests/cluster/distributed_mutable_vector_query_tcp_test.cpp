@@ -165,8 +165,11 @@ TEST(DistributedMutableVectorQueryTcpTest, OwnsRealConnectListenMutualTlsAndComp
   const auto responses = client->responses();
   ASSERT_TRUE(responses.has_value());
   ASSERT_EQ(responses->size(), 1U);
-  ASSERT_TRUE(responses->front().payload.has_value());
-  EXPECT_TRUE(responses->front().payload->terminal);
+  const auto& response_payload = responses->front().payload;
+  if (!response_payload.has_value()) {
+    FAIL() << "successful mutable query response produced no payload";
+  }
+  EXPECT_TRUE(response_payload->terminal);
   EXPECT_EQ(worker.calls, 1U);
   EXPECT_TRUE(client_authenticator.saw_fingerprint);
   EXPECT_TRUE(server_authenticator.saw_fingerprint);

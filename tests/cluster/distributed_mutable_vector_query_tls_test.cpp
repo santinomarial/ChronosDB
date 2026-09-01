@@ -191,8 +191,11 @@ TEST(DistributedMutableVectorQueryTlsTest,
   ASSERT_TRUE(responses.has_value());
   ASSERT_EQ(responses->size(), 1U);
   EXPECT_EQ(responses->front().status_code, common::StatusCode::kOk);
-  ASSERT_TRUE(responses->front().payload.has_value());
-  EXPECT_TRUE(responses->front().payload->terminal);
+  const auto& response_payload = responses->front().payload;
+  if (!response_payload.has_value()) {
+    FAIL() << "successful mutable TLS query response produced no payload";
+  }
+  EXPECT_TRUE(response_payload->terminal);
 }
 
 TEST(DistributedMutableVectorQueryTlsTest, RejectsMismatchedTargetAndExpiresExactly) {

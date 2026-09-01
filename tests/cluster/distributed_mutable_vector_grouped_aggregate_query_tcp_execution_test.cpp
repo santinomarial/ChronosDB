@@ -267,10 +267,13 @@ TEST(DistributedMutableVectorGroupedAggregateQueryTcpExecutionTest,
   ASSERT_EQ(scheduled->state(),
             DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kComplete)
       << scheduled->failure().to_string();
-  ASSERT_TRUE(scheduled->result().has_value());
-  ASSERT_EQ(scheduled->result()->row_count, 1U);
-  ASSERT_EQ(scheduled->result()->encoded_batches.size(), 1U);
-  auto decoded = network::decode_query_result_batch(scheduled->result()->encoded_batches.front());
+  const auto& scheduled_result = scheduled->result();
+  if (!scheduled_result.has_value()) {
+    FAIL() << "completed grouped query execution produced no result";
+  }
+  ASSERT_EQ(scheduled_result->row_count, 1U);
+  ASSERT_EQ(scheduled_result->encoded_batches.size(), 1U);
+  auto decoded = network::decode_query_result_batch(scheduled_result->encoded_batches.front());
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   ASSERT_EQ(decoded->row_count(), 1U);
   ASSERT_EQ(decoded->columns().size(), 1U);
@@ -443,8 +446,12 @@ TEST(DistributedMutableVectorGroupedAggregateQueryTcpExecutionTest,
   ASSERT_EQ(scheduled->state(),
             DistributedMutableVectorGroupedAggregateQueryTcpExecutionState::kComplete)
       << scheduled->failure().to_string();
-  ASSERT_TRUE(scheduled->result().has_value());
-  auto decoded = network::decode_query_result_batch(scheduled->result()->encoded_batches.front());
+  const auto& scheduled_result = scheduled->result();
+  if (!scheduled_result.has_value()) {
+    FAIL() << "completed split-route grouped query execution produced no result";
+  }
+  ASSERT_FALSE(scheduled_result->encoded_batches.empty());
+  auto decoded = network::decode_query_result_batch(scheduled_result->encoded_batches.front());
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   const network::QueryResultCell* count = decoded->cell(0U, 1U);
   ASSERT_NE(count, nullptr);
