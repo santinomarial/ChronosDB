@@ -152,8 +152,13 @@ public:
   execute(const query::DistributedMutableVectorFragment&) override {
     auto value = response();
     auto authority = query::DistributedVectorGroupedAggregateAuthority{keys(), aggregates()};
+    const auto& payload = value.payload;
+    if (!payload.has_value()) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInternal, "test response produced no payload"});
+    }
     auto encoded = query::encode_distributed_vector_grouped_aggregate_exchange_message(
-        *value.payload, authority.keys, authority.aggregates);
+        payload.value(), authority.keys, authority.aggregates);
     if (!encoded.has_value())
       return common::make_unexpected(encoded.error());
     query::DistributedVectorGroupedAggregateWorkerResultV2 result{
