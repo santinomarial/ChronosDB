@@ -150,8 +150,12 @@ TEST(DistributedMutableVectorGroupedAggregateShuffleExecutionTest,
   EXPECT_EQ(owner->metrics().workers.local_completed_attempts, 1U);
   EXPECT_EQ(owner->metrics().shuffle.local_edges, 1U);
 
-  ASSERT_EQ(owner->result()->encoded_batches.size(), 1U);
-  auto decoded = network::decode_query_result_batch(owner->result()->encoded_batches.front());
+  const auto& owner_result = owner->result();
+  if (!owner_result.has_value()) {
+    FAIL() << "completed grouped shuffle execution produced no result";
+  }
+  ASSERT_EQ(owner_result->encoded_batches.size(), 1U);
+  auto decoded = network::decode_query_result_batch(owner_result->encoded_batches.front());
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   ASSERT_EQ(decoded->row_count(), 1U);
   auto region =

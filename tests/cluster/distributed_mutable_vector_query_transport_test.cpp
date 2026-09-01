@@ -110,7 +110,12 @@ public:
     last = received;
     if (failure.has_value())
       return common::make_unexpected(*failure);
-    return std::vector<DistributedVectorResultExchangeMessage>{*success_response().payload};
+    auto response = success_response();
+    if (!response.payload.has_value()) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInternal, "test response produced no payload"});
+    }
+    return std::vector<DistributedVectorResultExchangeMessage>{std::move(response.payload).value()};
   }
 
   std::size_t calls{};
@@ -205,8 +210,11 @@ TEST(DistributedMutableVectorQueryReceiverTest,
       decode_distributed_vector_query_response_v2_exact(success->front(), result_schema());
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   EXPECT_EQ(decoded->status_code, common::StatusCode::kOk);
-  ASSERT_TRUE(worker.last.has_value());
-  EXPECT_EQ(*worker.last, fragment());
+  const auto& last_fragment = worker.last;
+  if (!last_fragment.has_value()) {
+    FAIL() << "successful mutable query worker retained no fragment";
+  }
+  EXPECT_EQ(last_fragment.value(), fragment());
 
   worker.failure = common::Status{common::StatusCode::kUnavailable, "leader changed"};
   const auto failed = receiver->receive(request, {.authorized = true, .principal_id = 91U});
@@ -239,8 +247,11 @@ TEST(DistributedMutableVectorQuerySenderTest, RetainsOnlyCompleteCorrelatedTermi
   EXPECT_EQ(sender->state(), DistributedQuerySenderState::kWaitingForResponse);
   EXPECT_TRUE(sender->accept_responses(success, now).is_ok());
   EXPECT_EQ(sender->state(), DistributedQuerySenderState::kSucceeded);
-  ASSERT_TRUE(sender->result().has_value());
-  EXPECT_EQ(sender->result()->size(), 1U);
+  const auto& sender_result = sender->result();
+  if (!sender_result.has_value()) {
+    FAIL() << "successful mutable query sender produced no result";
+  }
+  EXPECT_EQ(sender_result->size(), 1U);
 
   auto retrying = DistributedMutableVectorQuerySender::create(
       1U, fragment(),

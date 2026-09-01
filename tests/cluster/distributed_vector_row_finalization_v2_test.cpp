@@ -449,10 +449,11 @@ TEST(DistributedVectorRowFinalizationV2Test,
       ASSERT_NE(folded, nullptr);
       common::ByteReader reader{shifted->value};
       EXPECT_EQ(reader.read_i64_le(), expected_scores[output_row]);
-      EXPECT_EQ(folded->is_null, !expected_labels[output_row].has_value());
-      if (expected_labels[output_row].has_value()) {
-        EXPECT_TRUE(std::ranges::equal(folded->value,
-                                       std::as_bytes(std::span{*expected_labels[output_row]})));
+      const auto& expected_label = expected_labels[output_row];
+      EXPECT_EQ(folded->is_null, !expected_label.has_value());
+      if (expected_label.has_value()) {
+        EXPECT_TRUE(
+            std::ranges::equal(folded->value, std::as_bytes(std::span{expected_label.value()})));
       }
       ++output_row;
     }

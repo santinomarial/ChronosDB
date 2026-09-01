@@ -217,9 +217,13 @@ TEST(DistributedMutableVectorGroupedAggregateQueryReceiverTest,
         bound->encoded_responses[ordinal], bound->authority.keys, bound->authority.aggregates,
         resources);
     ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
-    ASSERT_TRUE(decoded->payload.has_value());
-    EXPECT_EQ(decoded->payload->position().sequence, ordinal + 1U);
-    EXPECT_EQ(decoded->payload->position().terminal, ordinal + 1U == 2U);
+    const auto& decoded_payload = decoded->payload;
+    if (!decoded_payload.has_value()) {
+      ADD_FAILURE() << "successful grouped response produced no payload";
+      return;
+    }
+    EXPECT_EQ(decoded_payload->position().sequence, ordinal + 1U);
+    EXPECT_EQ(decoded_payload->position().terminal, ordinal + 1U == 2U);
   }
 
   worker.wrong_bound_key = true;
@@ -269,8 +273,11 @@ TEST(DistributedMutableVectorGroupedAggregateQueryReceiverTest,
       encoded->front(), expected_keys, expected_aggregates, resources);
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   EXPECT_EQ(decoded->status_code, common::StatusCode::kUnavailable);
-  ASSERT_TRUE(decoded->leader_hint.has_value());
-  EXPECT_EQ(decoded->leader_hint->node_id, 3U);
+  const auto& leader_hint = decoded->leader_hint;
+  if (!leader_hint.has_value()) {
+    FAIL() << "unavailable grouped response produced no leader hint";
+  }
+  EXPECT_EQ(leader_hint->node_id, 3U);
   EXPECT_EQ(hints.calls, 1U);
 }
 
@@ -289,8 +296,11 @@ TEST(DistributedMutableVectorGroupedAggregateQuerySenderTest,
   EXPECT_EQ(decoded_request->fragment, fragment());
 
   ASSERT_TRUE(sender->record_transport_failure(common::StatusCode::kIoError, now).is_ok());
-  ASSERT_TRUE(sender->next_attempt_not_before().has_value());
-  auto second = sender->begin_attempt(*sender->next_attempt_not_before());
+  const auto retry_time = sender->next_attempt_not_before();
+  if (!retry_time.has_value()) {
+    FAIL() << "retryable grouped query failure produced no retry deadline";
+  }
+  auto second = sender->begin_attempt(retry_time.value());
   ASSERT_TRUE(second.has_value()) << second.error().to_string();
   EXPECT_EQ(second->request_bytes, first->request_bytes);
 
@@ -301,8 +311,11 @@ TEST(DistributedMutableVectorGroupedAggregateQuerySenderTest,
   auto complete = responses();
   EXPECT_TRUE(sender->accept_responses(complete, now).is_ok());
   EXPECT_EQ(sender->state(), DistributedQuerySenderState::kSucceeded);
-  ASSERT_TRUE(sender->result().has_value());
-  EXPECT_EQ(sender->result()->size(), 2U);
+  const auto& sender_result = sender->result();
+  if (!sender_result.has_value()) {
+    FAIL() << "successful grouped query sender produced no result";
+  }
+  EXPECT_EQ(sender_result->size(), 2U);
 }
 
 } // namespace
