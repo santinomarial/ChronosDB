@@ -962,9 +962,10 @@ SingleNodeDatabase::compact_append_only_parts(const SingleNodeAppendOnlyCompacti
     auto planned = manifest::plan_append_only_compaction(published->parts(), config.planner_limits);
     if (!planned.has_value())
       return common::make_unexpected(planned.error());
-    if (!planned->has_value())
+    auto plan = std::move(*planned);
+    if (!plan.has_value())
       return std::optional<manifest::AppendOnlyCompactionCompletion>{};
-    const manifest::PlannedAppendOnlyCompaction& plan = **planned;
+    const manifest::PlannedAppendOnlyCompaction& selected_plan = *plan;
 
     std::vector<manifest::TabletSchemaBinding> schema_bindings;
     schema_bindings.reserve(published->durable_tablets().size());
@@ -1040,8 +1041,8 @@ SingleNodeDatabase::compact_append_only_parts(const SingleNodeAppendOnlyCompacti
         recovered->manifest_storage(), recovered->storage_publisher());
     if (!coordinator.has_value())
       return common::make_unexpected(coordinator.error());
-    auto completed = coordinator->compact({.tablet_id = plan.tablet_id(),
-                                           .input_part_ids = plan.input_part_ids(),
+    auto completed = coordinator->compact({.tablet_id = selected_plan.tablet_id(),
+                                           .input_part_ids = selected_plan.input_part_ids(),
                                            .output_part_id = *output_part_id,
                                            .part_nonce = *part_nonce,
                                            .manifest_nonce = *manifest_nonce,
@@ -1058,7 +1059,7 @@ SingleNodeDatabase::compact_append_only_parts(const SingleNodeAppendOnlyCompacti
       }
       return common::make_unexpected(completed.error());
     }
-    return std::optional<manifest::AppendOnlyCompactionCompletion>{std::move(*completed)};
+    return std::optional<manifest::AppendOnlyCompactionCompletion>{*completed};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("single-node compaction allocation failed"));
   } catch (const std::length_error&) {

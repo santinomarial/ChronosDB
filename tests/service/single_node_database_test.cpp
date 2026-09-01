@@ -1252,10 +1252,12 @@ TEST(SingleNodeDatabaseTest, PlansPublishesAndRecoversOneAppendOnlyCompaction) {
       database->compact_append_only_parts({.compression = cseg::PageCompression::kZstd});
   ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
   ASSERT_TRUE(compacted->has_value());
-  EXPECT_EQ((**compacted).output_part_id.uuid(), uuid(16U));
-  EXPECT_EQ((**compacted).manifest_generation, 4U);
-  EXPECT_EQ((**compacted).row_count, 8U);
-  EXPECT_FALSE((**compacted).resumed_durable_manifest);
+  const manifest::AppendOnlyCompactionCompletion expected_completion{
+      .output_part_id = cseg::PartId::from_uuid(uuid(16U)).value(),
+      .manifest_generation = 4U,
+      .row_count = 8U,
+      .resumed_durable_manifest = false};
+  EXPECT_EQ(**compacted, expected_completion);
   EXPECT_EQ(identities.calls, 16U);
 
   auto after = database->storage_snapshot();
