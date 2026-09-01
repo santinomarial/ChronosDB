@@ -535,10 +535,14 @@ TEST(NativeQueryTcpClientTest, ReconnectsThroughRealMutualTlsAndPublishesComplet
   EXPECT_EQ(second->queries(), std::vector<std::vector<std::byte>>{expected_sql});
   EXPECT_EQ(authenticator.calls, 2U);
   EXPECT_EQ(authorizer.observed_nodes, (std::vector<std::uint64_t>{1U, 2U}));
-  ASSERT_TRUE(client->result().has_value());
-  EXPECT_EQ(client->result()->row_count, 0U);
-  ASSERT_EQ(client->result()->encoded_batches.size(), 1U);
-  EXPECT_TRUE(decode_query_result_batch(client->result()->encoded_batches.front()).has_value());
+  const auto& result = client->result();
+  if (!result.has_value()) {
+    ADD_FAILURE() << "completed query client did not publish a result";
+    return;
+  }
+  EXPECT_EQ(result->row_count, 0U);
+  ASSERT_EQ(result->encoded_batches.size(), 1U);
+  EXPECT_TRUE(decode_query_result_batch(result->encoded_batches.front()).has_value());
 }
 
 TEST(NativeQueryTcpClientTest, DoesNotReplayAnAmbiguousTransportClose) {
@@ -630,8 +634,12 @@ TEST(NativeQueryTcpExecutionTest, PollsACompleteRedirectedOperation) {
   EXPECT_FALSE(metrics.active_client);
   EXPECT_FALSE(execution->next_deadline().has_value());
   EXPECT_EQ(execution->current_route().node_id, 2U);
-  ASSERT_TRUE(execution->result().has_value());
-  EXPECT_EQ(execution->result()->encoded_batches.size(), 1U);
+  const auto& result = execution->result();
+  if (!result.has_value()) {
+    ADD_FAILURE() << "completed query execution did not publish a result";
+    return;
+  }
+  EXPECT_EQ(result->encoded_batches.size(), 1U);
   EXPECT_TRUE(execution->poll_once(std::chrono::milliseconds{100}).is_ok());
 }
 

@@ -122,11 +122,15 @@ TEST(NativeQueryRetryTest, ReplaysExactSqlAndPublishesOnlyCompleteResult) {
       retry->receive(server_frame(MessageType::kQueryEnd, second_request.header.request_id));
   ASSERT_TRUE(complete.has_value()) << complete.error().to_string();
   EXPECT_TRUE(complete->completed);
-  ASSERT_TRUE(retry->result().has_value());
-  EXPECT_EQ(retry->result()->row_count, 1U);
-  EXPECT_EQ(retry->result()->payload_bytes, batch.size());
-  ASSERT_EQ(retry->result()->encoded_batches.size(), 1U);
-  EXPECT_EQ(retry->result()->encoded_batches.front(), batch);
+  const auto& result = retry->result();
+  if (!result.has_value()) {
+    ADD_FAILURE() << "completed retry did not publish a result";
+    return;
+  }
+  EXPECT_EQ(result->row_count, 1U);
+  EXPECT_EQ(result->payload_bytes, batch.size());
+  ASSERT_EQ(result->encoded_batches.size(), 1U);
+  EXPECT_EQ(result->encoded_batches.front(), batch);
   EXPECT_TRUE(retry->pending_write().empty());
 }
 
