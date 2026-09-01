@@ -5,6 +5,10 @@ tested subsystem slices, but later roadmap phases and production qualification r
 Use each document's explicit implementation status and the evidence-based roadmap gates; the
 existence of a design document alone is not implementation evidence.
 
+For the deliberately bounded, runnable project story, start with the
+[interview walkthrough](interview-guide.md) and the
+[single-node SQL quickstart](operations/native-server.md#single-node-sql-quickstart).
+
 ## Product
 
 - [Vision](product/vision.md): problem, users, differentiators, principles, and success criteria.

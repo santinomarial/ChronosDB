@@ -94,32 +94,39 @@ loopback server. It creates a table, inserts two `LOCAL_SYNC` rows, reads them, 
 daemon, and reads the recovered rows:
 
 ```sh
-cmake --build build --target chronosd chronosctl
-CHRONOS_DEMO_DIR=$(mktemp -d /tmp/chronosdb-sql-demo.XXXXXX)
+cmake --build --preset dev --target chronosd chronosctl
+CHRONOS_DEMO_ROOT=$(mktemp -d /tmp/chronosdb-sql-demo.XXXXXX)
+CHRONOS_DEMO_DIR="$CHRONOS_DEMO_ROOT/data"
+mkdir "$CHRONOS_DEMO_DIR"
 CHRONOS_DEMO_PORT=7777
-./build/chronosd --data-dir "$CHRONOS_DEMO_DIR" --port "$CHRONOS_DEMO_PORT" \
-  >"$CHRONOS_DEMO_DIR/chronosd.log" 2>&1 &
+./build/dev/chronosd --data-dir "$CHRONOS_DEMO_DIR" --port "$CHRONOS_DEMO_PORT" \
+  >"$CHRONOS_DEMO_ROOT/chronosd.log" 2>&1 &
 CHRONOS_DEMO_PID=$!
-until grep -q "chronosd listening" "$CHRONOS_DEMO_DIR/chronosd.log"; do sleep 0.1; done
+until grep -q "chronosd listening" "$CHRONOS_DEMO_ROOT/chronosd.log"; do sleep 0.1; done
 
-./build/chronosctl sql --host 127.0.0.1 --port "$CHRONOS_DEMO_PORT" --execute \
-  "CREATE TABLE trades (ts TIMESTAMP_NS NOT NULL, symbol SYMBOL NOT NULL, price DECIMAL(20, 8) NOT NULL, note STRING) EVENT TIME ts ORDER KEY (symbol, ts) PARTITION BY time_bucket(INTERVAL '1 day', ts) SHARD KEY (symbol) DEDUP KEY (symbol, ts) RETENTION INTERVAL '30 days' SYSTEM HISTORY RETENTION INTERVAL '7 days' ALLOWED LATENESS INTERVAL '0 seconds'"
-./build/chronosctl sql --host 127.0.0.1 --port "$CHRONOS_DEMO_PORT" --execute \
-  "INSERT INTO trades VALUES (TIMESTAMP '2026-08-24 12:00:00Z', CAST('AAPL' AS SYMBOL), CAST(227.16000000 AS DECIMAL(20,8)), 'opening row'), (TIMESTAMP '2026-08-24 12:00:01Z', CAST('MSFT' AS SYMBOL), CAST(504.26000000 AS DECIMAL(20,8)), NULL)"
-./build/chronosctl sql --host 127.0.0.1 --port "$CHRONOS_DEMO_PORT" --execute \
+./build/dev/chronosctl sql --host 127.0.0.1 --port "$CHRONOS_DEMO_PORT" --execute \
+  "CREATE TABLE trades (ts TIMESTAMP_NS NOT NULL, symbol SYMBOL NOT NULL, price_cents INT64 NOT NULL, note STRING) EVENT TIME ts ORDER KEY (symbol, ts) PARTITION BY time_bucket(INTERVAL '1 day', ts) SHARD KEY (symbol) DEDUP KEY (symbol, ts) RETENTION INTERVAL '30 days' SYSTEM HISTORY RETENTION INTERVAL '7 days' ALLOWED LATENESS INTERVAL '0 seconds'"
+./build/dev/chronosctl sql --host 127.0.0.1 --port "$CHRONOS_DEMO_PORT" --execute \
+  "INSERT INTO trades VALUES (TIMESTAMP '2026-08-24 12:00:00Z', CAST('AAPL' AS SYMBOL), 22716, 'opening row'), (TIMESTAMP '2026-08-24 12:00:01Z', CAST('MSFT' AS SYMBOL), 50426, NULL)"
+./build/dev/chronosctl sql --host 127.0.0.1 --port "$CHRONOS_DEMO_PORT" --execute \
   "SELECT count(*) AS rows FROM trades"
 
 kill -TERM "$CHRONOS_DEMO_PID"
 wait "$CHRONOS_DEMO_PID"
-./build/chronosd --data-dir "$CHRONOS_DEMO_DIR" --port "$CHRONOS_DEMO_PORT" \
-  >"$CHRONOS_DEMO_DIR/chronosd-restarted.log" 2>&1 &
+./build/dev/chronosd --data-dir "$CHRONOS_DEMO_DIR" --port "$CHRONOS_DEMO_PORT" \
+  >"$CHRONOS_DEMO_ROOT/chronosd-restarted.log" 2>&1 &
 CHRONOS_DEMO_PID=$!
-until grep -q "chronosd listening" "$CHRONOS_DEMO_DIR/chronosd-restarted.log"; do sleep 0.1; done
-./build/chronosctl sql --host 127.0.0.1 --port "$CHRONOS_DEMO_PORT" --execute \
+until grep -q "chronosd listening" "$CHRONOS_DEMO_ROOT/chronosd-restarted.log"; do sleep 0.1; done
+./build/dev/chronosctl sql --host 127.0.0.1 --port "$CHRONOS_DEMO_PORT" --execute \
   "SELECT count(*) AS rows FROM trades"
 kill -TERM "$CHRONOS_DEMO_PID"
 wait "$CHRONOS_DEMO_PID"
 ```
+
+On Linux, the same lifecycle is packaged as `scripts/demo-single-node.sh`. It chooses an ephemeral
+port and retains the temporary database and daemon logs for inspection. The packaged daemon is
+Linux-only because its supported socket reactor is `epoll`; use a Linux VM or container when the
+development host is macOS.
 
 `chronosctl sql` executes exactly one statement per process through the existing Protocol v1 client
 session and prints tab-separated column names and rows. Tabs, newlines, carriage returns,

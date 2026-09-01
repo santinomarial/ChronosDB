@@ -1,11 +1,46 @@
 # ChronosDB
 
+A from-scratch C++23 analytical database prototype focused on durability, recoverability, and
+explainable systems engineering. Its interview-ready vertical slice is a real Linux daemon and CLI:
+create a typed event table, insert synchronously durable rows, query them through the native
+protocol, restart the process, and query the recovered rows.
+
 > **Pre-alpha — architecture-phase implementation.** The accepted single-node foundation through
 > Phase 10 is implemented and tested, including WAL/recovery, columnar storage, the supported SQL
 > and vectorized-query surface, and a bounded native networking library. A packaged `chronosd`
 > process now optionally composes a durable single-node data plane for native CREATE, SQL INSERT,
 > canonical ingest, and the supported vector SELECT subset.
 > ChronosDB is not a production server or production database service.
+
+## Run the proof
+
+On Linux with the [documented prerequisites](docs/development/building.md):
+
+```sh
+cmake --preset dev
+cmake --build --preset dev --target chronosd chronosctl
+scripts/demo-single-node.sh
+```
+
+The demo starts a fresh database on an ephemeral loopback port, executes `CREATE TABLE`, inserts two
+`LOCAL_SYNC` rows, prints them, gracefully stops and restarts `chronosd` against the same data
+directory, and prints the recovered rows. It retains the temporary database and logs so the WAL,
+manifest, parts, and shutdown behavior can be inspected afterward. The packaged daemon uses Linux
+`epoll`; on macOS, run the demo in a Linux VM or container.
+
+## What this stopping point proves
+
+| Boundary | Current evidence |
+| --- | --- |
+| Usable vertical slice | Real `chronosd` and `chronosctl` processes perform CREATE, INSERT, SELECT, shutdown, restart, and recovered SELECT. |
+| Storage ownership | Checksummed segmented WAL, idempotent recovery, mutable columnar heads, immutable CSEG parts, manifests, checkpointing, and bounded single-node compaction are implemented without embedding another database engine. |
+| Query path | A custom SQL front end lowers the supported SQL v1 subset into bounded vectorized scans, expressions, aggregates, ordering, and result batches. |
+| Failure discipline | Durable formats are versioned and checked; crash, corruption, allocation-failure, sanitizer, and real-process tests exercise failure boundaries. |
+| Honest limit | This is an interview-ready pre-alpha prototype, not a production database. Raft, subscriptions, distributed execution, movement, and object-storage code are advanced experimental slices with documented integration and qualification gaps. |
+
+For a five-minute walkthrough, design talking points, and likely follow-up questions, see the
+[interview guide](docs/interview-guide.md). Exact server behavior and limitations are in the
+[native server runbook](docs/operations/native-server.md).
 
 ChronosDB is a greenfield, Linux-first distributed real-time analytical database planned primarily in C++23. It is intended to unite durable, low-latency ingestion of event-heavy data with historical columnar SQL, event-time-aware live analytics, system-time history, and resumable subscriptions—through purpose-built storage, query, networking, and replication subsystems rather than an existing database engine hidden behind a new interface.
 
@@ -88,6 +123,7 @@ The roadmap calls for a checksummed segmented WAL and idempotent recovery; appen
 - [Roadmap and phase gates](docs/roadmap.md)
 - [Building and testing](docs/development/building.md)
 - [Development tooling](docs/development/tooling.md)
+- [Interview walkthrough](docs/interview-guide.md)
 - [Common binary foundations](docs/learning/common-binary-foundations.md)
 - [Durable POSIX I/O foundations](docs/learning/posix-io.md)
 - [Product workloads](docs/product/workloads.md)
