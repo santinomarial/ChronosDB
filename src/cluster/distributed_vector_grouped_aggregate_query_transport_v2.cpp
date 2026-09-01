@@ -1037,10 +1037,11 @@ common::Status DistributedVectorGroupedAggregateQuerySenderV2::accept_responses(
           *encoded, keys_, aggregates_, resources_, limits_.payload);
       if (!decoded.has_value())
         return decoded.error();
-      if (!decoded->payload.has_value())
+      auto canonical_payload = std::move(decoded->payload);
+      if (!canonical_payload.has_value())
         return corruption("grouped vector query v2 canonical success payload is absent");
       auto nested = query::encode_distributed_vector_grouped_aggregate_exchange_message(
-          *decoded->payload, keys_, aggregates_);
+          *canonical_payload, keys_, aggregates_);
       if (!nested.has_value())
         return nested.error();
       accepted.push_back(std::move(*nested));

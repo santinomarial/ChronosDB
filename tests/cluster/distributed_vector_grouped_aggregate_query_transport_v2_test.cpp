@@ -597,6 +597,8 @@ TEST(DistributedVectorGroupedAggregateQuerySenderV2Test,
     ASSERT_TRUE(message.has_value()) << message.error().to_string();
     EXPECT_EQ(message->position().group_ordinal, ordinal);
     EXPECT_EQ(message->position().terminal, ordinal == 1U);
+    EXPECT_EQ(std::get<std::string>(message->keys().front().storage()),
+              ordinal == 0U ? "east" : "west");
   }
   EXPECT_FALSE(sender->begin_attempt(now).has_value());
 }
