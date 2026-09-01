@@ -29,6 +29,11 @@ inline constexpr std::size_t kTlsScratchSize = std::size_t{16U} * 1024U;
   return {common::StatusCode::kResourceExhausted, message};
 }
 
+template <typename Value>
+[[nodiscard]] Value* optional_pointer(std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
 template <typename TimePoint>
 [[nodiscard]] bool
 valid_limits(const DistributedVectorGroupedAggregateShuffleTlsLimits& limits) noexcept {
@@ -161,15 +166,15 @@ public:
         return fail(step.error());
       if (step->consumed_bytes != received.size())
         return fail(corruption("grouped shuffle TLS acknowledgment has a suffix"));
-      if (step->ack.has_value()) {
-        const auto& ack = *step->ack;
+      const auto* ack = optional_pointer(step->ack);
+      if (ack != nullptr) {
         const auto& edge = sender_.edge();
-        if (ack.edge.tablet_id != edge.tablet_id || ack.edge.partition_id != edge.partition_id ||
-            ack.edge.source_node_id != edge.source_node_id ||
-            ack.edge.target_node_id != edge.target_node_id ||
-            ack.edge.hash_version != edge.hash_version ||
-            ack.accepted_frames != sender_.frame_count() ||
-            ack.accepted_bytes != sender_.encoded_bytes()) {
+        if (ack->edge.tablet_id != edge.tablet_id || ack->edge.partition_id != edge.partition_id ||
+            ack->edge.source_node_id != edge.source_node_id ||
+            ack->edge.target_node_id != edge.target_node_id ||
+            ack->edge.hash_version != edge.hash_version ||
+            ack->accepted_frames != sender_.frame_count() ||
+            ack->accepted_bytes != sender_.encoded_bytes()) {
           return fail(corruption("grouped shuffle TLS acknowledgment extent differs"));
         }
         state_ = DistributedVectorGroupedAggregateShuffleTlsState::kComplete;
@@ -308,7 +313,10 @@ public:
   [[nodiscard]] common::Status write_ack(const bool readable, const bool writable) {
     if ((!interest_.want_read || !readable) && (!interest_.want_write || !writable))
       return common::Status::ok();
-    auto progress = socket_.write(ack_writer_->pending_write());
+    auto* writer = optional_pointer(ack_writer_);
+    if (writer == nullptr)
+      return fail(corruption("grouped shuffle acknowledgment writer is unavailable"));
+    auto progress = socket_.write(writer->pending_write());
     if (!progress.has_value())
       return fail(progress.error());
     if (progress->state == network::TlsIoState::kClosed)
@@ -320,10 +328,10 @@ public:
     else {
       if (progress->bytes_transferred == 0U)
         return fail(unavailable("grouped shuffle TLS acknowledgment write made no progress"));
-      common::Status consumed = ack_writer_->consume_written(progress->bytes_transferred);
+      common::Status consumed = writer->consume_written(progress->bytes_transferred);
       if (!consumed.is_ok())
         return fail(std::move(consumed));
-      if (ack_writer_->complete()) {
+      if (writer->complete()) {
         state_ = DistributedVectorGroupedAggregateShuffleTlsState::kComplete;
         interest_ = {};
       } else {
@@ -490,11 +498,13 @@ DistributedVectorGroupedAggregateShuffleTlsServer::deadline() const noexcept {
 common::Result<DistributedVectorGroupedAggregateShuffleCompleteStream>
 DistributedVectorGroupedAggregateShuffleTlsServer::take_complete_stream() {
   if (!implementation_ ||
-      implementation_->state_ != DistributedVectorGroupedAggregateShuffleTlsState::kComplete ||
-      !implementation_->stream_.has_value()) {
+      implementation_->state_ != DistributedVectorGroupedAggregateShuffleTlsState::kComplete) {
     return common::make_unexpected(invalid("grouped shuffle TLS complete stream is unavailable"));
   }
-  auto stream = std::move(*implementation_->stream_);
+  auto* complete_stream = optional_pointer(implementation_->stream_);
+  if (complete_stream == nullptr)
+    return common::make_unexpected(invalid("grouped shuffle TLS complete stream is unavailable"));
+  auto stream = std::move(*complete_stream);
   implementation_->stream_.reset();
   return stream;
 }
