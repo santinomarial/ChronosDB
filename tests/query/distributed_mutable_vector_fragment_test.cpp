@@ -15,6 +15,12 @@
 namespace chronos::query {
 namespace {
 
+template <typename T> [[nodiscard]] const T& require_optional(const std::optional<T>& value) {
+  if (!value.has_value())
+    throw std::bad_optional_access{};
+  return value.value();
+}
+
 inline constexpr std::array<std::byte, 8U> kMutableMagic{
     std::byte{'C'}, std::byte{'H'}, std::byte{'D'}, std::byte{'M'},
     std::byte{'V'}, std::byte{'F'}, std::byte{'R'}, std::byte{'1'}};
@@ -371,7 +377,7 @@ TEST(DistributedMutableVectorFragmentTest, BindsTransportsAndExecutesOwnedPreGro
                                                 .pre_group_program = &pre_group});
   ASSERT_TRUE(fragment.has_value()) << fragment.error().to_string();
   ASSERT_TRUE(fragment->pre_group_program.has_value());
-  EXPECT_EQ(*fragment->pre_group_program, pre_group);
+  EXPECT_EQ(require_optional(fragment->pre_group_program), pre_group);
   auto encoded = encode_distributed_mutable_vector_fragment(*fragment);
   ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
   EXPECT_TRUE(std::ranges::equal(encoded->bytes().first(8U), kMutablePreGroupMagic));

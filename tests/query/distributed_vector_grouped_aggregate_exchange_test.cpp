@@ -17,6 +17,12 @@
 namespace chronos::query {
 namespace {
 
+template <typename T> [[nodiscard]] const T& require_optional(const std::optional<T>& value) {
+  if (!value.has_value())
+    throw std::bad_optional_access{};
+  return value.value();
+}
+
 [[nodiscard]] common::Uuid uuid(const std::uint8_t seed) {
   common::Uuid::Bytes bytes{};
   bytes.back() = static_cast<std::byte>(seed);
@@ -287,7 +293,7 @@ TEST(DistributedVectorGroupedAggregateExchangeTest,
       ASSERT_TRUE(second.has_value()) << second.error().to_string();
       EXPECT_EQ(second->consumed_bytes, encoded.bytes().size() - split);
       ASSERT_TRUE(second->message.has_value());
-      EXPECT_EQ(second->message->position().query_id, message.position().query_id);
+      EXPECT_EQ(require_optional(second->message).position().query_id, message.position().query_id);
       EXPECT_FALSE(reader.failed());
     }
     EXPECT_EQ(resources.reserved_memory_bytes(), 0U);

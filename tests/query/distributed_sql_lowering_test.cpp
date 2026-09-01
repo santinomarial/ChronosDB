@@ -18,6 +18,12 @@
 namespace chronos::query {
 namespace {
 
+template <typename T> [[nodiscard]] const T& require_optional(const std::optional<T>& value) {
+  if (!value.has_value())
+    throw std::bad_optional_access{};
+  return value.value();
+}
+
 template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t seed) {
   common::Uuid::Bytes bytes{};
   bytes.front() = static_cast<std::byte>(seed);
@@ -71,12 +77,11 @@ TEST(DistributedSqlLoweringTest, OwnsCanonicalProjectionPredicateOrderLimitAndSc
   EXPECT_EQ(lowered->destination_schema_id, id<schema::SchemaId>(2U));
   EXPECT_EQ(lowered->destination_column_ordinals, (std::vector<std::uint32_t>{2U, 0U}));
   ASSERT_TRUE(lowered->event_time_predicate.has_value());
-  ASSERT_TRUE(lowered->event_time_predicate->lower.has_value());
-  EXPECT_EQ(lowered->event_time_predicate->lower,
-            (cseg::EventTimeBound{.value = 1, .inclusive = false}));
-  ASSERT_TRUE(lowered->event_time_predicate->upper.has_value());
-  EXPECT_EQ(lowered->event_time_predicate->upper,
-            (cseg::EventTimeBound{.value = 9, .inclusive = true}));
+  const auto& event_time_predicate = require_optional(lowered->event_time_predicate);
+  ASSERT_TRUE(event_time_predicate.lower.has_value());
+  EXPECT_EQ(event_time_predicate.lower, (cseg::EventTimeBound{.value = 1, .inclusive = false}));
+  ASSERT_TRUE(event_time_predicate.upper.has_value());
+  EXPECT_EQ(event_time_predicate.upper, (cseg::EventTimeBound{.value = 9, .inclusive = true}));
   EXPECT_EQ(lowered->intent.mode, DistributedVectorPlanMode::kRows);
   EXPECT_EQ(lowered->intent.row_output_indices, (std::vector<std::uint32_t>{0U, 1U, 0U}));
   ASSERT_EQ(lowered->intent.order_keys.size(), 2U);
@@ -109,10 +114,9 @@ TEST(DistributedSqlLoweringTest, ExpandsStarsAndNormalizesTightestOpenBounds) {
   EXPECT_EQ(lowered->destination_column_ordinals, (std::vector<std::uint32_t>{0U, 1U, 2U}));
   EXPECT_EQ(lowered->intent.row_output_indices, (std::vector<std::uint32_t>{0U, 1U, 2U}));
   ASSERT_TRUE(lowered->event_time_predicate.has_value());
-  EXPECT_EQ(lowered->event_time_predicate->lower,
-            (cseg::EventTimeBound{.value = 2, .inclusive = true}));
-  EXPECT_EQ(lowered->event_time_predicate->upper,
-            (cseg::EventTimeBound{.value = 9, .inclusive = false}));
+  const auto& event_time_predicate = require_optional(lowered->event_time_predicate);
+  EXPECT_EQ(event_time_predicate.lower, (cseg::EventTimeBound{.value = 2, .inclusive = true}));
+  EXPECT_EQ(event_time_predicate.upper, (cseg::EventTimeBound{.value = 9, .inclusive = false}));
   EXPECT_TRUE(lowered->intent.order_keys.empty());
   EXPECT_FALSE(lowered->intent.limit.has_value());
 }
@@ -125,19 +129,20 @@ TEST(DistributedSqlLoweringTest, NormalizesInclusiveBetweenWithComparisonBounds)
   auto lowered = lower_bound_sql_select_to_distributed_vector_rows(select);
   ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
   ASSERT_TRUE(lowered->event_time_predicate.has_value());
-  EXPECT_EQ(lowered->event_time_predicate->lower,
-            (cseg::EventTimeBound{.value = 3, .inclusive = false}));
-  EXPECT_EQ(lowered->event_time_predicate->upper,
-            (cseg::EventTimeBound{.value = 9, .inclusive = true}));
+  const auto& event_time_predicate = require_optional(lowered->event_time_predicate);
+  EXPECT_EQ(event_time_predicate.lower, (cseg::EventTimeBound{.value = 3, .inclusive = false}));
+  EXPECT_EQ(event_time_predicate.upper, (cseg::EventTimeBound{.value = 9, .inclusive = true}));
 
   BoundSqlSelect reversed = bind("SELECT value FROM metrics WHERE ts BETWEEN "
                                  "TIMESTAMP '1970-01-01 00:00:00.000000009Z' AND "
                                  "TIMESTAMP '1970-01-01 00:00:00.000000002Z'");
   auto empty = lower_bound_sql_select_to_distributed_vector_rows(reversed);
   ASSERT_TRUE(empty.has_value()) << empty.error().status().to_string();
-  EXPECT_EQ(empty->event_time_predicate->lower,
+  ASSERT_TRUE(empty->event_time_predicate.has_value());
+  const auto& empty_event_time_predicate = require_optional(empty->event_time_predicate);
+  EXPECT_EQ(empty_event_time_predicate.lower,
             (cseg::EventTimeBound{.value = 9, .inclusive = true}));
-  EXPECT_EQ(empty->event_time_predicate->upper,
+  EXPECT_EQ(empty_event_time_predicate.upper,
             (cseg::EventTimeBound{.value = 2, .inclusive = true}));
 }
 
@@ -167,7 +172,7 @@ TEST(DistributedSqlLoweringTest, OwnsSourceIndependentOutputsAndARealRowAnchor) 
   ASSERT_EQ(lowered->intent.order_keys.size(), 1U);
   EXPECT_EQ(lowered->intent.order_keys.front().output_index, 1U);
   ASSERT_TRUE(lowered->coordinator_projection.has_value());
-  const auto& projection = *lowered->coordinator_projection;
+  const auto& projection = require_optional(lowered->coordinator_projection);
   ASSERT_EQ(projection.outputs.size(), 3U);
   const auto& seven = std::get<DistributedVectorRowConstantOutput>(projection.outputs[0]);
   common::ByteReader seven_reader{seven.canonical_value};
@@ -191,8 +196,9 @@ TEST(DistributedSqlLoweringTest, OwnsSourceIndependentOutputsAndARealRowAnchor) 
   ASSERT_EQ(anchored->result_schema.columns.size(), 1U);
   EXPECT_EQ(anchored->result_schema.columns.front().name, "ts");
   ASSERT_TRUE(anchored->coordinator_projection.has_value());
+  const auto& anchored_projection = require_optional(anchored->coordinator_projection);
   const auto& missing =
-      std::get<DistributedVectorRowConstantOutput>(anchored->coordinator_projection->outputs[1]);
+      std::get<DistributedVectorRowConstantOutput>(anchored_projection.outputs[1]);
   EXPECT_TRUE(missing.is_null);
   EXPECT_TRUE(missing.canonical_value.empty());
 }
@@ -211,7 +217,7 @@ TEST(DistributedSqlLoweringTest, OwnsCheckedRowDependentCoordinatorExpressions) 
   ASSERT_EQ(lowered->result_schema.columns.size(), 3U);
   EXPECT_EQ(lowered->result_schema.columns[1].name, "label");
   ASSERT_TRUE(lowered->coordinator_projection.has_value());
-  const auto& projection = *lowered->coordinator_projection;
+  const auto& projection = require_optional(lowered->coordinator_projection);
   ASSERT_EQ(projection.outputs.size(), 4U);
   const auto& shifted =
       std::get<DistributedVectorRowExpressionOutput>(projection.outputs[0]).expression;
@@ -235,10 +241,9 @@ TEST(DistributedSqlLoweringTest, OwnsCheckedRowDependentCoordinatorExpressions) 
   EXPECT_EQ(computed_order->destination_column_ordinals, (std::vector<std::uint32_t>{0U, 1U, 2U}));
   EXPECT_TRUE(computed_order->intent.order_keys.empty());
   ASSERT_TRUE(computed_order->coordinator_projection.has_value());
-  ASSERT_EQ(computed_order->coordinator_projection->order_keys.size(), 1U);
-  EXPECT_EQ(computed_order->coordinator_projection->order_keys.front()
-                .expression.result_shape()
-                .type.kind(),
+  const auto& computed_projection = require_optional(computed_order->coordinator_projection);
+  ASSERT_EQ(computed_projection.order_keys.size(), 1U);
+  EXPECT_EQ(computed_projection.order_keys.front().expression.result_shape().type.kind(),
             schema::LogicalTypeKind::kInt64);
 
   const auto mixed_order = lower_bound_sql_select_to_distributed_vector_rows(
@@ -246,11 +251,10 @@ TEST(DistributedSqlLoweringTest, OwnsCheckedRowDependentCoordinatorExpressions) 
   ASSERT_TRUE(mixed_order.has_value()) << mixed_order.error().status().to_string();
   EXPECT_TRUE(mixed_order->intent.order_keys.empty());
   ASSERT_TRUE(mixed_order->coordinator_projection.has_value());
-  ASSERT_EQ(mixed_order->coordinator_projection->order_keys.size(), 2U);
-  EXPECT_EQ(mixed_order->coordinator_projection->order_keys[0].null_placement,
-            ScalarNullPlacement::kFirst);
-  EXPECT_EQ(mixed_order->coordinator_projection->order_keys[1].direction,
-            PhysicalSortDirection::kDescending);
+  const auto& mixed_projection = require_optional(mixed_order->coordinator_projection);
+  ASSERT_EQ(mixed_projection.order_keys.size(), 2U);
+  EXPECT_EQ(mixed_projection.order_keys[0].null_placement, ScalarNullPlacement::kFirst);
+  EXPECT_EQ(mixed_projection.order_keys[1].direction, PhysicalSortDirection::kDescending);
 
   const auto constant_order = lower_bound_sql_select_to_distributed_vector_rows(
       bind("SELECT value FROM metrics ORDER BY lower('constant')"));
@@ -290,10 +294,11 @@ TEST(DistributedSqlLoweringTest, OwnsGeneralBooleanCoordinatorPredicates) {
   EXPECT_EQ(lowered->intent.row_output_indices, (std::vector<std::uint32_t>{0U, 1U, 2U}));
   EXPECT_FALSE(lowered->event_time_predicate.has_value());
   ASSERT_TRUE(lowered->coordinator_projection.has_value());
-  ASSERT_TRUE(lowered->coordinator_projection->predicate.has_value());
-  EXPECT_EQ(lowered->coordinator_projection->predicate->result_shape().type.kind(),
-            schema::LogicalTypeKind::kBool);
-  EXPECT_TRUE(lowered->coordinator_projection->predicate->result_shape().nullable);
+  const auto& projection = require_optional(lowered->coordinator_projection);
+  ASSERT_TRUE(projection.predicate.has_value());
+  const auto& predicate = require_optional(projection.predicate);
+  EXPECT_EQ(predicate.result_shape().type.kind(), schema::LogicalTypeKind::kBool);
+  EXPECT_TRUE(predicate.result_shape().nullable);
   ASSERT_EQ(lowered->intent.order_keys.size(), 1U);
   EXPECT_EQ(lowered->intent.order_keys.front().output_index, 2U);
 
@@ -302,8 +307,9 @@ TEST(DistributedSqlLoweringTest, OwnsGeneralBooleanCoordinatorPredicates) {
   ASSERT_TRUE(constant.has_value()) << constant.error().status().to_string();
   EXPECT_EQ(constant->destination_column_ordinals, (std::vector<std::uint32_t>{1U}));
   ASSERT_TRUE(constant->coordinator_projection.has_value());
-  ASSERT_TRUE(constant->coordinator_projection->predicate.has_value());
-  EXPECT_EQ(constant->coordinator_projection->predicate->instructions().size(), 1U);
+  const auto& constant_projection = require_optional(constant->coordinator_projection);
+  ASSERT_TRUE(constant_projection.predicate.has_value());
+  EXPECT_EQ(require_optional(constant_projection.predicate).instructions().size(), 1U);
 
   auto disjoint_time = lower_bound_sql_select_to_distributed_vector_rows(
       bind("SELECT value FROM metrics WHERE ts NOT BETWEEN "
@@ -311,7 +317,7 @@ TEST(DistributedSqlLoweringTest, OwnsGeneralBooleanCoordinatorPredicates) {
   ASSERT_TRUE(disjoint_time.has_value()) << disjoint_time.error().status().to_string();
   EXPECT_FALSE(disjoint_time->event_time_predicate.has_value());
   ASSERT_TRUE(disjoint_time->coordinator_projection.has_value());
-  EXPECT_TRUE(disjoint_time->coordinator_projection->predicate.has_value());
+  EXPECT_TRUE(require_optional(disjoint_time->coordinator_projection).predicate.has_value());
 
   const auto bounded = lower_bound_sql_select_to_distributed_vector_rows(
       select, {.maximum_expression_configuration_bytes = 1U});
@@ -386,10 +392,9 @@ TEST(DistributedSqlLoweringTest, OwnsCanonicalGlobalAggregateProjectionPredicate
   EXPECT_EQ(lowered->input_rows.destination_schema_id, id<schema::SchemaId>(2U));
   EXPECT_EQ(lowered->input_rows.destination_column_ordinals, (std::vector<std::uint32_t>{2U, 1U}));
   ASSERT_TRUE(lowered->input_rows.event_time_predicate.has_value());
-  EXPECT_EQ(lowered->input_rows.event_time_predicate->lower,
-            (cseg::EventTimeBound{.value = 2, .inclusive = true}));
-  EXPECT_EQ(lowered->input_rows.event_time_predicate->upper,
-            (cseg::EventTimeBound{.value = 9, .inclusive = true}));
+  const auto& event_time_predicate = require_optional(lowered->input_rows.event_time_predicate);
+  EXPECT_EQ(event_time_predicate.lower, (cseg::EventTimeBound{.value = 2, .inclusive = true}));
+  EXPECT_EQ(event_time_predicate.upper, (cseg::EventTimeBound{.value = 9, .inclusive = true}));
   EXPECT_EQ(lowered->input_rows.intent.mode, DistributedVectorPlanMode::kRows);
   EXPECT_EQ(lowered->input_rows.intent.row_output_indices, (std::vector<std::uint32_t>{0U, 1U}));
   EXPECT_TRUE(lowered->input_rows.intent.visible_row_output_indices.empty());
@@ -485,15 +490,14 @@ TEST(DistributedSqlLoweringTest, LowersCheckedFinalGlobalAggregateExpressions) {
   ASSERT_EQ(lowered->result_schema.columns.size(), 3U);
   EXPECT_EQ(lowered->result_schema.columns[0].name, "_");
   ASSERT_TRUE(lowered->coordinator_projection.has_value());
-  ASSERT_EQ(lowered->coordinator_projection->outputs.size(), 3U);
-  ASSERT_EQ(lowered->coordinator_projection->result_schema.columns.size(), 3U);
-  EXPECT_EQ(lowered->coordinator_projection->result_schema.columns[0].name, "shifted");
-  EXPECT_EQ(lowered->coordinator_projection->result_schema.columns[1].name, "minimum_label");
-  EXPECT_EQ(lowered->coordinator_projection->result_schema.columns[2].name, "doubled");
-  EXPECT_EQ(lowered->coordinator_projection->outputs[0].result_shape().type.kind(),
-            schema::LogicalTypeKind::kInt64);
-  EXPECT_EQ(lowered->coordinator_projection->outputs[1].result_shape().type.kind(),
-            schema::LogicalTypeKind::kString);
+  const auto& projection = require_optional(lowered->coordinator_projection);
+  ASSERT_EQ(projection.outputs.size(), 3U);
+  ASSERT_EQ(projection.result_schema.columns.size(), 3U);
+  EXPECT_EQ(projection.result_schema.columns[0].name, "shifted");
+  EXPECT_EQ(projection.result_schema.columns[1].name, "minimum_label");
+  EXPECT_EQ(projection.result_schema.columns[2].name, "doubled");
+  EXPECT_EQ(projection.outputs[0].result_shape().type.kind(), schema::LogicalTypeKind::kInt64);
+  EXPECT_EQ(projection.outputs[1].result_shape().type.kind(), schema::LogicalTypeKind::kString);
 
   const auto bounded = lower_bound_sql_select_to_distributed_vector_aggregate(
       select, {.maximum_expression_configuration_bytes = 1U});
@@ -547,10 +551,9 @@ TEST(DistributedSqlLoweringTest, LowersDirectGroupedSufficientStateIntent) {
   EXPECT_EQ(lowered->destination_schema_id, id<schema::SchemaId>(2U));
   EXPECT_EQ(lowered->destination_column_ordinals, (std::vector<std::uint32_t>{1U, 2U}));
   ASSERT_TRUE(lowered->event_time_predicate.has_value());
-  EXPECT_EQ(lowered->event_time_predicate->lower,
-            (cseg::EventTimeBound{.value = 2, .inclusive = true}));
-  EXPECT_EQ(lowered->event_time_predicate->upper,
-            (cseg::EventTimeBound{.value = 9, .inclusive = true}));
+  const auto& event_time_predicate = require_optional(lowered->event_time_predicate);
+  EXPECT_EQ(event_time_predicate.lower, (cseg::EventTimeBound{.value = 2, .inclusive = true}));
+  EXPECT_EQ(event_time_predicate.upper, (cseg::EventTimeBound{.value = 9, .inclusive = true}));
   EXPECT_EQ(lowered->intent.mode, DistributedVectorPlanMode::kGroupedAggregate);
   EXPECT_EQ(lowered->intent.group_key_input_indices, (std::vector<std::uint32_t>{0U, 1U}));
   ASSERT_EQ(lowered->intent.aggregates.size(), 3U);
@@ -610,7 +613,7 @@ TEST(DistributedSqlLoweringTest, SplitsRawGroupedStateFromCheckedFinalProjection
   EXPECT_EQ(lowered->result_schema.columns[2].type.kind(), schema::LogicalTypeKind::kInt64);
   ASSERT_TRUE(lowered->coordinator_projection.has_value());
   const DistributedVectorGroupedAggregateCoordinatorProjection& projection =
-      *lowered->coordinator_projection;
+      require_optional(lowered->coordinator_projection);
   ASSERT_EQ(projection.outputs.size(), 3U);
   ASSERT_EQ(projection.result_schema.columns.size(), 3U);
   EXPECT_EQ(projection.result_schema.columns[0].name, "adjusted");
@@ -629,8 +632,9 @@ TEST(DistributedSqlLoweringTest, LowersComputedGroupedSufficientStatePrograms) {
   ASSERT_TRUE(grouped_key.has_value()) << grouped_key.error().status().to_string();
   EXPECT_EQ(grouped_key->destination_column_ordinals, (std::vector<std::uint32_t>{2U}));
   ASSERT_TRUE(grouped_key->pre_group_program.has_value());
-  ASSERT_EQ(grouped_key->pre_group_program->outputs.size(), 1U);
-  const VectorExpression& key = grouped_key->pre_group_program->outputs.front();
+  const auto& grouped_key_program = require_optional(grouped_key->pre_group_program);
+  ASSERT_EQ(grouped_key_program.outputs.size(), 1U);
+  const VectorExpression& key = grouped_key_program.outputs.front();
   ASSERT_EQ(key.instructions().size(), 3U);
   EXPECT_EQ(std::get<VectorInputExpression>(key.instructions()[0]).input_column_ordinal, 2U);
   EXPECT_TRUE(std::holds_alternative<VectorConstantExpression>(key.instructions()[1]));
@@ -650,12 +654,12 @@ TEST(DistributedSqlLoweringTest, LowersComputedGroupedSufficientStatePrograms) {
   ASSERT_TRUE(aggregate_input.has_value()) << aggregate_input.error().status().to_string();
   EXPECT_EQ(aggregate_input->destination_column_ordinals, (std::vector<std::uint32_t>{1U, 2U}));
   ASSERT_TRUE(aggregate_input->pre_group_program.has_value());
-  ASSERT_EQ(aggregate_input->pre_group_program->outputs.size(), 2U);
-  EXPECT_EQ(std::get<VectorInputExpression>(
-                aggregate_input->pre_group_program->outputs[0].instructions()[0])
+  const auto& aggregate_input_program = require_optional(aggregate_input->pre_group_program);
+  ASSERT_EQ(aggregate_input_program.outputs.size(), 2U);
+  EXPECT_EQ(std::get<VectorInputExpression>(aggregate_input_program.outputs[0].instructions()[0])
                 .input_column_ordinal,
             1U);
-  const VectorExpression& input = aggregate_input->pre_group_program->outputs[1];
+  const VectorExpression& input = aggregate_input_program.outputs[1];
   ASSERT_EQ(input.instructions().size(), 3U);
   EXPECT_EQ(std::get<VectorInputExpression>(input.instructions()[0]).input_column_ordinal, 2U);
   EXPECT_EQ(std::get<VectorBinaryExpression>(input.instructions()[2]).operation,
@@ -670,10 +674,11 @@ TEST(DistributedSqlLoweringTest, LowersComputedGroupedSufficientStatePrograms) {
            "GROUP BY value % 3"));
   ASSERT_TRUE(computed_final.has_value()) << computed_final.error().status().to_string();
   ASSERT_TRUE(computed_final->pre_group_program.has_value());
-  ASSERT_EQ(computed_final->pre_group_program->outputs.size(), 1U);
+  ASSERT_EQ(require_optional(computed_final->pre_group_program).outputs.size(), 1U);
   ASSERT_TRUE(computed_final->coordinator_projection.has_value());
-  ASSERT_EQ(computed_final->coordinator_projection->outputs.size(), 2U);
-  const VectorExpression& shifted = computed_final->coordinator_projection->outputs[0];
+  const auto& computed_projection = require_optional(computed_final->coordinator_projection);
+  ASSERT_EQ(computed_projection.outputs.size(), 2U);
+  const VectorExpression& shifted = computed_projection.outputs[0];
   ASSERT_EQ(shifted.instructions().size(), 3U);
   EXPECT_EQ(std::get<VectorInputExpression>(shifted.instructions()[0]).input_column_ordinal, 0U);
   EXPECT_EQ(std::get<VectorBinaryExpression>(shifted.instructions()[2]).operation,
@@ -722,9 +727,9 @@ TEST(DistributedSqlLoweringTest, OwnsGeneralGlobalAggregatePredicates) {
             (std::vector<std::uint32_t>{0U, 1U, 2U}));
   EXPECT_FALSE(lowered->input_rows.event_time_predicate.has_value());
   ASSERT_TRUE(lowered->coordinator_predicate.has_value());
-  EXPECT_EQ(lowered->coordinator_predicate->result_shape().type.kind(),
-            schema::LogicalTypeKind::kBool);
-  EXPECT_TRUE(lowered->coordinator_predicate->result_shape().nullable);
+  const auto& predicate = require_optional(lowered->coordinator_predicate);
+  EXPECT_EQ(predicate.result_shape().type.kind(), schema::LogicalTypeKind::kBool);
+  EXPECT_TRUE(predicate.result_shape().nullable);
   ASSERT_EQ(lowered->intent.aggregates.size(), 3U);
   EXPECT_FALSE(lowered->intent.aggregates[0].input_index.has_value());
   EXPECT_EQ(lowered->intent.aggregates[1].input_index, 2U);
@@ -735,7 +740,7 @@ TEST(DistributedSqlLoweringTest, OwnsGeneralGlobalAggregatePredicates) {
   ASSERT_TRUE(constant.has_value()) << constant.error().status().to_string();
   EXPECT_EQ(constant->input_rows.destination_column_ordinals, (std::vector<std::uint32_t>{0U}));
   ASSERT_TRUE(constant->coordinator_predicate.has_value());
-  EXPECT_EQ(constant->coordinator_predicate->instructions().size(), 1U);
+  EXPECT_EQ(require_optional(constant->coordinator_predicate).instructions().size(), 1U);
 
   auto disjoint_time = lower_bound_sql_select_to_distributed_vector_aggregate(
       bind("SELECT count(*) AS n FROM metrics WHERE ts NOT BETWEEN "
