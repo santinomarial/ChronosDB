@@ -201,8 +201,12 @@ TEST(ReplicatedRaftTransportRuntimeTest, AppliesExactResidentGroupElectionTimeou
     auto result = observation->wait();
     ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->size(), 1U);
-    ASSERT_TRUE(result->front().observation.has_value());
-    observed_term = result->front().observation->current_term;
+    const auto& current_observation = result->front().observation;
+    if (!current_observation.has_value()) {
+      ADD_FAILURE() << "durable runtime returned no group observation";
+      return;
+    }
+    observed_term = current_observation->current_term;
   }
   EXPECT_EQ(observed_term, 1U);
   EXPECT_TRUE(transport->shutdown().is_ok());

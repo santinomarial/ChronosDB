@@ -27,6 +27,7 @@
 #include <memory>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -37,6 +38,14 @@
 
 namespace chronos::service {
 namespace {
+
+[[nodiscard]] std::string bytes_as_string(const std::span<const std::byte> bytes) {
+  std::string result;
+  result.reserve(bytes.size());
+  for (const std::byte byte : bytes)
+    result.push_back(static_cast<char>(byte));
+  return result;
+}
 
 [[nodiscard]] std::filesystem::path network_fixture(const char* name) {
   return std::filesystem::path{CHRONOS_NETWORK_FIXTURE_DIR} / "tls" / name;
@@ -523,11 +532,14 @@ void elect_and_provision(ReplicatedIngestRuntime& owner, const bool include_remo
     return {};
   auto results = completion->wait();
   EXPECT_TRUE(results.has_value());
-  if (!results.has_value() || results->size() != 1U || !results->front().observation.has_value())
+  if (!results.has_value() || results->size() != 1U)
     return {};
   EXPECT_TRUE(results->front().status.is_ok()) << results->front().status.to_string();
   EXPECT_FALSE(results->front().transition.has_value());
-  return *results->front().observation;
+  auto observation = std::move(results->front().observation);
+  if (!observation.has_value())
+    return {};
+  return std::move(*observation);
 }
 
 void replicate_current(ReplicatedIngestRuntime& owner, const raft::GroupId& group_id) {
@@ -1412,14 +1424,8 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
       network::decode_query_result_batch(native_distributed_grouped->responses[0].frame.payload);
   ASSERT_TRUE(remote_grouped_first.has_value()) << remote_grouped_first.error().to_string();
   ASSERT_EQ(remote_grouped_first->row_count(), 2U);
-  EXPECT_EQ(
-      std::string(reinterpret_cast<const char*>(remote_grouped_first->cell(0U, 0U)->value.data()),
-                  remote_grouped_first->cell(0U, 0U)->value.size()),
-      "missing");
-  EXPECT_EQ(
-      std::string(reinterpret_cast<const char*>(remote_grouped_first->cell(1U, 0U)->value.data()),
-                  remote_grouped_first->cell(1U, 0U)->value.size()),
-      "x");
+  EXPECT_EQ(bytes_as_string(remote_grouped_first->cell(0U, 0U)->value), "missing");
+  EXPECT_EQ(bytes_as_string(remote_grouped_first->cell(1U, 0U)->value), "x");
   common::ByteReader grouped_first_count{remote_grouped_first->cell(0U, 2U)->value};
   common::ByteReader grouped_second_count{remote_grouped_first->cell(1U, 2U)->value};
   EXPECT_EQ(grouped_first_count.read_i64_le().value(), 2);
@@ -1455,10 +1461,7 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsMultipleTabletGroupsAndPinsTheirWhole
   EXPECT_EQ(remote_grouped_sufficient_batch->columns()[0].name, "tag");
   EXPECT_EQ(remote_grouped_sufficient_batch->columns()[1].name, "n");
   ASSERT_FALSE(remote_grouped_sufficient_batch->cell(0U, 0U)->is_null);
-  EXPECT_EQ(std::string(reinterpret_cast<const char*>(
-                            remote_grouped_sufficient_batch->cell(0U, 0U)->value.data()),
-                        remote_grouped_sufficient_batch->cell(0U, 0U)->value.size()),
-            "x");
+  EXPECT_EQ(bytes_as_string(remote_grouped_sufficient_batch->cell(0U, 0U)->value), "x");
   EXPECT_TRUE(remote_grouped_sufficient_batch->cell(1U, 0U)->is_null);
   common::ByteReader grouped_sufficient_first_count{
       remote_grouped_sufficient_batch->cell(0U, 1U)->value};
@@ -2316,8 +2319,9 @@ TEST(ReplicatedIngestDatabaseTest, CoordinatesNativeQueryAcrossSplitLocalAndRemo
       .execution_timeout = std::chrono::milliseconds{5000},
       .maximum_poll_wait = std::chrono::milliseconds{1}};
   NativeProtocolService distributed_service{*database, *read_barrier, distributed_config};
-  std::jthread remote_thread{[&](const std::stop_token& stop) {
-    while (!stop.stop_requested())
+  std::atomic<bool> stop_remote{};
+  std::thread remote_thread{[&] {
+    while (!stop_remote.load(std::memory_order_acquire))
       EXPECT_TRUE(remote_server->poll_once(std::chrono::milliseconds{1}).is_ok());
   }};
   auto distributed_response =
@@ -2354,7 +2358,8 @@ TEST(ReplicatedIngestDatabaseTest, CoordinatesNativeQueryAcrossSplitLocalAndRemo
   const auto remote_metrics = remote_server->metrics();
   EXPECT_EQ(remote_metrics.completed_read_authorities, 1U);
   EXPECT_EQ(remote_metrics.completed_mutable_queries, 1U);
-  remote_thread.request_stop();
+  // Release/acquire publishes the stop request to the sole polling thread.
+  stop_remote.store(true, std::memory_order_release);
   remote_thread.join();
   EXPECT_TRUE(remote_server->shutdown().is_ok());
   ASSERT_TRUE(read_barrier->shutdown().is_ok());
