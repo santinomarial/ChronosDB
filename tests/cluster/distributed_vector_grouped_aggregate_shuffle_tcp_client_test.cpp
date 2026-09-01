@@ -170,17 +170,20 @@ TEST(DistributedVectorGroupedAggregateShuffleTcpClientTest,
     if (!accepted_socket.has_value()) {
       auto accepted = listener->accept_one();
       ASSERT_TRUE(accepted.has_value());
-      if (accepted->has_value()) {
-        accepted_socket.emplace(std::move(accepted->value()));
+      auto accepted_connection = std::move(accepted).value();
+      if (accepted_connection.has_value()) {
+        accepted_socket.emplace(std::move(accepted_connection).value());
         auto tls = network::TlsSocket::accept(*server_context, accepted_socket->descriptor());
         ASSERT_TRUE(tls.has_value());
+        const auto peer_endpoint = accepted_socket->peer_endpoint();
+        ASSERT_TRUE(peer_endpoint.has_value());
         auto carrier = DistributedVectorGroupedAggregateShuffleTlsServer::create(
             std::move(*tls), resources,
             {.authenticator = &client_authenticator,
              .node_authorizer = &authorizer,
              .authority = &expected,
              .local_node_id = 3U,
-             .peer_ipv4_address = accepted_socket->peer_endpoint().value().address,
+             .peer_ipv4_address = peer_endpoint->address,
              .limits = limits()},
             DistributedVectorGroupedAggregateShuffleTlsServer::TimePoint::clock::now());
         ASSERT_TRUE(carrier.has_value()) << carrier.error().to_string();
@@ -196,6 +199,9 @@ TEST(DistributedVectorGroupedAggregateShuffleTcpClientTest,
                                 static_cast<short>((client_interest.want_read ? POLLIN : 0) |
                                                    (client_interest.want_write ? POLLOUT : 0))};
     if (server.has_value()) {
+      if (!accepted_socket.has_value()) {
+        FAIL() << "TLS shuffle server exists without its accepted TCP socket";
+      }
       const auto server_interest = server->interest();
       descriptors[count++] = {.fd = accepted_socket->descriptor(),
                               .events =
@@ -224,11 +230,14 @@ TEST(DistributedVectorGroupedAggregateShuffleTcpClientTest,
   }
 
   ASSERT_EQ(client->state(), DistributedVectorGroupedAggregateShuffleTcpClientState::kComplete);
-  ASSERT_TRUE(server.has_value());
-  ASSERT_EQ(server->state(), DistributedVectorGroupedAggregateShuffleTlsState::kComplete);
+  if (!server.has_value()) {
+    FAIL() << "completed TCP shuffle client produced no TLS shuffle server";
+  }
+  auto& completed_server = server.value();
+  ASSERT_EQ(completed_server.state(), DistributedVectorGroupedAggregateShuffleTlsState::kComplete);
   EXPECT_TRUE(client_authenticator.saw_fingerprint);
   EXPECT_TRUE(server_authenticator.saw_fingerprint);
-  auto complete = server->take_complete_stream();
+  auto complete = completed_server.take_complete_stream();
   ASSERT_TRUE(complete.has_value()) << complete.error().to_string();
   EXPECT_EQ(complete->messages.size(), 2U);
   EXPECT_EQ(complete->edge.target_node_id, 3U);

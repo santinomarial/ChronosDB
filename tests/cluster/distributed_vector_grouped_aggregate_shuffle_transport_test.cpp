@@ -207,8 +207,12 @@ TEST(DistributedVectorGroupedAggregateShuffleTransportTest,
     auto second = reader.consume(suffix);
     ASSERT_TRUE(second.has_value()) << second.error().to_string();
     EXPECT_EQ(second->consumed_bytes, encoded.size() - split);
-    ASSERT_TRUE(second->frame.has_value());
-    EXPECT_EQ(second->frame->edge.partition_id, message.edge.partition_id);
+    const auto& decoded_frame = second->frame;
+    if (!decoded_frame.has_value()) {
+      ADD_FAILURE() << "complete shuffle frame split produced no value";
+      return;
+    }
+    EXPECT_EQ(decoded_frame->edge.partition_id, message.edge.partition_id);
     EXPECT_EQ(reader.buffered_bytes(), 0U);
   }
 
@@ -224,7 +228,6 @@ TEST(DistributedVectorGroupedAggregateShuffleTransportTest,
   EXPECT_EQ(consumed, encoded.size());
   EXPECT_EQ(cursor.consume_written(1U).code(), common::StatusCode::kInvalidArgument);
   auto moved = std::move(cursor);
-  EXPECT_TRUE(cursor.complete());
   EXPECT_TRUE(moved.complete());
 
   auto damaged = encoded;

@@ -146,10 +146,15 @@ struct Carriers {
   DistributedVectorGroupedAggregateShuffleTlsClient client;
 };
 
+struct CarrierAuthenticators {
+  Authenticator* client{};
+  Authenticator* server{};
+};
+
 [[nodiscard]] common::Result<Carriers>
 create_carriers(DistributedVectorGroupedAggregateShuffleAuthority& expected, Authorizer& authorizer,
-                Authenticator& client_authenticator, Authenticator& server_authenticator,
-                query::QueryResourceContext resources,
+                const CarrierAuthenticators authenticators,
+                const query::QueryResourceContext& resources,
                 const DistributedVectorGroupedAggregateShuffleTlsLimits limits) {
   auto encoded = messages();
   auto sender = DistributedVectorGroupedAggregateShuffleStreamSender::create(
@@ -171,7 +176,7 @@ create_carriers(DistributedVectorGroupedAggregateShuffleAuthority& expected, Aut
     return common::make_unexpected(client_socket.error());
   auto server = DistributedVectorGroupedAggregateShuffleTlsServer::create(
       std::move(*server_socket), resources,
-      {.authenticator = &client_authenticator,
+      {.authenticator = authenticators.client,
        .node_authorizer = &authorizer,
        .authority = &expected,
        .local_node_id = 3U,
@@ -182,7 +187,7 @@ create_carriers(DistributedVectorGroupedAggregateShuffleAuthority& expected, Aut
     return common::make_unexpected(server.error());
   auto client = DistributedVectorGroupedAggregateShuffleTlsClient::create(
       std::move(*client_socket), std::move(*sender), expected,
-      {.authenticator = &server_authenticator,
+      {.authenticator = authenticators.server,
        .node_authorizer = &authorizer,
        .peer_ipv4_address = {127U, 0U, 0U, 1U},
        .limits = limits},
@@ -204,8 +209,9 @@ TEST(DistributedVectorGroupedAggregateShuffleTlsTest,
       .exchange_timeout = std::chrono::milliseconds{100},
       .stream = {.maximum_frames = 2U, .maximum_encoded_bytes = 1U << 20U}};
   auto resources = query::QueryResourceContext::create(4U << 20U).value();
-  auto carriers = create_carriers(expected, authorizer, client_authenticator, server_authenticator,
-                                  resources, limits);
+  auto carriers = create_carriers(
+      expected, authorizer, {.client = &client_authenticator, .server = &server_authenticator},
+      resources, limits);
   ASSERT_TRUE(carriers.has_value()) << carriers.error().to_string();
   EXPECT_FALSE(carriers->server.take_complete_stream().has_value());
   const auto now =
@@ -241,7 +247,8 @@ TEST(DistributedVectorGroupedAggregateShuffleTlsTest,
   const DistributedVectorGroupedAggregateShuffleTlsLimits limits{
       .handshake_timeout = std::chrono::milliseconds{100},
       .exchange_timeout = std::chrono::milliseconds{100}};
-  auto denied = create_carriers(expected, authorizer, client_authenticator, server_authenticator,
+  auto denied = create_carriers(expected, authorizer,
+                                {.client = &client_authenticator, .server = &server_authenticator},
                                 resources, limits);
   ASSERT_TRUE(denied.has_value()) << denied.error().to_string();
   const auto progress =
