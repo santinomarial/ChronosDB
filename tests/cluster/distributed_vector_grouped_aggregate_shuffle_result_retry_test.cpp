@@ -75,7 +75,11 @@ TEST(DistributedVectorGroupedAggregateShuffleResultRetryTest,
   const auto first_bytes = drain(first->stream);
   EXPECT_EQ(retry.begin_attempt(start).error().code(), common::StatusCode::kUnavailable);
   ASSERT_TRUE(retry.record_attempt_failure(common::StatusCode::kIoError, start).is_ok());
-  EXPECT_EQ(*retry.next_attempt_not_before(), start + std::chrono::milliseconds{10});
+  const auto first_retry_time = retry.next_attempt_not_before();
+  if (!first_retry_time.has_value()) {
+    FAIL() << "retryable failure produced no first retry deadline";
+  }
+  EXPECT_EQ(first_retry_time.value(), start + std::chrono::milliseconds{10});
   EXPECT_EQ(retry.begin_attempt(start + std::chrono::milliseconds{9}).error().code(),
             common::StatusCode::kUnavailable);
 
@@ -86,7 +90,11 @@ TEST(DistributedVectorGroupedAggregateShuffleResultRetryTest,
                   .record_attempt_failure(common::StatusCode::kResourceExhausted,
                                           start + std::chrono::milliseconds{10})
                   .is_ok());
-  EXPECT_EQ(*retry.next_attempt_not_before(), start + std::chrono::milliseconds{30});
+  const auto second_retry_time = retry.next_attempt_not_before();
+  if (!second_retry_time.has_value()) {
+    FAIL() << "second retryable failure produced no retry deadline";
+  }
+  EXPECT_EQ(second_retry_time.value(), start + std::chrono::milliseconds{30});
   auto third = retry.begin_attempt(start + std::chrono::milliseconds{30});
   ASSERT_TRUE(third.has_value());
   EXPECT_EQ(drain(third->stream), first_bytes);
@@ -112,7 +120,11 @@ TEST(DistributedVectorGroupedAggregateShuffleResultRetryTest,
   ASSERT_TRUE(succeeded.record_acknowledged().is_ok());
   EXPECT_EQ(succeeded.state(),
             DistributedVectorGroupedAggregateShuffleResultRetryState::kSucceeded);
-  EXPECT_EQ(*succeeded.last_status_code(), common::StatusCode::kOk);
+  const auto last_status = succeeded.last_status_code();
+  if (!last_status.has_value()) {
+    FAIL() << "acknowledged retry produced no terminal status";
+  }
+  EXPECT_EQ(last_status.value(), common::StatusCode::kOk);
 
   auto failed = DistributedVectorGroupedAggregateShuffleResultRetry::create(
                     expected, schema,

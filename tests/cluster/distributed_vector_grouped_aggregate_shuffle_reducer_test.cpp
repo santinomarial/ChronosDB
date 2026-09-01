@@ -62,17 +62,23 @@ message(const schema::TabletId& tablet_id, const std::size_t count) {
           std::move(states)};
 }
 
+struct StreamInput {
+  schema::TabletId tablet_id;
+  raft::NodeId source_node{};
+  std::size_t count{};
+};
+
 [[nodiscard]] DistributedVectorGroupedAggregateShuffleCompleteStream
 stream(const DistributedVectorGroupedAggregateShuffleAuthority& expected,
-       const schema::TabletId& tablet_id, const raft::NodeId source_node, const std::size_t count) {
+       const StreamInput& input) {
   std::vector<query::DistributedVectorGroupedAggregateExchangeMessage> messages;
-  messages.push_back(message(tablet_id, count));
+  messages.push_back(message(input.tablet_id, input.count));
   auto nested = query::encode_distributed_vector_grouped_aggregate_exchange_message(
                     messages.front(), expected.key_definitions(), expected.aggregate_definitions())
                     .value();
-  return {.edge = {.tablet_id = tablet_id,
+  return {.edge = {.tablet_id = input.tablet_id,
                    .partition_id = 0U,
-                   .source_node_id = source_node,
+                   .source_node_id = input.source_node,
                    .target_node_id = 3U,
                    .hash_version = expected.hash_version()},
           .messages = std::move(messages),
@@ -94,8 +100,8 @@ TEST(DistributedVectorGroupedAggregateShuffleReducerTest,
   auto expected = authority();
   auto reducer = DistributedVectorGroupedAggregateShuffleReducer::create(expected, 0U, 3U);
   ASSERT_TRUE(reducer.has_value()) << reducer.error().to_string();
-  auto second = stream(expected, tablet(3U), 4U, 2U);
-  auto first = stream(expected, tablet(2U), 2U, 1U);
+  auto second = stream(expected, {.tablet_id = tablet(3U), .source_node = 4U, .count = 2U});
+  auto first = stream(expected, {.tablet_id = tablet(2U), .source_node = 2U, .count = 1U});
   EXPECT_TRUE(reducer->accept_stream(second).is_ok());
   EXPECT_TRUE(reducer->accept_stream(second).is_ok());
   EXPECT_EQ(reducer->finish().code(), common::StatusCode::kUnavailable);
@@ -121,16 +127,16 @@ TEST(DistributedVectorGroupedAggregateShuffleReducerTest,
      RejectsConflictingRetryWrongRouteAndNoncanonicalExtent) {
   auto expected = authority();
   auto reducer = DistributedVectorGroupedAggregateShuffleReducer::create(expected, 0U, 3U).value();
-  auto accepted = stream(expected, tablet(2U), 2U, 1U);
+  auto accepted = stream(expected, {.tablet_id = tablet(2U), .source_node = 2U, .count = 1U});
   EXPECT_TRUE(reducer.accept_stream(accepted).is_ok());
-  auto conflicting = stream(expected, tablet(2U), 2U, 9U);
+  auto conflicting = stream(expected, {.tablet_id = tablet(2U), .source_node = 2U, .count = 9U});
   EXPECT_EQ(reducer.accept_stream(conflicting).code(), common::StatusCode::kAlreadyExists);
   EXPECT_EQ(reducer.metrics().duplicate_streams, 0U);
 
-  auto wrong_route = stream(expected, tablet(3U), 4U, 1U);
+  auto wrong_route = stream(expected, {.tablet_id = tablet(3U), .source_node = 4U, .count = 1U});
   wrong_route.edge.target_node_id = 5U;
   EXPECT_EQ(reducer.accept_stream(wrong_route).code(), common::StatusCode::kInvalidArgument);
-  auto wrong_extent = stream(expected, tablet(3U), 4U, 1U);
+  auto wrong_extent = stream(expected, {.tablet_id = tablet(3U), .source_node = 4U, .count = 1U});
   ++wrong_extent.encoded_bytes;
   EXPECT_EQ(reducer.accept_stream(wrong_extent).code(), common::StatusCode::kInvalidArgument);
 

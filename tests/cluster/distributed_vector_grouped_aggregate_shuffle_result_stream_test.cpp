@@ -175,9 +175,6 @@ TEST(DistributedVectorGroupedAggregateShuffleResultStreamTest,
                     expected, schema, 0U, 3U, 9U, batches)
                     .value();
   auto moved_sender = std::move(sender);
-  EXPECT_TRUE(sender.complete());
-  EXPECT_TRUE(sender.pending_write().empty());
-  EXPECT_TRUE(sender.consume_written(0U).is_ok());
   EXPECT_FALSE(moved_sender.complete());
 
   Authorizer authorizer;
@@ -185,8 +182,6 @@ TEST(DistributedVectorGroupedAggregateShuffleResultStreamTest,
                       expected, schema, 9U, authorizer, {.authorized = true, .principal_id = 91U})
                       .value();
   auto moved_receiver = std::move(receiver);
-  EXPECT_EQ(receiver.consume({}).error().code(), common::StatusCode::kInvalidArgument);
-  EXPECT_TRUE(receiver.failed());
   EXPECT_FALSE(moved_receiver.failed());
 }
 

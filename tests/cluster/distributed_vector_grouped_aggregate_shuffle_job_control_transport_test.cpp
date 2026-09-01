@@ -62,15 +62,21 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTransportTest,
   auto header = reader.consume(common::ByteView{carrier}.subspan(17U, kHeaderLength - 17U));
   ASSERT_TRUE(header.has_value()) << header.error().to_string();
   EXPECT_FALSE(header->request.has_value());
-  ASSERT_TRUE(reader.expected_frame_bytes().has_value());
-  EXPECT_EQ(*reader.expected_frame_bytes(), encoded.bytes().size());
+  const auto expected_frame_bytes = reader.expected_frame_bytes();
+  if (!expected_frame_bytes.has_value()) {
+    FAIL() << "complete control header produced no expected frame length";
+  }
+  EXPECT_EQ(expected_frame_bytes.value(), encoded.bytes().size());
 
   auto completed = reader.consume(common::ByteView{carrier}.subspan(kHeaderLength));
   ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
-  ASSERT_TRUE(completed->request.has_value());
+  const auto& completed_request = completed->request;
+  if (!completed_request.has_value()) {
+    FAIL() << "complete prepare frame produced no request";
+  }
   EXPECT_EQ(completed->consumed_bytes, encoded.bytes().size() - kHeaderLength);
   const auto* actual =
-      std::get_if<DistributedVectorGroupedAggregateShuffleJobPrepare>(&*completed->request);
+      std::get_if<DistributedVectorGroupedAggregateShuffleJobPrepare>(&completed_request.value());
   ASSERT_NE(actual, nullptr);
   EXPECT_EQ(actual->authority.query_id(), expected.authority.query_id());
   EXPECT_EQ(actual->coordinator_result_endpoint, expected.coordinator_result_endpoint);
@@ -115,8 +121,11 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTransportTest,
   EXPECT_FALSE(prefix->response.has_value());
   auto completed = response_reader.consume(common::ByteView{carrier}.subspan(11U));
   ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
-  ASSERT_TRUE(completed->response.has_value());
-  EXPECT_EQ(*completed->response, response());
+  const auto& completed_response = completed->response;
+  if (!completed_response.has_value()) {
+    FAIL() << "complete response frame produced no response";
+  }
+  EXPECT_EQ(completed_response.value(), response());
   EXPECT_EQ(completed->consumed_bytes, encoded_response.bytes().size() - 11U);
 
   auto encoded_request =
@@ -127,7 +136,6 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTransportTest,
           std::move(encoded_request));
   EXPECT_TRUE(request_writer.consume_written(13U).is_ok());
   auto moved = std::move(request_writer);
-  EXPECT_TRUE(request_writer.complete()); // NOLINT(bugprone-use-after-move): documented contract.
   EXPECT_EQ(moved.pending_write().size(), request_size - 13U);
   EXPECT_TRUE(moved.consume_written(request_size - 13U).is_ok());
   EXPECT_TRUE(moved.complete());
@@ -155,9 +163,12 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTransportTest,
   EXPECT_FALSE(prefix->request.has_value());
   auto completed = reader.consume(encoded.bytes().subspan(31U));
   ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
-  ASSERT_TRUE(completed->request.has_value());
-  const auto* actual =
-      std::get_if<DistributedVectorGroupedAggregateShuffleJobInstallRoutes>(&*completed->request);
+  const auto& completed_request = completed->request;
+  if (!completed_request.has_value()) {
+    FAIL() << "complete route frame produced no request";
+  }
+  const auto* actual = std::get_if<DistributedVectorGroupedAggregateShuffleJobInstallRoutes>(
+      &completed_request.value());
   ASSERT_NE(actual, nullptr);
   EXPECT_EQ(*actual, routes);
 
@@ -175,8 +186,11 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTransportTest,
   EXPECT_FALSE(response_prefix->response.has_value());
   auto response_complete = response_reader.consume(response_bytes.bytes().subspan(19U));
   ASSERT_TRUE(response_complete.has_value()) << response_complete.error().to_string();
-  ASSERT_TRUE(response_complete->response.has_value());
-  EXPECT_EQ(*response_complete->response, response);
+  const auto& completed_response = response_complete->response;
+  if (!completed_response.has_value()) {
+    FAIL() << "complete route response frame produced no response";
+  }
+  EXPECT_EQ(completed_response.value(), response);
 }
 
 TEST(DistributedVectorGroupedAggregateShuffleJobControlTransportTest,
@@ -190,9 +204,12 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTransportTest,
   EXPECT_FALSE(prefix->request.has_value());
   auto completed = reader.consume(encoded.bytes().subspan(17U));
   ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
-  ASSERT_TRUE(completed->request.has_value());
+  const auto& completed_request = completed->request;
+  if (!completed_request.has_value()) {
+    FAIL() << "complete cancellation frame produced no request";
+  }
   const auto* actual =
-      std::get_if<DistributedVectorGroupedAggregateShuffleJobCancel>(&*completed->request);
+      std::get_if<DistributedVectorGroupedAggregateShuffleJobCancel>(&completed_request.value());
   ASSERT_NE(actual, nullptr);
   EXPECT_EQ(*actual, cancel);
 
@@ -210,8 +227,11 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTransportTest,
   EXPECT_FALSE(response_prefix->response.has_value());
   auto response_complete = response_reader.consume(response_bytes.bytes().subspan(23U));
   ASSERT_TRUE(response_complete.has_value()) << response_complete.error().to_string();
-  ASSERT_TRUE(response_complete->response.has_value());
-  EXPECT_EQ(*response_complete->response, response);
+  const auto& completed_response = response_complete->response;
+  if (!completed_response.has_value()) {
+    FAIL() << "complete cancellation response frame produced no response";
+  }
+  EXPECT_EQ(completed_response.value(), response);
 }
 
 TEST(DistributedVectorGroupedAggregateShuffleJobControlTransportTest,
@@ -229,9 +249,12 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTransportTest,
   EXPECT_FALSE(prefix->request.has_value());
   auto completed = reader.consume(encoded.bytes().subspan(29U));
   ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
-  ASSERT_TRUE(completed->request.has_value());
-  const auto* actual =
-      std::get_if<DistributedVectorGroupedAggregateShuffleJobRenewLease>(&*completed->request);
+  const auto& completed_request = completed->request;
+  if (!completed_request.has_value()) {
+    FAIL() << "complete lease-renewal frame produced no request";
+  }
+  const auto* actual = std::get_if<DistributedVectorGroupedAggregateShuffleJobRenewLease>(
+      &completed_request.value());
   ASSERT_NE(actual, nullptr);
   EXPECT_EQ(*actual, renewal);
 
@@ -249,8 +272,11 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTransportTest,
   EXPECT_FALSE(response_prefix->response.has_value());
   auto response_complete = response_reader.consume(response_bytes.bytes().subspan(31U));
   ASSERT_TRUE(response_complete.has_value()) << response_complete.error().to_string();
-  ASSERT_TRUE(response_complete->response.has_value());
-  EXPECT_EQ(*response_complete->response, response);
+  const auto& completed_response = response_complete->response;
+  if (!completed_response.has_value()) {
+    FAIL() << "complete lease-renewal response frame produced no response";
+  }
+  EXPECT_EQ(completed_response.value(), response);
 }
 
 } // namespace

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <gtest/gtest.h>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <utility>
 #include <variant>
@@ -125,8 +126,8 @@ complete_destination(const DistributedVectorGroupedAggregateShuffleAuthority& ex
   if (!plan.has_value())
     return common::make_unexpected(plan.error());
   auto streams = plan->take_local_streams();
-  for (auto stream = streams.rbegin(); stream != streams.rend(); ++stream) {
-    const common::Status accepted = destination->accept_local_stream(*stream);
+  for (const auto& stream : std::views::reverse(streams)) {
+    const common::Status accepted = destination->accept_local_stream(stream);
     if (!accepted.is_ok())
       return common::make_unexpected(accepted);
   }
