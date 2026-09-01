@@ -195,10 +195,13 @@ TEST(DistributedVectorGroupedAggregateShuffleQueryExecutionTest,
   ASSERT_TRUE(execution->poll_once(std::chrono::milliseconds{0}).is_ok());
   EXPECT_EQ(execution->state(),
             DistributedVectorGroupedAggregateShuffleQueryExecutionState::kComplete);
-  ASSERT_TRUE(execution->result().has_value());
-  EXPECT_EQ(execution->result()->row_count, 1U);
-  ASSERT_EQ(execution->result()->encoded_batches.size(), 1U);
-  auto decoded = network::decode_query_result_batch(execution->result()->encoded_batches.front());
+  const auto& execution_result = execution->result();
+  if (!execution_result.has_value()) {
+    FAIL() << "completed grouped shuffle execution produced no result";
+  }
+  EXPECT_EQ(execution_result->row_count, 1U);
+  ASSERT_EQ(execution_result->encoded_batches.size(), 1U);
+  auto decoded = network::decode_query_result_batch(execution_result->encoded_batches.front());
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   ASSERT_EQ(decoded->row_count(), 1U);
   ASSERT_EQ(decoded->columns().size(), 2U);
@@ -300,8 +303,11 @@ TEST(DistributedVectorGroupedAggregateShuffleQueryExecutionTest,
   }
   ASSERT_EQ(execution->state(),
             DistributedVectorGroupedAggregateShuffleQueryExecutionState::kComplete);
-  ASSERT_TRUE(execution->result().has_value());
-  EXPECT_EQ(execution->result()->row_count, 2U);
+  const auto& execution_result = execution->result();
+  if (!execution_result.has_value()) {
+    FAIL() << "completed remote grouped shuffle execution produced no result";
+  }
+  EXPECT_EQ(execution_result->row_count, 2U);
   const auto metrics = execution->metrics();
   EXPECT_EQ(metrics.source_tablets, 2U);
   EXPECT_EQ(metrics.destination_nodes, 2U);

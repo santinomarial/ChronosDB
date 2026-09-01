@@ -195,13 +195,16 @@ TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
                                   control_peer, std::chrono::steady_clock::now());
   ASSERT_TRUE(admitted.has_value()) << admitted.error().to_string();
   ASSERT_EQ(admitted->status_code, common::StatusCode::kOk);
-  ASSERT_TRUE(admitted->reducer_shuffle_endpoint.has_value());
+  const auto& reducer_endpoint = admitted->reducer_shuffle_endpoint;
+  if (!reducer_endpoint.has_value()) {
+    FAIL() << "admitted shuffle job produced no reducer endpoint";
+  }
 
   const DistributedVectorGroupedAggregateShuffleJobInstallRoutes routes{
       .query_id = uuid(1U),
       .coordinator_node_id = 9U,
       .target_node_id = 3U,
-      .routes = {{.node_id = 3U, .endpoint = *admitted->reducer_shuffle_endpoint}}};
+      .routes = {{.node_id = 3U, .endpoint = reducer_endpoint.value()}}};
   auto installed =
       service.receive(DistributedVectorGroupedAggregateShuffleJobControlRequest{routes},
                       control_peer, std::chrono::steady_clock::now());
@@ -246,7 +249,7 @@ TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
           {.authenticator = &shuffle_client_authenticator,
            .node_authorizer = &authorizer,
            .routes = {{.node_id = 3U,
-                       .endpoints = {*admitted->reducer_shuffle_endpoint},
+                       .endpoints = {reducer_endpoint.value()},
                        .tls_context = &shuffle_client_context}},
            .carrier_limits = shuffle_limits(),
            .connect_timeout = std::chrono::milliseconds{1000},
@@ -460,7 +463,10 @@ TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
       now);
   ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
   ASSERT_EQ(prepared->status_code, common::StatusCode::kOk);
-  ASSERT_TRUE(prepared->reducer_shuffle_endpoint.has_value());
+  const auto& reducer_endpoint = prepared->reducer_shuffle_endpoint;
+  if (!reducer_endpoint.has_value()) {
+    FAIL() << "prepared shuffle job produced no reducer endpoint";
+  }
 
   const DistributedVectorGroupedAggregateShuffleJobRenewLease renewal{
       .query_id = uuid(1U),
@@ -476,7 +482,7 @@ TEST(DistributedVectorGroupedAggregateShuffleJobServiceTest,
       .query_id = uuid(1U),
       .coordinator_node_id = 9U,
       .target_node_id = 3U,
-      .routes = {{.node_id = 3U, .endpoint = *prepared->reducer_shuffle_endpoint}}};
+      .routes = {{.node_id = 3U, .endpoint = reducer_endpoint.value()}}};
   auto installed =
       service.receive(DistributedVectorGroupedAggregateShuffleJobControlRequest{routes}, peer, now);
   ASSERT_TRUE(installed.has_value()) << installed.error().to_string();

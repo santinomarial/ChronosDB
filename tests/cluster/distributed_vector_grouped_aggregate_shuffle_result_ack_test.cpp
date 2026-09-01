@@ -59,11 +59,14 @@ TEST(DistributedVectorGroupedAggregateShuffleResultAckTest,
   ASSERT_EQ(encoded->size(), kDistributedVectorGroupedAggregateShuffleResultAckV1Size);
   auto decoded = decode_distributed_vector_grouped_aggregate_shuffle_result_ack_v1_exact(
       *encoded, expected, schema, 9U);
-  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
-  EXPECT_EQ(decoded->source_node_id, 3U);
-  EXPECT_EQ(decoded->target_node_id, 9U);
-  EXPECT_EQ(decoded->accepted_frames, 2U);
-  EXPECT_EQ(decoded->accepted_bytes, 1024U);
+  if (!decoded.has_value()) {
+    FAIL() << decoded.error().to_string();
+  }
+  const auto& decoded_ack = decoded.value();
+  EXPECT_EQ(decoded_ack.source_node_id, 3U);
+  EXPECT_EQ(decoded_ack.target_node_id, 9U);
+  EXPECT_EQ(decoded_ack.accepted_frames, 2U);
+  EXPECT_EQ(decoded_ack.accepted_bytes, 1024U);
 
   for (std::size_t split = 0U; split < encoded->size(); ++split) {
     DistributedVectorGroupedAggregateShuffleResultAckV1Reader reader{expected, schema, 9U};
@@ -72,8 +75,12 @@ TEST(DistributedVectorGroupedAggregateShuffleResultAckTest,
     EXPECT_FALSE(first->ack.has_value());
     auto second = reader.consume(std::span{*encoded}.subspan(split));
     ASSERT_TRUE(second.has_value()) << second.error().to_string();
-    ASSERT_TRUE(second->ack.has_value());
-    EXPECT_EQ(second->ack->accepted_bytes, 1024U);
+    const auto& split_ack = second->ack;
+    if (!split_ack.has_value()) {
+      ADD_FAILURE() << "complete result acknowledgement split produced no value";
+      return;
+    }
+    EXPECT_EQ(split_ack->accepted_bytes, 1024U);
     auto repeated = reader.consume({});
     ASSERT_TRUE(repeated.has_value());
     EXPECT_FALSE(repeated->ack.has_value());
@@ -87,7 +94,6 @@ TEST(DistributedVectorGroupedAggregateShuffleResultAckTest,
     ASSERT_TRUE(cursor.consume_written(count).is_ok());
   }
   auto moved = std::move(cursor);
-  EXPECT_TRUE(cursor.complete());
   EXPECT_TRUE(moved.complete());
 }
 

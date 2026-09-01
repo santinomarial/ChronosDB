@@ -62,8 +62,9 @@ struct TcpPair {
       auto accepted = listener.accept_one();
       if (!accepted.has_value())
         return common::make_unexpected(accepted.error());
-      if (accepted->has_value())
-        server.emplace(std::move(**accepted));
+      auto accepted_socket = std::move(accepted).value();
+      if (accepted_socket.has_value())
+        server.emplace(std::move(accepted_socket).value());
     }
     if (server.has_value() && client->connect_state() == network::TcpConnectState::kConnected)
       return TcpPair{.server = std::move(*server), .client = std::move(*client)};
