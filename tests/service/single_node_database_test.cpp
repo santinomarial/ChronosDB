@@ -85,8 +85,7 @@ private:
 
 class RepeatingIdentityGenerator final : public NativeIdentityGenerator {
 public:
-  explicit RepeatingIdentityGenerator(common::Uuid identity) noexcept
-      : identity_(std::move(identity)) {}
+  explicit RepeatingIdentityGenerator(common::Uuid identity) noexcept : identity_(identity) {}
 
   [[nodiscard]] common::Result<common::Uuid> generate() override {
     ++calls;
@@ -1251,13 +1250,17 @@ TEST(SingleNodeDatabaseTest, PlansPublishesAndRecoversOneAppendOnlyCompaction) {
   auto compacted =
       database->compact_append_only_parts({.compression = cseg::PageCompression::kZstd});
   ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
-  ASSERT_TRUE(compacted->has_value());
+  auto completion = *compacted;
+  if (!completion.has_value()) {
+    ADD_FAILURE() << "eligible compaction did not publish a completion";
+    return;
+  }
   const manifest::AppendOnlyCompactionCompletion expected_completion{
       .output_part_id = cseg::PartId::from_uuid(uuid(16U)).value(),
       .manifest_generation = 4U,
       .row_count = 8U,
       .resumed_durable_manifest = false};
-  EXPECT_EQ(**compacted, expected_completion);
+  EXPECT_EQ(*completion, expected_completion);
   EXPECT_EQ(identities.calls, 16U);
 
   auto after = database->storage_snapshot();
@@ -1341,8 +1344,12 @@ TEST(SingleNodeDatabaseTest, BoundsCompactionIdentityCollisionsBeforeFilesystemM
 
   auto retried = database->compact_append_only_parts();
   ASSERT_TRUE(retried.has_value()) << retried.error().to_string();
-  ASSERT_TRUE(retried->has_value());
-  EXPECT_EQ((**retried).output_part_id.uuid(), uuid(16U));
+  auto retried_completion = *retried;
+  if (!retried_completion.has_value()) {
+    ADD_FAILURE() << "retryable compaction did not publish a completion";
+    return;
+  }
+  EXPECT_EQ(retried_completion->output_part_id.uuid(), uuid(16U));
   EXPECT_EQ(identities.calls, 12U);
   auto completed = database->storage_snapshot();
   ASSERT_TRUE(completed.has_value()) << completed.error().to_string();

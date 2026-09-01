@@ -134,8 +134,8 @@ public:
   }
 
 private:
-  std::atomic<std::uint64_t> started_{};
-  std::atomic<std::uint64_t> cancellation_observed_{};
+  std::atomic<std::uint64_t> started_;
+  std::atomic<std::uint64_t> cancellation_observed_;
 };
 
 [[nodiscard]] common::Result<ReplicatedIngestRuntimeConfig>
@@ -324,7 +324,10 @@ TEST(ReplicatedIngestServiceTest, CancelsAnExactActiveQueryAndSuppressesItsRespo
   ASSERT_TRUE(occupied.has_value()) << occupied.error().to_string();
   ASSERT_TRUE(occupied->response_enqueued);
   auto occupied_response = responses.try_pop();
-  ASSERT_TRUE(occupied_response.has_value());
+  if (!occupied_response.has_value()) {
+    ADD_FAILURE() << "occupied query did not publish an overload response";
+    return;
+  }
   auto occupied_error = network::decode_error_message(occupied_response->frame.payload);
   ASSERT_TRUE(occupied_error.has_value()) << occupied_error.error().to_string();
   EXPECT_EQ(occupied_error->code, network::ProtocolErrorCode::kOverloaded);
