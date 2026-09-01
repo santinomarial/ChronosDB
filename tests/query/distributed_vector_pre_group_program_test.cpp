@@ -53,7 +53,7 @@ TEST(DistributedVectorPreGroupProgramTest, RoundTripsEveryInstructionVariantAndO
   const auto& constant =
       std::get<VectorConstantExpression>(decoded->outputs.front().instructions()[1U]);
   ASSERT_TRUE(constant.value.type().has_value());
-  EXPECT_EQ(*constant.value.type(), type(schema::LogicalTypeKind::kInt64));
+  EXPECT_EQ(constant.value.type(), type(schema::LogicalTypeKind::kInt64));
   EXPECT_EQ(std::get<std::int64_t>(constant.value.storage()), 7);
 }
 
@@ -122,22 +122,23 @@ TEST(DistributedVectorPreGroupProgramTest, RejectsEmptyAndOversizedConstantProgr
   std::vector<VectorExpressionInstruction> instructions{VectorConstantExpression{
       ScalarValue::text(type(schema::LogicalTypeKind::kString), std::move(large)).value()}};
   const DistributedVectorPreGroupProgram oversized{
-      .outputs = {
-          VectorExpression::create(std::move(instructions),
-                                   {.maximum_retained_configuration_bytes = 2U * 1024U * 1024U})
-              .value()}};
+      .outputs = {VectorExpression::create(
+                      std::move(instructions),
+                      {.maximum_retained_configuration_bytes = std::size_t{2U} * 1024U * 1024U})
+                      .value()}};
   EXPECT_EQ(validate_distributed_vector_pre_group_program(oversized).code(),
             common::StatusCode::kResourceExhausted);
 }
 
 TEST(DistributedVectorPreGroupProgramTest,
      RoundTripsAboveTheLocalExpressionDefaultWithinWireBounds) {
-  std::string payload(300U * 1024U, 'z');
+  std::string payload(std::size_t{300U} * 1024U, 'z');
   std::vector<VectorExpressionInstruction> instructions{VectorConstantExpression{
       ScalarValue::text(type(schema::LogicalTypeKind::kString), std::move(payload)).value()}};
   const DistributedVectorPreGroupProgram expected{
-      .outputs = {VectorExpression::create(std::move(instructions),
-                                           {.maximum_retained_configuration_bytes = 512U * 1024U})
+      .outputs = {VectorExpression::create(
+                      std::move(instructions),
+                      {.maximum_retained_configuration_bytes = std::size_t{512U} * 1024U})
                       .value()}};
   auto encoded = encode_distributed_vector_pre_group_program(expected);
   ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
