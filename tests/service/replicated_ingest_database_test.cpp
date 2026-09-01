@@ -166,6 +166,7 @@ public:
 
   common::Result<cluster::RaftReadAuthority> acquire(const raft::GroupId& group_id) override {
     ++calls;
+    last_group = group_id;
     const auto found =
         std::ranges::find(observations_, group_id, &raft::RaftGroupObservation::group_id);
     if (found == observations_.end()) {
@@ -180,6 +181,7 @@ public:
   }
 
   std::uint64_t calls{};
+  std::optional<raft::GroupId> last_group;
 
 private:
   std::vector<raft::RaftGroupObservation> observations_;
@@ -2345,6 +2347,7 @@ TEST(ReplicatedIngestDatabaseTest, CoordinatesNativeQueryAcrossSplitLocalAndRemo
   common::ByteReader count_reader{count->value};
   EXPECT_EQ(count_reader.read_i64_le().value(), 0);
   EXPECT_EQ(remote_authority.calls, 1U);
+  EXPECT_EQ(remote_authority.last_group, tablet_group());
   EXPECT_EQ(remote_worker.calls, 1U);
   EXPECT_EQ(remote_grouped_worker.calls, 0U);
   const auto remote_metrics = remote_server->metrics();

@@ -140,6 +140,8 @@ TEST(ReplicatedDistributedMutableQueryControlTcpServerTest,
   if (!server.has_value() && server.error().code() == common::StatusCode::kIoError)
     GTEST_SKIP() << "workspace does not permit loopback listener creation";
   ASSERT_TRUE(server.has_value()) << server.error().to_string();
+  EXPECT_NE(server->mutable_grouped_worker(), nullptr);
+  EXPECT_NE(server->grouped_shuffle_job_service(), nullptr);
   Authenticator server_authenticator{92U};
   auto client = cluster::RaftReadAuthorityTcpClient::begin(
       {.remote_endpoint = server->bound_endpoint(),
@@ -185,6 +187,8 @@ TEST(ReplicatedDistributedMutableQueryControlTcpServerTest,
   EXPECT_EQ(server->metrics().completed_read_authorities, 1U);
   EXPECT_EQ(server->metrics().completed_mutable_queries, 0U);
   EXPECT_TRUE(server->shutdown().is_ok());
+  EXPECT_EQ(server->mutable_grouped_worker(), nullptr);
+  EXPECT_EQ(server->grouped_shuffle_job_service(), nullptr);
   EXPECT_TRUE(barrier->shutdown().is_ok());
   EXPECT_TRUE(runtime->shutdown().is_ok());
 }

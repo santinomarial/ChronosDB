@@ -286,14 +286,16 @@ acquire_distributed_read_authorities(ReplicatedIngestDatabase& database,
            .retry = config.authority_retry});
     }
 
-    std::optional<cluster::RaftReadAuthorityTcpBatchAcquisition> remote;
+    std::optional<cluster::RaftReadAuthorityTcpBatchAcquisition> remote_storage;
+    // Borrows the engaged storage below and never leaves this function scope.
+    cluster::RaftReadAuthorityTcpBatchAcquisition* remote_batch{};
     if (!remote_groups.empty()) {
       auto created = cluster::RaftReadAuthorityTcpBatchAcquisition::create(
           {.groups = std::move(remote_groups), .maximum_groups = observations->size()});
       if (!created.has_value())
         return common::make_unexpected(created.error());
-      remote.emplace(std::move(*created));
-      const common::Status started = remote->poll_once(std::chrono::milliseconds{0});
+      remote_batch = std::addressof(remote_storage.emplace(std::move(*created)));
+      const common::Status started = remote_batch->poll_once(std::chrono::milliseconds{0});
       if (!started.is_ok())
         return common::make_unexpected(started);
     }
@@ -302,36 +304,37 @@ acquire_distributed_read_authorities(ReplicatedIngestDatabase& database,
     authorities.reserve(observations->size());
     for (const raft::GroupId& group_id : local_groups) {
       if (cancellation != nullptr && cancellation->requested()) {
-        if (remote.has_value())
-          static_cast<void>(remote->cancel());
+        if (remote_batch != nullptr)
+          static_cast<void>(remote_batch->cancel());
         return common::make_unexpected(
             common::Status{common::StatusCode::kCancelled, "native query was cancelled"});
       }
       if (std::chrono::steady_clock::now() >= execution_deadline) {
-        if (remote.has_value())
-          static_cast<void>(remote->cancel());
+        if (remote_batch != nullptr)
+          static_cast<void>(remote_batch->cancel());
         return common::make_unexpected(common::Status{
             common::StatusCode::kCancelled, "distributed Native query execution deadline expired"});
       }
       auto local = read_barrier.await_group_authority(group_id);
       if (!local.has_value()) {
-        if (remote.has_value())
-          static_cast<void>(remote->cancel());
+        if (remote_batch != nullptr)
+          static_cast<void>(remote_batch->cancel());
         return common::make_unexpected(local.error());
       }
       authorities.push_back(std::move(*local));
     }
 
-    if (remote.has_value()) {
-      while (remote->state() == cluster::RaftReadAuthorityTcpBatchAcquisitionState::kRunning) {
+    if (remote_batch != nullptr) {
+      while (remote_batch->state() ==
+             cluster::RaftReadAuthorityTcpBatchAcquisitionState::kRunning) {
         if (cancellation != nullptr && cancellation->requested()) {
-          static_cast<void>(remote->cancel());
+          static_cast<void>(remote_batch->cancel());
           return common::make_unexpected(
               common::Status{common::StatusCode::kCancelled, "native query was cancelled"});
         }
         const auto now = std::chrono::steady_clock::now();
         if (now >= execution_deadline) {
-          static_cast<void>(remote->cancel());
+          static_cast<void>(remote_batch->cancel());
           return common::make_unexpected(
               common::Status{common::StatusCode::kCancelled,
                              "distributed Native query execution deadline expired"});
@@ -339,11 +342,11 @@ acquire_distributed_read_authorities(ReplicatedIngestDatabase& database,
         const auto remaining =
             std::chrono::duration_cast<std::chrono::milliseconds>(execution_deadline - now);
         const common::Status progress =
-            remote->poll_once(std::min(config.maximum_poll_wait, remaining));
+            remote_batch->poll_once(std::min(config.maximum_poll_wait, remaining));
         if (!progress.is_ok())
           return common::make_unexpected(progress);
       }
-      auto acquired = remote->result();
+      auto acquired = remote_batch->result();
       if (!acquired.has_value())
         return common::make_unexpected(acquired.error());
       authorities.insert(authorities.end(), std::make_move_iterator(acquired->begin()),

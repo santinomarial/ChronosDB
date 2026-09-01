@@ -54,6 +54,15 @@ public:
     // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
     return std::addressof(*server);
   }
+
+  [[nodiscard]] cluster::DistributedMutableVectorGroupedAggregateShuffleSourceWorker*
+  active_grouped_shuffle_source_worker() noexcept {
+    if (!grouped_shuffle_source_worker.has_value())
+      return nullptr;
+    // Guarded by the presence check above.
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+    return std::addressof(*grouped_shuffle_source_worker);
+  }
 };
 
 ReplicatedDistributedMutableQueryControlTcpServer::
@@ -219,8 +228,10 @@ cluster::DistributedMutableVectorGroupedAggregateQueryWorkerService*
 ReplicatedDistributedMutableQueryControlTcpServer::mutable_grouped_worker() noexcept {
   if (!implementation_ || !is_running())
     return nullptr;
-  if (implementation_->grouped_shuffle_source_worker.has_value())
-    return std::addressof(*implementation_->grouped_shuffle_source_worker);
+  if (auto* const source_worker = implementation_->active_grouped_shuffle_source_worker();
+      source_worker != nullptr) {
+    return source_worker;
+  }
   return std::addressof(implementation_->grouped_worker);
 }
 
