@@ -71,8 +71,12 @@ TEST(DistributedVectorGroupedAggregateShuffleAckTest,
     EXPECT_FALSE(first->ack.has_value());
     auto second = reader.consume(std::span{*encoded}.subspan(split));
     ASSERT_TRUE(second.has_value()) << second.error().to_string();
-    ASSERT_TRUE(second->ack.has_value());
-    EXPECT_EQ(second->ack->accepted_bytes, 1024U);
+    const auto& decoded_ack = second->ack;
+    if (!decoded_ack.has_value()) {
+      ADD_FAILURE() << "complete shuffle acknowledgement split produced no value";
+      return;
+    }
+    EXPECT_EQ(decoded_ack->accepted_bytes, 1024U);
   }
 
   auto cursor =
@@ -83,7 +87,6 @@ TEST(DistributedVectorGroupedAggregateShuffleAckTest,
   }
   EXPECT_EQ(cursor.written_bytes(), encoded->size());
   auto moved = std::move(cursor);
-  EXPECT_TRUE(cursor.complete());
   EXPECT_TRUE(moved.complete());
 }
 

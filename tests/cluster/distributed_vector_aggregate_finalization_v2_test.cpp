@@ -7,12 +7,21 @@
 #include <cstdint>
 #include <gtest/gtest.h>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace chronos::cluster {
 namespace {
+
+[[nodiscard]] std::string bytes_as_string(const std::span<const std::byte> bytes) {
+  std::string result;
+  result.reserve(bytes.size());
+  for (const std::byte byte : bytes)
+    result.push_back(static_cast<char>(byte));
+  return result;
+}
 
 [[nodiscard]] schema::LogicalType type(const schema::LogicalTypeKind kind) {
   return schema::LogicalType::create(kind).value();
@@ -189,8 +198,7 @@ TEST(DistributedVectorAggregateFinalizationV2Test,
   EXPECT_EQ(std::bit_cast<std::int64_t>(shifted_bytes), -63);
   const network::QueryResultCell* upper = batch->cell(0U, 1U);
   ASSERT_NE(upper, nullptr);
-  EXPECT_EQ(std::string(reinterpret_cast<const char*>(upper->value.data()), upper->value.size()),
-            "SYMBOL");
+  EXPECT_EQ(bytes_as_string(upper->value), "SYMBOL");
 
   auto failing_input = all_types_input();
   failing_input.plan.limit = 0U;

@@ -24,6 +24,14 @@
 namespace chronos::cluster {
 namespace {
 
+[[nodiscard]] std::string bytes_as_string(const std::span<const std::byte> bytes) {
+  std::string result;
+  result.reserve(bytes.size());
+  for (const std::byte byte : bytes)
+    result.push_back(static_cast<char>(byte));
+  return result;
+}
+
 template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t seed) {
   common::Uuid::Bytes bytes{};
   bytes.front() = static_cast<std::byte>(seed);
@@ -109,8 +117,8 @@ encode_rows(const std::span<const Row> rows,
     booleans[ordinal] = rows[ordinal].enabled ? std::byte{1U} : std::byte{};
     cells.push_back({.value = timestamps[ordinal]});
     if (rows[ordinal].label.has_value()) {
-      cells.push_back({.value = std::as_bytes(
-                           std::span{rows[ordinal].label->data(), rows[ordinal].label->size()})});
+      const std::string_view label = rows[ordinal].label.value_or(std::string_view{});
+      cells.push_back({.value = std::as_bytes(std::span{label.data(), label.size()})});
     } else {
       cells.push_back({.is_null = true});
     }
@@ -168,15 +176,11 @@ TEST(DistributedVectorPhysicalRowsFinalizationV2Test,
   ASSERT_EQ(first_group->row_count(), 2U);
   ASSERT_EQ(first_group->columns().size(), 4U);
   EXPECT_EQ(first_group->columns()[0].name, "bucket");
-  EXPECT_EQ(std::string(reinterpret_cast<const char*>(first_group->cell(0U, 0U)->value.data()),
-                        first_group->cell(0U, 0U)->value.size()),
-            "b");
+  EXPECT_EQ(bytes_as_string(first_group->cell(0U, 0U)->value), "b");
   EXPECT_FALSE(first_group->cell(0U, 1U)->value.front() == std::byte{1U});
   EXPECT_EQ(int64_cell(*first_group, 0U, 2U), 10);
   EXPECT_EQ(int64_cell(*first_group, 0U, 3U), 2);
-  EXPECT_EQ(std::string(reinterpret_cast<const char*>(first_group->cell(1U, 0U)->value.data()),
-                        first_group->cell(1U, 0U)->value.size()),
-            "a");
+  EXPECT_EQ(bytes_as_string(first_group->cell(1U, 0U)->value), "a");
   EXPECT_EQ(int64_cell(*first_group, 1U, 2U), 9);
   EXPECT_EQ(int64_cell(*first_group, 1U, 3U), 2);
 }

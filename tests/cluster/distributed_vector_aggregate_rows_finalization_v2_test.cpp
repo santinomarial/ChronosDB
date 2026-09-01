@@ -17,6 +17,14 @@
 namespace chronos::cluster {
 namespace {
 
+[[nodiscard]] std::string bytes_as_string(const std::span<const std::byte> bytes) {
+  std::string result;
+  result.reserve(bytes.size());
+  for (const std::byte byte : bytes)
+    result.push_back(static_cast<char>(byte));
+  return result;
+}
+
 struct TestRow {
   std::int64_t score{};
   std::optional<std::string> label;
@@ -85,10 +93,11 @@ struct TestRow {
     scores.push_back(signed_bytes(row.score));
   for (std::size_t index = 0U; index < rows.size(); ++index) {
     cells.push_back({.value = scores[index]});
-    if (!rows[index].label.has_value()) {
+    const auto& label = rows[index].label;
+    if (!label.has_value()) {
       cells.push_back({.is_null = true});
     } else {
-      const std::string& value = *rows[index].label;
+      const std::string& value = label.value();
       cells.push_back({.value = std::as_bytes(std::span{value.data(), value.size()})});
     }
   }
@@ -294,9 +303,7 @@ TEST(DistributedVectorAggregateRowsFinalizationV2Test,
   EXPECT_EQ(std::bit_cast<std::int64_t>(bits_cell(*batch, 0U)), 9);
   const network::QueryResultCell* minimum = batch->cell(0U, 1U);
   ASSERT_NE(minimum, nullptr);
-  EXPECT_EQ(
-      std::string(reinterpret_cast<const char*>(minimum->value.data()), minimum->value.size()),
-      "a");
+  EXPECT_EQ(bytes_as_string(minimum->value), "a");
 }
 
 TEST(DistributedVectorAggregateRowsFinalizationV2Test,
