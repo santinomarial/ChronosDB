@@ -194,8 +194,12 @@ TEST(RaftReadAuthorityStreamTest, OwnsEverySplitCoalescedSuffixAndShortWrite) {
     EXPECT_FALSE(first->request.has_value());
     auto second = reader.consume(common::ByteView{request}.subspan(split));
     ASSERT_TRUE(second.has_value()) << "request split " << split;
-    ASSERT_TRUE(second->request.has_value());
-    EXPECT_EQ(second->request->correlation_id, 19U);
+    const auto& decoded_request = second->request;
+    if (!decoded_request.has_value()) {
+      ADD_FAILURE() << "complete request split produced no value";
+      return;
+    }
+    EXPECT_EQ(decoded_request->correlation_id, 19U);
   }
 
   const RaftReadAuthorityResponse success{.source_node_id = 2U,
@@ -224,8 +228,12 @@ TEST(RaftReadAuthorityStreamTest, OwnsEverySplitCoalescedSuffixAndShortWrite) {
       EXPECT_FALSE(first->response.has_value());
       auto second = reader.consume(common::ByteView{response}.subspan(split));
       ASSERT_TRUE(second.has_value()) << "response size " << response.size() << " split " << split;
-      ASSERT_TRUE(second->response.has_value());
-      EXPECT_EQ(second->response->source_node_id, 2U);
+      const auto& decoded_response = second->response;
+      if (!decoded_response.has_value()) {
+        ADD_FAILURE() << "complete response split produced no value";
+        return;
+      }
+      EXPECT_EQ(decoded_response->source_node_id, 2U);
     }
   }
 
@@ -238,8 +246,11 @@ TEST(RaftReadAuthorityStreamTest, OwnsEverySplitCoalescedSuffixAndShortWrite) {
   EXPECT_EQ(first->consumed_bytes, responses.front().size());
   auto second = reader.consume(common::ByteView{coalesced}.subspan(first->consumed_bytes));
   ASSERT_TRUE(second.has_value());
-  ASSERT_TRUE(second->response.has_value());
-  EXPECT_EQ(second->response->status_code, common::StatusCode::kUnavailable);
+  const auto& decoded_response = second->response;
+  if (!decoded_response.has_value()) {
+    FAIL() << "complete coalesced response produced no value";
+  }
+  EXPECT_EQ(decoded_response->status_code, common::StatusCode::kUnavailable);
 
   auto cursor = RaftReadAuthorityFrameWriteCursor::create(request);
   ASSERT_TRUE(cursor.has_value()) << cursor.error().to_string();

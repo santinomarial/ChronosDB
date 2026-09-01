@@ -13,5 +13,5 @@ void use_raft_read_authority_tcp_batch_acquisition_header() {
   (void)acquisition.state();
   (void)acquisition.metrics();
   (void)acquisition.poll_once(std::chrono::milliseconds{0});
-  (void)acquisition.result();
+  [[maybe_unused]] const auto& result = acquisition.result();
 }
