@@ -216,13 +216,17 @@ private:
   return port <= 65'535UL ? static_cast<std::uint16_t>(port) : 0U;
 }
 
+[[nodiscard]] std::string line_or_empty(const std::optional<std::string>& line) {
+  return line.value_or(std::string{});
+}
+
 void expect_successful_query() {
   ChildProcess coordinator;
   ASSERT_TRUE(coordinator.start({"coordinator", "0", "5000"}));
   const auto ready = coordinator.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(ready.has_value());
-  const std::uint16_t coordinator_port = ready_port(*ready);
-  ASSERT_NE(coordinator_port, 0U) << *ready;
+  const std::uint16_t coordinator_port = ready_port(line_or_empty(ready));
+  ASSERT_NE(coordinator_port, 0U) << line_or_empty(ready);
   const std::uint16_t refused_port = reserve_then_release_loopback_port();
   ASSERT_NE(refused_port, 0U);
 
@@ -235,14 +239,14 @@ void expect_successful_query() {
   const auto west_sent = west.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(east_sent.has_value());
   ASSERT_TRUE(west_sent.has_value());
-  EXPECT_EQ(*east_sent, "SENT 0 attempts=2 retries=1");
-  EXPECT_EQ(*west_sent, "SENT 1 attempts=1 retries=0");
+  EXPECT_EQ(line_or_empty(east_sent), "SENT 0 attempts=2 retries=1");
+  EXPECT_EQ(line_or_empty(west_sent), "SENT 1 attempts=1 retries=0");
   EXPECT_EQ(east.wait_for_exit(std::chrono::seconds{5}), 0);
   EXPECT_EQ(west.wait_for_exit(std::chrono::seconds{5}), 0);
 
   const auto result = coordinator.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(result.has_value());
-  EXPECT_EQ(*result, "RESULT west 2");
+  EXPECT_EQ(line_or_empty(result), "RESULT west 2");
   EXPECT_EQ(coordinator.wait_for_exit(std::chrono::seconds{5}), 0);
 }
 
@@ -257,8 +261,8 @@ TEST(GroupedShuffleResultProcessTest,
   ASSERT_TRUE(coordinator.start({"coordinator", "0", "750"}));
   const auto ready = coordinator.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(ready.has_value());
-  const std::uint16_t coordinator_port = ready_port(*ready);
-  ASSERT_NE(coordinator_port, 0U) << *ready;
+  const std::uint16_t coordinator_port = ready_port(line_or_empty(ready));
+  ASSERT_NE(coordinator_port, 0U) << line_or_empty(ready);
 
   ChildProcess east;
   ChildProcess lost_west;
@@ -268,14 +272,14 @@ TEST(GroupedShuffleResultProcessTest,
   const auto stalled = lost_west.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(east_sent.has_value());
   ASSERT_TRUE(stalled.has_value());
-  EXPECT_EQ(*east_sent, "SENT 0 attempts=1 retries=0");
-  EXPECT_EQ(*stalled, "STALLING 1");
+  EXPECT_EQ(line_or_empty(east_sent), "SENT 0 attempts=1 retries=0");
+  EXPECT_EQ(line_or_empty(stalled), "STALLING 1");
   EXPECT_EQ(east.wait_for_exit(std::chrono::seconds{5}), 0);
   EXPECT_TRUE(lost_west.kill_abruptly());
 
   const auto cancelled = coordinator.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(cancelled.has_value());
-  EXPECT_EQ(*cancelled, "CANCELLED");
+  EXPECT_EQ(line_or_empty(cancelled), "CANCELLED");
   EXPECT_EQ(coordinator.wait_for_exit(std::chrono::seconds{5}), 3);
 
   expect_successful_query();
@@ -287,15 +291,15 @@ TEST(GroupedShuffleResultProcessTest,
   ASSERT_TRUE(reducer.start({"job-reducer", "2", "none"}));
   const auto reducer_ready = reducer.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(reducer_ready.has_value());
-  const std::uint16_t reducer_port = job_reducer_port(*reducer_ready);
-  ASSERT_NE(reducer_port, 0U) << *reducer_ready;
+  const std::uint16_t reducer_port = job_reducer_port(line_or_empty(reducer_ready));
+  ASSERT_NE(reducer_port, 0U) << line_or_empty(reducer_ready);
 
   ChildProcess lost_coordinator;
   ASSERT_TRUE(lost_coordinator.start(
       {"job-coordinator", std::to_string(reducer_port), "1", "5000", "200", "hold"}));
   const auto first_leased = lost_coordinator.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(first_leased.has_value());
-  EXPECT_EQ(*first_leased, "LEASED 1");
+  EXPECT_EQ(line_or_empty(first_leased), "LEASED 1");
   EXPECT_TRUE(reducer.read_until("ACTIVE 1", std::chrono::seconds{5}).has_value());
   EXPECT_TRUE(reducer.read_until("RENEWED 1", std::chrono::seconds{5}).has_value());
 
@@ -309,11 +313,11 @@ TEST(GroupedShuffleResultProcessTest,
       {"job-coordinator", std::to_string(reducer_port), "2", "5000", "200", "cancel"}));
   const auto replacement_leased = replacement.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(replacement_leased.has_value());
-  EXPECT_EQ(*replacement_leased, "LEASED 2");
+  EXPECT_EQ(line_or_empty(replacement_leased), "LEASED 2");
   EXPECT_TRUE(reducer.read_until("ACTIVE 2", std::chrono::seconds{5}).has_value());
   const auto replacement_cancelled = replacement.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(replacement_cancelled.has_value());
-  EXPECT_EQ(*replacement_cancelled, "CANCELLED 2");
+  EXPECT_EQ(line_or_empty(replacement_cancelled), "CANCELLED 2");
   EXPECT_EQ(replacement.wait_for_exit(std::chrono::seconds{5}), 0);
   EXPECT_TRUE(reducer.kill_abruptly());
 }
@@ -328,8 +332,8 @@ void expect_pre_activation_coordinator_loss(const PreActivationLossCase& loss_ca
   ASSERT_TRUE(reducer.start({"job-reducer", "2", loss_case.reducer_boundary}));
   const auto reducer_ready = reducer.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(reducer_ready.has_value());
-  const std::uint16_t initial_port = job_reducer_port(*reducer_ready);
-  ASSERT_NE(initial_port, 0U) << *reducer_ready;
+  const std::uint16_t initial_port = job_reducer_port(line_or_empty(reducer_ready));
+  ASSERT_NE(initial_port, 0U) << line_or_empty(reducer_ready);
 
   ChildProcess lost_coordinator;
   ASSERT_TRUE(lost_coordinator.start(
@@ -341,8 +345,8 @@ void expect_pre_activation_coordinator_loss(const PreActivationLossCase& loss_ca
 
   const auto resumed = reducer.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(resumed.has_value());
-  const std::uint16_t resumed_port = resumed_job_reducer_port(*resumed);
-  ASSERT_NE(resumed_port, 0U) << *resumed;
+  const std::uint16_t resumed_port = resumed_job_reducer_port(line_or_empty(resumed));
+  ASSERT_NE(resumed_port, 0U) << line_or_empty(resumed);
   ASSERT_TRUE(reducer.read_until("EXECUTION_EXPIRED 1", std::chrono::seconds{2}).has_value());
 
   ChildProcess replacement;
@@ -350,11 +354,11 @@ void expect_pre_activation_coordinator_loss(const PreActivationLossCase& loss_ca
       {"job-coordinator", std::to_string(resumed_port), "2", "5000", "200", "cancel"}));
   const auto replacement_leased = replacement.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(replacement_leased.has_value());
-  EXPECT_EQ(*replacement_leased, "LEASED 2");
+  EXPECT_EQ(line_or_empty(replacement_leased), "LEASED 2");
   EXPECT_TRUE(reducer.read_until("ACTIVE 1", std::chrono::seconds{5}).has_value());
   const auto replacement_cancelled = replacement.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(replacement_cancelled.has_value());
-  EXPECT_EQ(*replacement_cancelled, "CANCELLED 2");
+  EXPECT_EQ(line_or_empty(replacement_cancelled), "CANCELLED 2");
   EXPECT_EQ(replacement.wait_for_exit(std::chrono::seconds{5}), 0);
   EXPECT_TRUE(reducer.kill_abruptly());
 }
@@ -391,10 +395,10 @@ void expect_partial_multi_reducer_coordinator_loss(const PartialMultiReducerLoss
   const auto second_ready = second_reducer.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(first_ready.has_value());
   ASSERT_TRUE(second_ready.has_value());
-  const std::uint16_t first_port = job_reducer_port(*first_ready);
-  const std::uint16_t second_port = job_reducer_port(*second_ready);
-  ASSERT_NE(first_port, 0U) << *first_ready;
-  ASSERT_NE(second_port, 0U) << *second_ready;
+  const std::uint16_t first_port = job_reducer_port(line_or_empty(first_ready));
+  const std::uint16_t second_port = job_reducer_port(line_or_empty(second_ready));
+  ASSERT_NE(first_port, 0U) << line_or_empty(first_ready);
+  ASSERT_NE(second_port, 0U) << line_or_empty(second_ready);
 
   if (loss_case.first_boundary == "before-control") {
     ASSERT_TRUE(
@@ -428,10 +432,10 @@ void expect_partial_multi_reducer_coordinator_loss(const PartialMultiReducerLoss
   const auto second_resumed = second_reducer.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(first_resumed.has_value());
   ASSERT_TRUE(second_resumed.has_value());
-  const std::uint16_t first_resumed_port = resumed_job_reducer_port(*first_resumed);
-  const std::uint16_t second_resumed_port = resumed_job_reducer_port(*second_resumed);
-  ASSERT_NE(first_resumed_port, 0U) << *first_resumed;
-  ASSERT_NE(second_resumed_port, 0U) << *second_resumed;
+  const std::uint16_t first_resumed_port = resumed_job_reducer_port(line_or_empty(first_resumed));
+  const std::uint16_t second_resumed_port = resumed_job_reducer_port(line_or_empty(second_resumed));
+  ASSERT_NE(first_resumed_port, 0U) << line_or_empty(first_resumed);
+  ASSERT_NE(second_resumed_port, 0U) << line_or_empty(second_resumed);
   if (!loss_case.first_expiration.empty()) {
     ASSERT_TRUE(
         first_reducer.read_until(loss_case.first_expiration, std::chrono::seconds{3}).has_value());
@@ -447,7 +451,7 @@ void expect_partial_multi_reducer_coordinator_loss(const PartialMultiReducerLoss
                          std::to_string(second_resumed_port), "2", "5000", "300", "cancel"}));
   const auto replacement_leased = replacement.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(replacement_leased.has_value());
-  EXPECT_EQ(*replacement_leased, "LEASED 2");
+  EXPECT_EQ(line_or_empty(replacement_leased), "LEASED 2");
   ASSERT_TRUE(first_reducer
                   .read_until("ACTIVE " + std::to_string(loss_case.first_replacement_activation),
                               std::chrono::seconds{5})
@@ -458,7 +462,7 @@ void expect_partial_multi_reducer_coordinator_loss(const PartialMultiReducerLoss
                   .has_value());
   const auto replacement_cancelled = replacement.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(replacement_cancelled.has_value());
-  EXPECT_EQ(*replacement_cancelled, "CANCELLED 2");
+  EXPECT_EQ(line_or_empty(replacement_cancelled), "CANCELLED 2");
   EXPECT_EQ(replacement.wait_for_exit(std::chrono::seconds{5}), 0);
   EXPECT_TRUE(first_reducer.kill_abruptly());
   EXPECT_TRUE(second_reducer.kill_abruptly());

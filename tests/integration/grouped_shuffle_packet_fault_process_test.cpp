@@ -137,7 +137,7 @@ struct TcpPair {
       if (!accepted.has_value())
         return common::make_unexpected(accepted.error());
       if (accepted->has_value())
-        server.emplace(std::move(**accepted));
+        server = std::move(*accepted);
     }
     if (server.has_value() && client->connect_state() == network::TcpConnectState::kConnected)
       return TcpPair{.server = std::move(*server), .client = std::move(*client)};
@@ -506,6 +506,10 @@ private:
   return port <= 65'535UL ? static_cast<std::uint16_t>(port) : 0U;
 }
 
+[[nodiscard]] std::string line_or_empty(const std::optional<std::string>& line) {
+  return line.value_or(std::string{});
+}
+
 void expect_directional_packet_loss_and_healing(const PacketDirection direction) {
   const std::string iptables = iptables_path();
   if (const auto unavailable = packet_fault_unavailability(iptables); unavailable.has_value())
@@ -519,10 +523,10 @@ void expect_directional_packet_loss_and_healing(const PacketDirection direction)
   const auto healthy_ready = healthy_reducer.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(isolated_ready.has_value());
   ASSERT_TRUE(healthy_ready.has_value());
-  const std::uint16_t isolated_port = job_reducer_port(*isolated_ready);
-  const std::uint16_t healthy_port = job_reducer_port(*healthy_ready);
-  ASSERT_NE(isolated_port, 0U) << *isolated_ready;
-  ASSERT_NE(healthy_port, 0U) << *healthy_ready;
+  const std::uint16_t isolated_port = job_reducer_port(line_or_empty(isolated_ready));
+  const std::uint16_t healthy_port = job_reducer_port(line_or_empty(healthy_ready));
+  ASSERT_NE(isolated_port, 0U) << line_or_empty(isolated_ready);
+  ASSERT_NE(healthy_port, 0U) << line_or_empty(healthy_ready);
 
   ChildProcess partitioned_coordinator;
   ASSERT_TRUE(
@@ -530,7 +534,7 @@ void expect_directional_packet_loss_and_healing(const PacketDirection direction)
                                      std::to_string(healthy_port), "1", "5000", "300", "hold"}));
   const auto leased = partitioned_coordinator.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(leased.has_value());
-  ASSERT_EQ(*leased, "LEASED 1");
+  ASSERT_EQ(line_or_empty(leased), "LEASED 1");
   ASSERT_TRUE(isolated_reducer.read_until("RENEWED 1", std::chrono::seconds{5}).has_value());
   ASSERT_TRUE(healthy_reducer.read_until("RENEWED 1", std::chrono::seconds{5}).has_value());
 
@@ -548,12 +552,12 @@ void expect_directional_packet_loss_and_healing(const PacketDirection direction)
                                  std::to_string(healthy_port), "2", "5000", "300", "cancel"}));
   const auto replacement_leased = replacement.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(replacement_leased.has_value());
-  EXPECT_EQ(*replacement_leased, "LEASED 2");
+  EXPECT_EQ(line_or_empty(replacement_leased), "LEASED 2");
   ASSERT_TRUE(isolated_reducer.read_until("ACTIVE 2", std::chrono::seconds{5}).has_value());
   ASSERT_TRUE(healthy_reducer.read_until("ACTIVE 2", std::chrono::seconds{5}).has_value());
   const auto replacement_cancelled = replacement.read_line(std::chrono::seconds{5});
   ASSERT_TRUE(replacement_cancelled.has_value());
-  EXPECT_EQ(*replacement_cancelled, "CANCELLED 2");
+  EXPECT_EQ(line_or_empty(replacement_cancelled), "CANCELLED 2");
   EXPECT_EQ(replacement.wait_for_exit(std::chrono::seconds{5}), 0);
   EXPECT_TRUE(
       isolated_reducer.read_until("CANCEL_REQUESTS 1", std::chrono::seconds{5}).has_value());
