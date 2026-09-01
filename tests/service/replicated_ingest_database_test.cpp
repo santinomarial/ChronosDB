@@ -2121,6 +2121,7 @@ TEST(ReplicatedIngestDatabaseTest, PinsCommittedWholeTableQueryStateBeyondOwnerS
   EXPECT_EQ(query_route->group_id, tablet_group());
   EXPECT_EQ(query_route->placement_epoch, 1U);
   EXPECT_EQ(query_route->replicas, std::vector<raft::NodeId>{1U});
+  EXPECT_EQ(snapshot->single_group_route(schema::TableId::from_uuid(id(0xfeU)).value()), nullptr);
   auto local_leader = database->resolve_query_leader(*query_route);
   ASSERT_TRUE(local_leader.has_value()) << local_leader.error().to_string();
   EXPECT_FALSE(local_leader->has_value());

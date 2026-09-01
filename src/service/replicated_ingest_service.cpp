@@ -138,7 +138,7 @@ public:
     bool suppress_response_{};
     bool allocation_failure_{};
     bool unexpected_failure_{};
-    std::atomic<bool> complete_{};
+    std::atomic<bool> complete_;
     std::thread thread_;
   };
 

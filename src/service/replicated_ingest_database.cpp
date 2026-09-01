@@ -215,10 +215,13 @@ observe_group(raft::AsyncDurableMultiRaftRuntime& runtime, const raft::GroupId& 
   if (!results.has_value())
     return common::make_unexpected(results.error());
   if (results->size() != 1U || !results->front().status.is_ok() ||
-      results->front().transition.has_value() || !results->front().observation.has_value()) {
+      results->front().transition.has_value()) {
     return common::make_unexpected(corruption("replicated query group observation is malformed"));
   }
-  return std::move(*results->front().observation);
+  auto observation = std::move(results->front().observation);
+  if (!observation.has_value())
+    return common::make_unexpected(corruption("replicated query group observation is malformed"));
+  return std::move(*observation);
 }
 
 [[nodiscard]] const raft::CatalogTableDefinition*
@@ -479,9 +482,12 @@ ReplicatedQuerySnapshot::single_group_route(const schema::TableId& table_id) con
   const auto table = std::ranges::find_if(impl_->tables, [&](const Impl::Table& candidate) {
     return candidate.lineage.table_id() == table_id;
   });
-  return table != impl_->tables.end() && table->single_group.has_value()
-             ? std::addressof(*table->single_group)
-             : nullptr;
+  if (table == impl_->tables.end())
+    return nullptr;
+  const auto& route = table->single_group;
+  if (!route.has_value())
+    return nullptr;
+  return std::addressof(*route);
 }
 
 common::Result<std::unique_ptr<query::PhysicalOperator>>
@@ -1047,12 +1053,16 @@ ReplicatedIngestDatabase::acquire(const query::DistributedMutableVectorFragment&
   }
   if (!observation_results->front().status.is_ok())
     return common::make_unexpected(observation_results->front().status);
-  if (observation_results->front().transition.has_value() ||
-      !observation_results->front().observation.has_value()) {
+  if (observation_results->front().transition.has_value()) {
     return common::make_unexpected(
         corruption("replicated mutable worker group observation is invalid"));
   }
-  const raft::RaftGroupObservation& observation = *observation_results->front().observation;
+  auto current_observation = std::move(observation_results->front().observation);
+  if (!current_observation.has_value()) {
+    return common::make_unexpected(
+        corruption("replicated mutable worker group observation is invalid"));
+  }
+  const raft::RaftGroupObservation& observation = *current_observation;
   if (observation.group_id != fragment.raft_group_id || observation.node_id == 0U ||
       observation.last_log_index < observation.commit_index ||
       observation.commit_index < observation.applied_index) {
@@ -1200,7 +1210,8 @@ ReplicatedIngestDatabase::resolve_query_leader(const ReplicatedSingleGroupQueryR
     auto current_route = single_group_route(**catalog, route.table_id);
     if (!current_route.has_value())
       return common::make_unexpected(current_route.error());
-    if (!current_route->has_value() || **current_route != route)
+    auto observed_route = std::move(*current_route);
+    if (!observed_route.has_value() || *observed_route != route)
       return common::make_unexpected(
           unavailable("replicated single-group query route changed during observation"));
 
@@ -1240,12 +1251,13 @@ ReplicatedIngestDatabase::resolve_query_leader(const ReplicatedSingleGroupQueryR
           unavailable("replicated query groups have split local and remote leadership"));
     if (saw_local_leader)
       return std::optional<ReplicatedQueryLeaderRoute>{};
-    if (!remote_leader.has_value() || table_observation->leader_id != remote_leader)
+    const raft::NodeId remote_leader_id = remote_leader.value_or(0U);
+    if (remote_leader_id == 0U || table_observation->leader_id != remote_leader_id)
       return common::make_unexpected(
           unavailable("replicated query route has no common remote leader"));
     return std::optional<ReplicatedQueryLeaderRoute>{
         ReplicatedQueryLeaderRoute{.group_id = route.group_id,
-                                   .leader_node_id = *remote_leader,
+                                   .leader_node_id = remote_leader_id,
                                    .leader_term = table_observation->current_term,
                                    .placement_epoch = route.placement_epoch}};
   } catch (const std::bad_alloc&) {
