@@ -84,14 +84,14 @@ jobs:
           - name: TSan
             preset: tsan
     env:
-      CC: clang
-      CXX: clang++
+      CC: gcc
+      CXX: g++
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - name: Install libc++
+      - name: Install sanitizer dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libc++-dev libc++abi-dev libcurl4-openssl-dev libzstd-dev
+          sudo apt-get install --yes libcurl4-openssl-dev libssl-dev libzstd-dev
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
       - name: Build
