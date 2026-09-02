@@ -42,7 +42,7 @@ enum class DistributedVectorPlanMode : std::uint8_t {
 
 struct DistributedVectorAggregateIntent {
   VectorAggregateOperation operation;
-  std::optional<std::uint32_t> input_index;
+  std::optional<std::uint32_t> input_index{std::nullopt};
 
   friend bool operator==(const DistributedVectorAggregateIntent&,
                          const DistributedVectorAggregateIntent&) = default;
@@ -64,12 +64,14 @@ struct DistributedVectorOrderKey {
 // ungrouped output is aggregates only.
 struct DistributedVectorPlanIntent {
   DistributedVectorPlanMode mode{DistributedVectorPlanMode::kRows};
-  std::vector<std::uint32_t> row_output_indices;
-  std::vector<std::uint32_t> visible_row_output_indices;
-  std::vector<std::uint32_t> group_key_input_indices;
-  std::vector<DistributedVectorAggregateIntent> aggregates;
-  std::vector<DistributedVectorOrderKey> order_keys;
-  std::optional<std::uint64_t> limit;
+  std::vector<std::uint32_t> row_output_indices{}; // NOLINT(readability-redundant-member-init)
+  std::vector<std::uint32_t>
+      visible_row_output_indices{};                     // NOLINT(readability-redundant-member-init)
+  std::vector<std::uint32_t> group_key_input_indices{}; // NOLINT(readability-redundant-member-init)
+  std::vector<DistributedVectorAggregateIntent>
+      aggregates{};                                    // NOLINT(readability-redundant-member-init)
+  std::vector<DistributedVectorOrderKey> order_keys{}; // NOLINT(readability-redundant-member-init)
+  std::optional<std::uint64_t> limit{std::nullopt};
 
   friend bool operator==(const DistributedVectorPlanIntent&,
                          const DistributedVectorPlanIntent&) = default;

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <fcntl.h>
 #include <gtest/gtest.h>
+#include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <optional>
 #include <poll.h>
@@ -63,8 +64,9 @@ TEST(TcpSocketTest, ResolvesBoundedCanonicalDnsEndpointsWithoutChangingTheirPort
 void wait_for_connection(TcpListener& listener, TcpSocket& client,
                          std::optional<TcpSocket>& accepted) {
   for (std::size_t attempt = 0U; attempt < 32U && !accepted.has_value(); ++attempt) {
-    std::array<pollfd, 2> descriptors{{{.fd = listener.descriptor(), .events = POLLIN},
-                                       {.fd = client.descriptor(), .events = POLLOUT}}};
+    std::array<pollfd, 2> descriptors{
+        {{.fd = listener.descriptor(), .events = POLLIN, .revents = 0},
+         {.fd = client.descriptor(), .events = POLLOUT, .revents = 0}}};
     ASSERT_GE(::poll(descriptors.data(), descriptors.size(), 100), 0);
     if (client.connect_state() == TcpConnectState::kInProgress &&
         (descriptors[1].revents & (POLLOUT | POLLERR | POLLHUP)) != 0) {
@@ -133,7 +135,7 @@ TEST(TcpSocketTest, EstablishesOwnedNonblockingLoopbackConnection) {
   constexpr std::array<std::byte, 3> sent{std::byte{'t'}, std::byte{'c'}, std::byte{'p'}};
   ASSERT_EQ(::send(client->descriptor(), sent.data(), sent.size(), 0),
             static_cast<ssize_t>(sent.size()));
-  pollfd readable{.fd = server.descriptor(), .events = POLLIN};
+  pollfd readable{.fd = server.descriptor(), .events = POLLIN, .revents = 0};
   ASSERT_GT(::poll(&readable, 1U, 100), 0);
   std::array<std::byte, 3> received{};
   ASSERT_EQ(::recv(server.descriptor(), received.data(), received.size(), 0),
@@ -173,7 +175,7 @@ TEST(TcpSocketTest, RefusedConnectCannotBecomeSuccessfulOnRetry) {
     EXPECT_EQ(refused.error().code(), common::StatusCode::kIoError);
     return;
   }
-  pollfd writable{.fd = refused->descriptor(), .events = POLLOUT};
+  pollfd writable{.fd = refused->descriptor(), .events = POLLOUT, .revents = 0};
   ASSERT_GT(::poll(&writable, 1U, 100), 0);
   const auto completion = refused->finish_connect();
   ASSERT_FALSE(completion.has_value());

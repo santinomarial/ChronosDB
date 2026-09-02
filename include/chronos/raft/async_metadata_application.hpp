@@ -12,10 +12,10 @@ namespace chronos::raft {
 
 struct AsyncRaftMetadataApplicationConfig {
   GroupId group_id;
-  std::optional<MetadataSnapshotStorage> snapshot_storage;
-  MetadataLimits state_limits;
-  MetadataCommandCodecLimits codec_limits;
-  SchemaDefinitionCodecLimits schema_codec_limits;
+  std::optional<MetadataSnapshotStorage> snapshot_storage{std::nullopt};
+  MetadataLimits state_limits{};
+  MetadataCommandCodecLimits codec_limits{};
+  SchemaDefinitionCodecLimits schema_codec_limits{};
 };
 
 // Worker extension that recovers and applies the one authoritative metadata Raft group on the

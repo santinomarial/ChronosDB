@@ -167,7 +167,7 @@ common::Status NativeQueryTcpExecution::poll_once(const std::chrono::millisecond
   if (client->descriptor() < 0 || requested == 0)
     return impl.fail(
         status(common::StatusCode::kInternal, "native query TCP client has no pollable interest"));
-  pollfd descriptor{.fd = client->descriptor(), .events = requested};
+  pollfd descriptor{.fd = client->descriptor(), .events = requested, .revents = 0};
   const auto wait = bounded_wait(maximum_wait, now, impl.next_deadline());
   const int ready = ::poll(&descriptor, 1U, static_cast<int>(wait.count()));
   if (ready < 0) {

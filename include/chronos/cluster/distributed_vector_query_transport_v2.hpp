@@ -50,8 +50,8 @@ struct DistributedVectorQueryResponseV2 {
   common::Uuid query_id;
   schema::TabletId tablet_id;
   common::StatusCode status_code{common::StatusCode::kInternal};
-  std::optional<DistributedVectorResultExchangeMessage> payload;
-  std::optional<DistributedQueryLeaderHint> leader_hint;
+  std::optional<DistributedVectorResultExchangeMessage> payload{std::nullopt};
+  std::optional<DistributedQueryLeaderHint> leader_hint{std::nullopt};
 };
 
 struct DistributedVectorQueryAttemptV2 {
@@ -99,7 +99,7 @@ private:
 
 struct DistributedVectorQueryResponseV2ReadStep {
   std::size_t consumed_bytes{};
-  std::optional<DistributedVectorQueryResponseV2> response;
+  std::optional<DistributedVectorQueryResponseV2> response{std::nullopt};
 };
 
 // The caller transfers the admitted Fragment-v2 result schema into the connection reader. One
@@ -202,7 +202,7 @@ private:
 };
 
 struct DistributedVectorQuerySenderLimitsV2 {
-  DistributedQueryRetryLimits retry;
+  DistributedQueryRetryLimits retry{};
   std::size_t maximum_response_frames{1024U};
   std::size_t maximum_response_bytes{kDefaultDistributedVectorQueryV2ResponseBytes};
 };

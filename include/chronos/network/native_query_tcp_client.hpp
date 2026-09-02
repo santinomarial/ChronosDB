@@ -23,10 +23,10 @@ struct NativeQueryTcpClientLimits {
 };
 
 struct NativeQueryTcpClientConfig {
-  NativeQueryRetryConfig retry;
+  NativeQueryRetryConfig retry{};
   ConnectionAuthenticator* authenticator{};
   const NativeNodePrincipalAuthorizer* node_authorizer{};
-  NativeQueryTcpClientLimits limits;
+  NativeQueryTcpClientLimits limits{};
 };
 
 enum class NativeQueryTcpClientState : std::uint8_t {

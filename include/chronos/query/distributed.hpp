@@ -34,7 +34,7 @@ struct DistributedTablet {
 
 struct DistributedReadPolicy {
   DistributedReadConsistency consistency{DistributedReadConsistency::kLeaderLinearizable};
-  std::optional<std::uint64_t> maximum_staleness_positions;
+  std::optional<std::uint64_t> maximum_staleness_positions{std::nullopt};
 
   friend bool operator==(const DistributedReadPolicy&, const DistributedReadPolicy&) = default;
 };
@@ -90,8 +90,8 @@ validate_distributed_read_admission(DistributedReadPolicy policy,
 struct MergeableAggregateState {
   std::uint64_t count{};
   double sum{};
-  std::optional<double> minimum;
-  std::optional<double> maximum;
+  std::optional<double> minimum{}; // NOLINT(readability-redundant-member-init)
+  std::optional<double> maximum{}; // NOLINT(readability-redundant-member-init)
   double mean{};
   double m2{};
 

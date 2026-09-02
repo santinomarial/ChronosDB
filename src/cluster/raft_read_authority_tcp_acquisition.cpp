@@ -255,7 +255,8 @@ RaftReadAuthorityTcpAcquisition::poll_once(const std::chrono::milliseconds maxim
   const auto interest = active->interest();
   pollfd descriptor{.fd = active->descriptor(),
                     .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                 (interest.want_write ? POLLOUT : 0))};
+                                                 (interest.want_write ? POLLOUT : 0)),
+                    .revents = 0};
   auto wait = maximum_wait;
   const auto deadline = active->deadline();
   if (deadline.has_value())

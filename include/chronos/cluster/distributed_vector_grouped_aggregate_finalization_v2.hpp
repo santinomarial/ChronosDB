@@ -61,8 +61,8 @@ struct DistributedVectorGroupedAggregateFinalizationLimitsV2 {
   std::uint64_t maximum_output_rows{kDefaultDistributedVectorRowFinalizationRowsV2};
   std::size_t maximum_output_batches{query::kMaximumDistributedCoordinatorMessages};
   std::size_t maximum_output_encoded_bytes{kDefaultDistributedVectorRowFinalizationOutputBytesV2};
-  query::SortLimits sort;
-  network::QueryResultLimits output_batch;
+  query::SortLimits sort{};
+  network::QueryResultLimits output_batch{};
 };
 
 [[nodiscard]] common::Status validate_distributed_vector_grouped_aggregate_finalization_limits_v2(

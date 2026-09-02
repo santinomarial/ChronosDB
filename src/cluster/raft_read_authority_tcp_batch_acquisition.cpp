@@ -216,7 +216,8 @@ RaftReadAuthorityTcpBatchAcquisition::poll_once(const std::chrono::milliseconds 
     impl.poll_descriptors[count++] = {.fd = descriptor,
                                       .events =
                                           static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                             (interest.want_write ? POLLOUT : 0))};
+                                                             (interest.want_write ? POLLOUT : 0)),
+                                      .revents = 0};
   }
   const int ready = ::poll(impl.poll_descriptors.data(), static_cast<nfds_t>(count),
                            static_cast<int>(wait.count()));

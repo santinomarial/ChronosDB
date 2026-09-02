@@ -49,7 +49,7 @@ struct DatabaseBootstrapConfig {
   // Existing dedicated database root. Creation of this directory and durability of its name are
   // deployment responsibilities; this owner installs and synchronizes children within it.
   std::string database_root;
-  DatabaseBootstrapDescriptor new_database;
+  DatabaseBootstrapDescriptor new_database{};
   std::uint16_t file_permissions{0600U};
   std::uint16_t directory_permissions{0700U};
 };

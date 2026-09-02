@@ -16,18 +16,18 @@ namespace chronos::service {
 
 struct NativeDistributedGroupedShuffleJobProviderConfig {
   raft::NodeId coordinator_node_id{};
-  network::TlsServerConfig result_tls;
+  network::TlsServerConfig result_tls{};
   network::ConnectionAuthenticator* authenticator{};
   const cluster::ClusterNodePrincipalAuthorizer* node_authorizer{};
   cluster::DistributedVectorGroupedAggregateShuffleJobService* local_reducer_job_service{};
-  network::TcpListenerConfig result_listener;
-  cluster::DistributedVectorGroupedAggregateShuffleAuthorityLimits authority;
-  cluster::DistributedVectorGroupedAggregateShuffleJobControlTlsLimits carrier_limits;
-  cluster::DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits prepare_retry;
-  cluster::DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits route_install_retry;
-  cluster::DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits seal_retry;
-  cluster::DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits cancel_retry;
-  cluster::DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits lease_retry;
+  network::TcpListenerConfig result_listener{};
+  cluster::DistributedVectorGroupedAggregateShuffleAuthorityLimits authority{};
+  cluster::DistributedVectorGroupedAggregateShuffleJobControlTlsLimits carrier_limits{};
+  cluster::DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits prepare_retry{};
+  cluster::DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits route_install_retry{};
+  cluster::DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits seal_retry{};
+  cluster::DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits cancel_retry{};
+  cluster::DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits lease_retry{};
   std::chrono::milliseconds connect_timeout{5000};
   std::chrono::milliseconds reducer_execution_timeout{30000};
   std::chrono::milliseconds lease_duration{5000};

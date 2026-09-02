@@ -1210,7 +1210,7 @@ TEST(AsyncDurableMultiRaftRuntimeTest, FansOutOneTerminalFailureToQueuedCompleti
   EXPECT_EQ(metrics.written_completion_notifications, 3U);
   EXPECT_EQ(metrics.coalesced_completion_notifications, 0U);
 
-  pollfd descriptor{.fd = runtime->completion_descriptor(), .events = POLLIN};
+  pollfd descriptor{.fd = runtime->completion_descriptor(), .events = POLLIN, .revents = 0};
   ASSERT_EQ(::poll(&descriptor, 1U, 0), 1);
   EXPECT_NE(descriptor.revents & POLLIN, 0);
   ASSERT_TRUE(runtime->drain_completion_notifications().is_ok());
@@ -1353,7 +1353,7 @@ TEST(AsyncDurableMultiRaftRuntimeTest,
   ASSERT_TRUE(election.has_value()) << election.error().to_string();
   auto elected = election->wait();
   ASSERT_TRUE(elected.has_value()) << elected.error().to_string();
-  pollfd descriptor{.fd = runtime->completion_descriptor(), .events = POLLIN};
+  pollfd descriptor{.fd = runtime->completion_descriptor(), .events = POLLIN, .revents = 0};
   ASSERT_EQ(::poll(&descriptor, 1U, 1000), 1);
 
   const common::Status failed_drain = runtime->drain_completion_notifications();
@@ -1385,7 +1385,7 @@ TEST(AsyncDurableMultiRaftRuntimeTest, WakesAndDrainsCompletionDescriptor) {
   auto election = runtime->try_submit({{group, StartElectionOperation{}}});
   ASSERT_TRUE(election.has_value());
 
-  pollfd descriptor{.fd = runtime->completion_descriptor(), .events = POLLIN};
+  pollfd descriptor{.fd = runtime->completion_descriptor(), .events = POLLIN, .revents = 0};
   ASSERT_EQ(::poll(&descriptor, 1U, 1000), 1);
   EXPECT_NE(descriptor.revents & POLLIN, 0);
   ASSERT_TRUE(runtime->drain_completion_notifications().is_ok());
@@ -1438,7 +1438,7 @@ TEST(AsyncDurableMultiRaftRuntimeTest, CoalescesSaturatedCompletionPipeAndResume
   EXPECT_TRUE(saturated.accepting);
   EXPECT_FALSE(saturated.terminal_failure);
 
-  pollfd descriptor{.fd = runtime->completion_descriptor(), .events = POLLIN};
+  pollfd descriptor{.fd = runtime->completion_descriptor(), .events = POLLIN, .revents = 0};
   ASSERT_EQ(::poll(&descriptor, 1U, 0), 1);
   EXPECT_NE(descriptor.revents & POLLIN, 0);
   ASSERT_TRUE(runtime->drain_completion_notifications().is_ok());
@@ -1580,7 +1580,7 @@ TEST(AsyncDurableMultiRaftRuntimeTest, ConcurrentShutdownDrainsTheExactAcceptedB
   EXPECT_EQ(metrics.high_water_pending_batches, kMaximumPending);
   EXPECT_EQ(metrics.high_water_pending_operations, kMaximumPending);
 
-  pollfd descriptor{.fd = runtime->completion_descriptor(), .events = POLLIN};
+  pollfd descriptor{.fd = runtime->completion_descriptor(), .events = POLLIN, .revents = 0};
   ASSERT_EQ(::poll(&descriptor, 1U, 0), 1);
   EXPECT_NE(descriptor.revents & POLLIN, 0);
   ASSERT_TRUE(runtime->drain_completion_notifications().is_ok());

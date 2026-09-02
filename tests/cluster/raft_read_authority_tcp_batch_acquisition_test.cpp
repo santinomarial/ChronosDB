@@ -209,7 +209,9 @@ TEST(RaftReadAuthorityTcpBatchAcquisitionTest, RejectsAmbiguityAndCancelsWholeFa
     static_cast<void>(batch->poll_once(std::chrono::milliseconds{1}));
   }
   ASSERT_EQ(batch->state(), RaftReadAuthorityTcpBatchAcquisitionState::kFailed);
-  EXPECT_EQ(batch->failure().code(), common::StatusCode::kUnavailable);
+  // A refused nonblocking connect is reported as POLLERR on some kernels and SO_ERROR on others.
+  EXPECT_TRUE(batch->failure().code() == common::StatusCode::kUnavailable ||
+              batch->failure().code() == common::StatusCode::kIoError);
   EXPECT_EQ(batch->result().error(), batch->failure());
   EXPECT_EQ(batch->metrics().completed_groups, 0U);
   EXPECT_EQ(batch->metrics().active_groups, 0U);

@@ -177,13 +177,15 @@ TEST(DistributedMutableVectorFragmentTest,
                common::crc32c(common::ByteView{damaged}.first(damaged.size() - 4U)));
   EXPECT_EQ(decode_distributed_mutable_vector_fragment_exact(damaged).error().code(),
             common::StatusCode::kCorruption);
-  EXPECT_EQ(decode_distributed_mutable_vector_fragment_exact(
-                encoded->bytes(), {.maximum_frame_length = encoded->bytes().size() - 1U})
+  auto frame_limits = DistributedMutableVectorFragmentDecodeLimits{};
+  frame_limits.maximum_frame_length = encoded->bytes().size() - 1U;
+  EXPECT_EQ(decode_distributed_mutable_vector_fragment_exact(encoded->bytes(), frame_limits)
                 .error()
                 .code(),
             common::StatusCode::kResourceExhausted);
-  EXPECT_EQ(decode_distributed_mutable_vector_fragment_exact(encoded->bytes(),
-                                                             {.maximum_projection_columns = 2U})
+  auto projection_limits = DistributedMutableVectorFragmentDecodeLimits{};
+  projection_limits.maximum_projection_columns = 2U;
+  EXPECT_EQ(decode_distributed_mutable_vector_fragment_exact(encoded->bytes(), projection_limits)
                 .error()
                 .code(),
             common::StatusCode::kResourceExhausted);
@@ -386,9 +388,9 @@ TEST(DistributedMutableVectorFragmentTest, BindsTransportsAndExecutesOwnedPreGro
   EXPECT_EQ(*round_trip, *fragment);
   auto encoded_program = encode_distributed_vector_pre_group_program(pre_group);
   ASSERT_TRUE(encoded_program.has_value());
-  EXPECT_EQ(decode_distributed_mutable_vector_fragment_exact(
-                encoded->bytes(), {.pre_group_program = {.maximum_frame_length =
-                                                             encoded_program->bytes().size() - 1U}})
+  auto pre_group_limits = DistributedMutableVectorFragmentDecodeLimits{};
+  pre_group_limits.pre_group_program.maximum_frame_length = encoded_program->bytes().size() - 1U;
+  EXPECT_EQ(decode_distributed_mutable_vector_fragment_exact(encoded->bytes(), pre_group_limits)
                 .error()
                 .code(),
             common::StatusCode::kResourceExhausted);

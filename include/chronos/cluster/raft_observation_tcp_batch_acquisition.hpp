@@ -25,10 +25,10 @@ struct RaftObservationTcpBatchConstructionConfig {
   std::span<const RaftObservationNodeTlsContext> tls_contexts;
   network::ConnectionAuthenticator* authenticator{};
   const ClusterNodePrincipalAuthorizer* node_authorizer{};
-  RaftObservationRouteResolutionLimits route_limits;
-  RaftObservationTlsClientLimits carrier_limits;
+  RaftObservationRouteResolutionLimits route_limits{};
+  RaftObservationTlsClientLimits carrier_limits{};
   std::chrono::milliseconds connect_timeout{5000};
-  RaftObservationTcpRetryLimits retry;
+  RaftObservationTcpRetryLimits retry{};
   std::size_t maximum_pairs{query::DistributedPlanLimits{}.maximum_fragments};
 };
 

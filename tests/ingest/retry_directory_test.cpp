@@ -56,6 +56,7 @@ outcome(const ColumnarAppendMutationIdentity& identity, const std::uint64_t sequ
   return std::make_shared<const ColumnarAppendRetryOutcome>(
       ColumnarAppendRetryOutcome{.mutation = identity,
                                  .wal_id = wal_id(9U),
+                                 .raft_group_id = {},
                                  .record_sequence = sequence,
                                  .applied_row_count = rows});
 }
@@ -186,9 +187,12 @@ TEST(RetryDirectoryTest, CommitsOnlyAValidPublishedOutcomeAfterWalStarts) {
   EXPECT_EQ(reservation.commit_published(outcome(mutation(2U))).error().code(),
             common::StatusCode::kInvalidArgument);
 
-  const auto bad_position =
-      std::make_shared<const ColumnarAppendRetryOutcome>(ColumnarAppendRetryOutcome{
-          .mutation = request, .wal_id = {}, .record_sequence = 0U, .applied_row_count = 0U});
+  const auto bad_position = std::make_shared<const ColumnarAppendRetryOutcome>(
+      ColumnarAppendRetryOutcome{.mutation = request,
+                                 .wal_id = {},
+                                 .raft_group_id = {},
+                                 .record_sequence = 0U,
+                                 .applied_row_count = 0U});
   EXPECT_EQ(reservation.commit_published(bad_position).error().code(),
             common::StatusCode::kInvalidArgument);
 
@@ -225,6 +229,7 @@ TEST(RetryDirectoryTest, CommitsAnExactRaftSourcedOutcome) {
   const auto published = std::make_shared<const ColumnarAppendRetryOutcome>(
       ColumnarAppendRetryOutcome{.mutation = request,
                                  .commit_source = head::CommitSource::kRaft,
+                                 .wal_id = {},
                                  .raft_group_id = raft_group_id(),
                                  .record_sequence = 17U,
                                  .applied_row_count = 3U});

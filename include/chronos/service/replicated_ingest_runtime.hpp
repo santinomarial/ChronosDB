@@ -36,9 +36,9 @@ struct ReplicatedIngestRuntimeConfig {
   std::vector<raft::RaftGroupConfiguration> groups;
   std::vector<ingest::AsyncRaftTabletApplicationConfig> tablets;
   raft::AsyncRaftMetadataApplicationConfig metadata;
-  raft::AsyncDurableMultiRaftLimits runtime_limits;
-  ingest::AsyncRaftTabletApplicationLimits application_limits;
-  ReplicatedIngestCoordinatorLimits coordinator_limits;
+  raft::AsyncDurableMultiRaftLimits runtime_limits{};
+  ingest::AsyncRaftTabletApplicationLimits application_limits{};
+  ReplicatedIngestCoordinatorLimits coordinator_limits{};
 };
 
 // Complete owning lifecycle for replicated ingest on one node. The durable runtime owns the

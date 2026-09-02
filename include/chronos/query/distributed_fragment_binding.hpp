@@ -32,7 +32,8 @@ struct DistributedAggregateFragmentBinding {
   std::reference_wrapper<const raft::TabletPlacementMetadata> placement;
   std::span<const std::uint32_t> destination_column_ordinals;
   std::uint32_t aggregate_input_index{};
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::optional<cseg::EventTimePredicate>
+      event_time_predicate{}; // NOLINT(readability-redundant-member-init)
 };
 
 // Reproves admission, committed placement, Raft source identity, exact durable boundary, and
@@ -49,7 +50,8 @@ struct DistributedVectorFragmentBinding {
   common::Uuid raft_group_id;
   std::reference_wrapper<const raft::TabletPlacementMetadata> placement;
   std::span<const std::uint32_t> destination_column_ordinals;
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::optional<cseg::EventTimePredicate>
+      event_time_predicate{}; // NOLINT(readability-redundant-member-init)
 };
 
 // Derives one owning vector dispatch only after exact read admission, committed placement,
@@ -94,7 +96,8 @@ struct DistributedAggregateSnapshotFragmentBinding {
   std::reference_wrapper<const raft::TabletPlacementMetadata> placement;
   std::span<const std::uint32_t> destination_column_ordinals;
   std::uint32_t aggregate_input_index{};
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::optional<cseg::EventTimePredicate>
+      event_time_predicate{}; // NOLINT(readability-redundant-member-init)
 };
 
 inline constexpr std::size_t kMaximumDistributedSnapshotProjectionOrdinals =
@@ -151,7 +154,8 @@ struct DistributedVectorSnapshotFragmentBinding {
   common::Uuid raft_group_id;
   std::reference_wrapper<const raft::TabletPlacementMetadata> placement;
   std::span<const std::uint32_t> destination_column_ordinals;
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::optional<cseg::EventTimePredicate>
+      event_time_predicate{}; // NOLINT(readability-redundant-member-init)
 };
 
 struct DistributedVectorSnapshotBindingLimits {
@@ -306,8 +310,10 @@ bind_compatible_distributed_grouped_float64_snapshot(
 // must instead carry the completed barrier from the observed leader term.
 struct DistributedAggregateReplicaProof {
   std::reference_wrapper<const raft::RaftGroupObservation> observation;
-  std::optional<raft::LogIndex> observed_leader_commit_position;
-  std::optional<raft::ReadBarrier> linearizable_barrier;
+  std::optional<raft::LogIndex>
+      observed_leader_commit_position{}; // NOLINT(readability-redundant-member-init)
+  std::optional<raft::ReadBarrier>
+      linearizable_barrier{}; // NOLINT(readability-redundant-member-init)
 };
 
 struct MetadataBackedDistributedAggregateSnapshotBinding {
@@ -316,7 +322,8 @@ struct MetadataBackedDistributedAggregateSnapshotBinding {
   std::span<const DistributedAggregateReplicaProof> replica_proofs;
   std::span<const std::uint32_t> destination_column_ordinals;
   std::uint32_t aggregate_input_index{};
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::optional<cseg::EventTimePredicate>
+      event_time_predicate{}; // NOLINT(readability-redundant-member-init)
 };
 
 // Resolves every planned tablet's active schema, committed placement, and immutable Raft group
@@ -335,7 +342,8 @@ struct MetadataBackedDistributedVectorSnapshotBinding {
   schema::TableId table_id;
   std::span<const DistributedVectorReplicaProof> replica_proofs;
   std::span<const std::uint32_t> destination_column_ordinals;
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::optional<cseg::EventTimePredicate>
+      event_time_predicate{}; // NOLINT(readability-redundant-member-init)
 };
 
 // Resolves every vector fragment's schema, placement, group, and policy-specific read admission
@@ -370,7 +378,8 @@ struct GroupBackedDistributedAggregateSnapshotBinding {
   std::span<const DistributedAggregateGroupReadAuthority> group_authorities;
   std::span<const std::uint32_t> destination_column_ordinals;
   std::uint32_t aggregate_input_index{};
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::optional<cseg::EventTimePredicate>
+      event_time_predicate{}; // NOLINT(readability-redundant-member-init)
 };
 
 // Resolves every planned tablet through committed tablet-to-group metadata before selecting its
@@ -389,7 +398,8 @@ struct GroupBackedDistributedVectorSnapshotBinding {
   // have one exact barrier/observation pair.
   std::span<const DistributedVectorGroupReadAuthority> group_authorities;
   std::span<const std::uint32_t> destination_column_ordinals;
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::optional<cseg::EventTimePredicate>
+      event_time_predicate{}; // NOLINT(readability-redundant-member-init)
 };
 
 [[nodiscard]] common::Result<CompatibleDistributedVectorSnapshot>
@@ -425,7 +435,8 @@ struct FollowerGroupBackedDistributedAggregateSnapshotBinding {
   std::span<const DistributedAggregateFollowerReadAuthority> group_authorities;
   std::span<const std::uint32_t> destination_column_ordinals;
   std::uint32_t aggregate_input_index{};
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::optional<cseg::EventTimePredicate>
+      event_time_predicate{}; // NOLINT(readability-redundant-member-init)
 };
 
 // Derives the leader-commit position only from a correlated same-group, same-term leader/follower
@@ -443,7 +454,8 @@ struct FollowerGroupBackedDistributedVectorSnapshotBinding {
   // leader/follower pair; unrelated groups are ignored.
   std::span<const DistributedVectorFollowerReadAuthority> group_authorities;
   std::span<const std::uint32_t> destination_column_ordinals;
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::optional<cseg::EventTimePredicate>
+      event_time_predicate{}; // NOLINT(readability-redundant-member-init)
 };
 
 [[nodiscard]] common::Result<CompatibleDistributedVectorSnapshot>

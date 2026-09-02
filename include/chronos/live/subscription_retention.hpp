@@ -69,10 +69,11 @@ struct SubscriptionRetentionConfig {
   common::Uuid database_id;
   schema::TableId table_id;
   raft::NodeId local_node_id{};
-  std::vector<SubscriptionRetentionMember> members;
+  std::vector<SubscriptionRetentionMember> members{}; // NOLINT(readability-redundant-member-init)
   // This is the complete set of durable plan coordinators allowed to promise resume for the fixed
   // source set. They and their checkpoint stores outlive this authority.
-  std::vector<const DurableMultiTabletSubscription*> subscription_owners;
+  std::vector<const DurableMultiTabletSubscription*>
+      subscription_owners{}; // NOLINT(readability-redundant-member-init)
   std::size_t maximum_subscription_owners{1024U};
 };
 

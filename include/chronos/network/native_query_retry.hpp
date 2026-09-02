@@ -15,16 +15,16 @@
 namespace chronos::network {
 
 struct NativeQueryRetryLimits {
-  QueryResultLimits query_result;
+  QueryResultLimits query_result{};
   std::uint64_t maximum_result_rows{1'048'576U};
   std::size_t maximum_result_batches{1024U};
   std::size_t maximum_result_payload_bytes{std::size_t{64U} * 1024U * 1024U};
 };
 
 struct NativeQueryRetryConfig {
-  NativeLeaderRedirectRouterConfig routing;
-  ConnectionBufferConfig buffers;
-  NativeQueryRetryLimits limits;
+  NativeLeaderRedirectRouterConfig routing{};
+  ConnectionBufferConfig buffers{};
+  NativeQueryRetryLimits limits{};
 };
 
 struct NativeQueryResult {

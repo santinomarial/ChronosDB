@@ -109,16 +109,17 @@ struct RaftSimulationLimits {
   std::size_t maximum_pending_messages{65'536U};
   std::size_t maximum_trace_actions{1U << 20U};
   std::size_t maximum_shrink_replays{100'000U};
-  RaftLimits raft;
+  RaftLimits raft{};
 };
 
 struct RaftSimulationConfig {
-  std::vector<NodeId> node_ids;
-  std::vector<NodeId> initial_voters;
+  std::vector<NodeId> node_ids{};       // NOLINT(readability-redundant-member-init)
+  std::vector<NodeId> initial_voters{}; // NOLINT(readability-redundant-member-init)
   // Empty starts every node from canonical term-zero state. Otherwise this vector contains one
   // complete durable image per node, in the exact order of `node_ids`.
-  std::vector<PersistentState> initial_persistent_states;
-  RaftSimulationLimits limits;
+  std::vector<PersistentState>
+      initial_persistent_states{}; // NOLINT(readability-redundant-member-init)
+  RaftSimulationLimits limits{};
 };
 
 struct RaftSimulationMessageRoute {

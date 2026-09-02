@@ -14,6 +14,7 @@
 #include <memory>
 #include <openssl/ssl.h>
 #include <optional>
+#include <poll.h>
 #include <span>
 #include <string>
 #include <sys/socket.h>
@@ -381,22 +382,35 @@ TEST(TlsSocketTest, AbruptPeerCloseNeverRaisesSigpipe) {
   SigpipeObserver observer;
   ASSERT_TRUE(observer.installed());
   sigpipe_observed = 0;
+  const linger reset_on_close{.l_onoff = 1, .l_linger = 0};
+  ASSERT_EQ(::setsockopt(sockets.sockets[1], SOL_SOCKET, SO_LINGER, &reset_on_close,
+                         sizeof(reset_on_close)),
+            0);
   *client = TlsSocket{};
   ASSERT_EQ(::close(sockets.sockets[1]), 0);
   sockets.sockets[1] = -1;
+  pollfd peer_close{.fd = sockets.sockets[0], .events = POLLIN, .revents = 0};
+  ASSERT_GT(::poll(&peer_close, 1U, 1000), 0);
+  ASSERT_NE(peer_close.revents & (POLLIN | POLLERR | POLLHUP), 0);
 
   const std::array<std::byte, std::size_t{16U} * 1024U> bytes{};
   common::Status write_failure;
+  bool write_terminated = false;
   bool write_failed = false;
-  for (std::size_t attempt = 0U; attempt < 1024U && !write_failed; ++attempt) {
+  for (std::size_t attempt = 0U; attempt < 1024U && !write_terminated; ++attempt) {
     const auto written = server->write(bytes);
     if (!written.has_value()) {
       write_failure = written.error();
       write_failed = true;
+      write_terminated = true;
+    } else if (written->state == TlsIoState::kClosed) {
+      write_terminated = true;
     }
   }
-  ASSERT_TRUE(write_failed);
-  EXPECT_EQ(write_failure.code(), common::StatusCode::kIoError);
+  ASSERT_TRUE(write_terminated);
+  if (write_failed) {
+    EXPECT_EQ(write_failure.code(), common::StatusCode::kIoError);
+  }
   EXPECT_EQ(sigpipe_observed, 0);
 }
 

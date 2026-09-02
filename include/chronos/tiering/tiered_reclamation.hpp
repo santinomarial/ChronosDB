@@ -74,7 +74,7 @@ private:
 };
 
 struct TieredLocalPartReclamationLimits {
-  manifest::ManifestDecodeLimits manifest_decode;
+  manifest::ManifestDecodeLimits manifest_decode{};
   manifest::TemporalPartValidationLimits part_validation;
 };
 

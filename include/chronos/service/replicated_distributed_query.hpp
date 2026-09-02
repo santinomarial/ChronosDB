@@ -33,16 +33,16 @@ struct ReplicatedDistributedAggregateQueryConfig {
   schema::TableId table_id;
   std::span<const std::uint32_t> destination_column_ordinals;
   std::uint32_t aggregate_input_index{};
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::optional<cseg::EventTimePredicate> event_time_predicate{std::nullopt};
   std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts;
   network::ConnectionAuthenticator* authenticator{};
   const cluster::ClusterNodePrincipalAuthorizer* node_authorizer{};
   query::DistributedAggregateSnapshotBindingLimits binding_limits;
-  cluster::DistributedQueryRouteResolutionLimits route_limits;
-  cluster::DistributedQueryExecutionLimits execution_limits;
-  cluster::DistributedQueryTlsClientLimits carrier_limits;
+  cluster::DistributedQueryRouteResolutionLimits route_limits{};
+  cluster::DistributedQueryExecutionLimits execution_limits{};
+  cluster::DistributedQueryTlsClientLimits carrier_limits{};
   std::chrono::milliseconds connect_timeout{5000};
-  std::optional<std::chrono::steady_clock::time_point> execution_deadline;
+  std::optional<std::chrono::steady_clock::time_point> execution_deadline{std::nullopt};
   std::size_t maximum_rebindings{3U};
 };
 
@@ -69,17 +69,17 @@ struct ReplicatedDistributedVectorAggregateQueryConfigV2 {
   std::reference_wrapper<const raft::MetadataCatalogSnapshot> catalog;
   schema::TableId table_id;
   std::span<const std::uint32_t> destination_column_ordinals;
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::optional<cseg::EventTimePredicate> event_time_predicate{std::nullopt};
   std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts;
   network::ConnectionAuthenticator* authenticator{};
   const cluster::ClusterNodePrincipalAuthorizer* node_authorizer{};
   query::DistributedVectorSnapshotBindingLimits binding_limits;
-  cluster::DistributedQueryRouteResolutionLimits route_limits;
-  cluster::DistributedVectorAggregateQueryExecutionLimitsV2 execution_limits;
-  cluster::DistributedVectorAggregateQueryTlsLimitsV2 carrier_limits;
-  cluster::DistributedVectorAggregateFinalizationLimitsV2 finalization_limits;
+  cluster::DistributedQueryRouteResolutionLimits route_limits{};
+  cluster::DistributedVectorAggregateQueryExecutionLimitsV2 execution_limits{};
+  cluster::DistributedVectorAggregateQueryTlsLimitsV2 carrier_limits{};
+  cluster::DistributedVectorAggregateFinalizationLimitsV2 finalization_limits{};
   std::chrono::milliseconds connect_timeout{5000};
-  std::optional<std::chrono::steady_clock::time_point> execution_deadline;
+  std::optional<std::chrono::steady_clock::time_point> execution_deadline{std::nullopt};
 };
 
 // Acquires exact leader-linearizable authority and transfers one caller-owned result schema through
@@ -109,18 +109,18 @@ struct ReplicatedDistributedVectorGroupedAggregateQueryConfigV2 {
   std::reference_wrapper<const raft::MetadataCatalogSnapshot> catalog;
   schema::TableId table_id;
   std::span<const std::uint32_t> destination_column_ordinals;
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::optional<cseg::EventTimePredicate> event_time_predicate{std::nullopt};
   std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts;
   network::ConnectionAuthenticator* authenticator{};
   const cluster::ClusterNodePrincipalAuthorizer* node_authorizer{};
   query::DistributedVectorSnapshotBindingLimits binding_limits;
-  cluster::DistributedQueryRouteResolutionLimits route_limits;
-  cluster::DistributedVectorGroupedAggregateQueryExecutionLimitsV2 execution_limits;
-  cluster::DistributedVectorGroupedAggregateQuerySenderLimitsV2 sender_limits;
-  cluster::DistributedVectorGroupedAggregateQueryTlsLimitsV2 carrier_limits;
-  cluster::DistributedVectorGroupedAggregateFinalizationLimitsV2 finalization_limits;
+  cluster::DistributedQueryRouteResolutionLimits route_limits{};
+  cluster::DistributedVectorGroupedAggregateQueryExecutionLimitsV2 execution_limits{};
+  cluster::DistributedVectorGroupedAggregateQuerySenderLimitsV2 sender_limits{};
+  cluster::DistributedVectorGroupedAggregateQueryTlsLimitsV2 carrier_limits{};
+  cluster::DistributedVectorGroupedAggregateFinalizationLimitsV2 finalization_limits{};
   std::chrono::milliseconds connect_timeout{5000};
-  std::optional<std::chrono::steady_clock::time_point> execution_deadline;
+  std::optional<std::chrono::steady_clock::time_point> execution_deadline{std::nullopt};
 };
 
 // Acquires exact leader-linearizable authority and transfers one grouped sufficient-state plan,
@@ -162,16 +162,16 @@ struct ReplicatedDistributedGroupedFloat64QueryConfig {
   std::span<const std::uint32_t> destination_column_ordinals;
   std::uint32_t aggregate_input_index{};
   std::uint32_t group_key_input_index{};
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::optional<cseg::EventTimePredicate> event_time_predicate{std::nullopt};
   std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts;
   network::ConnectionAuthenticator* authenticator{};
   const cluster::ClusterNodePrincipalAuthorizer* node_authorizer{};
   query::DistributedAggregateSnapshotBindingLimits binding_limits;
-  cluster::DistributedQueryRouteResolutionLimits route_limits;
-  cluster::DistributedGroupedQueryExecutionLimits execution_limits;
-  cluster::DistributedGroupedQueryTlsLimits carrier_limits;
+  cluster::DistributedQueryRouteResolutionLimits route_limits{};
+  cluster::DistributedGroupedQueryExecutionLimits execution_limits{};
+  cluster::DistributedGroupedQueryTlsLimits carrier_limits{};
   std::chrono::milliseconds connect_timeout{5000};
-  std::optional<std::chrono::steady_clock::time_point> execution_deadline;
+  std::optional<std::chrono::steady_clock::time_point> execution_deadline{std::nullopt};
   std::size_t maximum_rebindings{3U};
 };
 

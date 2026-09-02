@@ -36,7 +36,7 @@ decode_distributed_vector_grouped_aggregate_shuffle_ack_v1_exact(
 
 struct DistributedVectorGroupedAggregateShuffleAckV1ReadStep {
   std::size_t consumed_bytes{};
-  std::optional<DistributedVectorGroupedAggregateShuffleAckV1> ack;
+  std::optional<DistributedVectorGroupedAggregateShuffleAckV1> ack{std::nullopt};
 };
 
 class DistributedVectorGroupedAggregateShuffleAckV1Reader {

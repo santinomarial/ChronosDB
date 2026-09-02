@@ -55,8 +55,9 @@ void store_u32(const std::span<std::byte> bytes, const std::size_t offset,
                                      const std::size_t offset) noexcept {
   std::uint16_t value{};
   for (std::size_t index = 0U; index < sizeof(value); ++index) {
-    value |= static_cast<std::uint16_t>(std::to_integer<std::uint8_t>(bytes[offset + index]))
-             << (index * 8U);
+    const auto byte =
+        static_cast<std::uint16_t>(std::to_integer<std::uint8_t>(bytes[offset + index]));
+    value = static_cast<std::uint16_t>(value | static_cast<std::uint16_t>(byte << (index * 8U)));
   }
   return value;
 }

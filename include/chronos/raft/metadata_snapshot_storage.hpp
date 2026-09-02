@@ -24,7 +24,7 @@ class MetadataSnapshotStorageTestAccess;
 struct MetadataSnapshotStorageConfig {
   std::string directory_path;
   GroupId group_id;
-  MetadataSnapshotCodecLimits codec_limits;
+  MetadataSnapshotCodecLimits codec_limits{};
   std::uint16_t file_permissions{0600U};
 };
 

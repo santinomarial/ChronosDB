@@ -199,6 +199,7 @@ TEST(MutableHeadTest, PublishesTheCompleteBatchAndHiddenMetadataAtOneBoundary) {
             (RowVersionIdentity{.table_id = input->schema().table_id(),
                                 .tablet_id = tablet_id(),
                                 .wal_id = wal_id(),
+                                .raft_group_id = {},
                                 .record_sequence = 7U,
                                 .row_ordinal = 1U}));
 
@@ -222,6 +223,7 @@ TEST(MutableHeadTest, PreservesRaftGroupAndIndexAsTheRowVersionIdentity) {
             (RowVersionIdentity{.table_id = input->schema().table_id(),
                                 .tablet_id = tablet_id(),
                                 .commit_source = CommitSource::kRaft,
+                                .wal_id = {},
                                 .raft_group_id = raft_group_id(),
                                 .record_sequence = 11U,
                                 .row_ordinal = 1U}));

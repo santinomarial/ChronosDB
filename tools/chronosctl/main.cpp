@@ -53,7 +53,7 @@ struct SqlOptions {
 };
 
 struct SqlParseResult {
-  std::optional<SqlOptions> options;
+  std::optional<SqlOptions> options{std::nullopt};
   std::string error;
   bool help{};
 };
@@ -71,7 +71,7 @@ struct RoutedSqlOptions {
 };
 
 struct RoutedSqlParseResult {
-  std::optional<RoutedSqlOptions> options;
+  std::optional<RoutedSqlOptions> options{std::nullopt};
   std::string error;
   bool help{};
 };
@@ -90,7 +90,7 @@ struct QuorumSyncOptions {
 };
 
 struct ParseResult {
-  std::optional<QuorumSyncOptions> options;
+  std::optional<QuorumSyncOptions> options{std::nullopt};
   std::string error;
   bool help{};
 };
@@ -236,7 +236,7 @@ parse_uuid(const std::string_view text) noexcept {
       if (arguments.size() != 3U) {
         return {.error = "--help cannot be combined with sql options"};
       }
-      return {.help = true};
+      return {.error = {}, .help = true};
     }
     if (argument == "--host") {
       if (host_seen) {
@@ -281,7 +281,7 @@ parse_uuid(const std::string_view text) noexcept {
   if (!host_seen || !port_seen || !execute_seen) {
     return {.error = "sql requires --host, --port, and --execute"};
   }
-  return {.options = std::move(options)};
+  return {.options = std::move(options), .error = {}};
 }
 
 [[nodiscard]] RoutedSqlParseResult
@@ -323,7 +323,7 @@ parse_routed_sql_options(const std::span<const char* const> arguments) {
       if (arguments.size() != 3U) {
         return {.error = "--help cannot be combined with routed-sql options"};
       }
-      return {.help = true};
+      return {.error = {}, .help = true};
     }
     if (argument == "--group") {
       if (group_seen) {
@@ -400,7 +400,7 @@ parse_routed_sql_options(const std::span<const char* const> arguments) {
       !timeout_seen) {
     return {.error = "routed-sql requires every group, route, TLS, query, and timeout option"};
   }
-  return {.options = std::move(options)};
+  return {.options = std::move(options), .error = {}};
 }
 
 [[nodiscard]] ParseResult parse_quorum_sync_options(const std::span<const char* const> arguments) {
@@ -442,7 +442,7 @@ parse_routed_sql_options(const std::span<const char* const> arguments) {
       if (arguments.size() != 3U) {
         return {.error = "--help cannot be combined with quorum-sync options"};
       }
-      return {.help = true};
+      return {.error = {}, .help = true};
     }
     if (argument == "--json") {
       if (json_seen) {
@@ -517,7 +517,7 @@ parse_routed_sql_options(const std::span<const char* const> arguments) {
       !timeout_seen) {
     return {.error = "quorum-sync requires every group, route, TLS, append, and timeout option"};
   }
-  return {.options = std::move(options)};
+  return {.options = std::move(options), .error = {}};
 }
 
 [[nodiscard]] chronos::common::Result<std::vector<std::byte>>

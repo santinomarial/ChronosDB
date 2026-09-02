@@ -21,10 +21,10 @@ struct DistributedVectorAggregateQueryTcpExecutionConfigV2 {
   network::ConnectionAuthenticator* authenticator{};
   const ClusterNodePrincipalAuthorizer* node_authorizer{};
   std::vector<DistributedQueryNodeRoute> routes;
-  DistributedVectorAggregateQueryTlsLimitsV2 carrier_limits;
-  DistributedVectorAggregateFinalizationLimitsV2 finalization_limits;
+  DistributedVectorAggregateQueryTlsLimitsV2 carrier_limits{};
+  DistributedVectorAggregateFinalizationLimitsV2 finalization_limits{};
   std::chrono::milliseconds connect_timeout{5000};
-  std::optional<std::chrono::steady_clock::time_point> execution_deadline;
+  std::optional<std::chrono::steady_clock::time_point> execution_deadline{std::nullopt};
 };
 
 struct DistributedVectorAggregateQueryTcpExecutionMetricsV2 {

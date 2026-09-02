@@ -64,13 +64,14 @@ TEST(DistributedVectorGroupedAggregateShuffleResultTlsAllocationFailureTest,
   Authenticator authenticator;
   Authorizer authorizer;
   const DistributedVectorGroupedAggregateShuffleResultTlsClientConfig client_config{
-      .authenticator = &authenticator, .node_authorizer = &authorizer};
+      .authenticator = &authenticator, .node_authorizer = &authorizer, .limits = {}};
   const DistributedVectorGroupedAggregateShuffleResultTlsServerConfig server_config{
       .authenticator = &authenticator,
       .node_authorizer = &authorizer,
       .authority = &authority,
       .result_schema = &schema,
-      .coordinator_node_id = 9U};
+      .coordinator_node_id = 9U,
+      .limits = {}};
 
   bool client_success{};
   for (std::size_t fail_after = 0U; fail_after < 64U; ++fail_after) {

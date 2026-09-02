@@ -118,7 +118,7 @@ struct ErrorMessageView {
 };
 
 struct QueryResultLimits {
-  ProtocolLimits protocol;
+  ProtocolLimits protocol{};
   std::uint32_t maximum_rows{1'048'576U};
   std::uint32_t maximum_columns{4096U};
   std::uint32_t maximum_column_name_bytes{1024U};

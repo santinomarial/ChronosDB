@@ -120,7 +120,8 @@ public:
           .receiver = &receiver,
           .peer_ipv4_address = {127U, 0U, 0U, 1U},
           .limits = {.handshake_timeout = std::chrono::milliseconds{100},
-                     .frame_read_timeout = std::chrono::milliseconds{100}}};
+                     .frame_read_timeout = std::chrono::milliseconds{100}},
+          .codec_limits = {}};
 }
 
 void finish_handshake(network::TlsSocket& client, RaftTransportTlsServer& server,
@@ -159,13 +160,14 @@ void send_frame(network::TlsSocket& client, RaftTransportTlsServer& server,
   ASSERT_TRUE(server.state() == RaftTransportTlsServerState::kAwaitingDurableResult ||
               server.state() == RaftTransportTlsServerState::kResultReady);
 
-  pollfd descriptor{.fd = runtime.completion_descriptor(), .events = POLLIN};
+  pollfd descriptor{.fd = runtime.completion_descriptor(), .events = POLLIN, .revents = 0};
   ASSERT_GE(descriptor.fd, 0);
   ASSERT_EQ(::poll(&descriptor, 1U, 1000), 1);
   ASSERT_NE(descriptor.revents & POLLIN, 0);
   ASSERT_TRUE(runtime.drain_completion_notifications().is_ok());
-  if (server.state() == RaftTransportTlsServerState::kAwaitingDurableResult)
+  if (server.state() == RaftTransportTlsServerState::kAwaitingDurableResult) {
     ASSERT_TRUE(server.on_ready(false, false, now).is_ok()) << server.failure().to_string();
+  }
   ASSERT_EQ(server.state(), RaftTransportTlsServerState::kResultReady);
 }
 

@@ -22,8 +22,8 @@ inline constexpr std::size_t kMaximumDistributedVectorAggregateQueryExecutionMem
     std::size_t{1024U} * 1024U * 1024U;
 
 struct DistributedVectorAggregateQueryExecutionLimitsV2 {
-  DistributedVectorAggregateQuerySenderLimitsV2 sender;
-  query::DistributedVectorAggregateCoordinatorLimitsV2 coordinator;
+  DistributedVectorAggregateQuerySenderLimitsV2 sender{};
+  query::DistributedVectorAggregateCoordinatorLimitsV2 coordinator{};
   std::size_t maximum_query_memory_bytes{
       kDefaultDistributedVectorAggregateQueryExecutionMemoryBytesV2};
 };

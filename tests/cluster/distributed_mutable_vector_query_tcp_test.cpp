@@ -148,7 +148,8 @@ TEST(DistributedMutableVectorQueryTcpTest, OwnsRealConnectListenMutualTlsAndComp
     const auto interest = client->interest();
     pollfd descriptor{.fd = client->descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                   (interest.want_write ? POLLOUT : 0))};
+                                                   (interest.want_write ? POLLOUT : 0)),
+                      .revents = 0};
     ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
     ASSERT_TRUE(client
                     ->on_ready((descriptor.revents & POLLIN) != 0,

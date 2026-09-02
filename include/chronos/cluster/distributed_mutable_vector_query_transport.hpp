@@ -43,7 +43,7 @@ decode_distributed_mutable_vector_query_request_exact(common::ByteView bytes);
 
 struct DistributedMutableVectorQueryRequestReadStep {
   std::size_t consumed_bytes{};
-  std::optional<DistributedMutableVectorQueryRequest> request;
+  std::optional<DistributedMutableVectorQueryRequest> request{std::nullopt};
 };
 
 // Owns at most one bounded request frame. One connection thread serializes consume calls;

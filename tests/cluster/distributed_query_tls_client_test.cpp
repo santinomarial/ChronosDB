@@ -186,11 +186,13 @@ TEST(DistributedQueryTlsClientTest, AuthenticatesWritesReadsAndFeedsExactSenderR
     } else if (!response_writer->complete()) {
       auto write = server->write(response_writer->pending_write());
       ASSERT_TRUE(write.has_value()) << write.error().message();
-      if (write->state == network::TlsIoState::kComplete)
+      if (write->state == network::TlsIoState::kComplete) {
         ASSERT_TRUE(response_writer->consume_written(write->bytes_transferred).is_ok());
+      }
     }
-    if (carrier->state() == DistributedQueryTlsClientState::kComplete)
+    if (carrier->state() == DistributedQueryTlsClientState::kComplete) {
       break;
+    }
   }
 
   ASSERT_EQ(carrier->state(), DistributedQueryTlsClientState::kComplete);

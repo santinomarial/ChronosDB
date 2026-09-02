@@ -139,8 +139,13 @@ TEST(DistributedVectorAggregateWorkerAllocationFailureTest,
                                          .part_count = 0U,
                                          .durable_version_count = 0U,
                                          .commit_source = manifest::ManifestCommitSource::kRaft}};
-  const auto encoded = manifest::encode_manifest_v2_temporal(
-      {.generation = 1U, .database_id = database_id, .tablets = tablets});
+  const auto encoded =
+      manifest::encode_manifest_v2_temporal({.generation = 1U,
+                                             .database_id = database_id,
+                                             .wal_reclaim_checkpoint = std::nullopt,
+                                             .tablets = tablets,
+                                             .parts = {},
+                                             .retries = {}});
   ASSERT_TRUE(encoded.has_value());
   write_file(directory.path() / manifest::kManifestDirectoryName /
                  *manifest::manifest_file_name(1U),
@@ -202,7 +207,8 @@ TEST(DistributedVectorAggregateWorkerAllocationFailureTest,
                                                           .raft_group_id = group_id,
                                                           .local_node = 11U,
                                                           .local_linearizable_barrier =
-                                                              raft::ReadBarrier{2U, 3U, 10U}};
+                                                              raft::ReadBarrier{2U, 3U, 10U},
+                                                          .limits = {}};
 
   bool succeeded{};
   for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
@@ -238,7 +244,8 @@ TEST(DistributedVectorAggregateWorkerAllocationFailureTest,
       .placement = std::cref(placement),
       .raft_group_id = group_id,
       .local_node = 11U,
-      .local_linearizable_barrier = raft::ReadBarrier{2U, 3U, 10U}};
+      .local_linearizable_barrier = raft::ReadBarrier{2U, 3U, 10U},
+      .limits = {}};
   bool grouped_succeeded{};
   for (std::size_t fail_after = 0U; fail_after < 192U; ++fail_after) {
     auto result = run_failure(fail_after, [&] {
@@ -373,7 +380,8 @@ TEST(DistributedVectorAggregateWorkerAllocationFailureTest,
       .placement = std::cref(mutable_placement),
       .raft_group_id = mutable_group_id,
       .local_node = 11U,
-      .local_linearizable_barrier = mutable_barrier};
+      .local_linearizable_barrier = mutable_barrier,
+      .limits = {}};
   bool mutable_grouped_succeeded{};
   for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
     auto result = run_failure(fail_after, [&] {

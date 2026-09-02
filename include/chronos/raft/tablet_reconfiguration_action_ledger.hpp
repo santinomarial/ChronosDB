@@ -14,7 +14,7 @@ namespace chronos::raft {
 struct TabletReconfigurationActionLedgerConfig {
   std::string directory_path;
   schema::TabletId tablet_id;
-  TabletReconfigurationActionCodecLimits codec_limits;
+  TabletReconfigurationActionCodecLimits codec_limits{};
   std::uint16_t file_permissions{0600U};
 };
 

@@ -53,7 +53,7 @@ struct ReplicatedMutableVectorQueryBinding {
   // every selected tablet's immutable group authority must be present.
   std::span<const query::DistributedVectorGroupReadAuthority> group_authorities;
   std::span<const std::uint32_t> destination_column_ordinals;
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::optional<cseg::EventTimePredicate> event_time_predicate{std::nullopt};
   std::reference_wrapper<const query::DistributedVectorResultSchema> result_schema;
   const query::DistributedVectorPreGroupProgram* pre_group_program{};
 };
@@ -186,18 +186,19 @@ private:
 };
 
 struct ReplicatedIngestDatabaseConfig {
-  runtime::DatabaseBootstrapConfig bootstrap;
-  std::vector<raft::RaftGroupConfiguration> groups;
-  raft::RaftPersistentLogOpenOptions raft_recovery;
-  std::optional<raft::MetadataSnapshotStorageConfig> metadata_snapshots;
-  std::vector<ingest::RaftTabletSnapshotStorageConfig> tablet_snapshots;
-  raft::AsyncDurableMultiRaftLimits runtime_limits;
-  ingest::AsyncRaftTabletApplicationLimits application_limits;
-  ReplicatedIngestCoordinatorLimits coordinator_limits;
-  raft::MetadataLimits metadata_limits;
-  raft::MetadataCommandCodecLimits metadata_codec_limits;
-  raft::SchemaDefinitionCodecLimits schema_codec_limits;
-  ingest::ColumnarAppendDecodeLimits columnar_append_limits;
+  runtime::DatabaseBootstrapConfig bootstrap{};
+  std::vector<raft::RaftGroupConfiguration> groups{}; // NOLINT(readability-redundant-member-init)
+  raft::RaftPersistentLogOpenOptions raft_recovery{};
+  std::optional<raft::MetadataSnapshotStorageConfig> metadata_snapshots{std::nullopt};
+  std::vector<ingest::RaftTabletSnapshotStorageConfig>
+      tablet_snapshots{}; // NOLINT(readability-redundant-member-init)
+  raft::AsyncDurableMultiRaftLimits runtime_limits{};
+  ingest::AsyncRaftTabletApplicationLimits application_limits{};
+  ReplicatedIngestCoordinatorLimits coordinator_limits{};
+  raft::MetadataLimits metadata_limits{};
+  raft::MetadataCommandCodecLimits metadata_codec_limits{};
+  raft::SchemaDefinitionCodecLimits schema_codec_limits{};
+  ingest::ColumnarAppendDecodeLimits columnar_append_limits{};
   ReplicatedIngestDatabaseStartupObserver* startup_observer{};
 };
 

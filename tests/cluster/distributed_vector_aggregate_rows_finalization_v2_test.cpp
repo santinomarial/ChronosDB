@@ -95,7 +95,7 @@ struct TestRow {
     cells.push_back({.value = scores[index]});
     const auto& label = rows[index].label;
     if (!label.has_value()) {
-      cells.push_back({.is_null = true});
+      cells.push_back({.is_null = true, .value = {}});
     } else {
       const std::string& value = label.value();
       cells.push_back({.value = std::as_bytes(std::span{value.data(), value.size()})});

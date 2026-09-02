@@ -395,8 +395,9 @@ TEST(TemporalMetadataCodecTest,
     header ? refresh_header_and_metadata_crc(bytes) : refresh_metadata_crc(bytes);
     const auto decoded = decode_cseg_v2_temporal_metadata_exact(bytes);
     EXPECT_FALSE(decoded.has_value()) << offset;
-    if (!decoded.has_value())
+    if (!decoded.has_value()) {
       EXPECT_EQ(decoded.error().kind(), expected) << offset;
+    }
   };
   const auto expect_u32 = [&](const std::size_t offset, const std::uint32_t value,
                               const bool header, const CsegMetadataDecodeErrorKind expected) {
@@ -405,8 +406,9 @@ TEST(TemporalMetadataCodecTest,
     header ? refresh_header_and_metadata_crc(bytes) : refresh_metadata_crc(bytes);
     const auto decoded = decode_cseg_v2_temporal_metadata_exact(bytes);
     EXPECT_FALSE(decoded.has_value()) << offset;
-    if (!decoded.has_value())
+    if (!decoded.has_value()) {
       EXPECT_EQ(decoded.error().kind(), expected) << offset;
+    }
   };
   const auto expect_byte = [&](const std::size_t offset,
                                const CsegMetadataDecodeErrorKind expected) {
@@ -416,8 +418,9 @@ TEST(TemporalMetadataCodecTest,
     header ? refresh_header_and_metadata_crc(bytes) : refresh_metadata_crc(bytes);
     const auto decoded = decode_cseg_v2_temporal_metadata_exact(bytes);
     EXPECT_FALSE(decoded.has_value()) << offset;
-    if (!decoded.has_value())
+    if (!decoded.has_value()) {
       EXPECT_EQ(decoded.error().kind(), expected) << offset;
+    }
   };
 
   expect_u16(format::kFormatMajorOffset, 3U, true, CsegMetadataDecodeErrorKind::kUnsupported);

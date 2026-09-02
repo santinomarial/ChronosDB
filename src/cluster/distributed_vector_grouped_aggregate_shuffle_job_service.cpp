@@ -141,7 +141,7 @@ encode_chunk(const query::VectorChunk& chunk,
         if (!cell.has_value())
           return common::make_unexpected(cell.error());
         if (cell->is_null()) {
-          cells.push_back({.is_null = true});
+          cells.push_back({.is_null = true, .value = {}});
         } else if (cell->kind() == columnar::ColumnCellView::Kind::kBoolean) {
           auto value = cell->boolean();
           if (!value.has_value())

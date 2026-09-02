@@ -32,8 +32,8 @@ struct DistributedVectorGroupedAggregateQueryResponseV2 {
   common::Uuid query_id;
   schema::TabletId tablet_id;
   common::StatusCode status_code{common::StatusCode::kInternal};
-  std::optional<query::DistributedVectorGroupedAggregateExchangeMessage> payload;
-  std::optional<DistributedQueryLeaderHint> leader_hint;
+  std::optional<query::DistributedVectorGroupedAggregateExchangeMessage> payload{std::nullopt};
+  std::optional<DistributedQueryLeaderHint> leader_hint{std::nullopt};
 };
 
 // Exact Fragment-v2 plan/result-shape validation shared by receiver and sender. It does not derive
@@ -58,7 +58,7 @@ decode_distributed_vector_grouped_aggregate_query_response_v2_exact(
 
 struct DistributedVectorGroupedAggregateQueryResponseV2ReadStep {
   std::size_t consumed_bytes{};
-  std::optional<DistributedVectorGroupedAggregateQueryResponseV2> response;
+  std::optional<DistributedVectorGroupedAggregateQueryResponseV2> response{std::nullopt};
 };
 
 // One connection owner retains the complete grouped authority and query resource context. Only a
@@ -159,7 +159,7 @@ struct DistributedVectorGroupedAggregateQueryReceiverV2Config {
   std::size_t maximum_response_bytes{kDefaultDistributedVectorGroupedAggregateQueryV2ResponseBytes};
   std::size_t maximum_decode_memory_bytes{
       kDefaultDistributedVectorGroupedAggregateQueryV2DecodeMemoryBytes};
-  query::DistributedVectorGroupedAggregateExchangeDecodeLimits payload;
+  query::DistributedVectorGroupedAggregateExchangeDecodeLimits payload{};
 };
 
 struct DistributedVectorGroupedAggregateQueryBoundResponsesV2 {
@@ -196,11 +196,11 @@ struct DistributedVectorGroupedAggregateQueryAttemptV2 {
 };
 
 struct DistributedVectorGroupedAggregateQuerySenderLimitsV2 {
-  DistributedQueryRetryLimits retry;
+  DistributedQueryRetryLimits retry{};
   std::size_t maximum_response_frames{
       query::distributed_vector_grouped_aggregate_exchange_format::kMaximumGroups};
   std::size_t maximum_response_bytes{kDefaultDistributedVectorGroupedAggregateQueryV2ResponseBytes};
-  query::DistributedVectorGroupedAggregateExchangeDecodeLimits payload;
+  query::DistributedVectorGroupedAggregateExchangeDecodeLimits payload{};
 };
 
 // Single-threaded finite policy owner for one immutable grouped Fragment-v2 dispatch. A complete

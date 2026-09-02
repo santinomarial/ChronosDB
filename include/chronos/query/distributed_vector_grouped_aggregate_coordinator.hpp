@@ -31,8 +31,8 @@ struct DistributedVectorGroupedAggregateCoordinatorLimits {
   std::size_t maximum_total_encoded_bytes{kDefaultDistributedVectorGroupedCoordinatorEncodedBytes};
   std::size_t maximum_query_memory_bytes{kDefaultDistributedVectorGroupedCoordinatorMemoryBytes};
   std::size_t maximum_retained_configuration_bytes{kDefaultGroupedAggregateConfigurationByteLimit};
-  DistributedVectorGroupedAggregateExchangeDecodeLimits decode;
-  GroupedAggregateLimits table;
+  DistributedVectorGroupedAggregateExchangeDecodeLimits decode{};
+  GroupedAggregateLimits table{};
 };
 
 // Single-threaded owner for one grouped sufficient-state query. Accept retains canonical bytes as

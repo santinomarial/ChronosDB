@@ -16,10 +16,11 @@
 namespace chronos::service {
 
 struct ReplicatedRaftTransportTlsCredentials {
-  std::string certificate_chain_file;
-  std::string private_key_file;
-  std::string trust_store_file;
-  std::shared_ptr<const network::TlsPemCredentials> pem_credentials;
+  std::string certificate_chain_file{}; // NOLINT(readability-redundant-member-init)
+  std::string private_key_file{};       // NOLINT(readability-redundant-member-init)
+  std::string trust_store_file{};       // NOLINT(readability-redundant-member-init)
+  std::shared_ptr<const network::TlsPemCredentials>
+      pem_credentials{}; // NOLINT(readability-redundant-member-init)
 };
 
 struct ReplicatedRaftGroupElectionTimeout {
@@ -34,13 +35,13 @@ struct ReplicatedRaftTransportLimits {
   std::chrono::milliseconds minimum_election_timeout{300};
   std::chrono::milliseconds maximum_election_timeout{600};
   std::chrono::milliseconds connect_timeout{5000};
-  raft::RaftTimerDriverLimits timers;
-  cluster::RaftTransportTlsServerLimits inbound_carrier;
-  cluster::RaftTransportTlsClientLimits outbound_carrier;
-  cluster::RaftTransportPeerReconnectLimits reconnect;
+  raft::RaftTimerDriverLimits timers{};
+  cluster::RaftTransportTlsServerLimits inbound_carrier{};
+  cluster::RaftTransportTlsClientLimits outbound_carrier{};
+  cluster::RaftTransportPeerReconnectLimits reconnect{};
   // This codec limit set is applied to receiver validation and both transport directions.
-  cluster::RaftTransportPeerPoolLimits peer_pool;
-  cluster::RaftTransportRuntimeLimits runtime;
+  cluster::RaftTransportPeerPoolLimits peer_pool{};
+  cluster::RaftTransportRuntimeLimits runtime{};
   std::size_t maximum_inbound_connections{1024U};
   std::size_t maximum_accepts_per_poll{32U};
 };
@@ -48,13 +49,14 @@ struct ReplicatedRaftTransportLimits {
 struct ReplicatedRaftTransportRuntimeConfig {
   raft::NodeId local_node_id{};
   raft::AsyncDurableMultiRaftRuntime* durable_runtime{};
-  std::vector<ReplicatedPeer> peers;
-  std::vector<raft::GroupId> resident_groups;
+  std::vector<ReplicatedPeer> peers{};          // NOLINT(readability-redundant-member-init)
+  std::vector<raft::GroupId> resident_groups{}; // NOLINT(readability-redundant-member-init)
   // Optional exact local overrides. Creation canonicalizes by group, rejects duplicates and
   // nonresident groups, and applies the ordinary randomized limits to every omitted group.
-  std::vector<ReplicatedRaftGroupElectionTimeout> group_election_timeouts;
-  ReplicatedRaftTransportTlsCredentials tls;
-  ReplicatedRaftTransportLimits limits;
+  std::vector<ReplicatedRaftGroupElectionTimeout>
+      group_election_timeouts{}; // NOLINT(readability-redundant-member-init)
+  ReplicatedRaftTransportTlsCredentials tls{};
+  ReplicatedRaftTransportLimits limits{};
 };
 
 // Address-stable owner for one node's authenticated inbound/outbound Raft carriers, randomized

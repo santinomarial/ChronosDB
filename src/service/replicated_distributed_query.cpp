@@ -225,6 +225,7 @@ prepare_vector_grouped_aggregate_sql_plan(
     query::DistributedVectorQueryPlan plan{
         .query_id = query_id,
         .read_policy = {.consistency = query::DistributedReadConsistency::kLeaderLinearizable},
+        .fragments = {},
         .intent = sql_plan.intent,
     };
     plan.fragments.reserve(planned_tablets);

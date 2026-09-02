@@ -91,10 +91,10 @@ using NativeIdentityGenerator = common::UuidGenerator;
 
 struct NativeDistributedGroupedShufflePlan {
   bool selected{true};
-  cluster::DistributedVectorGroupedAggregateShuffleQueryExecutionConfig execution;
+  cluster::DistributedVectorGroupedAggregateShuffleQueryExecutionConfig execution{};
   std::optional<cluster::DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionConfig>
-      reducer_jobs;
-  cluster::DistributedVectorGroupedAggregateShuffleAuthorityLimits authority;
+      reducer_jobs{std::nullopt};
+  cluster::DistributedVectorGroupedAggregateShuffleAuthorityLimits authority{};
 };
 
 // Deployment seam for per-query destination listeners, routes, TLS contexts, and reducer resource
@@ -131,21 +131,22 @@ struct NativeDistributedMutableVectorRowsQueryConfig {
   // dependency it returns must outlive the service/synchronous query call.
   NativeDistributedGroupedShuffleProvider* grouped_shuffle_provider{};
   std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts;
-  cluster::DistributedQueryRouteResolutionLimits route_resolution;
-  query::DistributedVectorRowsSqlLoweringLimits sql_lowering;
-  query::DistributedVectorAggregateSqlLoweringLimits aggregate_sql_lowering;
-  query::DistributedVectorGroupedSqlLoweringLimits grouped_sql_lowering;
-  query::DistributedVectorGroupedAggregateSqlLoweringLimits grouped_aggregate_sql_lowering;
-  cluster::DistributedMutableVectorQueryExecutionLimits execution;
-  cluster::DistributedMutableVectorGroupedAggregateQueryExecutionLimits grouped_aggregate_execution;
-  cluster::DistributedMutableVectorQueryTlsLimits carrier;
-  cluster::DistributedMutableVectorGroupedAggregateQueryTlsLimits grouped_aggregate_carrier;
-  cluster::RaftReadAuthorityTlsClientLimits authority_carrier;
-  cluster::RaftReadAuthorityTcpRetryLimits authority_retry;
-  cluster::DistributedVectorRowFinalizationLimitsV2 finalization;
-  cluster::DistributedVectorAggregateRowsFinalizationLimitsV2 aggregate_finalization;
-  cluster::DistributedVectorPhysicalRowsFinalizationLimitsV2 grouped_finalization;
-  cluster::DistributedVectorGroupedAggregateFinalizationLimitsV2 grouped_aggregate_finalization;
+  cluster::DistributedQueryRouteResolutionLimits route_resolution{};
+  query::DistributedVectorRowsSqlLoweringLimits sql_lowering{};
+  query::DistributedVectorAggregateSqlLoweringLimits aggregate_sql_lowering{};
+  query::DistributedVectorGroupedSqlLoweringLimits grouped_sql_lowering{};
+  query::DistributedVectorGroupedAggregateSqlLoweringLimits grouped_aggregate_sql_lowering{};
+  cluster::DistributedMutableVectorQueryExecutionLimits execution{};
+  cluster::DistributedMutableVectorGroupedAggregateQueryExecutionLimits
+      grouped_aggregate_execution{};
+  cluster::DistributedMutableVectorQueryTlsLimits carrier{};
+  cluster::DistributedMutableVectorGroupedAggregateQueryTlsLimits grouped_aggregate_carrier{};
+  cluster::RaftReadAuthorityTlsClientLimits authority_carrier{};
+  cluster::RaftReadAuthorityTcpRetryLimits authority_retry{};
+  cluster::DistributedVectorRowFinalizationLimitsV2 finalization{};
+  cluster::DistributedVectorAggregateRowsFinalizationLimitsV2 aggregate_finalization{};
+  cluster::DistributedVectorPhysicalRowsFinalizationLimitsV2 grouped_finalization{};
+  cluster::DistributedVectorGroupedAggregateFinalizationLimitsV2 grouped_aggregate_finalization{};
   std::chrono::milliseconds connect_timeout{5000};
   std::chrono::milliseconds authority_connect_timeout{5000};
   std::chrono::milliseconds execution_timeout{30000};

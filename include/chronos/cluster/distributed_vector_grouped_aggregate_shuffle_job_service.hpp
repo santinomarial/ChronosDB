@@ -26,18 +26,18 @@ inline constexpr std::size_t kMaximumDistributedVectorGroupedAggregateShuffleJob
 
 struct DistributedVectorGroupedAggregateShuffleJobServiceConfig {
   raft::NodeId local_node_id{};
-  network::TcpListenerConfig shuffle_listener;
-  network::TlsServerConfig shuffle_tls;
+  network::TcpListenerConfig shuffle_listener{};
+  network::TlsServerConfig shuffle_tls{};
   network::ConnectionAuthenticator* shuffle_authenticator{};
   network::ConnectionAuthenticator* result_authenticator{};
   const ClusterNodePrincipalAuthorizer* node_authorizer{};
   std::span<const DistributedQueryNodeTlsContext> result_tls_contexts;
-  DistributedVectorGroupedAggregateShuffleTlsLimits shuffle_carrier_limits;
-  DistributedVectorGroupedAggregateShuffleSourcePlanLimits source_plan_limits;
-  DistributedVectorGroupedAggregateShuffleReducerLimits reducer_limits;
-  DistributedVectorGroupedAggregateShuffleResultRetryLimits result_retry_limits;
-  DistributedVectorGroupedAggregateShuffleResultTlsLimits result_carrier_limits;
-  network::QueryResultLimits result_batch_limits;
+  DistributedVectorGroupedAggregateShuffleTlsLimits shuffle_carrier_limits{};
+  DistributedVectorGroupedAggregateShuffleSourcePlanLimits source_plan_limits{};
+  DistributedVectorGroupedAggregateShuffleReducerLimits reducer_limits{};
+  DistributedVectorGroupedAggregateShuffleResultRetryLimits result_retry_limits{};
+  DistributedVectorGroupedAggregateShuffleResultTlsLimits result_carrier_limits{};
+  network::QueryResultLimits result_batch_limits{};
   std::chrono::milliseconds result_connect_timeout{5000};
   std::chrono::milliseconds shuffle_connect_timeout{5000};
   std::size_t maximum_jobs{64U};

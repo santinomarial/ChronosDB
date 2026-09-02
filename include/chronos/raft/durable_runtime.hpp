@@ -87,15 +87,15 @@ struct RaftGroupObservation {
   NodeId node_id{};
   Role role{Role::kFollower};
   Term current_term{};
-  std::optional<NodeId> leader_id;
+  std::optional<NodeId> leader_id{std::nullopt};
   LogIndex last_log_index{};
   LogIndex commit_index{};
   LogIndex applied_index{};
   LogIndex snapshot_index{};
-  std::vector<NodeId> voters;
-  std::vector<NodeId> committed_voters;
-  std::vector<NodeId> joint_old_voters;
-  std::vector<NodeId> joint_new_voters;
+  std::vector<NodeId> voters{};           // NOLINT(readability-redundant-member-init)
+  std::vector<NodeId> committed_voters{}; // NOLINT(readability-redundant-member-init)
+  std::vector<NodeId> joint_old_voters{}; // NOLINT(readability-redundant-member-init)
+  std::vector<NodeId> joint_new_voters{}; // NOLINT(readability-redundant-member-init)
   bool joint_membership_active{};
   bool joint_membership_can_finalize{};
   bool final_membership_pending{};

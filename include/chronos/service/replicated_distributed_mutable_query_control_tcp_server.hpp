@@ -17,17 +17,17 @@
 namespace chronos::service {
 
 struct ReplicatedDistributedMutableQueryControlTcpServerConfig {
-  ReplicatedDistributedMutableVectorQueryWorkerConfig worker;
-  query::DistributedVectorGroupedAggregateWorkerLimitsV2 grouped_worker_limits;
+  ReplicatedDistributedMutableVectorQueryWorkerConfig worker{};
+  query::DistributedVectorGroupedAggregateWorkerLimitsV2 grouped_worker_limits{};
   ReplicatedReadBarrier* read_barrier{};
-  network::TcpListenerConfig listener;
-  network::TlsServerConfig tls;
+  network::TcpListenerConfig listener{};
+  network::TlsServerConfig tls{};
   network::ConnectionAuthenticator* authenticator{};
   const cluster::ClusterNodePrincipalAuthorizer* node_authorizer{};
   const cluster::DistributedQueryLeaderHintProvider* leader_hint_provider{};
   std::optional<cluster::DistributedVectorGroupedAggregateShuffleJobServiceConfig>
-      grouped_shuffle_jobs;
-  cluster::DistributedMutableQueryControlTlsServerLimits carrier_limits;
+      grouped_shuffle_jobs{std::nullopt};
+  cluster::DistributedMutableQueryControlTlsServerLimits carrier_limits{};
   std::size_t maximum_connections{1024U};
   std::size_t maximum_accepts_per_poll{32U};
 };

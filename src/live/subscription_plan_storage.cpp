@@ -93,9 +93,10 @@ public:
     std::vector<std::byte> bytes;
   };
 
-  Impl(SubscriptionPlanStorageConfig configured, io::PosixDirectory directory,
-       io::PosixAdvisoryLock lock) noexcept
-      : config(std::move(configured)), directory(std::move(directory)), lock(std::move(lock)) {}
+  Impl(SubscriptionPlanStorageConfig configured, io::PosixDirectory owned_directory,
+       io::PosixAdvisoryLock owned_lock) noexcept
+      : config(std::move(configured)), directory(std::move(owned_directory)),
+        lock(std::move(owned_lock)) {}
 
   [[nodiscard]] common::Status check_usable() const {
     return poison.is_ok()

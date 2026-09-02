@@ -120,7 +120,7 @@ encode_rows(const std::span<const Row> rows,
       const std::string_view label = rows[ordinal].label.value_or(std::string_view{});
       cells.push_back({.value = std::as_bytes(std::span{label.data(), label.size()})});
     } else {
-      cells.push_back({.is_null = true});
+      cells.push_back({.is_null = true, .value = {}});
     }
     cells.push_back({.value = {&booleans[ordinal], 1U}});
     cells.push_back({.value = scores[ordinal]});

@@ -36,7 +36,7 @@ distributed_vector_grouped_aggregate_shuffle_job_control_request_frame_length_v4
 
 struct DistributedVectorGroupedAggregateShuffleJobControlRequestReadStep {
   std::size_t consumed_bytes{};
-  std::optional<DistributedVectorGroupedAggregateShuffleJobControlRequest> request;
+  std::optional<DistributedVectorGroupedAggregateShuffleJobControlRequest> request{std::nullopt};
 };
 
 class DistributedVectorGroupedAggregateShuffleJobControlRequestReader {
@@ -81,7 +81,7 @@ private:
 
 struct DistributedVectorGroupedAggregateShuffleJobControlResponseReadStep {
   std::size_t consumed_bytes{};
-  std::optional<DistributedVectorGroupedAggregateShuffleJobControlResponse> response;
+  std::optional<DistributedVectorGroupedAggregateShuffleJobControlResponse> response{std::nullopt};
 };
 
 class DistributedVectorGroupedAggregateShuffleJobControlResponseReader {

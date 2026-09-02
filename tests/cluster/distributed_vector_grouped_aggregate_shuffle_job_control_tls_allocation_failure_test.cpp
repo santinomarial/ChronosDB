@@ -111,7 +111,8 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTlsAllocationFailureTest,
           network::TlsSocket{},
           {.authenticator = &authenticator,
            .node_authorizer = &authorizer,
-           .request = std::move(request)},
+           .request = std::move(request),
+           .limits = {}},
           {}));
       failure.disable();
     }
@@ -143,7 +144,8 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTlsAllocationFailureTest,
                      .value();
   ::chronos::test::ScopedAllocationFailure failure{0U};
   auto server = DistributedVectorGroupedAggregateShuffleJobControlTlsServer::create(
-      network::TlsSocket{}, {.authenticator = &authenticator, .service = &service}, {});
+      network::TlsSocket{}, {.authenticator = &authenticator, .service = &service, .limits = {}},
+      {});
   failure.disable();
   ASSERT_FALSE(server.has_value());
   EXPECT_EQ(server.error().code(), common::StatusCode::kResourceExhausted);
@@ -162,7 +164,8 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTlsAllocationFailureTest,
        .carrier = {.authenticator = &authenticator,
                    .node_authorizer = &authorizer,
                    .peer_ipv4_address = {127U, 0U, 0U, 1U},
-                   .request = std::move(request)}},
+                   .request = std::move(request),
+                   .limits = {}}},
       {});
   failure.disable();
   ASSERT_FALSE(client.has_value());
@@ -178,7 +181,12 @@ TEST(DistributedVectorGroupedAggregateShuffleJobControlTlsAllocationFailureTest,
       .route = {.node_id = 3U, .endpoints = {{{127U, 0U, 0U, 1U}, 9U}}, .tls_context = &context},
       .authenticator = &authenticator,
       .node_authorizer = &authorizer,
-      .request = DistributedVectorGroupedAggregateShuffleJobControlRequest{prepare()}};
+      .request = DistributedVectorGroupedAggregateShuffleJobControlRequest{prepare()},
+      .carrier_limits = {},
+      .connect_timeout = std::chrono::milliseconds{5000},
+      .retry = {},
+      .execution_deadline = std::nullopt,
+      .retry_unavailable_response = false};
   ::chronos::test::ScopedAllocationFailure failure{0U};
   auto acquisition =
       DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition::create(std::move(config));

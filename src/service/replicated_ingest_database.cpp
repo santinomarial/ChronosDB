@@ -385,7 +385,8 @@ build_tablets(const ReplicatedIngestDatabaseConfig& config,
           {.head_capacity = head_capacity(**schemas->begin(), bootstrap),
            .maximum_schema_versions = schemas->size(),
            .maximum_sealed_generations = bootstrap.maximum_sealed_generations,
-           .maximum_retry_entries = retry_limit});
+           .maximum_retry_entries = retry_limit,
+           .flush_queue = {}});
       auto retries = ingest::RetryDirectory::create({.maximum_entries = retry_limit});
       if (!tablet.has_value())
         return common::make_unexpected(tablet.error());
@@ -665,6 +666,7 @@ ReplicatedQuerySnapshot::prepare_linearizable_mutable_vector_rows_query(
     query::DistributedVectorQueryPlan plan{
         .query_id = binding.query_id,
         .read_policy = {.consistency = query::DistributedReadConsistency::kLeaderLinearizable},
+        .fragments = {},
         .intent = sql_plan.intent,
     };
     plan.fragments.reserve(table->tablets.size());

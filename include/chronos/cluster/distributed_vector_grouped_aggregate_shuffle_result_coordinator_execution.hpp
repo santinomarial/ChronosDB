@@ -17,12 +17,12 @@
 namespace chronos::cluster {
 
 struct DistributedVectorGroupedAggregateShuffleResultCoordinatorExecutionConfig {
-  network::TcpListenerConfig listener;
-  network::TlsServerConfig tls;
+  network::TcpListenerConfig listener{};
+  network::TlsServerConfig tls{};
   network::ConnectionAuthenticator* authenticator{};
   const ClusterNodePrincipalAuthorizer* node_authorizer{};
   raft::NodeId coordinator_node_id{};
-  DistributedVectorGroupedAggregateShuffleResultTlsLimits carrier_limits;
+  DistributedVectorGroupedAggregateShuffleResultTlsLimits carrier_limits{};
   std::size_t maximum_retained_server_streams{1024U};
   std::size_t maximum_accepts_per_poll{32U};
   std::size_t maximum_collected_encoded_bytes{
@@ -30,9 +30,9 @@ struct DistributedVectorGroupedAggregateShuffleResultCoordinatorExecutionConfig 
   std::size_t maximum_batch_working_bytes{query::kDefaultVectorChunkMemoryLimit};
   std::size_t maximum_working_memory_bytes{
       kDefaultDistributedVectorGroupedAggregateShuffleCollectedResultWorkingBytes};
-  DistributedVectorGroupedAggregateFinalizationLimitsV2 finalization_limits;
+  DistributedVectorGroupedAggregateFinalizationLimitsV2 finalization_limits{};
   const query::DistributedVectorGroupedAggregateCoordinatorProjection* projection{};
-  std::optional<std::chrono::steady_clock::time_point> execution_deadline;
+  std::optional<std::chrono::steady_clock::time_point> execution_deadline{std::nullopt};
 };
 
 struct DistributedVectorGroupedAggregateShuffleResultCoordinatorExecutionMetrics {

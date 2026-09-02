@@ -63,7 +63,7 @@ struct DistributedVectorRowSourceOutput {
 
 struct DistributedVectorRowConstantOutput {
   bool is_null{};
-  std::vector<std::byte> canonical_value;
+  std::vector<std::byte> canonical_value{}; // NOLINT(readability-redundant-member-init)
 
   friend bool operator==(const DistributedVectorRowConstantOutput&,
                          const DistributedVectorRowConstantOutput&) = default;
@@ -90,18 +90,20 @@ using DistributedVectorRowCoordinatorOutput =
                  DistributedVectorRowExpressionOutput>;
 
 struct DistributedVectorRowCoordinatorProjection {
-  std::vector<DistributedVectorRowCoordinatorOutput> outputs;
-  DistributedVectorResultSchema result_schema;
-  std::optional<VectorExpression> predicate;
-  std::vector<DistributedVectorRowCoordinatorOrderKey> order_keys;
+  std::vector<DistributedVectorRowCoordinatorOutput>
+      outputs{}; // NOLINT(readability-redundant-member-init)
+  DistributedVectorResultSchema result_schema{};
+  std::optional<VectorExpression> predicate{std::nullopt};
+  std::vector<DistributedVectorRowCoordinatorOrderKey>
+      order_keys{}; // NOLINT(readability-redundant-member-init)
 
   friend bool operator==(const DistributedVectorRowCoordinatorProjection&,
                          const DistributedVectorRowCoordinatorProjection&) = default;
 };
 
 struct DistributedVectorAggregateCoordinatorProjection {
-  std::vector<VectorExpression> outputs;
-  DistributedVectorResultSchema result_schema;
+  std::vector<VectorExpression> outputs{}; // NOLINT(readability-redundant-member-init)
+  DistributedVectorResultSchema result_schema{};
 
   friend bool operator==(const DistributedVectorAggregateCoordinatorProjection&,
                          const DistributedVectorAggregateCoordinatorProjection&) = default;
@@ -111,10 +113,10 @@ struct DistributedVectorAggregateCoordinatorProjection {
 // When present, ordering and LIMIT address the projected client outputs and the raw distributed
 // plan must carry neither operation.
 struct DistributedVectorGroupedAggregateCoordinatorProjection {
-  std::vector<VectorExpression> outputs;
+  std::vector<VectorExpression> outputs{}; // NOLINT(readability-redundant-member-init)
   DistributedVectorResultSchema result_schema;
-  std::vector<DistributedVectorOrderKey> order_keys;
-  std::optional<std::uint64_t> limit;
+  std::vector<DistributedVectorOrderKey> order_keys{}; // NOLINT(readability-redundant-member-init)
+  std::optional<std::uint64_t> limit{std::nullopt};
 
   friend bool operator==(const DistributedVectorGroupedAggregateCoordinatorProjection&,
                          const DistributedVectorGroupedAggregateCoordinatorProjection&) = default;
@@ -135,7 +137,7 @@ struct DistributedVectorRowsSqlPlan {
   schema::TableId table_id;
   schema::SchemaId destination_schema_id;
   std::vector<std::uint32_t> destination_column_ordinals;
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::optional<cseg::EventTimePredicate> event_time_predicate{std::nullopt};
   DistributedVectorPlanIntent intent;
   DistributedVectorResultSchema result_schema;
   std::optional<DistributedVectorRowCoordinatorProjection> coordinator_projection;
@@ -209,12 +211,13 @@ struct DistributedVectorGroupedAggregateSqlPlan {
   schema::TableId table_id;
   schema::SchemaId destination_schema_id;
   std::vector<std::uint32_t> destination_column_ordinals;
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::optional<cseg::EventTimePredicate> event_time_predicate{std::nullopt};
   DistributedVectorPlanIntent intent;
   // Raw grouped sufficient-state schema consumed by finalization.
   DistributedVectorResultSchema result_schema;
-  std::optional<DistributedVectorPreGroupProgram> pre_group_program;
-  std::optional<DistributedVectorGroupedAggregateCoordinatorProjection> coordinator_projection;
+  std::optional<DistributedVectorPreGroupProgram> pre_group_program{std::nullopt};
+  std::optional<DistributedVectorGroupedAggregateCoordinatorProjection> coordinator_projection{
+      std::nullopt};
 
   friend bool operator==(const DistributedVectorGroupedAggregateSqlPlan&,
                          const DistributedVectorGroupedAggregateSqlPlan&) = default;

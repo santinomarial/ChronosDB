@@ -262,8 +262,8 @@ INSTANTIATE_TEST_SUITE_P(
                       PackagedWriteCrashCase{"ResponseReady", "after_ingest_response_ready",
                                              "INGEST_RESPONSE_READY",
                                              PackagedWriteRecoveryExpectation::kCommitted}),
-    [](const ::testing::TestParamInfo<PackagedWriteCrashCase>& info) {
-      return std::string{info.param.name};
+    [](const ::testing::TestParamInfo<PackagedWriteCrashCase>& parameter) {
+      return std::string{parameter.param.name};
     });
 
 struct PackagedStartupCrashCase {
@@ -319,8 +319,8 @@ INSTANTIATE_TEST_SUITE_P(
         PackagedStartupCrashCase{"TabletOwners", "after_tablet_owners_prepared",
                                  "TABLET_OWNERS_PREPARED"},
         PackagedStartupCrashCase{"Runtime", "after_runtime_ready", "RUNTIME_READY"}),
-    [](const ::testing::TestParamInfo<PackagedStartupCrashCase>& info) {
-      return std::string{info.param.name};
+    [](const ::testing::TestParamInfo<PackagedStartupCrashCase>& parameter) {
+      return std::string{parameter.param.name};
     });
 
 struct PackagedShutdownCrashCase {
@@ -403,8 +403,8 @@ INSTANTIATE_TEST_SUITE_P(
                                   "SHUTDOWN_RUNTIME_STOPPED"},
         PackagedShutdownCrashCase{"RootReleased", "after_shutdown_root_released",
                                   "SHUTDOWN_ROOT_RELEASED"}),
-    [](const ::testing::TestParamInfo<PackagedShutdownCrashCase>& info) {
-      return std::string{info.param.name};
+    [](const ::testing::TestParamInfo<PackagedShutdownCrashCase>& parameter) {
+      return std::string{parameter.param.name};
     });
 
 } // namespace

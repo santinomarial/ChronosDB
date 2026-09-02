@@ -26,8 +26,8 @@ struct NativeClientTlsRouteFileLimits {
 
 struct NativeClientTlsRouteOwnerConfig {
   std::string route_config_file;
-  NativeClientTlsCredentials tls;
-  NativeClientTlsRouteFileLimits limits;
+  NativeClientTlsCredentials tls{};
+  NativeClientTlsRouteFileLimits limits{};
 };
 
 // Address-stable owner for a securely loaded native route file, its immutable certificate/node

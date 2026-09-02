@@ -23,10 +23,10 @@ struct NativeQuorumIngestTcpClientLimits {
 };
 
 struct NativeQuorumIngestTcpClientConfig {
-  NativeQuorumIngestRetryConfig retry;
+  NativeQuorumIngestRetryConfig retry{};
   ConnectionAuthenticator* authenticator{};
   const NativeNodePrincipalAuthorizer* node_authorizer{};
-  NativeQuorumIngestTcpClientLimits limits;
+  NativeQuorumIngestTcpClientLimits limits{};
 };
 
 enum class NativeQuorumIngestTcpClientState : std::uint8_t {

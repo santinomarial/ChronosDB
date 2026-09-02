@@ -128,7 +128,7 @@ public:
           if (!cell.has_value())
             return cell.error();
           if (cell->is_null()) {
-            cells.push_back({.is_null = true});
+            cells.push_back({.is_null = true, .value = {}});
           } else if (cell->kind() == columnar::ColumnCellView::Kind::kBoolean) {
             auto value = cell->boolean();
             if (!value.has_value())
@@ -181,8 +181,11 @@ public:
           return common::make_unexpected(
               exhausted("replicated vector worker terminal exceeds limits"));
         }
-        messages_.push_back(
-            {.query_id = query_id_, .tablet_id = tablet_id_, .sequence = 1U, .terminal = true});
+        messages_.push_back({.query_id = query_id_,
+                             .tablet_id = tablet_id_,
+                             .sequence = 1U,
+                             .terminal = true,
+                             .encoded_result_batch = {}});
       } else {
         messages_.back().terminal = true;
       }

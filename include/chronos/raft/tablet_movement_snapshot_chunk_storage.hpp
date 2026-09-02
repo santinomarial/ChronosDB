@@ -17,7 +17,7 @@ inline constexpr std::size_t kMaximumTabletMovementSnapshotChunkFiles = std::siz
 struct TabletMovementSnapshotChunkStorageConfig {
   std::string directory_path;
   TabletMovementSnapshotSession session;
-  TabletMovementSnapshotChunkCodecLimits codec_limits;
+  TabletMovementSnapshotChunkCodecLimits codec_limits{};
   std::size_t maximum_chunks{std::size_t{256U} * 1024U};
   std::uint16_t file_permissions{0600U};
 };

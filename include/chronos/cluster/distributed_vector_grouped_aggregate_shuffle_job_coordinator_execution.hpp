@@ -23,19 +23,19 @@ struct DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionConfig {
   network::ConnectionAuthenticator* authenticator{};
   const ClusterNodePrincipalAuthorizer* node_authorizer{};
   DistributedVectorGroupedAggregateShuffleJobService* local_reducer_job_service{};
-  DistributedVectorGroupedAggregateShuffleJobControlTlsLimits carrier_limits;
+  DistributedVectorGroupedAggregateShuffleJobControlTlsLimits carrier_limits{};
   std::chrono::milliseconds connect_timeout{5000};
-  DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits prepare_retry;
-  DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits route_install_retry;
-  DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits seal_retry;
-  DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits cancel_retry;
-  DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits lease_retry;
+  DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits prepare_retry{};
+  DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits route_install_retry{};
+  DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits seal_retry{};
+  DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits cancel_retry{};
+  DistributedVectorGroupedAggregateShuffleJobControlTcpRetryLimits lease_retry{};
   std::chrono::milliseconds reducer_execution_timeout{30000};
   std::chrono::milliseconds lease_duration{5000};
   std::chrono::milliseconds lease_renew_interval{1000};
   std::chrono::steady_clock::time_point execution_deadline;
   std::size_t maximum_reducer_nodes{4096U};
-  DistributedVectorGroupedAggregateShuffleResultCoordinatorExecutionConfig result;
+  DistributedVectorGroupedAggregateShuffleResultCoordinatorExecutionConfig result{};
 };
 
 struct DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionMetrics {

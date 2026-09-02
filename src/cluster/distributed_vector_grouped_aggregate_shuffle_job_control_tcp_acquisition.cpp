@@ -388,7 +388,8 @@ common::Status DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisition:
   const auto interest = active->interest();
   pollfd descriptor{.fd = active->descriptor(),
                     .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                 (interest.want_write ? POLLOUT : 0))};
+                                                 (interest.want_write ? POLLOUT : 0)),
+                    .revents = 0};
   auto wait = maximum_wait;
   if (const auto deadline = active->deadline(); deadline.has_value())
     wait = bounded_wait(wait, now, *deadline);

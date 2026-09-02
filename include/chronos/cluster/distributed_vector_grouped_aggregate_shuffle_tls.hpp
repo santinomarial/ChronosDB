@@ -17,7 +17,7 @@ namespace chronos::cluster {
 struct DistributedVectorGroupedAggregateShuffleTlsLimits {
   std::chrono::milliseconds handshake_timeout{5000};
   std::chrono::milliseconds exchange_timeout{30000};
-  DistributedVectorGroupedAggregateShuffleStreamLimits stream;
+  DistributedVectorGroupedAggregateShuffleStreamLimits stream{};
 };
 
 struct DistributedVectorGroupedAggregateShuffleTlsClientConfig {

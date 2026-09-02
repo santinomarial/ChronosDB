@@ -143,8 +143,9 @@ TEST(DistributedVectorFragmentTest, RejectsDamageLimitsAndContradictoryAuthority
   EXPECT_EQ(decode_distributed_vector_fragment_dispatch_exact(contradictory_plan).error().code(),
             common::StatusCode::kCorruption);
 
-  EXPECT_EQ(decode_distributed_vector_fragment_dispatch_exact(encoded->bytes(),
-                                                              {.maximum_projection_columns = 2U})
+  auto projection_limits = DistributedVectorFragmentDecodeLimits{};
+  projection_limits.maximum_projection_columns = 2U;
+  EXPECT_EQ(decode_distributed_vector_fragment_dispatch_exact(encoded->bytes(), projection_limits)
                 .error()
                 .code(),
             common::StatusCode::kResourceExhausted);
@@ -175,8 +176,9 @@ TEST(DistributedVectorFragmentTest, RejectsDamageLimitsAndContradictoryAuthority
                 .error()
                 .code(),
             common::StatusCode::kCorruption);
-  EXPECT_EQ(decode_distributed_vector_fragment_dispatch_v2_exact(
-                encoded_v2->bytes(), {.maximum_frame_length = encoded_v2->bytes().size() - 1U})
+  auto v2_limits = DistributedVectorFragmentV2DecodeLimits{};
+  v2_limits.maximum_frame_length = encoded_v2->bytes().size() - 1U;
+  EXPECT_EQ(decode_distributed_vector_fragment_dispatch_v2_exact(encoded_v2->bytes(), v2_limits)
                 .error()
                 .code(),
             common::StatusCode::kResourceExhausted);
@@ -204,8 +206,9 @@ TEST(DistributedVectorFragmentTest, OwnsBoundedPartialReadsAndShortWriteProgress
     ASSERT_TRUE(prefix.has_value()) << "split=" << split;
     EXPECT_EQ(prefix->consumed_bytes, split) << "split=" << split;
     EXPECT_EQ(prefix->dispatch.has_value(), split == encoded->bytes().size()) << "split=" << split;
-    if (split < encoded->bytes().size())
+    if (split < encoded->bytes().size()) {
       EXPECT_EQ(prefix->dispatch, std::nullopt) << "split=" << split;
+    }
     const auto suffix = reader.consume(encoded->bytes().subspan(split));
     ASSERT_TRUE(suffix.has_value()) << "split=" << split;
     EXPECT_EQ(suffix->consumed_bytes, encoded->bytes().size() - split) << "split=" << split;
@@ -236,12 +239,12 @@ TEST(DistributedVectorFragmentTest, OwnsBoundedPartialReadsAndShortWriteProgress
   EXPECT_EQ(failed_reader.buffered_bytes(), distributed_vector_fragment_format::kHeaderLength);
   EXPECT_EQ(failed_reader.consume(encoded->bytes()).error(), rejected.error());
 
-  DistributedVectorFragmentReader limited_reader(
-      {.maximum_frame_length = encoded->bytes().size() - 1U});
+  auto frame_limits = DistributedVectorFragmentDecodeLimits{};
+  frame_limits.maximum_frame_length = encoded->bytes().size() - 1U;
+  DistributedVectorFragmentReader limited_reader(frame_limits);
   EXPECT_EQ(limited_reader.consume(encoded->bytes()).error().code(),
             common::StatusCode::kResourceExhausted);
-  EXPECT_EQ(decode_distributed_vector_fragment_dispatch_exact(
-                encoded->bytes(), {.maximum_frame_length = encoded->bytes().size() - 1U})
+  EXPECT_EQ(decode_distributed_vector_fragment_dispatch_exact(encoded->bytes(), frame_limits)
                 .error()
                 .code(),
             common::StatusCode::kResourceExhausted);

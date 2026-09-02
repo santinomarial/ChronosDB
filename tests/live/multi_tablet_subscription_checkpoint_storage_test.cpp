@@ -139,7 +139,7 @@ TEST(MultiTabletSubscriptionCheckpointStorageTest, InstallsSelectsAndReopensExac
     ASSERT_TRUE(latest.has_value());
     ASSERT_TRUE(latest->has_value());
     const auto selected = latest->transform(
-        [](const LoadedMultiTabletSubscriptionCheckpoint& loaded) { return loaded.checkpoint; });
+        [](const LoadedMultiTabletSubscriptionCheckpoint& entry) { return entry.checkpoint; });
     EXPECT_EQ(selected,
               std::optional<BoundMultiTabletSubscriptionCheckpoint>{fixture.checkpoint(2U)});
   }

@@ -29,9 +29,9 @@ struct DistributedMutableQueryControlTlsServerLimits {
       kDefaultDistributedVectorGroupedAggregateQueryV2ResponseBytes};
   std::size_t maximum_mutable_grouped_decode_memory_bytes{
       kDefaultDistributedVectorGroupedAggregateQueryV2DecodeMemoryBytes};
-  query::DistributedVectorGroupedAggregateExchangeDecodeLimits mutable_grouped_payload;
-  RaftReadAuthorityTransportLimits read_authority_transport;
-  DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits grouped_shuffle_job_control;
+  query::DistributedVectorGroupedAggregateExchangeDecodeLimits mutable_grouped_payload{};
+  RaftReadAuthorityTransportLimits read_authority_transport{};
+  DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits grouped_shuffle_job_control{};
 };
 
 struct DistributedMutableQueryControlTlsServerConfig {

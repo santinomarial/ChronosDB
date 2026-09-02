@@ -133,7 +133,8 @@ struct Fixture {
   config(const TemporaryDirectory& directory) const {
     return {.directory_path = directory.path().string(),
             .expected_database_id = database_id,
-            .expected_object_store_id = object_store_id};
+            .expected_object_store_id = object_store_id,
+            .decode_limits = {}};
   }
 
   [[nodiscard]] common::Result<manifest::EncodedTemporalManifest>

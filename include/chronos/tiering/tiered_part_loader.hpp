@@ -25,7 +25,7 @@ enum class TieredPartSource : std::uint8_t {
 struct TieredTemporalPartLoadLimits {
   std::size_t maximum_parts{1U << 20U};
   std::uint64_t maximum_total_bytes{4ULL * 1024ULL * 1024ULL * 1024ULL};
-  manifest::TemporalPartValidationLimits validation;
+  manifest::TemporalPartValidationLimits validation{};
 };
 
 // Reads one exact immutable object after authoritative per-key metadata checks, recomputes its

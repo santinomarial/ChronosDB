@@ -106,8 +106,8 @@ TEST(RaftTabletSnapshotStorageTest, InstallsIdempotentlyAndSelectsHighestAfterRe
     auto latest = storage->load_latest();
     ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
     ASSERT_TRUE(latest->has_value());
-    EXPECT_EQ(latest->transform([](const LoadedRaftTabletSnapshot& loaded) {
-      return loaded.snapshot.raft_snapshot.last_included_index;
+    EXPECT_EQ(latest->transform([](const LoadedRaftTabletSnapshot& snapshot) {
+      return snapshot.snapshot.raft_snapshot.last_included_index;
     }),
               raft::LogIndex{10U});
   }

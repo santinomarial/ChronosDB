@@ -1371,13 +1371,13 @@ public:
     Method method{};
     std::string_view key;
     common::ByteView upload;
-    std::optional<ingest::Sha256Digest> checksum;
+    std::optional<ingest::Sha256Digest> checksum{std::nullopt};
     std::size_t range_offset{};
     std::size_t range_length{};
     std::size_t maximum_body_bytes{};
     std::string_view match_validator;
     std::string_view query;
-    std::optional<ingest::Sha256Digest> object_checksum;
+    std::optional<ingest::Sha256Digest> object_checksum{std::nullopt};
   };
 
   struct Response {
@@ -1729,7 +1729,9 @@ public:
       const std::string query = "uploadId=" + encode_path(identity.upload_id, false);
       [[maybe_unused]] auto aborted = perform({.method = Method::kAbortMultipart,
                                                .key = identity.key,
+                                               .upload = {},
                                                .maximum_body_bytes = kSmallResponseLimit,
+                                               .match_validator = {},
                                                .query = query});
     } catch (...) {
       return;
@@ -1843,7 +1845,9 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
 
       auto created = impl_->perform({.method = Impl::Method::kCreateMultipart,
                                      .key = key,
+                                     .upload = {},
                                      .maximum_body_bytes = kSmallResponseLimit,
+                                     .match_validator = {},
                                      .query = "uploads",
                                      .object_checksum = checksum});
       if (!created.has_value())
@@ -1911,6 +1915,7 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
                                             .upload = part,
                                             .checksum = *part_checksum,
                                             .maximum_body_bytes = kSmallResponseLimit,
+                                            .match_validator = {},
                                             .query = query});
             if (!uploaded.has_value() || uploaded->status != 200L ||
                 !uploaded->capture.entity_tag.has_value() ||
@@ -1976,6 +1981,7 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
                                        .upload = completion_body,
                                        .checksum = *completion_checksum,
                                        .maximum_body_bytes = kSmallResponseLimit,
+                                       .match_validator = {},
                                        .query = upload_query});
       if (completed.has_value() && completed->status == 200L) {
         const common::ByteView response_body{completed->capture.body};
@@ -2023,7 +2029,9 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
                                   .key = key,
                                   .upload = bytes,
                                   .checksum = checksum,
-                                  .maximum_body_bytes = kSmallResponseLimit});
+                                  .maximum_body_bytes = kSmallResponseLimit,
+                                  .match_validator = {},
+                                  .query = {}});
   if (!response.has_value())
     return common::make_unexpected(response.error());
   if (response->status == 412L) {
@@ -2055,8 +2063,12 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
 common::Result<ObjectMetadata> S3ObjectStore::stat(const std::string_view key) const {
   if (key.empty() || key.size() > 1024U || contains_control(key))
     return common::make_unexpected(invalid("S3 object key is invalid"));
-  auto response = impl_->perform(
-      {.method = Impl::Method::kHead, .key = key, .maximum_body_bytes = kSmallResponseLimit});
+  auto response = impl_->perform({.method = Impl::Method::kHead,
+                                  .key = key,
+                                  .upload = {},
+                                  .maximum_body_bytes = kSmallResponseLimit,
+                                  .match_validator = {},
+                                  .query = {}});
   if (!response.has_value())
     return common::make_unexpected(response.error());
   if (response->status != 200L)
@@ -2110,9 +2122,12 @@ common::Result<std::vector<std::byte>> S3ObjectStore::get_range(const std::strin
   }
   auto response = impl_->perform({.method = Impl::Method::kGetRange,
                                   .key = key,
+                                  .upload = {},
                                   .range_offset = offset,
                                   .range_length = length,
-                                  .maximum_body_bytes = length});
+                                  .maximum_body_bytes = length,
+                                  .match_validator = {},
+                                  .query = {}});
   if (!response.has_value())
     return common::make_unexpected(response.error());
   if (response->status != 206L)
@@ -2141,8 +2156,12 @@ S3ObjectStore::remove_if_exact(const std::string_view key, const std::size_t exp
                                const ingest::Sha256Digest& expected_checksum) {
   if (key.empty() || key.size() > 1024U || contains_control(key))
     return common::make_unexpected(invalid("S3 object key is invalid"));
-  auto head = impl_->perform(
-      {.method = Impl::Method::kHead, .key = key, .maximum_body_bytes = kSmallResponseLimit});
+  auto head = impl_->perform({.method = Impl::Method::kHead,
+                              .key = key,
+                              .upload = {},
+                              .maximum_body_bytes = kSmallResponseLimit,
+                              .match_validator = {},
+                              .query = {}});
   if (!head.has_value())
     return common::make_unexpected(head.error());
   if (head->status == 404L)
@@ -2175,8 +2194,10 @@ S3ObjectStore::remove_if_exact(const std::string_view key, const std::size_t exp
   }
   auto removed = impl_->perform({.method = Impl::Method::kDelete,
                                  .key = key,
+                                 .upload = {},
                                  .maximum_body_bytes = kSmallResponseLimit,
-                                 .match_validator = entity_tag});
+                                 .match_validator = entity_tag,
+                                 .query = {}});
   if (!removed.has_value())
     return common::make_unexpected(removed.error());
   if (removed->status == 404L)

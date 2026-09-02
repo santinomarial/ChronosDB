@@ -41,13 +41,13 @@ enum class StorageKind : std::uint16_t {
 };
 
 struct CsegColumnDescriptor {
-  std::optional<schema::ColumnId> column_id;
+  std::optional<schema::ColumnId> column_id{std::nullopt};
   StorageKind storage_kind;
   schema::LogicalType logical_type;
   bool nullable{};
   bool event_time{};
-  std::optional<std::uint32_t> schema_ordinal;
-  std::optional<std::uint32_t> ordering_ordinal;
+  std::optional<std::uint32_t> schema_ordinal{std::nullopt};
+  std::optional<std::uint32_t> ordering_ordinal{std::nullopt};
 
   friend bool operator==(const CsegColumnDescriptor&, const CsegColumnDescriptor&) = default;
 };

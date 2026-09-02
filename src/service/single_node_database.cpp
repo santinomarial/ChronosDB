@@ -698,8 +698,8 @@ SingleNodeDatabase::execute_append(const schema::TabletId tablet_id,
     const auto& commit = *wal_commit;
     impl_->committed_append_observer->on_applied(
         {.tablet_id = tablet_id,
-         .position = {.wal_id = commit.append.record_start.wal_id,
-                      .record_sequence = commit.append.record_sequence},
+         .position = head::HeadCommitPosition::wal(commit.append.record_start.wal_id,
+                                                   commit.append.record_sequence),
          .batch = std::move(retained_batch),
          .outcome = executed->outcome});
   }

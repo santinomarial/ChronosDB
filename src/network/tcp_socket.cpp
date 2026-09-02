@@ -438,7 +438,11 @@ common::Result<std::optional<TcpSocket>> TcpListener::accept_one() {
   const int descriptor = ::accept(implementation_->descriptor_, generic_address, &size);
   const int accept_error = errno;
   if (descriptor < 0) {
-    if (accept_error == EAGAIN || accept_error == EWOULDBLOCK)
+    bool would_block = accept_error == EAGAIN;
+#if EWOULDBLOCK != EAGAIN
+    would_block = would_block || accept_error == EWOULDBLOCK;
+#endif
+    if (would_block)
       return std::optional<TcpSocket>{};
     return common::make_unexpected(socket_error("accepting TCP socket", accept_error));
   }

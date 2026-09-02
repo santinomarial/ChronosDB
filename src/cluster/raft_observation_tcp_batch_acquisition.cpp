@@ -365,7 +365,8 @@ RaftObservationTcpBatchAcquisition::poll_once(const std::chrono::milliseconds ma
       impl.poll_descriptors[count++] = {
           .fd = target.descriptor,
           .events = static_cast<short>((target.interest.want_read ? POLLIN : 0) |
-                                       (target.interest.want_write ? POLLOUT : 0))};
+                                       (target.interest.want_write ? POLLOUT : 0)),
+          .revents = 0};
     }
   }
   const int ready = ::poll(impl.poll_descriptors.data(), static_cast<nfds_t>(count),

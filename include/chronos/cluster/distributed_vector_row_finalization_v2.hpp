@@ -34,7 +34,7 @@ struct DistributedVectorRowFinalizationLimitsV2 {
   std::size_t maximum_working_bytes{kDefaultDistributedVectorRowFinalizationWorkingBytesV2};
   std::size_t maximum_output_batches{query::kMaximumDistributedCoordinatorMessages};
   std::size_t maximum_output_encoded_bytes{kDefaultDistributedVectorRowFinalizationOutputBytesV2};
-  network::QueryResultLimits output_batch;
+  network::QueryResultLimits output_batch{};
 };
 
 struct DistributedVectorRowsFinalizedResultV2 {

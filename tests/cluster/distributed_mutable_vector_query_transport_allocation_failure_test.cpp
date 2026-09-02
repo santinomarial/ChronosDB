@@ -379,11 +379,13 @@ TEST(DistributedMutableVectorRowsQueryTcpExecutionAllocationFailureTest,
     std::vector fragments{fragment()};
     DistributedMutableVectorRowsQueryTcpExecutionConfig config{
         .source_node_id = 1U,
+        .execution = {},
         .tcp = {.authenticator = &authenticator,
                 .node_authorizer = &authorizer,
                 .routes = {{.node_id = 7U,
                             .endpoints = {listener->bound_endpoint()},
-                            .tls_context = std::addressof(*tls_context)}}}};
+                            .tls_context = std::addressof(*tls_context)}}},
+        .finalization = {}};
     auto result = run_failure(fail_after, [&] {
       return DistributedMutableVectorRowsQueryTcpExecution::create(std::move(fragments),
                                                                    std::move(config));
@@ -402,11 +404,13 @@ TEST(DistributedMutableVectorRowsQueryTcpExecutionAllocationFailureTest,
 
   DistributedMutableVectorRowsQueryTcpExecutionConfig transfer_config{
       .source_node_id = 1U,
+      .execution = {},
       .tcp = {.authenticator = &authenticator,
               .node_authorizer = &authorizer,
               .routes = {{.node_id = 7U,
                           .endpoints = {listener->bound_endpoint()},
-                          .tls_context = std::addressof(*tls_context)}}}};
+                          .tls_context = std::addressof(*tls_context)}}},
+      .finalization = {}};
   auto owner = DistributedMutableVectorRowsQueryTcpExecution::create({fragment()},
                                                                      std::move(transfer_config));
   ASSERT_TRUE(owner.has_value()) << owner.error().to_string();

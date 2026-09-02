@@ -108,7 +108,8 @@ TEST(RaftObservationTcpClientTest, OwnsRealConnectTlsAndCorrelatedExchange) {
     const auto interest = client->interest();
     pollfd descriptor{.fd = client->descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                   (interest.want_write ? POLLOUT : 0))};
+                                                   (interest.want_write ? POLLOUT : 0)),
+                      .revents = 0};
     ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
     ASSERT_TRUE(client
                     ->on_ready((descriptor.revents & POLLIN) != 0,
@@ -161,13 +162,15 @@ TEST(RaftObservationTcpClientTest, OwnsRealConnectTlsAndCorrelatedExchange) {
         if (!writer->complete()) {
           auto progress = server_socket->write(writer->pending_write());
           ASSERT_TRUE(progress.has_value()) << progress.error().to_string();
-          if (progress->state == network::TlsIoState::kComplete)
+          if (progress->state == network::TlsIoState::kComplete) {
             ASSERT_TRUE(writer->consume_written(progress->bytes_transferred).is_ok());
+          }
         }
       }
     }
-    if (client->state() == RaftObservationTcpClientState::kComplete)
+    if (client->state() == RaftObservationTcpClientState::kComplete) {
       break;
+    }
   }
 
   ASSERT_EQ(client->state(), RaftObservationTcpClientState::kComplete);

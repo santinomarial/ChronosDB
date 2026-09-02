@@ -31,8 +31,8 @@ struct DistributedVectorAggregateQueryResponseV2 {
   common::Uuid query_id;
   schema::TabletId tablet_id;
   common::StatusCode status_code{common::StatusCode::kInternal};
-  std::optional<query::DistributedVectorAggregateExchangeMessage> payload;
-  std::optional<DistributedQueryLeaderHint> leader_hint;
+  std::optional<query::DistributedVectorAggregateExchangeMessage> payload{std::nullopt};
+  std::optional<DistributedQueryLeaderHint> leader_hint{std::nullopt};
 };
 
 // Exact Fragment-v2 plan/result-shape validation shared by receiver, sender, and TLS ownership.
@@ -53,7 +53,7 @@ decode_distributed_vector_aggregate_query_response_v2_exact(
 
 struct DistributedVectorAggregateQueryResponseV2ReadStep {
   std::size_t consumed_bytes{};
-  std::optional<DistributedVectorAggregateQueryResponseV2> response;
+  std::optional<DistributedVectorAggregateQueryResponseV2> response{std::nullopt};
 };
 
 // One connection owner transfers the admitted aggregate definitions and query resource authority.
@@ -178,10 +178,10 @@ struct DistributedVectorAggregateQueryAttemptV2 {
 };
 
 struct DistributedVectorAggregateQuerySenderLimitsV2 {
-  DistributedQueryRetryLimits retry;
+  DistributedQueryRetryLimits retry{};
   std::size_t maximum_response_frames{query::kMaximumUngroupedAggregateWidth};
   std::size_t maximum_response_bytes{kDefaultDistributedVectorAggregateQueryV2ResponseBytes};
-  query::DistributedVectorAggregateExchangeDecodeLimits payload;
+  query::DistributedVectorAggregateExchangeDecodeLimits payload{};
 };
 
 // Single-threaded policy owner for one immutable definition-bound aggregate dispatch. Accepted

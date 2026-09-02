@@ -147,11 +147,13 @@ TEST(RaftObservationTlsClientTest, AuthenticatesAndAcquiresExactCorrelatedObserv
     } else if (!response->complete()) {
       auto progress = server->write(response->pending_write());
       ASSERT_TRUE(progress.has_value()) << progress.error().to_string();
-      if (progress->state == network::TlsIoState::kComplete)
+      if (progress->state == network::TlsIoState::kComplete) {
         ASSERT_TRUE(response->consume_written(progress->bytes_transferred).is_ok());
+      }
     }
-    if (client->state() == RaftObservationTlsClientState::kComplete)
+    if (client->state() == RaftObservationTlsClientState::kComplete) {
       break;
+    }
   }
   ASSERT_EQ(client->state(), RaftObservationTlsClientState::kComplete);
   EXPECT_TRUE(authenticator.saw_fingerprint);

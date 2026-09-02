@@ -16,8 +16,8 @@
 namespace chronos::cluster {
 
 struct DistributedVectorQueryExecutionLimitsV2 {
-  DistributedVectorQuerySenderLimitsV2 sender;
-  DistributedVectorResultCoordinatorLimitsV2 coordinator;
+  DistributedVectorQuerySenderLimitsV2 sender{};
+  DistributedVectorResultCoordinatorLimitsV2 coordinator{};
 };
 
 struct DistributedVectorQueryExecutionResultV2 {

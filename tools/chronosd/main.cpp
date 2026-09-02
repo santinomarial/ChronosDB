@@ -857,7 +857,11 @@ configure_distributed_mutable_query(
     owner->client_contexts.reserve(peers.size());
     for (const chronos::service::ReplicatedPeer& peer : peers) {
       auto context = chronos::network::TlsClientContext::create(
-          {.expected_server_identity = peer.tls_server_identity, .pem_credentials = credentials});
+          {.certificate_chain_file = {},
+           .private_key_file = {},
+           .trust_store_file = {},
+           .expected_server_identity = peer.tls_server_identity,
+           .pem_credentials = credentials});
       if (!context.has_value())
         return chronos::common::make_unexpected(context.error());
       owner->client_contexts.push_back(std::move(*context));
@@ -878,14 +882,20 @@ configure_distributed_mutable_query(
         {.worker = {.local_node_id = local_node_id, .context_provider = &database},
          .read_barrier = &read_barrier,
          .listener = {.bind_endpoint = *local_query_endpoint},
-         .tls = {.pem_credentials = credentials},
+         .tls = {.certificate_chain_file = {},
+                 .private_key_file = {},
+                 .trust_store_file = {},
+                 .pem_credentials = credentials},
          .authenticator = &installed_authority,
          .node_authorizer = &installed_authority,
          .grouped_shuffle_jobs =
              chronos::cluster::DistributedVectorGroupedAggregateShuffleJobServiceConfig{
                  .local_node_id = local_node_id,
                  .shuffle_listener = {},
-                 .shuffle_tls = {.pem_credentials = credentials},
+                 .shuffle_tls = {.certificate_chain_file = {},
+                                 .private_key_file = {},
+                                 .trust_store_file = {},
+                                 .pem_credentials = credentials},
                  .shuffle_authenticator = &installed_authority,
                  .result_authenticator = &installed_authority,
                  .node_authorizer = &installed_authority,
@@ -896,7 +906,10 @@ configure_distributed_mutable_query(
     auto grouped_shuffle_provider =
         chronos::service::NativeDistributedGroupedShuffleJobProvider::create(
             {.coordinator_node_id = local_node_id,
-             .result_tls = {.pem_credentials = credentials},
+             .result_tls = {.certificate_chain_file = {},
+                            .private_key_file = {},
+                            .trust_store_file = {},
+                            .pem_credentials = credentials},
              .authenticator = &installed_authority,
              .node_authorizer = &installed_authority,
              .local_reducer_job_service = installed_server.grouped_shuffle_job_service(),
@@ -1650,7 +1663,9 @@ int run_daemon(const int argc, const char* const argv[]) {
   if (!options->data_directory.empty()) {
     if (replicated_groups.has_value()) {
       auto opened = ReplicatedIngestDatabase::open_existing(
-          {.bootstrap = {.database_root = options->data_directory}, .groups = *replicated_groups});
+          {.bootstrap = {.database_root = options->data_directory},
+           .groups = *replicated_groups,
+           .tablet_snapshots = {}});
       if (!opened.has_value()) {
         logger.error("replicated_database_start_failed",
                      "replicated database start failed: " + opened.error().to_string());
@@ -1683,7 +1698,10 @@ int run_daemon(const int argc, const char* const argv[]) {
              .peers = *replicated_peers,
              .resident_groups = std::move(resident_groups),
              .group_election_timeouts = options->raft_group_election_timeouts,
-             .tls = {.pem_credentials = raft_tls_credentials},
+             .tls = {.certificate_chain_file = {},
+                     .private_key_file = {},
+                     .trust_store_file = {},
+                     .pem_credentials = raft_tls_credentials},
              .limits = transport_limits});
         if (!transport.has_value()) {
           static_cast<void>(replicated_database->shutdown());
@@ -1828,7 +1846,10 @@ int run_daemon(const int argc, const char* const argv[]) {
     config.security = {
         .mode = chronos::network::TransportSecurityMode::kTlsRequired,
         .authenticator = native_principal_authority.get(),
-        .tls = chronos::network::TlsServerConfig{.require_client_certificate = true,
+        .tls = chronos::network::TlsServerConfig{.certificate_chain_file = {},
+                                                 .private_key_file = {},
+                                                 .trust_store_file = {},
+                                                 .require_client_certificate = true,
                                                  .pem_credentials = native_tls_credentials}};
   }
   if (replicated_service.has_value()) {
@@ -2055,8 +2076,12 @@ int run_daemon(const int argc, const char* const argv[]) {
           chronos::network::NetworkSecurityConfig replacement_config{
               .mode = chronos::network::TransportSecurityMode::kTlsRequired,
               .authenticator = replacement->authority.get(),
-              .tls = chronos::network::TlsServerConfig{
-                  .require_client_certificate = true, .pem_credentials = replacement->credentials}};
+              .tls =
+                  chronos::network::TlsServerConfig{.certificate_chain_file = {},
+                                                    .private_key_file = {},
+                                                    .trust_store_file = {},
+                                                    .require_client_certificate = true,
+                                                    .pem_credentials = replacement->credentials}};
           const chronos::common::Status reloaded =
               reactor->reload_tls_security(std::move(replacement_config));
           if (!reloaded.is_ok()) {

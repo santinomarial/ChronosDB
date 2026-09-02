@@ -28,7 +28,7 @@ struct DistributedVectorAggregateFinalizationLimitsV2 {
   std::size_t maximum_working_bytes{kDefaultDistributedVectorAggregateFinalizationWorkingBytesV2};
   std::size_t maximum_output_encoded_bytes{
       kDefaultDistributedVectorAggregateFinalizationOutputBytesV2};
-  network::QueryResultLimits output_batch;
+  network::QueryResultLimits output_batch{};
 };
 
 struct DistributedVectorAggregateFinalizedResultV2 {

@@ -52,7 +52,7 @@ struct VectorAggregateInput {
 
 struct VectorAggregateDefinition {
   VectorAggregateOperation operation;
-  std::optional<VectorAggregateInput> input;
+  std::optional<VectorAggregateInput> input{std::nullopt};
 
   friend bool operator==(const VectorAggregateDefinition&,
                          const VectorAggregateDefinition&) = default;

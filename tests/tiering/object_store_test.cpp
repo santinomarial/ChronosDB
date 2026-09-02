@@ -11,6 +11,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <gtest/gtest.h>
@@ -66,13 +67,38 @@ constexpr std::size_t kMultipartPartBytes = std::size_t{5U} * 1024U * 1024U;
   return value;
 }
 
-[[nodiscard]] std::string future_http_date(const char* format) {
+enum class HttpDateFormat : std::uint8_t { kImfFixdate, kRfc850, kAsctime };
+
+[[nodiscard]] std::string future_http_date(const HttpDateFormat format) {
   const std::time_t future = std::time(nullptr) + 2;
   std::tm utc{};
   if (::gmtime_r(&future, &utc) == nullptr)
     return {};
   std::array<char, 64U> encoded{};
-  const std::size_t length = std::strftime(encoded.data(), encoded.size(), format, &utc);
+  std::size_t length{};
+  switch (format) {
+  case HttpDateFormat::kImfFixdate:
+    length = std::strftime(encoded.data(), encoded.size(), "%a, %d %b %Y %H:%M:%S GMT", &utc);
+    break;
+  case HttpDateFormat::kRfc850: {
+    std::array<char, 32U> prefix{};
+    std::array<char, 32U> suffix{};
+    const std::size_t prefix_length =
+        std::strftime(prefix.data(), prefix.size(), "%A, %d-%b-", &utc);
+    const std::size_t suffix_length =
+        std::strftime(suffix.data(), suffix.size(), " %H:%M:%S GMT", &utc);
+    if (prefix_length == 0U || suffix_length == 0U)
+      return {};
+    const int result = std::snprintf(encoded.data(), encoded.size(), "%s%02d%s", prefix.data(),
+                                     (utc.tm_year + 1900) % 100, suffix.data());
+    if (result < 0 || static_cast<std::size_t>(result) >= encoded.size())
+      return {};
+    length = static_cast<std::size_t>(result);
+  } break;
+  case HttpDateFormat::kAsctime:
+    length = std::strftime(encoded.data(), encoded.size(), "%a %b %e %H:%M:%S %Y", &utc);
+    break;
+  }
   return std::string{encoded.data(), length};
 }
 
@@ -98,13 +124,16 @@ struct LocalS3Behavior {
   std::string access_key_id{"test-access"};
   std::optional<std::string> session_token{"test-token"};
   std::size_t transient_put_failures{};
-  std::optional<std::string> transient_retry_after;
-  std::optional<std::size_t> fail_multipart_part;
+  std::optional<std::string> transient_retry_after{}; // NOLINT(readability-redundant-member-init)
+  std::optional<std::size_t> fail_multipart_part{};   // NOLINT(readability-redundant-member-init)
   bool embedded_multipart_completion_error{};
-  std::optional<std::string> head_encryption_override;
-  std::optional<std::string> container_credential_response;
-  std::optional<std::string> container_authorization;
-  std::optional<std::string> imdsv2_credential_response;
+  std::optional<std::string>
+      head_encryption_override{}; // NOLINT(readability-redundant-member-init)
+  std::optional<std::string>
+      container_credential_response{};                  // NOLINT(readability-redundant-member-init)
+  std::optional<std::string> container_authorization{}; // NOLINT(readability-redundant-member-init)
+  std::optional<std::string>
+      imdsv2_credential_response{}; // NOLINT(readability-redundant-member-init)
 };
 
 class LocalS3Server final {
@@ -569,7 +598,7 @@ private:
 
   void serve() {
     while (!stop_.load()) {
-      pollfd readiness{.fd = listener_, .events = POLLIN};
+      pollfd readiness{.fd = listener_, .events = POLLIN, .revents = 0};
       const int ready = ::poll(&readiness, 1U, 50);
       if (ready < 0) {
         if (errno == EINTR)
@@ -1413,9 +1442,9 @@ TEST(S3ObjectStoreTest, HonorsRetryAfterWithinConfiguredBackoffCeiling) {
 }
 
 TEST(S3ObjectStoreTest, HonorsEveryHttpDateRetryAfterFormWithinBackoffCeiling) {
-  constexpr std::array<const char*, 3U> formats{
-      "%a, %d %b %Y %H:%M:%S GMT", "%A, %d-%b-%y %H:%M:%S GMT", "%a %b %e %H:%M:%S %Y"};
-  for (const char* format : formats) {
+  constexpr std::array formats{HttpDateFormat::kImfFixdate, HttpDateFormat::kRfc850,
+                               HttpDateFormat::kAsctime};
+  for (const HttpDateFormat format : formats) {
     const std::string retry_after = future_http_date(format);
     ASSERT_FALSE(retry_after.empty());
     LocalS3Server server{

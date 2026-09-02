@@ -422,7 +422,8 @@ TEST(DistributedMutableQueryControlTcpTest, RoutesAllProtocolsAfterOneAuthentica
     const auto interest = mutable_query.interest();
     pollfd descriptor{.fd = mutable_query.descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                   (interest.want_write ? POLLOUT : 0))};
+                                                   (interest.want_write ? POLLOUT : 0)),
+                      .revents = 0};
     ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
     const auto progress = mutable_query.on_ready((descriptor.revents & POLLIN) != 0,
                                                  (descriptor.revents & POLLOUT) != 0,
@@ -444,7 +445,8 @@ TEST(DistributedMutableQueryControlTcpTest, RoutesAllProtocolsAfterOneAuthentica
     const auto interest = mutable_grouped_query.interest();
     pollfd descriptor{.fd = mutable_grouped_query.descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                   (interest.want_write ? POLLOUT : 0))};
+                                                   (interest.want_write ? POLLOUT : 0)),
+                      .revents = 0};
     ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
     const auto progress = mutable_grouped_query.on_ready((descriptor.revents & POLLIN) != 0,
                                                          (descriptor.revents & POLLOUT) != 0,
@@ -477,7 +479,8 @@ TEST(DistributedMutableQueryControlTcpTest, RoutesAllProtocolsAfterOneAuthentica
     const auto interest = read_authority->interest();
     pollfd descriptor{.fd = read_authority->descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                   (interest.want_write ? POLLOUT : 0))};
+                                                   (interest.want_write ? POLLOUT : 0)),
+                      .revents = 0};
     ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
     const auto progress = read_authority->on_ready((descriptor.revents & POLLIN) != 0,
                                                    (descriptor.revents & POLLOUT) != 0,
@@ -596,8 +599,9 @@ TEST(DistributedMutableQueryControlTcpTest, RetriesOnlyFiniteCorrelatedUnavailab
            DistributedVectorGroupedAggregateShuffleJobControlTcpAcquisitionState::kRunning;
        ++iteration) {
     const auto progress = seal->poll_once(std::chrono::milliseconds{1});
-    if (!progress.is_ok())
+    if (!progress.is_ok()) {
       EXPECT_EQ(progress.code(), common::StatusCode::kUnavailable);
+    }
     ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{1}).is_ok());
   }
   EXPECT_EQ(seal->state(),
@@ -705,7 +709,8 @@ TEST(DistributedMutableQueryControlTcpTest, RejectsPrincipalBeforeProtocolOrRece
     const auto interest = client.interest();
     pollfd descriptor{.fd = client.descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                   (interest.want_write ? POLLOUT : 0))};
+                                                   (interest.want_write ? POLLOUT : 0)),
+                      .revents = 0};
     static_cast<void>(::poll(&descriptor, 1U, 1));
     static_cast<void>(client.on_ready((descriptor.revents & POLLIN) != 0,
                                       (descriptor.revents & POLLOUT) != 0,

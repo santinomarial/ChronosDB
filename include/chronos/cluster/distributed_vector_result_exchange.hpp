@@ -34,13 +34,13 @@ struct DistributedVectorResultExchangeMessage {
   bool terminal{};
   // Empty only for a terminal-only empty stream. Otherwise exactly one Native Protocol v1
   // QUERY_RESULT payload whose descriptors equal the separately authorized result schema.
-  std::vector<std::byte> encoded_result_batch;
+  std::vector<std::byte> encoded_result_batch{}; // NOLINT(readability-redundant-member-init)
 };
 
 struct DistributedVectorResultExchangeDecodeLimits {
   std::size_t maximum_frame_length{
       distributed_vector_result_exchange_v2_format::kMaximumFrameLength};
-  network::QueryResultLimits result_batch;
+  network::QueryResultLimits result_batch{};
 };
 
 class EncodedDistributedVectorResultExchangeMessage {
@@ -143,7 +143,7 @@ inline constexpr std::size_t kMaximumDistributedVectorResultCoordinatorBytesV2 =
     std::size_t{1024U} * 1024U * 1024U;
 
 struct DistributedVectorResultCoordinatorLimitsV2 {
-  query::DistributedCoordinatorLimits messages;
+  query::DistributedCoordinatorLimits messages{};
   std::size_t maximum_total_encoded_bytes{kDefaultDistributedVectorResultCoordinatorBytesV2};
 };
 

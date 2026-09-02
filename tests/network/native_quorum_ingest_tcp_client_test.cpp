@@ -467,7 +467,8 @@ void drive_until_terminal(NativeQuorumIngestTcpClient& client,
     const NativeQuorumIngestTcpInterest interest = client.interest();
     pollfd descriptor{.fd = client.descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                   (interest.want_write ? POLLOUT : 0))};
+                                                   (interest.want_write ? POLLOUT : 0)),
+                      .revents = 0};
     const int ready = ::poll(&descriptor, 1U, 1);
     ASSERT_GE(ready, 0);
     const bool readable =
@@ -494,7 +495,8 @@ void drive_until_terminal(NativeQueryTcpClient& client,
     const NativeQueryTcpInterest interest = client.interest();
     pollfd descriptor{.fd = client.descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                   (interest.want_write ? POLLOUT : 0))};
+                                                   (interest.want_write ? POLLOUT : 0)),
+                      .revents = 0};
     const int ready = ::poll(&descriptor, 1U, 1);
     ASSERT_GE(ready, 0);
     const bool readable =
@@ -808,7 +810,7 @@ TEST(NativeQuorumIngestTcpClientTest, ExpiresHandshakeExactly) {
   for (std::size_t iteration = 0U;
        iteration < 64U && client->state() == NativeQuorumIngestTcpClientState::kConnecting;
        ++iteration) {
-    pollfd descriptor{.fd = client->descriptor(), .events = POLLOUT};
+    pollfd descriptor{.fd = client->descriptor(), .events = POLLOUT, .revents = 0};
     ASSERT_GE(::poll(&descriptor, 1U, 10), 0);
     ASSERT_TRUE(client->on_ready(false, (descriptor.revents & POLLOUT) != 0, start).is_ok());
   }
@@ -843,7 +845,8 @@ TEST(NativeQuorumIngestTcpClientTest, ExpiresAuthenticatedExchangeExactly) {
     const NativeQuorumIngestTcpInterest interest = client->interest();
     pollfd descriptor{.fd = client->descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                   (interest.want_write ? POLLOUT : 0))};
+                                                   (interest.want_write ? POLLOUT : 0)),
+                      .revents = 0};
     ASSERT_GE(::poll(&descriptor, 1U, 10), 0);
     const bool readable =
         (descriptor.revents & static_cast<short>(POLLIN | POLLERR | POLLHUP)) != 0;

@@ -578,8 +578,9 @@ append_batch(const Options& options, const std::uint64_t repetition, const std::
   if (!status.is_ok()) {
     return chronos::common::make_unexpected(status);
   }
-  Result<chronos::ingest::TabletAppendResult> published = prepared->publish(
-      {.wal_id = appended->record_start.wal_id, .record_sequence = appended->record_sequence});
+  Result<chronos::ingest::TabletAppendResult> published =
+      prepared->publish(chronos::head::HeadCommitPosition::wal(appended->record_start.wal_id,
+                                                               appended->record_sequence));
   if (!published.has_value()) {
     return chronos::common::make_unexpected(published.error());
   }

@@ -168,7 +168,9 @@ NativeQuorumIngestRetry::receive(const common::ByteView bytes) {
   if (!frames.has_value())
     return common::make_unexpected(impl.fail(frames.error()));
 
-  NativeQuorumIngestRetryProgress progress{.attempt_number = impl.attempts_started};
+  NativeQuorumIngestRetryProgress progress{.reconnect_required = false,
+                                           .attempt_number = impl.attempts_started,
+                                           .acknowledgement = std::nullopt};
   for (const Frame& frame : *frames) {
     if (frame.header.message_type == MessageType::kServerHello && !impl.request_id.has_value()) {
       constexpr std::uint64_t kRequiredFeatures =

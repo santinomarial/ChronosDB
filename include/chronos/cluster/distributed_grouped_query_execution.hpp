@@ -16,9 +16,9 @@
 namespace chronos::cluster {
 
 struct DistributedGroupedQueryExecutionLimits {
-  query::DistributedCoordinatorLimits coordinator;
-  DistributedQueryRetryLimits retry;
-  query::DistributedGroupedFloat64ResultOptions result;
+  query::DistributedCoordinatorLimits coordinator{};
+  DistributedQueryRetryLimits retry{};
+  query::DistributedGroupedFloat64ResultOptions result{};
 };
 
 // Single-owner orchestration for one proof-bound grouped snapshot. It retains the pinned Manifest

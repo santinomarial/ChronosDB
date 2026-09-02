@@ -15,7 +15,7 @@ namespace chronos::cluster {
 struct RaftReadAuthorityTlsClientLimits {
   std::chrono::milliseconds handshake_timeout{5000};
   std::chrono::milliseconds exchange_timeout{30000};
-  RaftReadAuthorityTransportLimits transport;
+  RaftReadAuthorityTransportLimits transport{};
 };
 
 struct RaftReadAuthorityTlsClientConfig {

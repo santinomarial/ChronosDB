@@ -22,9 +22,9 @@ inline constexpr std::size_t
         std::size_t{1024U} * 1024U * 1024U;
 
 struct DistributedMutableVectorGroupedAggregateQueryExecutionLimits {
-  DistributedMutableVectorGroupedAggregateQuerySenderLimits sender;
-  query::DistributedVectorGroupedAggregateCoordinatorLimits coordinator;
-  query::DistributedVectorGroupedAggregateExchangeDecodeLimits decode;
+  DistributedMutableVectorGroupedAggregateQuerySenderLimits sender{};
+  query::DistributedVectorGroupedAggregateCoordinatorLimits coordinator{};
+  query::DistributedVectorGroupedAggregateExchangeDecodeLimits decode{};
   std::size_t maximum_decode_memory_bytes{
       kDefaultDistributedMutableVectorGroupedAggregateQueryExecutionDecodeMemoryBytes};
 };

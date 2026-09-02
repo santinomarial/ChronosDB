@@ -233,7 +233,7 @@ public:
         .connection_id = request.connection_id,
         .principal_id = request.principal_id,
         .protocol = request.protocol,
-        .frame = {.header = {.request_id = request.frame.header.request_id}}};
+        .frame = {.header = {.request_id = request.frame.header.request_id}, .payload = {}}};
     const common::Status admitted = config.coordinator->admit(std::move(request), now);
     if (!admitted.is_ok())
       return reject(std::move(response_shell), admitted);

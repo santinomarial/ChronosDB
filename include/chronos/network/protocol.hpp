@@ -72,8 +72,9 @@ struct FrameHeader {
 };
 
 struct Frame {
-  FrameHeader header;
-  std::vector<std::byte> payload;
+  FrameHeader header{};
+  // Header-only control frames intentionally carry an empty payload.
+  std::vector<std::byte> payload{}; // NOLINT(readability-redundant-member-init)
 
   friend bool operator==(const Frame&, const Frame&) = default;
 };

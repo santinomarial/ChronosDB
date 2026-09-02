@@ -17,7 +17,7 @@ namespace chronos::cluster {
 struct DistributedVectorGroupedAggregateShuffleJobControlTlsLimits {
   std::chrono::milliseconds handshake_timeout{5000};
   std::chrono::milliseconds exchange_timeout{30000};
-  DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits request;
+  DistributedVectorGroupedAggregateShuffleJobControlDecodeLimits request{};
 };
 
 struct DistributedVectorGroupedAggregateShuffleJobControlTlsInterest {

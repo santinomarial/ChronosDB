@@ -30,14 +30,14 @@ struct DistributedMutableVectorGroupedAggregateQueryTcpExecutionConfig {
   raft::NodeId local_node_id{};
   DistributedMutableVectorGroupedAggregateQueryWorkerService* local_worker{};
   std::vector<DistributedQueryNodeRoute> routes;
-  DistributedMutableVectorGroupedAggregateQueryTlsLimits carrier_limits;
-  DistributedVectorGroupedAggregateFinalizationLimitsV2 finalization_limits;
+  DistributedMutableVectorGroupedAggregateQueryTlsLimits carrier_limits{};
+  DistributedVectorGroupedAggregateFinalizationLimitsV2 finalization_limits{};
   std::optional<query::DistributedVectorGroupedAggregateCoordinatorProjection>
-      coordinator_projection;
+      coordinator_projection{std::nullopt};
   DistributedMutableVectorGroupedAggregateQueryPublication publication{
       DistributedMutableVectorGroupedAggregateQueryPublication::kNativeResult};
   std::chrono::milliseconds connect_timeout{5000};
-  std::optional<std::chrono::steady_clock::time_point> execution_deadline;
+  std::optional<std::chrono::steady_clock::time_point> execution_deadline{std::nullopt};
   std::size_t maximum_rebindings{3U};
 };
 

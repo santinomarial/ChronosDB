@@ -24,7 +24,7 @@ class RaftTabletSnapshotStorageTestAccess;
 struct RaftTabletSnapshotStorageConfig {
   std::string directory_path;
   raft::GroupId group_id;
-  RaftTabletSnapshotCodecLimits codec_limits;
+  RaftTabletSnapshotCodecLimits codec_limits{};
   std::uint16_t file_permissions{0600U};
 };
 

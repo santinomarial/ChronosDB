@@ -42,7 +42,7 @@ struct RaftObservationResponse {
   raft::GroupId group_id;
   std::uint64_t correlation_id{};
   common::StatusCode status_code{common::StatusCode::kInternal};
-  std::optional<raft::RaftGroupObservation> observation;
+  std::optional<raft::RaftGroupObservation> observation{std::nullopt};
 
   friend bool operator==(const RaftObservationResponse&, const RaftObservationResponse&) = default;
 };
@@ -69,7 +69,7 @@ raft_observation_response_frame_length_v1(common::ByteView header,
 
 struct RaftObservationRequestReadStep {
   std::size_t consumed_bytes{};
-  std::optional<RaftObservationRequest> request;
+  std::optional<RaftObservationRequest> request{std::nullopt};
 };
 
 class RaftObservationRequestReader {
@@ -94,7 +94,7 @@ private:
 
 struct RaftObservationResponseReadStep {
   std::size_t consumed_bytes{};
-  std::optional<RaftObservationResponse> response;
+  std::optional<RaftObservationResponse> response{std::nullopt};
 };
 
 class RaftObservationResponseReader {
@@ -162,7 +162,7 @@ struct RaftObservationReceiverConfig {
   raft::NodeId local_node_id{};
   const ClusterNodePrincipalAuthorizer* authorizer{};
   RaftObservationService* service{};
-  RaftObservationTransportLimits limits;
+  RaftObservationTransportLimits limits{};
 };
 
 class RaftObservationReceiver {

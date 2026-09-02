@@ -26,8 +26,9 @@ enum class CommitSource : std::uint8_t {
 
 struct HeadCommitPosition {
   CommitSource source{CommitSource::kWal};
-  wal::WalId wal_id;
-  common::Uuid raft_group_id;
+  wal::WalId wal_id{};
+  // WAL-backed positions intentionally carry a nil Raft group identifier.
+  common::Uuid raft_group_id{}; // NOLINT(readability-redundant-member-init)
   std::uint64_t record_sequence{};
 
   [[nodiscard]] static HeadCommitPosition wal(wal::WalId id, std::uint64_t sequence) noexcept {

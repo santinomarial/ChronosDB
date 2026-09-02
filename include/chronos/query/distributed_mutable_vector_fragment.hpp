@@ -47,13 +47,15 @@ struct DistributedMutableVectorFragment {
   std::uint64_t applied_position{};
   std::uint64_t observed_leader_commit_position{};
   std::uint64_t placement_epoch{};
-  DistributedReadPolicy read_policy;
-  std::optional<raft::ReadBarrier> linearizable_barrier;
-  std::vector<std::uint32_t> destination_column_ordinals;
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
-  DistributedVectorPlanIntent plan;
-  DistributedVectorResultSchema result_schema;
-  std::optional<DistributedVectorPreGroupProgram> pre_group_program;
+  DistributedReadPolicy read_policy{};
+  std::optional<raft::ReadBarrier>
+      linearizable_barrier{}; // NOLINT(readability-redundant-member-init)
+  std::vector<std::uint32_t>
+      destination_column_ordinals{}; // NOLINT(readability-redundant-member-init)
+  std::optional<cseg::EventTimePredicate> event_time_predicate{std::nullopt};
+  DistributedVectorPlanIntent plan{};
+  DistributedVectorResultSchema result_schema{};
+  std::optional<DistributedVectorPreGroupProgram> pre_group_program{std::nullopt};
 
   friend bool operator==(const DistributedMutableVectorFragment&,
                          const DistributedMutableVectorFragment&) = default;

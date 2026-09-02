@@ -191,7 +191,10 @@ public:
       routes.reserve(configured.size());
       for (const NativeClientRoute& route : configured) {
         auto context = network::TlsClientContext::create(
-            {.expected_server_identity = route.tls_server_identity,
+            {.certificate_chain_file = {},
+             .private_key_file = {},
+             .trust_store_file = {},
+             .expected_server_identity = route.tls_server_identity,
              .pem_credentials = credentials});
         if (!context.has_value())
           return context.error();

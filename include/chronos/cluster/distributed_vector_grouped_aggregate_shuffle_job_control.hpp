@@ -165,7 +165,7 @@ struct DistributedVectorGroupedAggregateShuffleJobControlResponse {
   common::Uuid query_id;
   raft::NodeId coordinator_node_id{};
   raft::NodeId target_node_id{};
-  std::optional<network::Ipv4Endpoint> reducer_shuffle_endpoint;
+  std::optional<network::Ipv4Endpoint> reducer_shuffle_endpoint{std::nullopt};
 
   friend bool
   operator==(const DistributedVectorGroupedAggregateShuffleJobControlResponse&,

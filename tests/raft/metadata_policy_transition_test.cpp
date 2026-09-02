@@ -300,8 +300,8 @@ constexpr std::array<PolicyTransitionCase, 12U> kPolicyTransitionCases{{
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 INSTANTIATE_TEST_SUITE_P(SnapshotSuffixMatrix, MetadataPolicyTransitionTest,
                          testing::ValuesIn(kPolicyTransitionCases),
-                         [](const testing::TestParamInfo<PolicyTransitionCase>& info) {
-                           return std::string{info.param.name};
+                         [](const testing::TestParamInfo<PolicyTransitionCase>& parameter) {
+                           return std::string{parameter.param.name};
                          });
 
 } // namespace

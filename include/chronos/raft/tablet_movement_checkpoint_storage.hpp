@@ -17,8 +17,8 @@ namespace chronos::raft {
 struct TabletMovementCheckpointStorageConfig {
   std::string directory_path;
   schema::TabletId tablet_id;
-  TabletMovementCheckpointCodecLimits codec_limits;
-  TabletMovementCheckpointReferenceCodecLimits reference_codec_limits;
+  TabletMovementCheckpointCodecLimits codec_limits{};
+  TabletMovementCheckpointReferenceCodecLimits reference_codec_limits{};
   std::uint16_t file_permissions{0600U};
 };
 

@@ -38,10 +38,10 @@ TEST(TimestampFilterKernelTest, EveryAvailableKernelMatchesExactScalarBounds) {
                                                8U, 9U, 15U, 16U, 17U, 257U};
   const std::array<TimestampRangePredicate, 9U> predicates{
       TimestampRangePredicate{},
-      TimestampRangePredicate{.lower = TimestampRangeBound{-10, true}},
-      TimestampRangePredicate{.lower = TimestampRangeBound{-10, false}},
-      TimestampRangePredicate{.upper = TimestampRangeBound{10, true}},
-      TimestampRangePredicate{.upper = TimestampRangeBound{10, false}},
+      TimestampRangePredicate{.lower = TimestampRangeBound{-10, true}, .upper = std::nullopt},
+      TimestampRangePredicate{.lower = TimestampRangeBound{-10, false}, .upper = std::nullopt},
+      TimestampRangePredicate{.lower = std::nullopt, .upper = TimestampRangeBound{10, true}},
+      TimestampRangePredicate{.lower = std::nullopt, .upper = TimestampRangeBound{10, false}},
       TimestampRangePredicate{.lower = TimestampRangeBound{-20, true},
                               .upper = TimestampRangeBound{20, false}},
       TimestampRangePredicate{.lower = TimestampRangeBound{7, true},
@@ -64,8 +64,9 @@ TEST(TimestampFilterKernelTest, EveryAvailableKernelMatchesExactScalarBounds) {
           compact(timestamps, predicate, TimestampFilterKernel::kScalar);
       EXPECT_EQ(compact(timestamps, predicate, preferred_timestamp_filter_kernel()), expected);
       for (const TimestampFilterKernel kernel : kernels) {
-        if (timestamp_filter_kernel_available(kernel))
+        if (timestamp_filter_kernel_available(kernel)) {
           EXPECT_EQ(compact(timestamps, predicate, kernel), expected);
+        }
       }
     }
   }
@@ -73,12 +74,14 @@ TEST(TimestampFilterKernelTest, EveryAvailableKernelMatchesExactScalarBounds) {
 
 TEST(TimestampFilterKernelTest, UnavailableForcedKernelFallsBackToScalar) {
   const std::vector<std::int64_t> timestamps{-1, 0, 1};
-  const TimestampRangePredicate predicate{.lower = TimestampRangeBound{0, true}};
+  const TimestampRangePredicate predicate{.lower = TimestampRangeBound{0, true},
+                                          .upper = std::nullopt};
   const std::vector<std::uint32_t> expected{1U, 2U};
   for (const TimestampFilterKernel kernel :
        {TimestampFilterKernel::kAvx2, TimestampFilterKernel::kNeon}) {
-    if (!timestamp_filter_kernel_available(kernel))
+    if (!timestamp_filter_kernel_available(kernel)) {
       EXPECT_EQ(compact(timestamps, predicate, kernel), expected);
+    }
   }
 }
 

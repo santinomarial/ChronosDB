@@ -26,7 +26,7 @@ struct DistributedVectorGroupedAggregateShuffleResultStreamLimits {
   std::uint32_t maximum_frames{4096U};
   std::size_t maximum_encoded_bytes{
       kDefaultDistributedVectorGroupedAggregateShuffleResultStreamBytes};
-  DistributedVectorGroupedAggregateShuffleResultDecodeLimits frame;
+  DistributedVectorGroupedAggregateShuffleResultDecodeLimits frame{};
 };
 
 [[nodiscard]] bool validate_distributed_vector_grouped_aggregate_shuffle_result_stream_limits(

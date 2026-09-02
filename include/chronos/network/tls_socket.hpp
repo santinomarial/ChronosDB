@@ -23,23 +23,27 @@ struct TlsPemCredentials {
 };
 
 struct TlsServerConfig {
-  std::string certificate_chain_file;
-  std::string private_key_file;
-  std::string trust_store_file;
+  // Empty members are the explicit inactive half of the file-or-memory credential choice.
+  std::string certificate_chain_file{}; // NOLINT(readability-redundant-member-init)
+  std::string private_key_file{};       // NOLINT(readability-redundant-member-init)
+  std::string trust_store_file{};       // NOLINT(readability-redundant-member-init)
   bool require_client_certificate{true};
   // Alternative to the three file paths. The carrier parses these exact bytes without reopening
   // a filesystem path. Exactly one complete credential source must be configured.
-  std::shared_ptr<const TlsPemCredentials> pem_credentials;
+  std::shared_ptr<const TlsPemCredentials>
+      pem_credentials{}; // NOLINT(readability-redundant-member-init)
 };
 
 struct TlsClientConfig {
-  std::string certificate_chain_file;
-  std::string private_key_file;
-  std::string trust_store_file;
+  // Empty members are the explicit inactive half of the file-or-memory credential choice.
+  std::string certificate_chain_file{}; // NOLINT(readability-redundant-member-init)
+  std::string private_key_file{};       // NOLINT(readability-redundant-member-init)
+  std::string trust_store_file{};       // NOLINT(readability-redundant-member-init)
   // Required DNS name or IP address matched against the server certificate SAN.
-  std::string expected_server_identity;
+  std::string expected_server_identity{}; // NOLINT(readability-redundant-member-init)
   // Alternative to the three file paths. Exactly one complete credential source is required.
-  std::shared_ptr<const TlsPemCredentials> pem_credentials;
+  std::shared_ptr<const TlsPemCredentials>
+      pem_credentials{}; // NOLINT(readability-redundant-member-init)
 };
 
 enum class TlsIoState : std::uint8_t { kComplete, kWantRead, kWantWrite, kClosed };

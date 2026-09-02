@@ -100,9 +100,10 @@ parse_name(const std::string_view name, const schema::TabletId tablet_id, const 
 
 class TabletReconfigurationActionLedger::Impl {
 public:
-  Impl(TabletReconfigurationActionLedgerConfig config, io::PosixDirectory directory,
-       io::PosixAdvisoryLock lock) noexcept
-      : config(std::move(config)), directory(std::move(directory)), lock(std::move(lock)) {}
+  Impl(TabletReconfigurationActionLedgerConfig configured, io::PosixDirectory owned_directory,
+       io::PosixAdvisoryLock owned_lock) noexcept
+      : config(std::move(configured)), directory(std::move(owned_directory)),
+        lock(std::move(owned_lock)) {}
 
   [[nodiscard]] common::Status check() const {
     return poison.is_ok()

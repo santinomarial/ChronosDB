@@ -104,12 +104,15 @@ struct ActiveSchemaMetadata {
 // their immutable shared schemas pinned independently of the state machine lifetime.
 struct MetadataCatalogSnapshot {
   LogIndex applied_index{};
-  std::vector<ClusterNodeMetadata> cluster_nodes;
-  std::vector<CatalogTableDefinition> schema_definitions;
-  std::vector<ActiveSchemaMetadata> active_schemas;
-  std::vector<TabletPlacementMetadata> tablet_placements;
-  std::vector<TabletGroupBindingMetadata> tablet_group_bindings;
-  std::vector<TablePolicyMetadata> table_policies;
+  std::vector<ClusterNodeMetadata> cluster_nodes{}; // NOLINT(readability-redundant-member-init)
+  std::vector<CatalogTableDefinition>
+      schema_definitions{};                           // NOLINT(readability-redundant-member-init)
+  std::vector<ActiveSchemaMetadata> active_schemas{}; // NOLINT(readability-redundant-member-init)
+  std::vector<TabletPlacementMetadata>
+      tablet_placements{}; // NOLINT(readability-redundant-member-init)
+  std::vector<TabletGroupBindingMetadata>
+      tablet_group_bindings{};                       // NOLINT(readability-redundant-member-init)
+  std::vector<TablePolicyMetadata> table_policies{}; // NOLINT(readability-redundant-member-init)
 };
 
 // Deterministic application state for the dedicated metadata Raft group. Only committed commands

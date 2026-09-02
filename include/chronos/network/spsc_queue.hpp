@@ -27,8 +27,8 @@ struct NetworkTask {
   std::uint64_t principal_id{};
   // Immutable negotiated connection facts captured by the reactor when it dispatches the task.
   // Services must use these instead of reconstructing capabilities from frame bytes.
-  NetworkTaskProtocolContext protocol;
-  Frame frame;
+  NetworkTaskProtocolContext protocol{};
+  Frame frame{};
 };
 
 // Exactly one producer calls try_push and exactly one consumer calls try_pop. Moving the queue is

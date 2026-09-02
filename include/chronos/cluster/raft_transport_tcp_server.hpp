@@ -14,12 +14,12 @@
 namespace chronos::cluster {
 
 struct RaftTransportTcpServerConfig {
-  network::TcpListenerConfig listener;
-  network::TlsServerConfig tls;
+  network::TcpListenerConfig listener{};
+  network::TlsServerConfig tls{};
   network::ConnectionAuthenticator* authenticator{};
   RaftTransportReceiver* receiver{};
-  RaftTransportTlsServerLimits carrier_limits;
-  raft::RaftTransportCodecLimits codec_limits;
+  RaftTransportTlsServerLimits carrier_limits{};
+  raft::RaftTransportCodecLimits codec_limits{};
   std::size_t maximum_connections{1024U};
   std::size_t maximum_accepts_per_poll{32U};
 };

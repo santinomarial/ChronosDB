@@ -36,8 +36,8 @@ struct DistributedVectorAggregateRowsFinalizationLimitsV2 {
   std::size_t maximum_query_memory_bytes{
       query::kDefaultDistributedVectorAggregateCoordinatorMemoryBytesV2};
   std::size_t maximum_variable_extremum_bytes{query::kDefaultAggregateExtremumByteLimit};
-  network::QueryResultLimits input_batch;
-  DistributedVectorAggregateFinalizationLimitsV2 output;
+  network::QueryResultLimits input_batch{};
+  DistributedVectorAggregateFinalizationLimitsV2 output{};
 };
 
 // Transitional coordinator-side aggregation over a complete all-tablet row execution. The input

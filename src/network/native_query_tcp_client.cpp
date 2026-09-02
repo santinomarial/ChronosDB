@@ -74,7 +74,8 @@ public:
       return fail(fingerprint.error());
     const NativeLeaderRoute route = retry.current_route();
     const NetworkSecurityConfig security{.mode = TransportSecurityMode::kTlsRequired,
-                                         .authenticator = &authenticator};
+                                         .authenticator = &authenticator,
+                                         .tls = std::nullopt};
     auto authentication = authenticate_peer(security, {.ipv4_address = route.endpoint.address,
                                                        .transport_authenticated = true,
                                                        .peer_certificate_sha256 = *fingerprint});

@@ -172,7 +172,8 @@ query_error(const ResponseRoute& target, const common::Status& status,
       .frame = {.header = {.protocol_major = target.protocol.protocol_major,
                            .protocol_minor = target.protocol.protocol_minor,
                            .message_type = network::MessageType::kQueryRequest,
-                           .request_id = target.request_id}}};
+                           .request_id = target.request_id},
+                .payload = {}}};
   auto encoded = error_response(std::move(shell), status, limits);
   if (!encoded.has_value())
     return common::make_unexpected(encoded.error());
@@ -560,7 +561,7 @@ encode_query_chunk(const query::VectorChunk& chunk,
         if (!cell.has_value())
           return common::make_unexpected(cell.error());
         if (cell->is_null()) {
-          cells.push_back({.is_null = true});
+          cells.push_back({.is_null = true, .value = {}});
         } else if (cell->kind() == columnar::ColumnCellView::Kind::kBoolean) {
           auto value = cell->boolean();
           if (!value.has_value())

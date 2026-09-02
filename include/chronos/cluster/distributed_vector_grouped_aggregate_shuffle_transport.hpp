@@ -44,7 +44,7 @@ decode_distributed_vector_grouped_aggregate_shuffle_frame_v1_exact(
 
 struct DistributedVectorGroupedAggregateShuffleFrameV1ReadStep {
   std::size_t consumed_bytes{};
-  std::optional<DistributedVectorGroupedAggregateShuffleFrameV1> frame;
+  std::optional<DistributedVectorGroupedAggregateShuffleFrameV1> frame{std::nullopt};
 };
 
 // Header-first reader for one or more sequential shuffle frames. The immutable authority is

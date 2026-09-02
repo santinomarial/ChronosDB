@@ -45,6 +45,16 @@ void saturating_increment(std::uint64_t& value) noexcept {
                             std::error_code(error, std::generic_category()).message()};
 }
 
+[[nodiscard]] bool would_block(const int error) noexcept {
+  if (error == EAGAIN)
+    return true;
+#if EWOULDBLOCK != EAGAIN
+  if (error == EWOULDBLOCK)
+    return true;
+#endif
+  return false;
+}
+
 template <typename Operation>
 [[nodiscard]] auto classify_allocation_failure(const char* const message,
                                                Operation&& operation) -> decltype(operation()) {
@@ -227,7 +237,7 @@ public:
        const std::array<int, 2> completion_pipe,
        std::shared_ptr<AsyncDurableRaftWorkerExtension> extension,
        const common::TimeSource& time_source, detail::AsyncDurableRaftCompletionIo& completion_io,
-       void (*worker_start_hook)(void*), void* const worker_start_context) noexcept
+       void (*worker_start_hook)(void*), void* const worker_start_context)
       : runtime_(std::move(runtime)), limits_(configured), time_source_(time_source),
         worker_start_hook_(worker_start_hook), worker_start_context_(worker_start_context),
         completion_io_(completion_io), completion_pipe_(completion_pipe) {
@@ -407,14 +417,15 @@ public:
     const std::uint8_t signal = 1U;
     while (true) {
       const ssize_t written = completion_io_.write(completion_pipe_[1], &signal, sizeof(signal));
+      const int write_error = errno;
       if (written == static_cast<ssize_t>(sizeof(signal))) {
         const std::lock_guard lock{mutex_};
         saturating_increment(metrics_.written_completion_notifications);
         return common::Status::ok();
       }
-      if (written < 0 && errno == EINTR)
+      if (written < 0 && write_error == EINTR)
         continue;
-      if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      if (written < 0 && would_block(write_error)) {
         const std::lock_guard lock{mutex_};
         saturating_increment(metrics_.coalesced_completion_notifications);
         return common::Status::ok();
@@ -423,7 +434,7 @@ public:
         const std::lock_guard lock{mutex_};
         saturating_increment(metrics_.failed_completion_notifications);
       }
-      return io_error("signaling durable Raft completion");
+      return io_error("signaling durable Raft completion", write_error);
     }
   }
 
@@ -431,13 +442,15 @@ public:
     std::array<std::uint8_t, 256> signals{};
     while (true) {
       const ssize_t read = completion_io_.read(completion_pipe_[0], signals.data(), signals.size());
+      const int read_error = errno;
       if (read > 0)
         continue;
-      if (read < 0 && errno == EINTR)
+      if (read < 0 && read_error == EINTR)
         continue;
-      if (read < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+      if (read < 0 && would_block(read_error))
         return common::Status::ok();
-      return io_error("draining durable Raft completion notifications", read == 0 ? EPIPE : errno);
+      return io_error("draining durable Raft completion notifications",
+                      read == 0 ? EPIPE : read_error);
     }
   }
 

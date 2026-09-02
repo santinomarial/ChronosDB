@@ -116,10 +116,10 @@ inline constexpr std::size_t kMaximumDistributedVectorRowsWorkerMemoryBytesV2 =
     std::size_t{1024U} * 1024U * 1024U;
 
 struct DistributedVectorRowsWorkerLimitsV2 {
-  DistributedAggregateWorkerLimits storage;
+  DistributedAggregateWorkerLimits storage{};
   std::size_t maximum_query_memory_bytes{kDefaultDistributedVectorRowsWorkerMemoryBytesV2};
-  ScalarSnapshotScanLimits scan;
-  VectorChunkLimits output;
+  ScalarSnapshotScanLimits scan{};
+  VectorChunkLimits output{};
 };
 
 struct DistributedVectorRowsWorkerRequestV2 {
@@ -211,8 +211,9 @@ struct DistributedVectorAggregateWorkerRequestV2 {
 struct DistributedVectorAggregateWorkerResultV2 {
   // The exact local fragment-derived definitions authorize every corresponding message and remain
   // available for encoding or comparison with the coordinator's pinned cross-tablet authority.
-  std::vector<VectorAggregateDefinition> definitions;
-  std::vector<DistributedVectorAggregateExchangeMessage> messages;
+  std::vector<VectorAggregateDefinition> definitions{}; // NOLINT(readability-redundant-member-init)
+  std::vector<DistributedVectorAggregateExchangeMessage>
+      messages{}; // NOLINT(readability-redundant-member-init)
   std::uint64_t input_rows{};
 };
 
@@ -275,7 +276,8 @@ struct DistributedMutableVectorGroupedAggregateWorkerRequest {
 
 struct DistributedVectorGroupedAggregateWorkerResultV2 {
   DistributedVectorGroupedAggregateAuthority authority;
-  std::vector<EncodedDistributedVectorGroupedAggregateExchangeMessage> messages;
+  std::vector<EncodedDistributedVectorGroupedAggregateExchangeMessage>
+      messages{}; // NOLINT(readability-redundant-member-init)
   std::uint64_t input_rows{};
   std::size_t group_count{};
   std::size_t encoded_bytes{};

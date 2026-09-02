@@ -68,12 +68,14 @@ TEST(TabletMovementCheckpointStorageTest, EmptyStorageHasNoLatestGeneration) {
 
   auto legacy = storage->load_latest();
   ASSERT_TRUE(legacy.has_value()) << legacy.error().to_string();
-  if (legacy.has_value())
+  if (legacy.has_value()) {
     EXPECT_FALSE(legacy.value().has_value());
+  }
   auto any = storage->load_latest_any();
   ASSERT_TRUE(any.has_value()) << any.error().to_string();
-  if (any.has_value())
+  if (any.has_value()) {
     EXPECT_FALSE(any.value().has_value());
+  }
 }
 
 TEST(TabletMovementCheckpointStorageTest, InstallsSelectsAndReopensExactGenerations) {

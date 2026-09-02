@@ -42,18 +42,18 @@ struct GroupReadBarrier {
 };
 
 struct MultiRaftTransition {
-  std::optional<GroupPersistentState> persistence;
+  std::optional<GroupPersistentState> persistence{std::nullopt};
   std::vector<GroupOutboundMessage> outbound;
-  std::optional<LogIndex> advanced_commit_index;
-  std::optional<GroupSnapshotInstall> snapshot_install;
-  std::optional<GroupReadBarrier> read_barrier_ready;
+  std::optional<LogIndex> advanced_commit_index{std::nullopt};
+  std::optional<GroupSnapshotInstall> snapshot_install{std::nullopt};
+  std::optional<GroupReadBarrier> read_barrier_ready{std::nullopt};
 };
 
 struct MultiRaftLimits {
   std::size_t maximum_groups{4096U};
   // Must hold every message from one legal core transition: max(1, maximum_voters - 1).
   std::size_t maximum_queued_outbound{65'536U};
-  RaftLimits raft;
+  RaftLimits raft{};
 };
 
 // One node-local, single-worker owner for many deterministic groups. Timers, transport, and disk

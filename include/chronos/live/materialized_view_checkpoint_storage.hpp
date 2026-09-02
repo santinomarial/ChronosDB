@@ -15,7 +15,7 @@ namespace chronos::live {
 struct MaterializedViewCheckpointStorageConfig {
   std::string directory_path;
   MaterializedViewCheckpointIdentity identity;
-  MaterializedViewCheckpointCodecLimits codec_limits;
+  MaterializedViewCheckpointCodecLimits codec_limits{};
   std::uint16_t file_permissions{0600U};
 };
 

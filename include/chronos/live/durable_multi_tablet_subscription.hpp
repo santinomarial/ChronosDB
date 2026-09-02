@@ -20,7 +20,7 @@ namespace chronos::live {
 struct DurableMultiTabletSubscriptionConfig {
   MultiTabletSubscriptionCheckpointStorageConfig storage;
   MultiTabletSubscriptionSource source;
-  SubscriptionLimits limits;
+  SubscriptionLimits limits{};
 };
 
 // Single-thread-affine composition of one exact multi-tablet coordinator and its locked checkpoint

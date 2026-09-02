@@ -18,7 +18,7 @@ struct RaftTransportReceiverConfig {
   raft::NodeId local_node_id{};
   const ClusterNodePrincipalAuthorizer* authorizer{};
   raft::AsyncDurableMultiRaftRuntime* runtime{};
-  raft::RaftTransportCodecLimits codec_limits;
+  raft::RaftTransportCodecLimits codec_limits{};
 };
 
 // Owns the asynchronous durable receive after authentication, authorization, and exact route

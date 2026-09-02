@@ -206,7 +206,8 @@ parse_header(const common::ByteView header,
                                                                .hash_version = *hash_version,
                                                                .sequence = *sequence,
                                                                .terminal =
-                                                                   (*flags & kTerminalFlag) != 0U};
+                                                                   (*flags & kTerminalFlag) != 0U,
+                                                               .encoded_result_batch = {}};
   if (!validate_identity(identity, authority, coordinator_node_id).is_ok()) {
     return common::make_unexpected(
         corruption("grouped shuffle result header differs from immutable authority"));

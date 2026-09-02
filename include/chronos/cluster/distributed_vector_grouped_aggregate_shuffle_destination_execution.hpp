@@ -15,13 +15,13 @@ namespace chronos::cluster {
 
 struct DistributedVectorGroupedAggregateShuffleDestinationExecutionConfig {
   raft::NodeId local_node_id{};
-  network::TcpListenerConfig listener;
-  network::TlsServerConfig tls;
+  network::TcpListenerConfig listener{};
+  network::TlsServerConfig tls{};
   network::ConnectionAuthenticator* authenticator{};
   const ClusterNodePrincipalAuthorizer* node_authorizer{};
-  std::optional<query::QueryResourceContext> resources;
-  DistributedVectorGroupedAggregateShuffleTlsLimits carrier_limits;
-  DistributedVectorGroupedAggregateShuffleReducerLimits reducer_limits;
+  std::optional<query::QueryResourceContext> resources{std::nullopt};
+  DistributedVectorGroupedAggregateShuffleTlsLimits carrier_limits{};
+  DistributedVectorGroupedAggregateShuffleReducerLimits reducer_limits{};
   std::size_t maximum_retained_streams{1024U};
   std::size_t maximum_accepts_per_poll{32U};
   std::size_t maximum_reducer_admissions_per_poll{1024U};

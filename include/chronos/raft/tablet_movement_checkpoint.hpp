@@ -26,7 +26,7 @@ struct TabletMovementCheckpoint {
 
 struct TabletMovementCheckpointCodecLimits {
   std::size_t maximum_checkpoint_bytes{kMaximumTabletMovementCheckpointSize};
-  TabletMovementLimits movement;
+  TabletMovementLimits movement{};
 };
 
 struct TabletMovementCheckpointGeneration {

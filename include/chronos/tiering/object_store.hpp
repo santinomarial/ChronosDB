@@ -92,17 +92,18 @@ enum class S3ServerSideEncryption : std::uint8_t {
 struct S3ObjectStoreConfig {
   // A scheme and authority with an optional base path, for example
   // https://s3.us-east-1.amazonaws.com or https://minio.example/storage.
-  std::string endpoint;
-  std::string region;
-  std::string bucket;
-  std::string access_key_id;
-  std::string secret_access_key;
-  std::optional<std::string> session_token;
-  std::shared_ptr<S3CredentialProvider> credential_provider;
-  std::optional<std::string> ca_bundle_path;
+  std::string endpoint{};                     // NOLINT(readability-redundant-member-init)
+  std::string region{};                       // NOLINT(readability-redundant-member-init)
+  std::string bucket{};                       // NOLINT(readability-redundant-member-init)
+  std::string access_key_id{};                // NOLINT(readability-redundant-member-init)
+  std::string secret_access_key{};            // NOLINT(readability-redundant-member-init)
+  std::optional<std::string> session_token{}; // NOLINT(readability-redundant-member-init)
+  std::shared_ptr<S3CredentialProvider>
+      credential_provider{};                   // NOLINT(readability-redundant-member-init)
+  std::optional<std::string> ca_bundle_path{}; // NOLINT(readability-redundant-member-init)
   // Process proxy variables are never inherited. Supplying this explicitly enables one HTTP(S)
   // proxy for every request; TLS endpoint verification and redirect rejection remain unchanged.
-  std::optional<std::string> proxy_url;
+  std::optional<std::string> proxy_url{}; // NOLINT(readability-redundant-member-init)
   std::chrono::milliseconds connect_timeout{5'000};
   std::chrono::milliseconds request_timeout{30'000};
   std::size_t maximum_attempts{3U};
@@ -111,7 +112,7 @@ struct S3ObjectStoreConfig {
   // Adds a uniformly distributed nonnegative delay after exponential/provider floors, without
   // exceeding maximum_retry_backoff. A fixed seed is intended only for deterministic testing.
   std::chrono::milliseconds maximum_retry_jitter{50};
-  std::optional<std::uint64_t> retry_jitter_seed;
+  std::optional<std::uint64_t> retry_jitter_seed{}; // NOLINT(readability-redundant-member-init)
   std::size_t multipart_threshold_bytes{std::size_t{64U} * 1024U * 1024U};
   std::size_t multipart_part_bytes{std::size_t{16U} * 1024U * 1024U};
   // Bounds simultaneously active UploadPart requests for one object. All workers are joined before
@@ -121,17 +122,18 @@ struct S3ObjectStoreConfig {
   // When set, every object creation requests this encryption mode and every successful HEAD must
   // report it. SSE-KMS also requires kms_key_id; use the canonical identifier expected in the
   // provider's HEAD response (normally a key ARN) so exact verification remains deterministic.
-  std::optional<S3ServerSideEncryption> server_side_encryption;
-  std::optional<std::string> kms_key_id;
+  std::optional<S3ServerSideEncryption>
+      server_side_encryption{};            // NOLINT(readability-redundant-member-init)
+  std::optional<std::string> kms_key_id{}; // NOLINT(readability-redundant-member-init)
   // Plain HTTP is rejected by default. This switch exists for explicitly isolated S3-compatible
   // deployments and local tests; credentials and object bytes are exposed to that network.
   bool require_tls{true};
 };
 
 struct S3Credentials {
-  std::string access_key_id;
-  std::string secret_access_key;
-  std::optional<std::string> session_token;
+  std::string access_key_id{};                // NOLINT(readability-redundant-member-init)
+  std::string secret_access_key{};            // NOLINT(readability-redundant-member-init)
+  std::optional<std::string> session_token{}; // NOLINT(readability-redundant-member-init)
 };
 
 enum class S3CredentialRequest : std::uint8_t {
@@ -202,9 +204,9 @@ private:
 
 struct S3ContainerCredentialProviderConfig {
   // Explicit container-agent credential URL. Redirects and ambient proxies are disabled.
-  std::string endpoint;
-  std::optional<std::string> authorization_token;
-  std::optional<std::string> ca_bundle_path;
+  std::string endpoint{};                           // NOLINT(readability-redundant-member-init)
+  std::optional<std::string> authorization_token{}; // NOLINT(readability-redundant-member-init)
+  std::optional<std::string> ca_bundle_path{};      // NOLINT(readability-redundant-member-init)
   std::chrono::milliseconds connect_timeout{1'000};
   std::chrono::milliseconds request_timeout{2'000};
   std::chrono::seconds refresh_before_expiration{300};

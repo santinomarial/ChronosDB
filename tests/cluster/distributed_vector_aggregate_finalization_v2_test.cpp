@@ -38,7 +38,7 @@ namespace {
 
 struct AllTypesInput {
   query::DistributedVectorPlanIntent plan;
-  query::DistributedVectorAggregateQueryResultV2 result;
+  query::DistributedVectorAggregateQueryResultV2 result{};
 };
 
 [[nodiscard]] AllTypesInput all_types_input() {

@@ -466,8 +466,9 @@ TEST_P(TabletSnapshotCompactionApplicationFailureTest,
   EXPECT_EQ(std::filesystem::exists(final), failure.application_snapshot_visible_after_failure);
   auto before_retry = storage->load(1U);
   EXPECT_EQ(before_retry.has_value(), failure.application_snapshot_visible_after_failure);
-  if (!failure.application_snapshot_visible_after_failure)
+  if (!failure.application_snapshot_visible_after_failure) {
     EXPECT_EQ(before_retry.error().code(), common::StatusCode::kNotFound);
+  }
   auto recovered = RaftTabletStateMachine::recover(
       test::crash_group_id(), *runtime, std::move(*storage),
       test::crash_compaction_retry_directory(), test::crash_compaction_tablet(),

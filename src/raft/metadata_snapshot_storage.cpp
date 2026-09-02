@@ -91,9 +91,10 @@ void saturating_add(std::uint64_t& target, const std::uint64_t increment) noexce
 
 class MetadataSnapshotStorage::Impl {
 public:
-  Impl(MetadataSnapshotStorageConfig config, io::PosixDirectory directory,
-       io::PosixAdvisoryLock lock) noexcept
-      : config(std::move(config)), directory(std::move(directory)), lock(std::move(lock)) {}
+  Impl(MetadataSnapshotStorageConfig configured, io::PosixDirectory owned_directory,
+       io::PosixAdvisoryLock owned_lock) noexcept
+      : config(std::move(configured)), directory(std::move(owned_directory)),
+        lock(std::move(owned_lock)) {}
 
   [[nodiscard]] common::Status fail(common::Status status, const bool poison_owner = false) {
     if (poison_owner && poison.is_ok())

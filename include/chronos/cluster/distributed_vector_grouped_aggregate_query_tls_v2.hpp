@@ -22,7 +22,7 @@ struct DistributedVectorGroupedAggregateQueryTlsLimitsV2 {
   std::size_t maximum_response_frames{
       query::distributed_vector_grouped_aggregate_exchange_format::kMaximumGroups};
   std::size_t maximum_response_bytes{kDefaultDistributedVectorGroupedAggregateQueryV2ResponseBytes};
-  query::DistributedVectorGroupedAggregateExchangeDecodeLimits payload;
+  query::DistributedVectorGroupedAggregateExchangeDecodeLimits payload{};
 };
 
 struct DistributedVectorGroupedAggregateQueryTlsClientConfigV2 {

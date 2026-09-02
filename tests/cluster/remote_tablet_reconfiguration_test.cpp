@@ -172,7 +172,8 @@ TEST(RemoteTabletReconfigurationReceiverTest,
                                                                .metadata_group_id = metadata_group,
                                                                .authorizer = &authorizer,
                                                                .action_ledger = &*ledger,
-                                                               .runtime = &*runtime});
+                                                               .runtime = &*runtime,
+                                                               .codec_limits = {}});
   ASSERT_TRUE(receiver.has_value()) << receiver.error().to_string();
   const RemoteTabletReconfigurationRequest request{1U, 2U, 1U, action(tablet_id(), tablet_group)};
   auto encoded = encode_remote_tablet_reconfiguration_request_v1(request);
@@ -275,7 +276,8 @@ TEST(RemoteTabletReconfigurationReceiverTest, RejectsWrongTargetTabletAndGroupBe
                                                                .metadata_group_id = metadata_group,
                                                                .authorizer = &authorizer,
                                                                .action_ledger = &*ledger,
-                                                               .runtime = &*runtime});
+                                                               .runtime = &*runtime,
+                                                               .codec_limits = {}});
   ASSERT_TRUE(receiver.has_value());
   const network::PeerAuthenticationResult peer{.authorized = true, .principal_id = 700U};
 

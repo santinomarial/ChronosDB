@@ -94,11 +94,11 @@ struct SingleNodeSubscriptionSnapshotContext {
 };
 
 struct SingleNodeAppendOnlyCompactionConfig {
-  manifest::AppendOnlyCompactionPlannerLimits planner_limits;
-  manifest::AppendOnlyCompactionLimits compaction_limits;
+  manifest::AppendOnlyCompactionPlannerLimits planner_limits{};
+  manifest::AppendOnlyCompactionLimits compaction_limits{};
   cseg::PageCompression compression{cseg::PageCompression::kNone};
-  manifest::ManifestDecodeLimits manifest_decode_limits;
-  manifest::ReferencedPartValidationLimits part_validation_limits;
+  manifest::ManifestDecodeLimits manifest_decode_limits{};
+  manifest::ReferencedPartValidationLimits part_validation_limits{};
 };
 
 // Recoverable single-process owner for the current WAL-backed single-node product boundary. The

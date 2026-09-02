@@ -22,8 +22,8 @@ struct DistributedVectorPhysicalRowsFinalizationLimitsV2 {
   std::uint64_t maximum_output_rows{kDefaultDistributedVectorRowFinalizationRowsV2};
   std::size_t maximum_output_batches{query::kMaximumDistributedCoordinatorMessages};
   std::size_t maximum_output_encoded_bytes{kDefaultDistributedVectorRowFinalizationOutputBytesV2};
-  network::QueryResultLimits input_batch;
-  network::QueryResultLimits output_batch;
+  network::QueryResultLimits input_batch{};
+  network::QueryResultLimits output_batch{};
 };
 
 // Consumes one complete all-tablet identity row stream and runs the borrowed immutable physical

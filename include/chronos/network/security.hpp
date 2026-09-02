@@ -15,7 +15,7 @@ enum class TransportSecurityMode : std::uint8_t { kLoopbackPlaintext, kTlsRequir
 struct PeerAuthenticationRequest {
   std::array<std::uint8_t, 4> ipv4_address{};
   bool transport_authenticated{};
-  std::optional<PeerCertificateSha256> peer_certificate_sha256;
+  std::optional<PeerCertificateSha256> peer_certificate_sha256{std::nullopt};
 };
 
 struct PeerAuthenticationResult {
@@ -36,7 +36,7 @@ public:
 struct NetworkSecurityConfig {
   TransportSecurityMode mode{TransportSecurityMode::kLoopbackPlaintext};
   ConnectionAuthenticator* authenticator{};
-  std::optional<TlsServerConfig> tls;
+  std::optional<TlsServerConfig> tls{std::nullopt};
 };
 
 [[nodiscard]] common::Status

@@ -561,7 +561,10 @@ common::Result<TlsSocket> TlsSocket::connect(const TlsClientContext& context,
       return release_on_error(invalid("TLS expected IP identity is invalid"));
   } else {
     if (SSL_set1_host(session, identity.c_str()) != 1 ||
-        SSL_set_tlsext_host_name(session, identity.c_str()) != 1)
+        SSL_ctrl(session, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name,
+                 // OpenSSL's SSL_ctrl API predates const-correct SNI inputs and does not mutate it.
+                 // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast)
+                 const_cast<char*>(identity.c_str())) != 1)
       return release_on_error(io_error("OpenSSL could not configure the expected DNS identity"));
   }
   SSL_set_connect_state(session);

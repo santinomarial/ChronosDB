@@ -168,7 +168,8 @@ DistributedVectorGroupedAggregatePartitioner::partition(
     output.reserve(partition_count_);
     std::size_t total_output_bytes{};
     for (std::uint32_t partition = 0U; partition < partition_count_; ++partition) {
-      DistributedVectorGroupedAggregatePartitionStream stream{.partition_id = partition};
+      DistributedVectorGroupedAggregatePartitionStream stream{
+          .partition_id = partition, .messages = {}, .encoded_bytes = 0U};
       const std::vector<std::size_t>& indexes = assignments[partition];
       stream.messages.reserve(std::max<std::size_t>(indexes.size(), 1U));
       if (indexes.empty()) {

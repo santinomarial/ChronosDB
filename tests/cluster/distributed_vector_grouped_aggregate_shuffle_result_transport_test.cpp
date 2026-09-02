@@ -184,8 +184,9 @@ TEST(DistributedVectorGroupedAggregateShuffleResultTransportTest,
     auto first = reader.consume(std::span{encoded}.first(split));
     ASSERT_TRUE(first.has_value()) << first.error().to_string();
     EXPECT_EQ(first->consumed_bytes, split);
-    if (split != encoded.size())
+    if (split != encoded.size()) {
       EXPECT_FALSE(first->frame.has_value());
+    }
     auto second = reader.consume(std::span{encoded}.subspan(split));
     ASSERT_TRUE(second.has_value()) << second.error().to_string();
     ASSERT_TRUE((first->frame.has_value() || second->frame.has_value()));

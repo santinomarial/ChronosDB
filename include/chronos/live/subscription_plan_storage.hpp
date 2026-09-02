@@ -15,8 +15,8 @@ namespace chronos::live {
 struct SubscriptionPlanStorageConfig {
   std::string directory_path;
   common::Uuid database_id;
-  SubscriptionPlanDefinitionLimits definition_limits;
-  SubscriptionPlanLimits plan_limits;
+  SubscriptionPlanDefinitionLimits definition_limits{};
+  SubscriptionPlanLimits plan_limits{};
   std::uint16_t file_permissions{0600U};
 };
 

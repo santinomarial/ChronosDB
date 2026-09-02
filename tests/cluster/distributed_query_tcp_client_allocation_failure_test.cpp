@@ -88,7 +88,8 @@ template <typename Id> [[nodiscard]] Id id(const std::uint8_t seed) {
                                            query::DistributedReadConsistency::kLeaderLinearizable},
                        .linearizable_barrier = raft::ReadBarrier{2U, 3U, 10U},
                        .destination_column_ordinals = {1U},
-                       .aggregate_input_index = 0U}};
+                       .aggregate_input_index = 0U,
+                       .event_time_predicate = std::nullopt}};
 }
 
 [[nodiscard]] query::DistributedGroupedFloat64FragmentDispatch grouped_dispatch() {

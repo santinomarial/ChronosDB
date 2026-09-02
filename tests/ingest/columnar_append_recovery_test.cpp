@@ -96,6 +96,7 @@ command(const std::uint8_t seed, const schema::TabletId target,
                                                      .tablet_id = decoded->tablet_id(),
                                                      .request_digest = decoded->request_digest()},
           .wal_id = wal_id,
+          .raft_group_id = {},
           .record_sequence = record_sequence,
           .applied_row_count = decoded->row_count()}};
 }

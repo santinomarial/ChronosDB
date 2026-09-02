@@ -50,8 +50,8 @@ struct DistributedQueryResponse {
   common::Uuid query_id;
   schema::TabletId tablet_id;
   common::StatusCode status_code{common::StatusCode::kInternal};
-  std::optional<query::ExchangeMessage> message;
-  std::optional<DistributedQueryLeaderHint> leader_hint;
+  std::optional<query::ExchangeMessage> message{std::nullopt};
+  std::optional<DistributedQueryLeaderHint> leader_hint{std::nullopt};
 };
 
 [[nodiscard]] common::Result<std::vector<std::byte>>
@@ -111,7 +111,7 @@ private:
 
 struct DistributedQueryRequestReadStep {
   std::size_t consumed_bytes{};
-  std::optional<DistributedQueryRequest> request;
+  std::optional<DistributedQueryRequest> request{std::nullopt};
 };
 
 // One-frame constant-storage stream reader. It integrity-checks the complete fixed header before
@@ -139,7 +139,7 @@ private:
 
 struct DistributedQueryResponseReadStep {
   std::size_t consumed_bytes{};
-  std::optional<DistributedQueryResponse> response;
+  std::optional<DistributedQueryResponse> response{std::nullopt};
 };
 
 class DistributedQueryResponseReader {

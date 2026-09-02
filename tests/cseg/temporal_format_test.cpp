@@ -8,6 +8,7 @@ namespace {
 TEST(TemporalFormatTest, FreezesVersionAndSystemColumnRegistry) {
   EXPECT_EQ(kFormatMajor, 2U);
   EXPECT_EQ(kFormatMinor, 0U);
+  EXPECT_EQ(kFormatMinor, format::kFormatMinor);
   EXPECT_EQ(kMaximumLogicalIdentityBytes, 1024U);
   ASSERT_EQ(kSystemColumns.size(), 8U);
   EXPECT_EQ(kSystemColumns.front().storage_kind, kCommitSourceStorageKind);

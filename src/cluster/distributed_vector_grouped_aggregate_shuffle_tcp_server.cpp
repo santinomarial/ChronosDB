@@ -234,7 +234,7 @@ common::Status DistributedVectorGroupedAggregateShuffleTcpServer::poll_once(
   if (maximum_wait.count() < 0 || maximum_wait.count() > INT_MAX)
     return invalid("grouped shuffle TCP poll timeout is invalid");
   Impl& impl = *implementation_;
-  impl.poll_descriptors_[0] = {.fd = impl.listener_.descriptor(), .events = POLLIN};
+  impl.poll_descriptors_[0] = {.fd = impl.listener_.descriptor(), .events = POLLIN, .revents = 0};
   for (std::size_t index = 0U; index < impl.connections_.size(); ++index) {
     const auto interest = impl.connections_[index]->carrier_.interest();
     short events{};
@@ -242,8 +242,8 @@ common::Status DistributedVectorGroupedAggregateShuffleTcpServer::poll_once(
       events |= POLLIN;
     if (interest.want_write)
       events |= POLLOUT;
-    impl.poll_descriptors_[index + 1U] = {.fd = impl.connections_[index]->socket_.descriptor(),
-                                          .events = events};
+    impl.poll_descriptors_[index + 1U] = {
+        .fd = impl.connections_[index]->socket_.descriptor(), .events = events, .revents = 0};
   }
   const nfds_t count = static_cast<nfds_t>(impl.connections_.size() + 1U);
   const auto before_poll = std::chrono::steady_clock::now();

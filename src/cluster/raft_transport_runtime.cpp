@@ -341,13 +341,14 @@ public:
   [[nodiscard]] common::Status prepare_poll() {
     descriptors.clear();
     owners.clear();
-    common::Status appended =
-        append_descriptor({.fd = durable_runtime->completion_descriptor(), .events = POLLIN},
-                          {PollKind::kDurable, 0U});
+    common::Status appended = append_descriptor(
+        {.fd = durable_runtime->completion_descriptor(), .events = POLLIN, .revents = 0},
+        {PollKind::kDurable, 0U});
     if (!appended.is_ok())
       return appended;
-    appended = append_descriptor({.fd = inbound.listener_descriptor(), .events = POLLIN},
-                                 {PollKind::kListener, 0U});
+    appended =
+        append_descriptor({.fd = inbound.listener_descriptor(), .events = POLLIN, .revents = 0},
+                          {PollKind::kListener, 0U});
     if (!appended.is_ok())
       return appended;
     auto inbound_interests = inbound.interests();
@@ -359,7 +360,7 @@ public:
         events |= POLLIN;
       if (interest.want_write)
         events |= POLLOUT;
-      appended = append_descriptor({.fd = interest.descriptor, .events = events},
+      appended = append_descriptor({.fd = interest.descriptor, .events = events, .revents = 0},
                                    {PollKind::kInbound, interest.connection_id});
       if (!appended.is_ok())
         return appended;
@@ -373,7 +374,7 @@ public:
         events |= POLLIN;
       if (interest.want_write)
         events |= POLLOUT;
-      appended = append_descriptor({.fd = interest.descriptor, .events = events},
+      appended = append_descriptor({.fd = interest.descriptor, .events = events, .revents = 0},
                                    {PollKind::kOutbound, interest.peer_node_id});
       if (!appended.is_ok())
         return appended;

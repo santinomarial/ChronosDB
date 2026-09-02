@@ -182,13 +182,14 @@ DistributedMutableQueryControlTcpServer::poll_once(const std::chrono::millisecon
     return status(common::StatusCode::kInvalidArgument,
                   "query-control TCP poll timeout is invalid");
   Impl& impl = *implementation_;
-  impl.poll_descriptors[0] = {.fd = impl.listener.descriptor(), .events = POLLIN};
+  impl.poll_descriptors[0] = {.fd = impl.listener.descriptor(), .events = POLLIN, .revents = 0};
   for (std::size_t index = 0U; index < impl.connections.size(); ++index) {
     const auto interest = impl.connections[index]->carrier.interest();
     impl.poll_descriptors[index + 1U] = {
         .fd = impl.connections[index]->socket.descriptor(),
         .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                     (interest.want_write ? POLLOUT : 0))};
+                                     (interest.want_write ? POLLOUT : 0)),
+        .revents = 0};
   }
   const nfds_t count = static_cast<nfds_t>(impl.connections.size() + 1U);
   const int ready =

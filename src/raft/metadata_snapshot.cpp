@@ -100,9 +100,11 @@ void store_u64(const std::span<std::byte> bytes, const std::size_t offset,
 [[nodiscard]] std::uint16_t load_u16(const common::ByteView bytes,
                                      const std::size_t offset) noexcept {
   std::uint16_t value{};
-  for (std::size_t index = 0U; index < sizeof(value); ++index)
-    value |= static_cast<std::uint16_t>(std::to_integer<std::uint8_t>(bytes[offset + index]))
-             << (index * 8U);
+  for (std::size_t index = 0U; index < sizeof(value); ++index) {
+    const auto byte =
+        static_cast<std::uint16_t>(std::to_integer<std::uint8_t>(bytes[offset + index]));
+    value = static_cast<std::uint16_t>(value | static_cast<std::uint16_t>(byte << (index * 8U)));
+  }
   return value;
 }
 [[nodiscard]] std::uint32_t load_u32(const common::ByteView bytes,

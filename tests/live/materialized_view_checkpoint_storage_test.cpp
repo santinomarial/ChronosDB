@@ -58,7 +58,7 @@ private:
 struct CheckpointOptions {
   double value_bias{};
   std::uint64_t generation{};
-  std::optional<std::int64_t> watermark;
+  std::optional<std::int64_t> watermark{std::nullopt};
 };
 
 [[nodiscard]] BoundMaterializedViewCheckpoint checkpoint(const std::uint64_t sequence,

@@ -52,7 +52,7 @@ struct RaftReadAuthorityResponse {
   raft::GroupId group_id;
   std::uint64_t correlation_id{};
   common::StatusCode status_code{common::StatusCode::kInternal};
-  std::optional<RaftReadAuthority> authority;
+  std::optional<RaftReadAuthority> authority{std::nullopt};
 
   friend bool operator==(const RaftReadAuthorityResponse&,
                          const RaftReadAuthorityResponse&) = default;
@@ -79,7 +79,7 @@ raft_read_authority_response_frame_length_v1(common::ByteView header,
 
 struct RaftReadAuthorityRequestReadStep {
   std::size_t consumed_bytes{};
-  std::optional<RaftReadAuthorityRequest> request;
+  std::optional<RaftReadAuthorityRequest> request{std::nullopt};
 };
 
 class RaftReadAuthorityRequestReader {
@@ -104,7 +104,7 @@ private:
 
 struct RaftReadAuthorityResponseReadStep {
   std::size_t consumed_bytes{};
-  std::optional<RaftReadAuthorityResponse> response;
+  std::optional<RaftReadAuthorityResponse> response{std::nullopt};
 };
 
 class RaftReadAuthorityResponseReader {
@@ -170,7 +170,7 @@ struct RaftReadAuthorityReceiverConfig {
   raft::NodeId local_node_id{};
   const ClusterNodePrincipalAuthorizer* authorizer{};
   RaftReadAuthorityService* service{};
-  RaftReadAuthorityTransportLimits limits;
+  RaftReadAuthorityTransportLimits limits{};
 };
 
 class RaftReadAuthorityReceiver {

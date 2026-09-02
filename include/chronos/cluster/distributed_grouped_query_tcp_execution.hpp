@@ -21,9 +21,9 @@ struct DistributedGroupedQueryTcpExecutionConfig {
   network::ConnectionAuthenticator* authenticator{};
   const ClusterNodePrincipalAuthorizer* node_authorizer{};
   std::vector<DistributedQueryNodeRoute> routes;
-  DistributedGroupedQueryTlsLimits carrier_limits;
+  DistributedGroupedQueryTlsLimits carrier_limits{};
   std::chrono::milliseconds connect_timeout{5000};
-  std::optional<std::chrono::steady_clock::time_point> execution_deadline;
+  std::optional<std::chrono::steady_clock::time_point> execution_deadline{std::nullopt};
   std::size_t maximum_rebindings{3U};
 };
 

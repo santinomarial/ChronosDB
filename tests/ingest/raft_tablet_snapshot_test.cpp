@@ -43,6 +43,10 @@ TEST(RaftTabletSnapshotTest, RoundTripsCanonicalApplicationPrefix) {
   auto encoded = encode_raft_tablet_application_snapshot_v1(expected);
   ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
   EXPECT_EQ(encoded->size() % 8U, 4U);
+  EXPECT_EQ((*encoded)[8U], std::byte{1U});
+  EXPECT_EQ((*encoded)[9U], std::byte{0U});
+  EXPECT_EQ((*encoded)[10U], std::byte{0U});
+  EXPECT_EQ((*encoded)[11U], std::byte{0U});
   auto decoded = decode_raft_tablet_application_snapshot_v1(*encoded);
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   EXPECT_EQ(*decoded, expected);

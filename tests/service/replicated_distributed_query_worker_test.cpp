@@ -596,7 +596,8 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
     const auto interest = aggregate_vector_client->interest();
     pollfd descriptor{.fd = aggregate_vector_client->descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                   (interest.want_write ? POLLOUT : 0))};
+                                                   (interest.want_write ? POLLOUT : 0)),
+                      .revents = 0};
     ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
     ASSERT_TRUE(
         aggregate_vector_client
@@ -723,7 +724,8 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
     const auto interest = grouped_vector_client->interest();
     pollfd descriptor{.fd = grouped_vector_client->descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                   (interest.want_write ? POLLOUT : 0))};
+                                                   (interest.want_write ? POLLOUT : 0)),
+                      .revents = 0};
     ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
     ASSERT_TRUE(
         grouped_vector_client
@@ -837,7 +839,8 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
     const auto interest = vector_client->interest();
     pollfd descriptor{.fd = vector_client->descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                   (interest.want_write ? POLLOUT : 0))};
+                                                   (interest.want_write ? POLLOUT : 0)),
+                      .revents = 0};
     ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
     ASSERT_TRUE(vector_client
                     ->on_ready((descriptor.revents & POLLIN) != 0,
@@ -945,7 +948,8 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
     const auto interest = grouped_client->interest();
     pollfd descriptor{.fd = grouped_client->descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                   (interest.want_write ? POLLOUT : 0))};
+                                                   (interest.want_write ? POLLOUT : 0)),
+                      .revents = 0};
     ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
     ASSERT_TRUE(grouped_client
                     ->on_ready((descriptor.revents & POLLIN) != 0,
@@ -1077,7 +1081,8 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
     const auto interest = moved_client->interest();
     pollfd descriptor{.fd = moved_client->descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                   (interest.want_write ? POLLOUT : 0))};
+                                                   (interest.want_write ? POLLOUT : 0)),
+                      .revents = 0};
     ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
     ASSERT_TRUE(moved_client
                     ->on_ready((descriptor.revents & POLLIN) != 0,
@@ -1158,7 +1163,8 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
     const auto interest = client->interest();
     pollfd descriptor{.fd = client->descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                   (interest.want_write ? POLLOUT : 0))};
+                                                   (interest.want_write ? POLLOUT : 0)),
+                      .revents = 0};
     ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
     ASSERT_TRUE(client
                     ->on_ready((descriptor.revents & POLLIN) != 0,

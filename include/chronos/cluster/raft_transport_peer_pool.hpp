@@ -15,7 +15,7 @@ namespace chronos::cluster {
 
 struct RaftTransportPeerPoolLimits {
   std::size_t maximum_peers{256U};
-  raft::RaftTransportCodecLimits codec;
+  raft::RaftTransportCodecLimits codec{};
 };
 struct RaftTransportFailedPeer {
   std::optional<network::TcpSocket> socket;

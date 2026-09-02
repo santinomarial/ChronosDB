@@ -959,8 +959,9 @@ TEST(MergeableVectorGroupedAggregateTableTest,
     auto input = accounted_chunk(resources, std::move(columns));
     auto table = MergeableVectorGroupedAggregateTable::create(group_keys, definitions);
     EXPECT_TRUE(table.has_value());
-    if (table.has_value())
+    if (table.has_value()) {
       EXPECT_TRUE(table->accumulate(input, resources).has_value());
+    }
     return table;
   };
 

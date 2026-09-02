@@ -115,7 +115,7 @@ struct DistributedVectorGroupedAggregateExchangeDecodeLimits {
       distributed_vector_grouped_aggregate_exchange_format::kMaximumGroupKeys};
   std::uint32_t maximum_aggregates{
       distributed_vector_grouped_aggregate_exchange_format::kMaximumAggregates};
-  DistributedVectorAggregateStateDecodeLimits state;
+  DistributedVectorAggregateStateDecodeLimits state{};
 };
 
 class EncodedDistributedVectorGroupedAggregateExchangeMessage {

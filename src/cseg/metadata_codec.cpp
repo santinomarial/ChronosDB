@@ -542,8 +542,7 @@ encode_cseg_metadata(const CsegMetadataEncodeInput& input, const std::uint16_t f
   const common::MutableByteView bytes{storage};
   std::copy(format::kMagic.begin(), format::kMagic.end(), storage.begin());
   store_u16_le(bytes, format::kFormatMajorOffset, format_major);
-  store_u16_le(bytes, format::kFormatMinorOffset,
-               temporal ? temporal_format::kFormatMinor : format::kFormatMinor);
+  store_u16_le(bytes, format::kFormatMinorOffset, format::kFormatMinor);
   store_u32_le(bytes, format::kHeaderLengthOffset, format::kFileHeaderLength);
   store_u64_le(bytes, format::kTotalLengthOffset, cursor);
   store_u64_le(bytes, format::kMetadataLengthOffset, metadata->metadata_length);

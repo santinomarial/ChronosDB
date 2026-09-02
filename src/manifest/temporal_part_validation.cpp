@@ -69,7 +69,8 @@ template <typename Integer>
   using Unsigned = std::make_unsigned_t<Integer>;
   Unsigned value = 0U;
   for (std::size_t index = 0U; index < bytes.size(); ++index) {
-    value |= static_cast<Unsigned>(std::to_integer<std::uint8_t>(bytes[index])) << (index * 8U);
+    const auto byte = static_cast<Unsigned>(std::to_integer<std::uint8_t>(bytes[index]));
+    value = static_cast<Unsigned>(value | static_cast<Unsigned>(byte << (index * 8U)));
   }
   return std::bit_cast<Integer>(value);
 }

@@ -986,7 +986,8 @@ common::Status DistributedVectorGroupedAggregateShuffleJobCoordinatorExecution::
         impl.poll_descriptors_[count++] = {
             .fd = acquisition.descriptor(),
             .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                         (interest.want_write ? POLLOUT : 0))};
+                                         (interest.want_write ? POLLOUT : 0)),
+            .revents = 0};
       }
     };
     append_descriptors(impl.acquisitions_);

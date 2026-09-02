@@ -328,8 +328,9 @@ TEST(DistributedVectorAggregateQueryTransportV2Test,
     const auto first = reader.consume(common::ByteView{encoded}.first(split));
     ASSERT_TRUE(first.has_value()) << first.error().to_string();
     EXPECT_EQ(first->consumed_bytes, split);
-    if (split != encoded.size())
+    if (split != encoded.size()) {
       EXPECT_FALSE(first->response.has_value());
+    }
     std::array<std::byte, 3U> successor{std::byte{1U}, std::byte{2U}, std::byte{3U}};
     std::vector<std::byte> tail(common::ByteView{encoded}.subspan(split).begin(),
                                 common::ByteView{encoded}.subspan(split).end());

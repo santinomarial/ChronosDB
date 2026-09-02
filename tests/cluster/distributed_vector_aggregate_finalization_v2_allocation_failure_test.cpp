@@ -37,7 +37,8 @@ struct Input {
                                           .input = query::VectorAggregateInput{.column_ordinal = 0U,
                                                                                .type = type,
                                                                                .nullable = false}}},
-                         .result_schema = {.columns = {{"maximum", type, true}}}}};
+                         .result_schema = {.columns = {{"maximum", type, true}}},
+                         .values = {}}};
   value.result.values.push_back(
       query::ScalarValue::text(type, "allocation-owned aggregate result larger than SSO").value());
   return value;

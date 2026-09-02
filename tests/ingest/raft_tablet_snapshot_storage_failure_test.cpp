@@ -105,8 +105,9 @@ TEST_P(RaftTabletSnapshotStorageFailureTest, FailsClosedAtEachInstallSyscallAndR
                                        "snapshot-00000000000000000009.rtas.tmp"));
   auto before_retry = reopened->load(expected.raft_snapshot.last_included_index);
   EXPECT_EQ(before_retry.has_value(), failure.final_visible);
-  if (!failure.final_visible)
+  if (!failure.final_visible) {
     EXPECT_EQ(before_retry.error().code(), common::StatusCode::kNotFound);
+  }
 
   auto retried = reopened->install(expected);
 

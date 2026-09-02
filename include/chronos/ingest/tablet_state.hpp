@@ -82,7 +82,7 @@ private:
 };
 
 struct TabletStateConfig {
-  head::MutableHeadCapacity head_capacity;
+  head::MutableHeadCapacity head_capacity{};
 
   // Sealed generations remain owned until an authorized post-Manifest-publication retirement.
   // All bounds must be nonzero; reaching one rejects registration or append before WAL.
@@ -91,7 +91,8 @@ struct TabletStateConfig {
   std::size_t maximum_retry_entries{};
   // When present, every nonempty rotation reserves this queue before changing tablet topology and
   // publishes the exact sealed pin after the new topology becomes visible.
-  std::shared_ptr<SealedHeadFlushQueue> flush_queue;
+  // Most tablets are not attached to the optional asynchronous flush pipeline.
+  std::shared_ptr<SealedHeadFlushQueue> flush_queue{}; // NOLINT(readability-redundant-member-init)
 };
 
 struct TabletStateMetrics {

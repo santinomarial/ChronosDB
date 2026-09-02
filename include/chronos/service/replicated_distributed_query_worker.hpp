@@ -52,7 +52,7 @@ struct ReplicatedDistributedQueryWorkerConfig {
   raft::NodeId local_node_id{};
   const manifest::ManifestStorage* storage{};
   ReplicatedDistributedQueryWorkerContextProvider* context_provider{};
-  query::DistributedAggregateWorkerLimits limits;
+  query::DistributedAggregateWorkerLimits limits{};
 };
 
 // Synchronous receiver service that acquires current local authority for each dispatch and then
@@ -97,7 +97,7 @@ struct ReplicatedDistributedGroupedQueryWorkerConfig {
   raft::NodeId local_node_id{};
   const manifest::ManifestStorage* storage{};
   ReplicatedDistributedGroupedQueryWorkerContextProvider* context_provider{};
-  query::DistributedAggregateWorkerLimits limits;
+  query::DistributedAggregateWorkerLimits limits{};
 };
 
 // Grouped counterpart of the request-local production worker adapter. It acquires one coherent
@@ -140,8 +140,8 @@ public:
 };
 
 struct ReplicatedDistributedVectorQueryWorkerLimitsV2 {
-  query::DistributedVectorRowsWorkerLimitsV2 rows;
-  network::QueryResultLimits result;
+  query::DistributedVectorRowsWorkerLimitsV2 rows{};
+  network::QueryResultLimits result{};
   std::size_t maximum_messages{1024U};
   std::size_t maximum_total_encoded_bytes{cluster::kDefaultDistributedVectorQueryV2ResponseBytes};
 };
@@ -150,7 +150,7 @@ struct ReplicatedDistributedVectorQueryWorkerConfigV2 {
   raft::NodeId local_node_id{};
   const manifest::ManifestStorage* storage{};
   ReplicatedDistributedVectorQueryWorkerContextProviderV2* context_provider{};
-  ReplicatedDistributedVectorQueryWorkerLimitsV2 limits;
+  ReplicatedDistributedVectorQueryWorkerLimitsV2 limits{};
 };
 
 // One coherent current mutable publication and its matching schema/Raft authority. The snapshot
@@ -183,7 +183,7 @@ public:
 struct ReplicatedDistributedMutableVectorQueryWorkerConfig {
   raft::NodeId local_node_id{};
   ReplicatedDistributedMutableVectorQueryWorkerContextProvider* context_provider{};
-  ReplicatedDistributedVectorQueryWorkerLimitsV2 limits;
+  ReplicatedDistributedVectorQueryWorkerLimitsV2 limits{};
 };
 
 // Request-local production adapter for one proof-bound mutable TabletState fragment. It reacquires
@@ -217,7 +217,7 @@ private:
 struct ReplicatedDistributedMutableVectorGroupedAggregateQueryWorkerConfig {
   raft::NodeId local_node_id{};
   ReplicatedDistributedMutableVectorQueryWorkerContextProvider* context_provider{};
-  query::DistributedVectorGroupedAggregateWorkerLimitsV2 limits;
+  query::DistributedVectorGroupedAggregateWorkerLimitsV2 limits{};
 };
 
 // Request-local grouped sufficient-state adapter for one proof-bound mutable TabletState
@@ -282,7 +282,7 @@ struct ReplicatedDistributedVectorAggregateQueryWorkerConfigV2 {
   raft::NodeId local_node_id{};
   const manifest::ManifestStorage* storage{};
   ReplicatedDistributedVectorQueryWorkerContextProviderV2* context_provider{};
-  query::DistributedVectorAggregateWorkerLimitsV2 limits;
+  query::DistributedVectorAggregateWorkerLimitsV2 limits{};
 };
 
 // Production aggregate counterpart. Definition binding and execution each acquire a fresh coherent
@@ -318,7 +318,7 @@ struct ReplicatedDistributedVectorGroupedAggregateQueryWorkerConfigV2 {
   raft::NodeId local_node_id{};
   const manifest::ManifestStorage* storage{};
   ReplicatedDistributedVectorQueryWorkerContextProviderV2* context_provider{};
-  query::DistributedVectorGroupedAggregateWorkerLimitsV2 limits;
+  query::DistributedVectorGroupedAggregateWorkerLimitsV2 limits{};
 };
 
 // Production grouped sufficient-state counterpart. Authority binding and execution independently

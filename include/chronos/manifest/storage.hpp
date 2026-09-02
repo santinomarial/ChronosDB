@@ -133,8 +133,8 @@ struct TemporalManifestInstallRequest {
   std::reference_wrapper<const EncodedTemporalManifest> encoded_manifest;
   std::span<const TabletSchemaBinding> schema_bindings;
   common::Uuid nonce;
-  ManifestDecodeLimits decode_limits;
-  TemporalPartValidationLimits part_validation_limits;
+  ManifestDecodeLimits decode_limits{};
+  TemporalPartValidationLimits part_validation_limits{};
   // Null preserves the ordinary add-only authority. A non-null retirement proof causes storage to
   // rebuild the one authorized source-removal successor from the selected durable predecessor and
   // require byte-for-byte equality before filesystem mutation.
@@ -284,8 +284,8 @@ struct TemporalManifestLoadRequest {
   DatabaseId expected_database_id;
   std::span<const TabletSchemaBinding> schema_bindings;
   std::span<const TemporalTabletSourceBinding> source_bindings;
-  ManifestDecodeLimits decode_limits;
-  TemporalPartValidationLimits part_validation_limits;
+  ManifestDecodeLimits decode_limits{};
+  TemporalPartValidationLimits part_validation_limits{};
   const TemporalMissingPartValidator* missing_part_validator{};
 };
 

@@ -14,7 +14,7 @@ namespace chronos::network {
 enum class ClientSessionPhase : std::uint8_t { kCreated, kAwaitingServerHello, kActive, kClosed };
 
 struct NativeClientConfig {
-  ConnectionBufferConfig buffers;
+  ConnectionBufferConfig buffers{};
   std::size_t maximum_in_flight_requests{64U};
   std::uint16_t minimum_protocol_major{kProtocolMajor};
   std::uint16_t maximum_protocol_major{kProtocolMajor};

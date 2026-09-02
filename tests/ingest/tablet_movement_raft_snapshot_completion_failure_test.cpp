@@ -341,8 +341,9 @@ TEST_P(TabletMovementRaftSnapshotCompletionFailureTest,
   auto runtime = raft::DurableMultiRaftRuntime::open_existing(
       4U, test::crash_log_config(root.path()), open_options, test::crash_groups());
   ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
-  if (failure.tail_repair_required)
+  if (failure.tail_repair_required) {
     EXPECT_EQ(std::filesystem::file_size(active_segment) + 16U, failed_size);
+  }
   const raft::RaftNode* group = runtime->find_group(test::crash_group_id());
   ASSERT_NE(group, nullptr);
   EXPECT_EQ(group->persistent_state().snapshot == expected.raft_snapshot,
@@ -569,8 +570,9 @@ TEST_P(TabletMovementRaftSnapshotMixedFailureTest,
                                              failure.raft_tail_repair_required},
       test::crash_groups());
   ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
-  if (failure.raft_tail_repair_required)
+  if (failure.raft_tail_repair_required) {
     EXPECT_EQ(std::filesystem::file_size(active_segment) + kPartialRecordBytes, failed_size);
+  }
   const raft::RaftNode* recovered_group = runtime->find_group(test::crash_group_id());
   ASSERT_NE(recovered_group, nullptr);
   EXPECT_NE(recovered_group->persistent_state().snapshot, expected.raft_snapshot);

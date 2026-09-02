@@ -33,7 +33,7 @@ struct DistributedVectorAggregateCoordinatorLimitsV2 {
       kDefaultDistributedVectorAggregateCoordinatorMemoryBytesV2};
   std::size_t maximum_retained_configuration_bytes{
       kDefaultUngroupedAggregateConfigurationByteLimit};
-  DistributedVectorAggregateExchangeDecodeLimits decode;
+  DistributedVectorAggregateExchangeDecodeLimits decode{};
 };
 
 struct DistributedVectorAggregateQueryResultV2 {

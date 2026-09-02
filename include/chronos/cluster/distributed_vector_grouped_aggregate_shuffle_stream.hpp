@@ -28,7 +28,7 @@ struct DistributedVectorGroupedAggregateShuffleStreamLimits {
   std::uint32_t maximum_frames{
       query::distributed_vector_grouped_aggregate_exchange_format::kMaximumGroups};
   std::size_t maximum_encoded_bytes{kDefaultDistributedVectorGroupedAggregateShuffleStreamBytes};
-  query::DistributedVectorGroupedAggregateExchangeDecodeLimits payload;
+  query::DistributedVectorGroupedAggregateExchangeDecodeLimits payload{};
 };
 
 [[nodiscard]] bool validate_distributed_vector_grouped_aggregate_shuffle_stream_limits(

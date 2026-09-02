@@ -13,9 +13,9 @@
 namespace chronos::cluster {
 
 struct DistributedMutableVectorGroupedAggregateShuffleJobExecutionConfig {
-  DistributedMutableVectorGroupedAggregateQueryExecutionLimits worker_execution;
+  DistributedMutableVectorGroupedAggregateQueryExecutionLimits worker_execution{};
   DistributedMutableVectorGroupedAggregateQueryTcpExecutionConfig worker_transport;
-  DistributedVectorGroupedAggregateShuffleAuthorityLimits authority;
+  DistributedVectorGroupedAggregateShuffleAuthorityLimits authority{};
   DistributedVectorGroupedAggregateShuffleJobCoordinatorExecutionConfig reducers;
 };
 

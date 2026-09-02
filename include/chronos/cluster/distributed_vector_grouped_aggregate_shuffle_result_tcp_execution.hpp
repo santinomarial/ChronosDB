@@ -22,9 +22,9 @@ struct DistributedVectorGroupedAggregateShuffleResultTcpExecutionConfig {
   network::ConnectionAuthenticator* authenticator{};
   const ClusterNodePrincipalAuthorizer* node_authorizer{};
   std::vector<DistributedQueryNodeRoute> routes;
-  DistributedVectorGroupedAggregateShuffleResultTlsLimits carrier_limits;
+  DistributedVectorGroupedAggregateShuffleResultTlsLimits carrier_limits{};
   std::chrono::milliseconds connect_timeout{5000};
-  std::optional<std::chrono::steady_clock::time_point> execution_deadline;
+  std::optional<std::chrono::steady_clock::time_point> execution_deadline{std::nullopt};
 };
 
 struct DistributedVectorGroupedAggregateShuffleResultTcpExecutionMetrics {

@@ -348,7 +348,7 @@ encode_chunk(const query::VectorChunk& chunk,
         if (!cell.has_value())
           return common::make_unexpected(cell.error());
         if (cell->is_null()) {
-          cells.push_back({.is_null = true});
+          cells.push_back({.is_null = true, .value = {}});
         } else if (cell->kind() == columnar::ColumnCellView::Kind::kBoolean) {
           auto value = cell->boolean();
           if (!value.has_value())
@@ -513,7 +513,8 @@ common::Result<DistributedVectorRowsFinalizedResultV2> finalize_distributed_vect
     for (const auto& column : result_schema.columns) {
       columns.push_back({.name = column.name, .type = column.type, .nullable = column.nullable});
     }
-    DistributedVectorRowsFinalizedResultV2 result{.result_schema = std::move(result_schema)};
+    DistributedVectorRowsFinalizedResultV2 result{.result_schema = std::move(result_schema),
+                                                  .encoded_batches = {}};
     result.encoded_batches.reserve(std::min<std::size_t>(limits.maximum_output_batches, 16U));
     for (;;) {
       auto step = (*pipeline)->next(*resources);

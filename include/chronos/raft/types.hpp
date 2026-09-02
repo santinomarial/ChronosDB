@@ -78,7 +78,7 @@ struct AppendEntriesResponse {
   Term term{};
   bool success{};
   LogIndex match_index{};
-  std::optional<Term> conflict_term;
+  std::optional<Term> conflict_term{std::nullopt};
   LogIndex conflict_index{};
 
   friend bool operator==(const AppendEntriesResponse&, const AppendEntriesResponse&) = default;

@@ -20,7 +20,7 @@ namespace {
 
 struct TestRow {
   std::int64_t score{};
-  std::optional<std::string> label;
+  std::optional<std::string> label{std::nullopt};
 };
 
 [[nodiscard]] common::Uuid uuid(const std::uint8_t seed) {
@@ -66,7 +66,7 @@ struct TestRow {
   for (std::size_t index = 0U; index < rows.size(); ++index) {
     cells.push_back({.value = scores[index]});
     if (!rows[index].label.has_value()) {
-      cells.push_back({.is_null = true});
+      cells.push_back({.is_null = true, .value = {}});
     } else {
       // Guarded by the presence check above.
       // NOLINTNEXTLINE(bugprone-unchecked-optional-access)

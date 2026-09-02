@@ -63,7 +63,7 @@ public:
   struct Slot {
     std::size_t route_index{};
     DistributedVectorGroupedAggregateShuffleRetry retry;
-    std::optional<DistributedVectorGroupedAggregateShuffleTcpClient> client;
+    std::optional<DistributedVectorGroupedAggregateShuffleTcpClient> client{std::nullopt};
 
     [[nodiscard]] DistributedVectorGroupedAggregateShuffleTcpClient* active_client() noexcept {
       return client.has_value() ? std::addressof(*client) : nullptr;
@@ -340,7 +340,8 @@ common::Status DistributedVectorGroupedAggregateShuffleTcpExecution::poll_once(
       events |= POLLIN;
     if (interest.want_write)
       events |= POLLOUT;
-    impl.poll_descriptors_[descriptor_count] = {.fd = client->descriptor(), .events = events};
+    impl.poll_descriptors_[descriptor_count] = {
+        .fd = client->descriptor(), .events = events, .revents = 0};
     impl.poll_slot_indexes_[descriptor_count] = index;
     ++descriptor_count;
   }

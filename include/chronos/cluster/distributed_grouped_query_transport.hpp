@@ -47,8 +47,8 @@ struct DistributedGroupedQueryResponse {
   common::Uuid query_id;
   schema::TabletId tablet_id;
   common::StatusCode status_code{common::StatusCode::kInternal};
-  std::optional<DistributedGroupedQueryResponsePayload> payload;
-  std::optional<DistributedQueryLeaderHint> leader_hint;
+  std::optional<DistributedGroupedQueryResponsePayload> payload{std::nullopt};
+  std::optional<DistributedQueryLeaderHint> leader_hint{std::nullopt};
 };
 
 [[nodiscard]] common::Result<std::vector<std::byte>>
@@ -62,7 +62,7 @@ decode_distributed_grouped_query_response_v1(common::ByteView bytes);
 
 struct DistributedGroupedQueryRequestReadStep {
   std::size_t consumed_bytes{};
-  std::optional<DistributedGroupedQueryRequest> request;
+  std::optional<DistributedGroupedQueryRequest> request{std::nullopt};
 };
 
 // One-frame fixed-storage reader. The complete header is integrity-checked before its bounded total
@@ -91,7 +91,7 @@ private:
 
 struct DistributedGroupedQueryResponseReadStep {
   std::size_t consumed_bytes{};
-  std::optional<DistributedGroupedQueryResponse> response;
+  std::optional<DistributedGroupedQueryResponse> response{std::nullopt};
 };
 
 class DistributedGroupedQueryResponseReader {

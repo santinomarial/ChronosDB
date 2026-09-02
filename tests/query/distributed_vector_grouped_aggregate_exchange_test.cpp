@@ -38,10 +38,10 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
 }
 
 [[nodiscard]] std::uint16_t load_u16(const common::ByteView bytes, const std::size_t offset) {
-  std::uint16_t value{};
-  for (std::size_t index = 0U; index < sizeof(value); ++index)
-    value |= std::to_integer<std::uint16_t>(bytes[offset + index]) << (index * 8U);
-  return value;
+  std::uint32_t value{};
+  for (std::size_t index = 0U; index < sizeof(std::uint16_t); ++index)
+    value |= std::to_integer<std::uint32_t>(bytes[offset + index]) << (index * 8U);
+  return static_cast<std::uint16_t>(value);
 }
 
 [[nodiscard]] std::uint32_t load_u32(const common::ByteView bytes, const std::size_t offset) {

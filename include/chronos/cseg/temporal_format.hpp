@@ -59,6 +59,7 @@ inline constexpr std::array<SystemColumnRegistryEntry, kSystemColumnCount> kSyst
 };
 
 static_assert(kFormatMajor != format::kFormatMajor);
+static_assert(kFormatMinor == format::kFormatMinor);
 static_assert(kSystemColumnCount > format::kSystemColumnCount);
 static_assert(kMaximumStoredColumnCount <= std::numeric_limits<std::uint32_t>::max());
 

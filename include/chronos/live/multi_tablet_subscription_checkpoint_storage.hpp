@@ -57,7 +57,7 @@ struct MultiTabletSubscriptionCheckpointStorageIdentity {
 struct MultiTabletSubscriptionCheckpointStorageConfig {
   std::string directory_path;
   MultiTabletSubscriptionCheckpointStorageIdentity identity;
-  MultiTabletSubscriptionCheckpointCodecLimits codec_limits;
+  MultiTabletSubscriptionCheckpointCodecLimits codec_limits{};
   std::uint16_t file_permissions{0600U};
 };
 

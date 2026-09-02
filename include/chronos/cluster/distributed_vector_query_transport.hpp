@@ -49,8 +49,8 @@ struct DistributedVectorQueryResponse {
   common::Uuid query_id;
   schema::TabletId tablet_id;
   common::StatusCode status_code{common::StatusCode::kInternal};
-  std::optional<query::DistributedVectorExchangeMessage> payload;
-  std::optional<DistributedQueryLeaderHint> leader_hint;
+  std::optional<query::DistributedVectorExchangeMessage> payload{std::nullopt};
+  std::optional<DistributedQueryLeaderHint> leader_hint{std::nullopt};
 };
 
 [[nodiscard]] common::Result<std::vector<std::byte>>
@@ -61,7 +61,7 @@ decode_distributed_vector_query_response_v1(common::ByteView bytes);
 
 struct DistributedVectorQueryRequestReadStep {
   std::size_t consumed_bytes{};
-  std::optional<DistributedVectorQueryRequest> request;
+  std::optional<DistributedVectorQueryRequest> request{std::nullopt};
 };
 
 class DistributedVectorQueryRequestReader {
@@ -90,7 +90,7 @@ private:
 
 struct DistributedVectorQueryResponseReadStep {
   std::size_t consumed_bytes{};
-  std::optional<DistributedVectorQueryResponse> response;
+  std::optional<DistributedVectorQueryResponse> response{std::nullopt};
 };
 
 class DistributedVectorQueryResponseReader {

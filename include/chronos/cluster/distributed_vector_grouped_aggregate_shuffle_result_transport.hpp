@@ -62,7 +62,7 @@ decode_distributed_vector_grouped_aggregate_shuffle_result_frame_exact(
 
 struct DistributedVectorGroupedAggregateShuffleResultReadStep {
   std::size_t consumed_bytes{};
-  std::optional<DistributedVectorGroupedAggregateShuffleResultFrame> frame;
+  std::optional<DistributedVectorGroupedAggregateShuffleResultFrame> frame{std::nullopt};
 };
 
 // Header-first reader for sequential result frames. Authority and schema are borrowed and must

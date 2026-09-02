@@ -14,8 +14,8 @@
 namespace chronos::network {
 
 struct NativeQuorumIngestRetryConfig {
-  NativeLeaderRedirectRouterConfig routing;
-  ConnectionBufferConfig buffers;
+  NativeLeaderRedirectRouterConfig routing{};
+  ConnectionBufferConfig buffers{};
 };
 
 enum class NativeQuorumIngestRetryState : std::uint8_t {
@@ -27,7 +27,7 @@ enum class NativeQuorumIngestRetryState : std::uint8_t {
 struct NativeQuorumIngestRetryProgress {
   bool reconnect_required{};
   std::size_t attempt_number{};
-  std::optional<QuorumSyncIngestAcknowledgement> acknowledgement;
+  std::optional<QuorumSyncIngestAcknowledgement> acknowledgement{std::nullopt};
 };
 
 // Portable, single-threaded Protocol 2 replay owner for one exact caller-supplied encoded

@@ -513,8 +513,9 @@ void expect_current_term_progress_allocation_atomic(const std::vector<NodeId>& v
     ASSERT_TRUE(created.has_value()) << created.error().to_string();
     RaftNode leader = std::move(*created);
     ASSERT_TRUE(leader.start_election().has_value());
-    if (voters.size() > 1U)
+    if (voters.size() > 1U) {
       ASSERT_TRUE(leader.receive(voters[1U], RequestVoteResponse{1U, true}).has_value());
+    }
     ASSERT_EQ(leader.role(), Role::kLeader);
     const PersistentState before = leader.persistent_state();
     PersistentState expected = before;

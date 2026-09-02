@@ -942,7 +942,8 @@ TEST(TieredRemoteObjectReclamationTest,
                                    .source_bindings = no_source_bindings}};
   auto bounded = TieredRestartRemoteGarbageCoordinator::reclaim_unreachable(
       *recovered_pair, *pair_storage, fixture->manifest_storage, *fixture->cold_storage,
-      historical_bindings, restart_store, {.maximum_cold_generations = 1U, .maximum_objects = 1U});
+      historical_bindings, restart_store,
+      {.manifest_decode = {}, .maximum_cold_generations = 1U, .maximum_objects = 1U});
   ASSERT_FALSE(bounded.has_value());
   EXPECT_EQ(bounded.error().code(), common::StatusCode::kResourceExhausted);
   EXPECT_EQ(restart_store.object_count(), 1U);

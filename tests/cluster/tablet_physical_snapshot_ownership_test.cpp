@@ -470,8 +470,9 @@ TEST(TabletPhysicalSnapshotOwnershipTest,
       .part_id = fixture.descriptor.part_id,
       .total_bytes = fixture.encoded.bytes().size(),
       .content_sha256 = fixture.descriptor.content_sha256};
-  auto receipt = TabletPhysicalPartChunkStorage::create(
-      {.directory_path = receipts.path().string(), .session = transfer_session});
+  auto receipt = TabletPhysicalPartChunkStorage::create({.directory_path = receipts.path().string(),
+                                                         .session = transfer_session,
+                                                         .codec_limits = {}});
   ASSERT_TRUE(receipt.has_value());
   ASSERT_TRUE(
       receipt

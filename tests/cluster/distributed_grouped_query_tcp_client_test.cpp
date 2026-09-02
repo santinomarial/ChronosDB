@@ -206,7 +206,8 @@ TEST(DistributedGroupedQueryTcpClientTest, OwnsConnectAndCompleteMutualTlsStream
     descriptors[count++] = {.fd = client->descriptor(),
                             .events =
                                 static_cast<short>((client_interest.want_read ? POLLIN : 0) |
-                                                   (client_interest.want_write ? POLLOUT : 0))};
+                                                   (client_interest.want_write ? POLLOUT : 0)),
+                            .revents = 0};
     if (server.has_value()) {
       const auto server_interest = server->interest();
       const int server_descriptor =
@@ -216,7 +217,8 @@ TEST(DistributedGroupedQueryTcpClientTest, OwnsConnectAndCompleteMutualTlsStream
       descriptors[count++] = {.fd = server_descriptor,
                               .events =
                                   static_cast<short>((server_interest.want_read ? POLLIN : 0) |
-                                                     (server_interest.want_write ? POLLOUT : 0))};
+                                                     (server_interest.want_write ? POLLOUT : 0)),
+                              .revents = 0};
     }
     ASSERT_GE(::poll(descriptors.data(), static_cast<nfds_t>(count), 1), 0);
     const auto now = DistributedGroupedQueryTcpClient::TimePoint::clock::now();
@@ -333,7 +335,8 @@ TEST(DistributedGroupedQueryTcpServerTest, ServesRealTcpMutualTlsStream) {
     const auto interest = client->interest();
     pollfd descriptor{.fd = client->descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                   (interest.want_write ? POLLOUT : 0))};
+                                                   (interest.want_write ? POLLOUT : 0)),
+                      .revents = 0};
     ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
     ASSERT_TRUE(client
                     ->on_ready((descriptor.revents & POLLIN) != 0,
@@ -388,7 +391,7 @@ TEST(DistributedGroupedQueryTcpServerTest, BoundsAdmissionAndValidatesConfigurat
     ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{1}).is_ok());
     for (network::TcpSocket* socket : {&*first, &*second}) {
       if (socket->valid() && socket->connect_state() == network::TcpConnectState::kInProgress) {
-        pollfd descriptor{.fd = socket->descriptor(), .events = POLLOUT};
+        pollfd descriptor{.fd = socket->descriptor(), .events = POLLOUT, .revents = 0};
         if (::poll(&descriptor, 1U, 0) > 0) {
           const auto connected = socket->finish_connect();
           ASSERT_TRUE(connected.has_value()) << connected.error().to_string();

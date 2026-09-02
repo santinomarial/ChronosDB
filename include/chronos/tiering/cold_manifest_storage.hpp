@@ -32,7 +32,7 @@ struct ColdLocationManifestStorageConfig {
   std::string directory_path;
   manifest::DatabaseId expected_database_id;
   common::Uuid expected_object_store_id;
-  ColdLocationManifestDecodeLimits decode_limits;
+  ColdLocationManifestDecodeLimits decode_limits{};
   std::uint16_t file_permissions{0600U};
 };
 

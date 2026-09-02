@@ -45,9 +45,9 @@ struct DistributedVectorFragmentDispatch {
   std::uint64_t observed_leader_commit_position{};
   std::uint64_t placement_epoch{};
   DistributedReadPolicy read_policy;
-  std::optional<raft::ReadBarrier> linearizable_barrier;
+  std::optional<raft::ReadBarrier> linearizable_barrier{std::nullopt};
   std::vector<std::uint32_t> destination_column_ordinals;
-  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::optional<cseg::EventTimePredicate> event_time_predicate{std::nullopt};
   DistributedVectorPlanIntent plan;
 
   friend bool operator==(const DistributedVectorFragmentDispatch&,
@@ -56,9 +56,9 @@ struct DistributedVectorFragmentDispatch {
 
 struct DistributedVectorQueryPlan {
   common::Uuid query_id;
-  DistributedReadPolicy read_policy;
+  DistributedReadPolicy read_policy{};
   std::vector<DistributedTablet> fragments;
-  DistributedVectorPlanIntent intent;
+  DistributedVectorPlanIntent intent{};
 };
 
 struct DistributedVectorFragmentDecodeLimits {

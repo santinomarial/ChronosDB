@@ -200,7 +200,7 @@ struct DistributedGroupedFloat64ResultOptions {
       DistributedGroupedFloat64ResultDirection::kAscending};
   DistributedGroupedFloat64NullPlacement null_placement{
       DistributedGroupedFloat64NullPlacement::kFirst};
-  std::optional<std::uint64_t> limit;
+  std::optional<std::uint64_t> limit{}; // NOLINT(readability-redundant-member-init)
 };
 
 // Single-owner grouped coordinator. The owner serializes admissions, failures, and finish. It

@@ -451,8 +451,9 @@ TEST(RaftPersistentLogTest, ReclamationDeletionAndSyncFailuresRecoverNewestAutho
         directory.path() / (new_base == 2U ? "raft-base-00000000000000000002.rbase"
                                            : "raft-base-00000000000000000003.rbase");
     EXPECT_FALSE(std::filesystem::exists(obsolete_segment));
-    if (old_base == 2U)
+    if (old_base == 2U) {
       EXPECT_FALSE(std::filesystem::exists(obsolete_anchor));
+    }
     EXPECT_TRUE(std::filesystem::exists(newest_anchor));
 
     auto reopened = RaftPersistentLog::open_existing(config);

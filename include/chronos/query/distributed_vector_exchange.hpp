@@ -32,12 +32,12 @@ struct DistributedVectorExchangeMessage {
   std::uint64_t sequence{};
   bool terminal{};
   // Empty only for a terminal-only empty stream. Otherwise exactly one canonical Columnar Batch v1.
-  std::vector<std::byte> encoded_batch;
+  std::vector<std::byte> encoded_batch{}; // NOLINT(readability-redundant-member-init)
 };
 
 struct DistributedVectorExchangeDecodeLimits {
   std::size_t maximum_frame_length{distributed_vector_exchange_format::kMaximumFrameLength};
-  columnar::ColumnarBatchDecodeLimits batch;
+  columnar::ColumnarBatchDecodeLimits batch{};
 };
 
 class EncodedDistributedVectorExchangeMessage {

@@ -26,7 +26,7 @@ enum class InboundActionKind : std::uint8_t {
 };
 
 struct ConnectionStateConfig {
-  ProtocolLimits limits;
+  ProtocolLimits limits{};
   std::size_t maximum_in_flight_requests{64U};
   std::uint16_t maximum_protocol_major{kProtocolMajor};
   std::uint64_t supported_feature_bits{kProtocolV1SupportedFeatureBits};

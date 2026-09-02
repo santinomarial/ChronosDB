@@ -43,8 +43,9 @@ TEST(NativeServerPrincipalConfigTest, RejectsMalformedAndAmbiguousAuthority) {
   const auto reject = [](const std::string& text) {
     const auto parsed = parse_native_server_principal_config(text);
     EXPECT_FALSE(parsed.has_value()) << text;
-    if (!parsed.has_value())
+    if (!parsed.has_value()) {
       EXPECT_EQ(parsed.error().code(), common::StatusCode::kInvalidArgument);
+    }
   };
 
   reject("");

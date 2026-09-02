@@ -110,7 +110,8 @@ TEST(DistributedVectorGroupedAggregateShuffleTcpClientAllocationFailureTest,
          .tls_context = &*context,
          .carrier = {.authenticator = &authenticator,
                      .node_authorizer = &authorizer,
-                     .peer_ipv4_address = {127U, 0U, 0U, 1U}},
+                     .peer_ipv4_address = {127U, 0U, 0U, 1U},
+                     .limits = {}},
          .connect_timeout = std::chrono::milliseconds{1000}},
         {});
   });

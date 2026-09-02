@@ -18,7 +18,7 @@ struct ReplicatedIngestServiceConfig {
   NativeQueryDispatcher* queries{};
   network::SpscNetworkTaskQueue* requests{};
   network::SpscNetworkTaskQueue* responses{};
-  network::ProtocolLimits protocol;
+  network::ProtocolLimits protocol{};
 };
 
 struct ReplicatedIngestServicePoll {

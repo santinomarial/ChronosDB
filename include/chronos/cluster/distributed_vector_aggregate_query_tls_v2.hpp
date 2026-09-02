@@ -21,7 +21,7 @@ struct DistributedVectorAggregateQueryTlsLimitsV2 {
   std::chrono::milliseconds exchange_timeout{30000};
   std::size_t maximum_response_frames{query::kMaximumUngroupedAggregateWidth};
   std::size_t maximum_response_bytes{kDefaultDistributedVectorAggregateQueryV2ResponseBytes};
-  query::DistributedVectorAggregateExchangeDecodeLimits payload;
+  query::DistributedVectorAggregateExchangeDecodeLimits payload{};
 };
 
 struct DistributedVectorAggregateQueryTlsClientConfigV2 {

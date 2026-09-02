@@ -42,7 +42,7 @@ struct DistributedMutableVectorGroupedAggregateQueryReceiverConfig {
   std::size_t maximum_response_bytes{kDefaultDistributedVectorGroupedAggregateQueryV2ResponseBytes};
   std::size_t maximum_decode_memory_bytes{
       kDefaultDistributedVectorGroupedAggregateQueryV2DecodeMemoryBytes};
-  query::DistributedVectorGroupedAggregateExchangeDecodeLimits payload;
+  query::DistributedVectorGroupedAggregateExchangeDecodeLimits payload{};
 };
 
 struct DistributedMutableVectorGroupedAggregateQueryBoundResponses {
@@ -78,11 +78,11 @@ struct DistributedMutableVectorGroupedAggregateQueryAttempt {
 };
 
 struct DistributedMutableVectorGroupedAggregateQuerySenderLimits {
-  DistributedQueryRetryLimits retry;
+  DistributedQueryRetryLimits retry{};
   std::size_t maximum_response_frames{
       query::distributed_vector_grouped_aggregate_exchange_format::kMaximumGroups};
   std::size_t maximum_response_bytes{kDefaultDistributedVectorGroupedAggregateQueryV2ResponseBytes};
-  query::DistributedVectorGroupedAggregateExchangeDecodeLimits payload;
+  query::DistributedVectorGroupedAggregateExchangeDecodeLimits payload{};
 };
 
 // Finite single-threaded retry owner. Attempts retain byte-identical mutable authority and only a

@@ -18,8 +18,8 @@ namespace chronos::service {
 struct ReplicatedIngestCoordinatorLimits {
   std::size_t maximum_pending_requests{1024U};
   std::chrono::milliseconds request_timeout{30'000};
-  network::ProtocolLimits protocol;
-  ingest::ColumnarAppendDecodeLimits columnar_append;
+  network::ProtocolLimits protocol{};
+  ingest::ColumnarAppendDecodeLimits columnar_append{};
 };
 
 struct ReplicatedIngestCoordinatorMetrics {

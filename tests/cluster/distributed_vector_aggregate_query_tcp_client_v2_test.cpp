@@ -200,13 +200,15 @@ TEST(DistributedVectorAggregateQueryTcpClientV2Test,
     descriptors[count++] = {.fd = client->descriptor(),
                             .events =
                                 static_cast<short>((client_interest.want_read ? POLLIN : 0) |
-                                                   (client_interest.want_write ? POLLOUT : 0))};
+                                                   (client_interest.want_write ? POLLOUT : 0)),
+                            .revents = 0};
     if (server.has_value()) {
       const auto server_interest = server->interest();
       descriptors[count++] = {.fd = accepted_socket->descriptor(),
                               .events =
                                   static_cast<short>((server_interest.want_read ? POLLIN : 0) |
-                                                     (server_interest.want_write ? POLLOUT : 0))};
+                                                     (server_interest.want_write ? POLLOUT : 0)),
+                              .revents = 0};
     }
     ASSERT_GE(::poll(descriptors.data(), static_cast<nfds_t>(count), 1), 0);
     const auto now = DistributedVectorAggregateQueryTcpClientV2::TimePoint::clock::now();

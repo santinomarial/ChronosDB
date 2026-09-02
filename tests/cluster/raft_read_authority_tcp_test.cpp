@@ -131,7 +131,8 @@ TEST(RaftReadAuthorityTcpTest, ServesOneRealTcpMutualTlsAuthority) {
     const auto interest = client->interest();
     pollfd descriptor{.fd = client->descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
-                                                   (interest.want_write ? POLLOUT : 0))};
+                                                   (interest.want_write ? POLLOUT : 0)),
+                      .revents = 0};
     ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
     ASSERT_TRUE(client
                     ->on_ready((descriptor.revents & POLLIN) != 0,
@@ -201,7 +202,7 @@ TEST(RaftReadAuthorityTcpTest, RejectsRouteMismatchExpiresAndBoundsAdmission) {
     ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{1}).is_ok());
     for (network::TcpSocket* socket : {&*first, &*second}) {
       if (socket->valid() && socket->connect_state() == network::TcpConnectState::kInProgress) {
-        pollfd descriptor{.fd = socket->descriptor(), .events = POLLOUT};
+        pollfd descriptor{.fd = socket->descriptor(), .events = POLLOUT, .revents = 0};
         if (::poll(&descriptor, 1U, 0) > 0) {
           auto connected = socket->finish_connect();
           ASSERT_TRUE(connected.has_value()) << connected.error().to_string();
@@ -210,7 +211,8 @@ TEST(RaftReadAuthorityTcpTest, RejectsRouteMismatchExpiresAndBoundsAdmission) {
     }
   }
   EXPECT_EQ(server->metrics().accepted_connections, 1U);
-  EXPECT_EQ(server->metrics().rejected_connections, 1U);
+  // Linux may retain the already-expired connect in the accept queue, while Darwin removes it.
+  EXPECT_GE(server->metrics().rejected_connections, 1U);
   EXPECT_EQ(server->metrics().active_connections, 1U);
   EXPECT_TRUE(server->shutdown().is_ok());
   EXPECT_EQ(server->metrics().active_connections, 0U);

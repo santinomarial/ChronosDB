@@ -169,7 +169,7 @@ common::Status RaftObservationTcpServer::poll_once(const std::chrono::millisecon
     return status(common::StatusCode::kInvalidArgument,
                   "Raft observation TCP poll timeout is invalid");
   Impl& impl = *implementation_;
-  impl.poll_descriptors[0] = {.fd = impl.listener.descriptor(), .events = POLLIN};
+  impl.poll_descriptors[0] = {.fd = impl.listener.descriptor(), .events = POLLIN, .revents = 0};
   for (std::size_t index = 0U; index < impl.connections.size(); ++index) {
     const auto interest = impl.connections[index]->session.interest();
     short events{};
@@ -177,8 +177,8 @@ common::Status RaftObservationTcpServer::poll_once(const std::chrono::millisecon
       events |= POLLIN;
     if (interest.want_write)
       events |= POLLOUT;
-    impl.poll_descriptors[index + 1U] = {.fd = impl.connections[index]->socket.descriptor(),
-                                         .events = events};
+    impl.poll_descriptors[index + 1U] = {
+        .fd = impl.connections[index]->socket.descriptor(), .events = events, .revents = 0};
   }
   const nfds_t count = static_cast<nfds_t>(impl.connections.size() + 1U);
   const int ready =

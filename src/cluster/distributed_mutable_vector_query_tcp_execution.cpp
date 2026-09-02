@@ -359,7 +359,8 @@ DistributedMutableVectorQueryTcpExecution::poll_once(const std::chrono::millisec
       events |= POLLIN;
     if (interest.want_write)
       events |= POLLOUT;
-    impl.poll_descriptors[descriptor_count] = {.fd = client->descriptor(), .events = events};
+    impl.poll_descriptors[descriptor_count] = {
+        .fd = client->descriptor(), .events = events, .revents = 0};
     impl.poll_slot_indexes[descriptor_count] = index;
     ++descriptor_count;
   }
