@@ -12,6 +12,10 @@ protocol, restart the process, and query the recovered rows.
 > canonical ingest, and the supported vector SELECT subset.
 > ChronosDB is not a production server or production database service.
 
+**Interview checkpoint: complete.** Development intentionally stops at the cohesive single-node
+boundary below. The broader distributed roadmap is preserved as architecture work and experimental
+subsystem slices, not presented as a finished product.
+
 ## Run the proof
 
 On Linux with the [documented prerequisites](docs/development/building.md):
@@ -28,6 +32,9 @@ directory, and prints the recovered rows. It retains the temporary database and 
 manifest, parts, and shutdown behavior can be inspected afterward. The packaged daemon uses Linux
 `epoll`; on macOS, run the demo in a Linux VM or container.
 
+A successful run reaches `==> Demo complete`, reports `persisted_rows` as `2`, and prints the AAPL
+and MSFT rows both before and after restart. That is the project's acceptance demonstration.
+
 ## What this stopping point proves
 
 | Boundary | Current evidence |
@@ -41,6 +48,19 @@ manifest, parts, and shutdown behavior can be inspected afterward. The packaged 
 For a five-minute walkthrough, design talking points, and likely follow-up questions, see the
 [interview guide](docs/interview-guide.md). Exact server behavior and limitations are in the
 [native server runbook](docs/operations/native-server.md).
+
+## 60-second repository tour
+
+1. Start at [`scripts/demo-single-node.sh`](scripts/demo-single-node.sh) for the executable proof.
+2. Follow process composition through [`tools/chronosd/main.cpp`](tools/chronosd/main.cpp) and
+   [`src/service/single_node_database.cpp`](src/service/single_node_database.cpp).
+3. Inspect [`src/wal/wal_writer.cpp`](src/wal/wal_writer.cpp) and
+   [`src/wal/wal_recovery.cpp`](src/wal/wal_recovery.cpp) for the durability/recovery boundary.
+4. Follow query execution from [`src/query/parser.cpp`](src/query/parser.cpp) through
+   [`src/query/physical_lowering.cpp`](src/query/physical_lowering.cpp).
+5. Use [`tests/integration/chronosd_process_test.cpp`](tests/integration/chronosd_process_test.cpp)
+   and [`docs/architecture/invariants.md`](docs/architecture/invariants.md) to show that the claims
+   are executable and explicitly scoped.
 
 ChronosDB is a greenfield, Linux-first distributed real-time analytical database planned primarily in C++23. It is intended to unite durable, low-latency ingestion of event-heavy data with historical columnar SQL, event-time-aware live analytics, system-time history, and resumable subscriptions—through purpose-built storage, query, networking, and replication subsystems rather than an existing database engine hidden behind a new interface.
 

@@ -8,6 +8,17 @@ checksummed WAL, mutable columnar storage, immutable parts, manifests, recovery,
 stopped at a demonstrable single-node system rather than claiming that the much broader distributed
 roadmap is production-ready.
 
+## What “finished” means here
+
+The interview checkpoint is complete when one command demonstrates a real client/server lifecycle:
+durable schema creation, synchronous inserts, a vectorized query, process restart, recovery, and the
+same query result afterward. That boundary is implemented, tested, and documented.
+
+“Finished” does not mean every roadmap item is complete. Multi-node deployment, production
+operations, backup/restore, broad SQL compatibility, and release qualification remain outside this
+checkpoint. Experimental Raft, subscription, distributed-query, movement, and tiering slices are
+useful design material, but they are not part of the runnable product claim.
+
 ## Five-minute demonstration
 
 The supported packaged server is Linux-only because it uses `epoll`:
@@ -31,6 +42,35 @@ Point out these boundaries while it runs:
 
 The script prints the retained temporary root. Its two daemon logs and durable files are useful
 artifacts to inspect after the run.
+
+Expected milestones are `CREATE TABLE`, `INSERT two LOCAL_SYNC rows`, `SELECT stored rows`,
+`Graceful shutdown and restart`, `SELECT after recovery`, and `Demo complete`. The recovered count
+must be `2`, followed by the same AAPL and MSFT rows.
+
+## Two-minute project story
+
+1. **Problem:** event-heavy analytical systems need low-latency ingestion without allowing an
+   acknowledged write to outrun recoverable state.
+2. **Choice:** build the educationally important core in C++23—durable formats, WAL/recovery,
+   columnar publication, immutable parts/manifests, bounded query execution, and a native protocol.
+3. **Proof:** run separate daemon and CLI processes, issue durable writes, kill the in-memory state
+   through a restart, and recover the same query result from disk.
+4. **Engineering depth:** point to checksums, fixed-width codecs, idempotent recovery, snapshot
+   lifetime pins, explicit resource limits, corruption/crash/allocation-failure tests, sanitizers,
+   and warnings-as-errors portability builds.
+5. **Judgment:** stop at a coherent single-node vertical slice. Describe later distributed work as
+   deliberately incomplete instead of turning a strong prototype into an unfinishable product claim.
+
+## 60-second code tour
+
+- `scripts/demo-single-node.sh`: the acceptance demonstration and exact process lifecycle.
+- `tools/chronosd/main.cpp`: Linux daemon composition, bounded socket lifecycle, and shutdown.
+- `src/service/single_node_database.cpp`: the narrow owner that joins protocol requests to storage
+  and query execution.
+- `src/wal/wal_writer.cpp` and `src/wal/wal_recovery.cpp`: the acknowledgment and replay boundary.
+- `src/query/parser.cpp` and `src/query/physical_lowering.cpp`: custom SQL to bounded physical work.
+- `tests/integration/chronosd_process_test.cpp`: real-process evidence rather than an in-memory-only
+  happy-path test.
 
 ## Architecture story
 
