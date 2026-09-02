@@ -6,6 +6,7 @@
 #include "service/replicated_ingest_database_crash_fixture.hpp"
 #include "wal/wal_crash_protocol.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -69,7 +70,8 @@ void expect_recovered_publication(ReplicatedIngestDatabase& database,
 
 [[nodiscard]] common::Result<network::NetworkTask>
 await_crash_response(ReplicatedIngestRuntime& runtime) {
-  for (std::size_t attempt = 0U; attempt < 10'000U; ++attempt) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+  while (std::chrono::steady_clock::now() < deadline) {
     auto response = runtime.coordinator()->poll();
     if (!response.has_value())
       return common::make_unexpected(response.error());

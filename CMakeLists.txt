@@ -1156,48 +1156,52 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_static_analysis(chronos_service_tests)
   gtest_discover_tests(chronos_service_tests DISCOVERY_TIMEOUT 30)
 
-  add_executable(
-    chronos_service_allocation_failure_tests
-    tests/service/native_distributed_grouped_shuffle_job_provider_allocation_failure_test.cpp
-    tests/service/replicated_distributed_query_allocation_failure_test.cpp
-    tests/support/failing_allocator.cpp
-  )
-  set_target_properties(
-    chronos_service_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF
-  )
-  target_compile_features(chronos_service_allocation_failure_tests PRIVATE cxx_std_23)
-  target_include_directories(
-    chronos_service_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
-  )
-  target_compile_definitions(
-    chronos_service_allocation_failure_tests
-    PRIVATE CHRONOS_NETWORK_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network"
-  )
-  target_link_libraries(
-    chronos_service_allocation_failure_tests PRIVATE chronos::service GTest::gtest_main
-  )
-  chronos_set_project_warnings(chronos_service_allocation_failure_tests)
-  chronos_enable_sanitizers(chronos_service_allocation_failure_tests)
-  chronos_enable_static_analysis(chronos_service_allocation_failure_tests)
-  gtest_discover_tests(chronos_service_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+  # Allocation-failure tests replace global new/delete and cannot coexist with
+  # ThreadSanitizer's allocator interceptors.
+  if(NOT CHRONOS_ENABLE_TSAN)
+    add_executable(
+      chronos_service_allocation_failure_tests
+      tests/service/native_distributed_grouped_shuffle_job_provider_allocation_failure_test.cpp
+      tests/service/replicated_distributed_query_allocation_failure_test.cpp
+      tests/support/failing_allocator.cpp
+    )
+    set_target_properties(
+      chronos_service_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF
+    )
+    target_compile_features(chronos_service_allocation_failure_tests PRIVATE cxx_std_23)
+    target_include_directories(
+      chronos_service_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+    )
+    target_compile_definitions(
+      chronos_service_allocation_failure_tests
+      PRIVATE CHRONOS_NETWORK_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network"
+    )
+    target_link_libraries(
+      chronos_service_allocation_failure_tests PRIVATE chronos::service GTest::gtest_main
+    )
+    chronos_set_project_warnings(chronos_service_allocation_failure_tests)
+    chronos_enable_sanitizers(chronos_service_allocation_failure_tests)
+    chronos_enable_static_analysis(chronos_service_allocation_failure_tests)
+    gtest_discover_tests(chronos_service_allocation_failure_tests DISCOVERY_TIMEOUT 30)
 
-  add_executable(
-    chronos_network_allocation_failure_tests
-    tests/network/protocol_allocation_failure_test.cpp
-    tests/support/failing_allocator.cpp
-  )
-  set_target_properties(chronos_network_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
-  target_compile_features(chronos_network_allocation_failure_tests PRIVATE cxx_std_23)
-  target_include_directories(
-    chronos_network_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
-  )
-  target_link_libraries(
-    chronos_network_allocation_failure_tests PRIVATE chronos::network GTest::gtest_main
-  )
-  chronos_set_project_warnings(chronos_network_allocation_failure_tests)
-  chronos_enable_sanitizers(chronos_network_allocation_failure_tests)
-  chronos_enable_static_analysis(chronos_network_allocation_failure_tests)
-  gtest_discover_tests(chronos_network_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+    add_executable(
+      chronos_network_allocation_failure_tests
+      tests/network/protocol_allocation_failure_test.cpp
+      tests/support/failing_allocator.cpp
+    )
+    set_target_properties(chronos_network_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
+    target_compile_features(chronos_network_allocation_failure_tests PRIVATE cxx_std_23)
+    target_include_directories(
+      chronos_network_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+    )
+    target_link_libraries(
+      chronos_network_allocation_failure_tests PRIVATE chronos::network GTest::gtest_main
+    )
+    chronos_set_project_warnings(chronos_network_allocation_failure_tests)
+    chronos_enable_sanitizers(chronos_network_allocation_failure_tests)
+    chronos_enable_static_analysis(chronos_network_allocation_failure_tests)
+    gtest_discover_tests(chronos_network_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+  endif()
 
   add_executable(
     chronos_live_tests
@@ -1257,30 +1261,32 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_static_analysis(chronos_live_tests)
   gtest_discover_tests(chronos_live_tests DISCOVERY_TIMEOUT 30)
 
-  add_executable(
-    chronos_live_allocation_failure_tests
-    tests/live/durable_multi_tablet_subscription_allocation_failure_test.cpp
-    tests/live/materialized_view_checkpoint_allocation_failure_test.cpp
-    tests/live/materialized_view_checkpoint_storage_allocation_failure_test.cpp
-    tests/live/multi_tablet_subscription_checkpoint_storage_allocation_failure_test.cpp
-    tests/live/multi_tablet_subscription_checkpoint_allocation_failure_test.cpp
-    tests/live/snapshot_subscription_allocation_failure_test.cpp
-    tests/live/subscription_plan_storage_allocation_failure_test.cpp
-    tests/live/subscription_service_allocation_failure_test.cpp
-    tests/support/failing_allocator.cpp
-  )
-  set_target_properties(chronos_live_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
-  target_compile_features(chronos_live_allocation_failure_tests PRIVATE cxx_std_23)
-  target_include_directories(
-    chronos_live_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
-  )
-  target_link_libraries(
-    chronos_live_allocation_failure_tests PRIVATE chronos::live GTest::gtest_main
-  )
-  chronos_set_project_warnings(chronos_live_allocation_failure_tests)
-  chronos_enable_sanitizers(chronos_live_allocation_failure_tests)
-  chronos_enable_static_analysis(chronos_live_allocation_failure_tests)
-  gtest_discover_tests(chronos_live_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+  if(NOT CHRONOS_ENABLE_TSAN)
+    add_executable(
+      chronos_live_allocation_failure_tests
+      tests/live/durable_multi_tablet_subscription_allocation_failure_test.cpp
+      tests/live/materialized_view_checkpoint_allocation_failure_test.cpp
+      tests/live/materialized_view_checkpoint_storage_allocation_failure_test.cpp
+      tests/live/multi_tablet_subscription_checkpoint_storage_allocation_failure_test.cpp
+      tests/live/multi_tablet_subscription_checkpoint_allocation_failure_test.cpp
+      tests/live/snapshot_subscription_allocation_failure_test.cpp
+      tests/live/subscription_plan_storage_allocation_failure_test.cpp
+      tests/live/subscription_service_allocation_failure_test.cpp
+      tests/support/failing_allocator.cpp
+    )
+    set_target_properties(chronos_live_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
+    target_compile_features(chronos_live_allocation_failure_tests PRIVATE cxx_std_23)
+    target_include_directories(
+      chronos_live_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+    )
+    target_link_libraries(
+      chronos_live_allocation_failure_tests PRIVATE chronos::live GTest::gtest_main
+    )
+    chronos_set_project_warnings(chronos_live_allocation_failure_tests)
+    chronos_enable_sanitizers(chronos_live_allocation_failure_tests)
+    chronos_enable_static_analysis(chronos_live_allocation_failure_tests)
+    gtest_discover_tests(chronos_live_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+  endif()
 
   add_executable(
     chronos_raft_tests
@@ -1426,28 +1432,30 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_static_analysis(chronos_raft_metadata_snapshot_crash_tests)
   gtest_discover_tests(chronos_raft_metadata_snapshot_crash_tests DISCOVERY_TIMEOUT 30)
 
-  add_executable(
-    chronos_raft_allocation_failure_tests
-    tests/raft/async_durable_runtime_allocation_failure_test.cpp
-    tests/raft/async_durable_worker_extension_set_allocation_failure_test.cpp
-    tests/raft/metadata_snapshot_allocation_failure_test.cpp
-    tests/raft/node_allocation_failure_test.cpp
-    tests/raft/transport_codec_allocation_failure_test.cpp
-    tests/support/failing_allocator.cpp
-  )
-  set_target_properties(chronos_raft_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
-  target_compile_features(chronos_raft_allocation_failure_tests PRIVATE cxx_std_23)
-  target_include_directories(
-    chronos_raft_allocation_failure_tests
-    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/tests"
-  )
-  target_link_libraries(
-    chronos_raft_allocation_failure_tests PRIVATE chronos::raft GTest::gtest_main
-  )
-  chronos_set_project_warnings(chronos_raft_allocation_failure_tests)
-  chronos_enable_sanitizers(chronos_raft_allocation_failure_tests)
-  chronos_enable_static_analysis(chronos_raft_allocation_failure_tests)
-  gtest_discover_tests(chronos_raft_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+  if(NOT CHRONOS_ENABLE_TSAN)
+    add_executable(
+      chronos_raft_allocation_failure_tests
+      tests/raft/async_durable_runtime_allocation_failure_test.cpp
+      tests/raft/async_durable_worker_extension_set_allocation_failure_test.cpp
+      tests/raft/metadata_snapshot_allocation_failure_test.cpp
+      tests/raft/node_allocation_failure_test.cpp
+      tests/raft/transport_codec_allocation_failure_test.cpp
+      tests/support/failing_allocator.cpp
+    )
+    set_target_properties(chronos_raft_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
+    target_compile_features(chronos_raft_allocation_failure_tests PRIVATE cxx_std_23)
+    target_include_directories(
+      chronos_raft_allocation_failure_tests
+      PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+    )
+    target_link_libraries(
+      chronos_raft_allocation_failure_tests PRIVATE chronos::raft GTest::gtest_main
+    )
+    chronos_set_project_warnings(chronos_raft_allocation_failure_tests)
+    chronos_enable_sanitizers(chronos_raft_allocation_failure_tests)
+    chronos_enable_static_analysis(chronos_raft_allocation_failure_tests)
+    gtest_discover_tests(chronos_raft_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+  endif()
 
   add_executable(
     chronos_cluster_tests
@@ -1680,71 +1688,73 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_static_analysis(chronos_cluster_tests)
   gtest_discover_tests(chronos_cluster_tests DISCOVERY_TIMEOUT 30)
 
-  add_executable(
-    chronos_cluster_allocation_failure_tests
-    tests/cluster/distributed_mutable_vector_grouped_aggregate_query_transport_allocation_failure_test.cpp
-    tests/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_job_execution_allocation_failure_test.cpp
-    tests/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_execution_allocation_failure_test.cpp
-    tests/cluster/distributed_mutable_vector_query_transport_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_aggregate_finalization_v2_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_aggregate_rows_finalization_v2_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_physical_rows_finalization_v2_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_aggregate_query_transport_v2_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_collected_result_execution_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_ack_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_query_transport_v2_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_authority_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_authority_codec_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_transport_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_tls_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_job_service_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_destination_execution_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_reducer_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_query_execution_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_ack_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_collector_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_coordinator_execution_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_execution_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_retry_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_stream_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_tcp_client_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_tcp_execution_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_tcp_server_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_tls_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_transport_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_retry_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_source_plan_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_stream_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_client_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_execution_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_server_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_tls_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_grouped_aggregate_shuffle_transport_allocation_failure_test.cpp
-    tests/cluster/distributed_query_tcp_client_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_row_finalization_v2_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_query_transport_v2_allocation_failure_test.cpp
-    tests/cluster/distributed_vector_result_exchange_allocation_failure_test.cpp
-    tests/support/failing_allocator.cpp
-  )
-  set_target_properties(
-    chronos_cluster_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF
-  )
-  target_compile_features(chronos_cluster_allocation_failure_tests PRIVATE cxx_std_23)
-  target_include_directories(
-    chronos_cluster_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
-  )
-  target_compile_definitions(
-    chronos_cluster_allocation_failure_tests
-    PRIVATE CHRONOS_NETWORK_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network"
-  )
-  target_link_libraries(
-    chronos_cluster_allocation_failure_tests PRIVATE chronos::cluster GTest::gtest_main
-  )
-  chronos_set_project_warnings(chronos_cluster_allocation_failure_tests)
-  chronos_enable_sanitizers(chronos_cluster_allocation_failure_tests)
-  chronos_enable_static_analysis(chronos_cluster_allocation_failure_tests)
-  gtest_discover_tests(chronos_cluster_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+  if(NOT CHRONOS_ENABLE_TSAN)
+    add_executable(
+      chronos_cluster_allocation_failure_tests
+      tests/cluster/distributed_mutable_vector_grouped_aggregate_query_transport_allocation_failure_test.cpp
+      tests/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_job_execution_allocation_failure_test.cpp
+      tests/cluster/distributed_mutable_vector_grouped_aggregate_shuffle_execution_allocation_failure_test.cpp
+      tests/cluster/distributed_mutable_vector_query_transport_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_aggregate_finalization_v2_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_aggregate_rows_finalization_v2_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_physical_rows_finalization_v2_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_aggregate_query_transport_v2_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_collected_result_execution_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_ack_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_query_transport_v2_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_authority_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_authority_codec_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_transport_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_job_control_tls_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_job_service_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_destination_execution_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_reducer_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_query_execution_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_ack_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_collector_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_coordinator_execution_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_execution_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_retry_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_stream_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_tcp_client_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_tcp_execution_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_tcp_server_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_tls_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_result_transport_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_retry_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_source_plan_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_stream_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_client_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_execution_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_tcp_server_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_tls_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_grouped_aggregate_shuffle_transport_allocation_failure_test.cpp
+      tests/cluster/distributed_query_tcp_client_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_row_finalization_v2_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_query_transport_v2_allocation_failure_test.cpp
+      tests/cluster/distributed_vector_result_exchange_allocation_failure_test.cpp
+      tests/support/failing_allocator.cpp
+    )
+    set_target_properties(
+      chronos_cluster_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF
+    )
+    target_compile_features(chronos_cluster_allocation_failure_tests PRIVATE cxx_std_23)
+    target_include_directories(
+      chronos_cluster_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+    )
+    target_compile_definitions(
+      chronos_cluster_allocation_failure_tests
+      PRIVATE CHRONOS_NETWORK_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network"
+    )
+    target_link_libraries(
+      chronos_cluster_allocation_failure_tests PRIVATE chronos::cluster GTest::gtest_main
+    )
+    chronos_set_project_warnings(chronos_cluster_allocation_failure_tests)
+    chronos_enable_sanitizers(chronos_cluster_allocation_failure_tests)
+    chronos_enable_static_analysis(chronos_cluster_allocation_failure_tests)
+    gtest_discover_tests(chronos_cluster_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+  endif()
 
   add_executable(
     chronos_tiering_tests
@@ -2008,25 +2018,27 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_static_analysis(chronos_cseg_tests)
   gtest_discover_tests(chronos_cseg_tests DISCOVERY_TIMEOUT 30)
 
-  add_executable(
-    chronos_cseg_allocation_failure_tests
-    tests/cseg/codec_allocation_failure_test.cpp
-    tests/cseg/projected_reader_allocation_failure_test.cpp
-    tests/support/failing_allocator.cpp
-  )
-  set_target_properties(chronos_cseg_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
-  target_compile_features(chronos_cseg_allocation_failure_tests PRIVATE cxx_std_23)
-  target_include_directories(
-    chronos_cseg_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
-  )
-  target_link_libraries(
-    chronos_cseg_allocation_failure_tests
-    PRIVATE chronos::cseg GTest::gtest_main zstd::libzstd
-  )
-  chronos_set_project_warnings(chronos_cseg_allocation_failure_tests)
-  chronos_enable_sanitizers(chronos_cseg_allocation_failure_tests)
-  chronos_enable_static_analysis(chronos_cseg_allocation_failure_tests)
-  gtest_discover_tests(chronos_cseg_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+  if(NOT CHRONOS_ENABLE_TSAN)
+    add_executable(
+      chronos_cseg_allocation_failure_tests
+      tests/cseg/codec_allocation_failure_test.cpp
+      tests/cseg/projected_reader_allocation_failure_test.cpp
+      tests/support/failing_allocator.cpp
+    )
+    set_target_properties(chronos_cseg_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
+    target_compile_features(chronos_cseg_allocation_failure_tests PRIVATE cxx_std_23)
+    target_include_directories(
+      chronos_cseg_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+    )
+    target_link_libraries(
+      chronos_cseg_allocation_failure_tests
+      PRIVATE chronos::cseg GTest::gtest_main zstd::libzstd
+    )
+    chronos_set_project_warnings(chronos_cseg_allocation_failure_tests)
+    chronos_enable_sanitizers(chronos_cseg_allocation_failure_tests)
+    chronos_enable_static_analysis(chronos_cseg_allocation_failure_tests)
+    gtest_discover_tests(chronos_cseg_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+  endif()
 
   add_executable(
     chronos_io_tests
@@ -2189,24 +2201,26 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_static_analysis(chronos_ingest_tests)
   gtest_discover_tests(chronos_ingest_tests DISCOVERY_TIMEOUT 30)
 
-  add_executable(
-    chronos_ingest_allocation_failure_tests
-    tests/ingest/allocation_failure_test.cpp
-    tests/support/failing_allocator.cpp
-  )
-  set_target_properties(chronos_ingest_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
-  target_compile_features(chronos_ingest_allocation_failure_tests PRIVATE cxx_std_23)
-  target_include_directories(
-    chronos_ingest_allocation_failure_tests
-    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
-  )
-  target_link_libraries(
-    chronos_ingest_allocation_failure_tests PRIVATE chronos::ingest GTest::gtest_main
-  )
-  chronos_set_project_warnings(chronos_ingest_allocation_failure_tests)
-  chronos_enable_sanitizers(chronos_ingest_allocation_failure_tests)
-  chronos_enable_static_analysis(chronos_ingest_allocation_failure_tests)
-  gtest_discover_tests(chronos_ingest_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+  if(NOT CHRONOS_ENABLE_TSAN)
+    add_executable(
+      chronos_ingest_allocation_failure_tests
+      tests/ingest/allocation_failure_test.cpp
+      tests/support/failing_allocator.cpp
+    )
+    set_target_properties(chronos_ingest_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
+    target_compile_features(chronos_ingest_allocation_failure_tests PRIVATE cxx_std_23)
+    target_include_directories(
+      chronos_ingest_allocation_failure_tests
+      PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+    )
+    target_link_libraries(
+      chronos_ingest_allocation_failure_tests PRIVATE chronos::ingest GTest::gtest_main
+    )
+    chronos_set_project_warnings(chronos_ingest_allocation_failure_tests)
+    chronos_enable_sanitizers(chronos_ingest_allocation_failure_tests)
+    chronos_enable_static_analysis(chronos_ingest_allocation_failure_tests)
+    gtest_discover_tests(chronos_ingest_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+  endif()
 
   add_executable(
     chronos_manifest_tests
@@ -2436,49 +2450,51 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_static_analysis(chronos_query_tests)
   gtest_discover_tests(chronos_query_tests DISCOVERY_TIMEOUT 30)
 
-  add_executable(
-    chronos_query_allocation_failure_tests
-    tests/query/asof_join_allocation_failure_test.cpp
-    tests/query/aggregate_allocation_failure_test.cpp
-    tests/query/cseg_scan_allocation_failure_test.cpp
-    tests/query/column_output_allocation_failure_test.cpp
-    tests/query/database_cseg_scan_allocation_failure_test.cpp
-    tests/query/distributed_fragment_worker_allocation_failure_test.cpp
-    tests/query/distributed_sql_lowering_allocation_failure_test.cpp
-    tests/query/distributed_vector_aggregate_coordinator_allocation_failure_test.cpp
-    tests/query/distributed_vector_aggregate_exchange_allocation_failure_test.cpp
-    tests/query/distributed_vector_grouped_aggregate_coordinator_allocation_failure_test.cpp
-    tests/query/distributed_vector_grouped_aggregate_exchange_allocation_failure_test.cpp
-    tests/query/distributed_vector_grouped_aggregate_partitioner_allocation_failure_test.cpp
-    tests/query/distributed_vector_aggregate_state_allocation_failure_test.cpp
-    tests/query/distributed_vector_fragment_v2_allocation_failure_test.cpp
-    tests/query/distributed_vector_pre_group_program_allocation_failure_test.cpp
-    tests/query/head_scan_allocation_failure_test.cpp
-    tests/query/latest_allocation_failure_test.cpp
-    tests/query/manifest_temporal_recovery_allocation_failure_test.cpp
-    tests/query/parallel_scheduler_allocation_failure_test.cpp
-    tests/query/physical_optimizer_allocation_failure_test.cpp
-    tests/query/physical_lowering_allocation_failure_test.cpp
-    tests/query/relational_plan_allocation_failure_test.cpp
-    tests/query/sort_allocation_failure_test.cpp
-    tests/query/spill_sort_allocation_failure_test.cpp
-    tests/query/temporal_command_allocation_failure_test.cpp
-    tests/query/temporal_recovery_allocation_failure_test.cpp
-    tests/support/failing_allocator.cpp
-  )
-  set_target_properties(chronos_query_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
-  target_compile_features(chronos_query_allocation_failure_tests PRIVATE cxx_std_23)
-  target_include_directories(
-    chronos_query_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
-  )
-  target_link_libraries(
-    chronos_query_allocation_failure_tests
-    PRIVATE chronos::query GTest::gtest_main Threads::Threads zstd::libzstd
-  )
-  chronos_set_project_warnings(chronos_query_allocation_failure_tests)
-  chronos_enable_sanitizers(chronos_query_allocation_failure_tests)
-  chronos_enable_static_analysis(chronos_query_allocation_failure_tests)
-  gtest_discover_tests(chronos_query_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+  if(NOT CHRONOS_ENABLE_TSAN)
+    add_executable(
+      chronos_query_allocation_failure_tests
+      tests/query/asof_join_allocation_failure_test.cpp
+      tests/query/aggregate_allocation_failure_test.cpp
+      tests/query/cseg_scan_allocation_failure_test.cpp
+      tests/query/column_output_allocation_failure_test.cpp
+      tests/query/database_cseg_scan_allocation_failure_test.cpp
+      tests/query/distributed_fragment_worker_allocation_failure_test.cpp
+      tests/query/distributed_sql_lowering_allocation_failure_test.cpp
+      tests/query/distributed_vector_aggregate_coordinator_allocation_failure_test.cpp
+      tests/query/distributed_vector_aggregate_exchange_allocation_failure_test.cpp
+      tests/query/distributed_vector_grouped_aggregate_coordinator_allocation_failure_test.cpp
+      tests/query/distributed_vector_grouped_aggregate_exchange_allocation_failure_test.cpp
+      tests/query/distributed_vector_grouped_aggregate_partitioner_allocation_failure_test.cpp
+      tests/query/distributed_vector_aggregate_state_allocation_failure_test.cpp
+      tests/query/distributed_vector_fragment_v2_allocation_failure_test.cpp
+      tests/query/distributed_vector_pre_group_program_allocation_failure_test.cpp
+      tests/query/head_scan_allocation_failure_test.cpp
+      tests/query/latest_allocation_failure_test.cpp
+      tests/query/manifest_temporal_recovery_allocation_failure_test.cpp
+      tests/query/parallel_scheduler_allocation_failure_test.cpp
+      tests/query/physical_optimizer_allocation_failure_test.cpp
+      tests/query/physical_lowering_allocation_failure_test.cpp
+      tests/query/relational_plan_allocation_failure_test.cpp
+      tests/query/sort_allocation_failure_test.cpp
+      tests/query/spill_sort_allocation_failure_test.cpp
+      tests/query/temporal_command_allocation_failure_test.cpp
+      tests/query/temporal_recovery_allocation_failure_test.cpp
+      tests/support/failing_allocator.cpp
+    )
+    set_target_properties(chronos_query_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
+    target_compile_features(chronos_query_allocation_failure_tests PRIVATE cxx_std_23)
+    target_include_directories(
+      chronos_query_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+    )
+    target_link_libraries(
+      chronos_query_allocation_failure_tests
+      PRIVATE chronos::query GTest::gtest_main Threads::Threads zstd::libzstd
+    )
+    chronos_set_project_warnings(chronos_query_allocation_failure_tests)
+    chronos_enable_sanitizers(chronos_query_allocation_failure_tests)
+    chronos_enable_static_analysis(chronos_query_allocation_failure_tests)
+    gtest_discover_tests(chronos_query_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+  endif()
 
   add_executable(
     chronos_head_tests

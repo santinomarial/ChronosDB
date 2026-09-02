@@ -75,7 +75,7 @@ std::size_t compact_avx2(const common::ByteView values, const std::span<std::uin
     std::uint32_t mask =
         static_cast<std::uint32_t>(_mm256_movemask_pd(_mm256_castsi256_pd(matches)));
     while (mask != 0U) {
-      const std::uint32_t offset = std::countr_zero(mask);
+      const std::uint32_t offset = static_cast<std::uint32_t>(std::countr_zero(mask));
       indices[output++] = static_cast<std::uint32_t>(row) + offset;
       mask &= mask - 1U;
     }
@@ -165,21 +165,17 @@ std::size_t compact_identity_timestamps(const common::ByteView values,
   if (values.size() % sizeof(std::int64_t) != 0 ||
       values.size() / sizeof(std::int64_t) != indices.size())
     return 0U;
-  switch (kernel) {
-  case TimestampFilterKernel::kAvx2:
+  if (kernel == TimestampFilterKernel::kAvx2) {
 #if defined(CHRONOS_QUERY_HAS_AVX2_KERNEL)
     if (timestamp_filter_kernel_available(kernel))
       return compact_avx2(values, indices, predicate);
 #endif
-    break;
-  case TimestampFilterKernel::kNeon:
+  }
+  if (kernel == TimestampFilterKernel::kNeon) {
 #if defined(CHRONOS_QUERY_HAS_NEON_KERNEL)
     if (timestamp_filter_kernel_available(kernel))
       return compact_neon(values, indices, predicate);
 #endif
-    break;
-  case TimestampFilterKernel::kScalar:
-    break;
   }
   return compact_scalar(values, indices, predicate);
 }
