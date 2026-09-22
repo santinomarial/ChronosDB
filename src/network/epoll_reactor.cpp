@@ -63,7 +63,8 @@ public:
     bool close_after_write{};
   };
 
-  // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+  // The descriptor roles are fixed at the single start() call site and stored by name below.
+  // NOLINTBEGIN(bugprone-easily-swappable-parameters)
   Impl(EpollServerConfig configured, SpscNetworkTaskQueue& request_queue,
        SpscNetworkTaskQueue& response_queue, int epoll_descriptor, int listener,
        int wake_descriptor, std::uint16_t actual_port, std::vector<epoll_event> events,
@@ -72,6 +73,7 @@ public:
         epoll_fd(epoll_descriptor), listen_fd(listener), wake_fd(wake_descriptor),
         port(actual_port), events_(std::move(events)), scratch_(std::move(scratch)),
         tls_context(std::move(tls_server_context)) {}
+  // NOLINTEND(bugprone-easily-swappable-parameters)
 
   ~Impl() {
     static_cast<void>(stop());
@@ -114,6 +116,8 @@ public:
         !status.is_ok()) {
       return reject(status);
     }
+    if (!replacement.tls.has_value())
+      return reject(invalid("TLS security reload has no TLS configuration"));
     auto replacement_context = TlsServerContext::create(*replacement.tls);
     if (!replacement_context.has_value())
       return reject(replacement_context.error());
@@ -138,7 +142,7 @@ public:
     return common::Status::ok();
   }
 
-  void update_interest(Connection& connection) {
+  void update_interest(Connection& connection) const {
     epoll_event event{};
     event.events = EPOLLIN | EPOLLRDHUP;
     const bool application_write_ready =
@@ -156,7 +160,10 @@ public:
       return;
     Connection& connection = found->second;
     for (const std::uint64_t request_id : connection.state.active_request_ids()) {
-      Frame cancel{.header = {.message_type = MessageType::kCancel, .request_id = request_id},
+      Frame cancel{.header = {.protocol_major = connection.state.negotiated_major(),
+                              .protocol_minor = connection.state.negotiated_minor(),
+                              .message_type = MessageType::kCancel,
+                              .request_id = request_id},
                    .payload = {}};
       if (!requests->try_push(
               {.connection_id = connection.id,
@@ -723,6 +730,8 @@ common::Result<EpollReactor> EpollReactor::start(const EpollServerConfig& config
     return common::make_unexpected(status);
   std::optional<TlsServerContext> tls_context;
   if (config.security.mode == TransportSecurityMode::kTlsRequired) {
+    if (!config.security.tls.has_value())
+      return common::make_unexpected(invalid("TLS-required reactor has no TLS configuration"));
     auto context = TlsServerContext::create(*config.security.tls);
     if (!context.has_value())
       return common::make_unexpected(context.error());

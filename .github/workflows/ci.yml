@@ -112,6 +112,9 @@ jobs:
       CC: clang-18
       CXX: clang++-18
       CXXFLAGS: -stdlib=libc++
+      # Ubuntu's Clang 18 libFuzzer archive is built against libstdc++; the targets use libc++
+      # for std::expected, and the C ABI at LLVMFuzzerTestOneInput keeps the two ABIs separate.
+      LDFLAGS: -Wl,-lstdc++
       FUZZ_RUNS: 1000
       FUZZ_SEED: 424242
       FUZZ_MAX_LEN: 4096

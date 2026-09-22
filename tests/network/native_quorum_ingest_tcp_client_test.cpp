@@ -993,6 +993,7 @@ TEST(NativeQuorumIngestTcpExecutionTest, BoundsTheKernelWaitByTheOperationDeadli
   EXPECT_EQ(execution->failure(), progress);
   EXPECT_FALSE(execution->metrics().active_client);
   EXPECT_FALSE(execution->next_deadline().has_value());
+  EXPECT_LT(execution->metrics().poll_calls, 128U);
   EXPECT_LT(NativeQuorumIngestTcpExecution::TimePoint::clock::now(),
             operation_deadline + std::chrono::seconds{1});
 }

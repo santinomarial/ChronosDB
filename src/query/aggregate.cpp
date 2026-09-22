@@ -41,6 +41,20 @@ inline constexpr std::size_t kConservativeAllocationOverheadBytes = 64U;
   return common::Status{common::StatusCode::kOutOfRange, std::string{message}};
 }
 
+[[nodiscard]] common::Result<ScalarValue> copy_aggregate_scalar(const ScalarValue& value) {
+  // Copy allocating payloads before constructing a variant. A throwing copy of the complete
+  // variant can reach an unreachable unwind path in libstdc++ 13 under allocation failure.
+  if (const auto* text = std::get_if<std::string>(&value.storage()); text != nullptr) {
+    const auto& value_type = value.type();
+    if (!value_type.has_value())
+      return common::make_unexpected(invalid("aggregate text value is untyped"));
+    return ScalarValue::text(*value_type, std::string{*text});
+  }
+  if (const auto* binary = std::get_if<std::vector<std::byte>>(&value.storage()); binary != nullptr)
+    return ScalarValue::binary(std::vector<std::byte>{*binary});
+  return value;
+}
+
 [[nodiscard]] bool numeric(const schema::LogicalTypeKind kind) noexcept {
   return (kind >= schema::LogicalTypeKind::kInt8 && kind <= schema::LogicalTypeKind::kFloat64) ||
          kind == schema::LogicalTypeKind::kDecimal;
@@ -313,18 +327,20 @@ MergeableVectorAggregateState::copy_variable_extremum(const ScalarValue& value,
   if (!reservation.has_value())
     return common::make_unexpected(reservation.error());
   try {
-    ScalarValue copied = value;
+    common::Result<ScalarValue> copied = copy_aggregate_scalar(value);
+    if (!copied.has_value())
+      return common::make_unexpected(copied.error());
     std::size_t retained_payload{};
-    if (const auto* text = std::get_if<std::string>(&copied.storage()); text != nullptr) {
+    if (const auto* text = std::get_if<std::string>(&copied->storage()); text != nullptr) {
       retained_payload = text->capacity();
-    } else if (const auto* binary = std::get_if<std::vector<std::byte>>(&copied.storage());
+    } else if (const auto* binary = std::get_if<std::vector<std::byte>>(&copied->storage());
                binary != nullptr) {
       retained_payload = binary->capacity();
     }
     if (retained_payload > reservation->bytes())
       return common::make_unexpected(
           exhausted("aggregate extremum allocation exceeded its charge"));
-    extremum_ = std::move(copied);
+    extremum_ = std::move(*copied);
     extremum_reservation_ = std::move(*reservation);
     return {};
   } catch (const std::bad_alloc&) {
@@ -1585,7 +1601,14 @@ private:
     if (!reservation.has_value())
       return common::make_unexpected(reservation.error());
     try {
-      std::vector<ScalarValue> retained_keys{keys.begin(), keys.end()};
+      std::vector<ScalarValue> retained_keys;
+      retained_keys.reserve(keys.size());
+      for (const ScalarValue& key : keys) {
+        common::Result<ScalarValue> copied = copy_aggregate_scalar(key);
+        if (!copied.has_value())
+          return common::make_unexpected(copied.error());
+        retained_keys.push_back(std::move(*copied));
+      }
       std::vector<MergeableVectorAggregateState> aggregates;
       aggregates.reserve(definitions_.size());
       for (std::size_t index = 0U; index < definitions_.size(); ++index) {

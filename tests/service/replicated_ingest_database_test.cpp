@@ -2326,6 +2326,10 @@ TEST(ReplicatedIngestDatabaseTest, CoordinatesNativeQueryAcrossSplitLocalAndRemo
   }};
   auto distributed_response =
       distributed_service.execute_query(query_request("SELECT count(*) AS rows FROM events", true));
+  // The listener, its receivers, and their metrics are single-thread-affine. Stop the polling
+  // owner before inspecting them, including when a later ASSERT exits this test early.
+  stop_remote.store(true, std::memory_order_release);
+  remote_thread.join();
   ASSERT_TRUE(distributed_response.has_value()) << distributed_response.error().to_string();
   if (distributed_response->responses.size() == 1U &&
       distributed_response->responses.front().frame.header.message_type ==
@@ -2358,9 +2362,6 @@ TEST(ReplicatedIngestDatabaseTest, CoordinatesNativeQueryAcrossSplitLocalAndRemo
   const auto remote_metrics = remote_server->metrics();
   EXPECT_EQ(remote_metrics.completed_read_authorities, 1U);
   EXPECT_EQ(remote_metrics.completed_mutable_queries, 1U);
-  // Release/acquire publishes the stop request to the sole polling thread.
-  stop_remote.store(true, std::memory_order_release);
-  remote_thread.join();
   EXPECT_TRUE(remote_server->shutdown().is_ok());
   ASSERT_TRUE(read_barrier->shutdown().is_ok());
   ASSERT_TRUE(database->shutdown().is_ok());

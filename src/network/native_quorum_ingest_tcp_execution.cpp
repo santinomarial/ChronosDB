@@ -41,7 +41,9 @@ bounded_wait(const std::chrono::milliseconds maximum_wait,
              const std::optional<NativeQuorumIngestTcpExecution::TimePoint> deadline) noexcept {
   if (!deadline.has_value() || *deadline <= now)
     return deadline.has_value() ? std::chrono::milliseconds{0} : maximum_wait;
-  const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(*deadline - now);
+  // poll(2) accepts whole milliseconds. Rounding down can turn a positive sub-millisecond
+  // remainder into a zero-timeout busy loop before the operation deadline expires.
+  const auto remaining = std::chrono::ceil<std::chrono::milliseconds>(*deadline - now);
   return std::min(maximum_wait, remaining);
 }
 

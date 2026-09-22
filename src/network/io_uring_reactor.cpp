@@ -162,7 +162,10 @@ public:
     Connection& connection = found->second;
     if (!connection.closing) {
       for (const std::uint64_t request_id : connection.state.active_request_ids()) {
-        Frame cancel{.header = {.message_type = MessageType::kCancel, .request_id = request_id},
+        Frame cancel{.header = {.protocol_major = connection.state.negotiated_major(),
+                                .protocol_minor = connection.state.negotiated_minor(),
+                                .message_type = MessageType::kCancel,
+                                .request_id = request_id},
                      .payload = {}};
         if (!requests->try_push(
                 {.connection_id = connection.id,

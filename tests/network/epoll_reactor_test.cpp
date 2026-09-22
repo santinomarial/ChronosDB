@@ -609,7 +609,10 @@ TEST(EpollReactorTest, ExplicitCancelAndHalfCloseDetachWorkDeterministically) {
   socket = connect_client(reactor.bound_port());
   ASSERT_GE(socket, 0);
   ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
-  NativeClientSession half_closed = NativeClientSession::create().value();
+  NativeClientSession half_closed =
+      NativeClientSession::create(
+          {.maximum_protocol_minor = 1U, .requested_feature_bits = kProtocolV1SubscriptionFeature})
+          .value();
   drive_handshake(reactor, socket, half_closed);
   const std::uint64_t detached_id = half_closed.queue_query("SELECT 2").value();
   send_client_pending(socket, half_closed);
@@ -626,6 +629,9 @@ TEST(EpollReactorTest, ExplicitCancelAndHalfCloseDetachWorkDeterministically) {
   EXPECT_EQ(detached->frame.header.message_type, MessageType::kCancel);
   EXPECT_EQ(detached->frame.header.request_id, detached_id);
   EXPECT_EQ(detached->connection_id, dispatched->connection_id);
+  EXPECT_EQ(detached->frame.header.protocol_major, detached->protocol.protocol_major);
+  EXPECT_EQ(detached->frame.header.protocol_minor, detached->protocol.protocol_minor);
+  EXPECT_EQ(detached->frame.header.protocol_minor, 1U);
   ::close(socket);
   EXPECT_TRUE(reactor.shutdown().is_ok());
 }

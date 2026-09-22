@@ -219,6 +219,11 @@ empty or syntax-heavy corpus cannot prevent success-path coverage. CI runs 1,000
 target as a bounded regression smoke. Longer corpus-growing campaigns remain separate evidence and
 must retain their exact settings and artifacts.
 
+On Ubuntu 24.04, Clang 18 needs libc++ for `std::expected`, while its packaged libFuzzer runtime
+uses libstdc++. The CI fuzz job adds `LDFLAGS=-Wl,-lstdc++` so the runtime's implementation symbols
+resolve; the harness interface itself is C linkage and does not exchange C++ standard-library
+objects across that boundary.
+
 Apple's Command Line Tools compiler may omit the libFuzzer runtime even when it accepts Clang
 sanitizer flags. Configuration detects that case and fails with a direct diagnostic. On a Homebrew
 LLVM installation, select that compiler before a fresh configure:
