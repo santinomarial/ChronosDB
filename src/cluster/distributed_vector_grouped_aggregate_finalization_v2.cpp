@@ -302,7 +302,7 @@ finalize_distributed_vector_grouped_aggregate_impl_v2(
           key.nullable != column.nullable) {
         return common::make_unexpected(invalid("grouped finalization key authority differs"));
       }
-      shapes.emplace_back(column.type, column.nullable);
+      shapes.push_back({.type = column.type, .nullable = column.nullable});
     }
     for (std::size_t ordinal = 0U; ordinal < aggregates.size(); ++ordinal) {
       const query::VectorAggregateDefinition& definition = aggregates[ordinal];
@@ -318,7 +318,7 @@ finalize_distributed_vector_grouped_aggregate_impl_v2(
           shape->type != column.type || shape->nullable != column.nullable) {
         return common::make_unexpected(invalid("grouped finalization aggregate authority differs"));
       }
-      shapes.emplace_back(column.type, column.nullable);
+      shapes.push_back({.type = column.type, .nullable = column.nullable});
     }
 
     query::DistributedVectorResultSchema output_schema = result_schema;
