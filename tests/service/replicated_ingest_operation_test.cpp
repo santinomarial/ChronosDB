@@ -12,6 +12,7 @@
 #include "ingest/ingest_test_support.hpp"
 
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <memory>
@@ -24,6 +25,8 @@
 
 namespace chronos::service {
 namespace {
+
+inline constexpr auto kAsyncCompletionTimeout = std::chrono::seconds{10};
 
 class TemporaryDirectory {
 public:
@@ -219,14 +222,15 @@ void publish_route(raft::AsyncDurableMultiRaftRuntime& runtime,
 }
 
 [[nodiscard]] common::Result<ReplicatedIngestResult> await(ReplicatedIngestOperation& operation) {
-  for (std::size_t attempt = 0U; attempt < 10'000U; ++attempt) {
+  const auto deadline = std::chrono::steady_clock::now() + kAsyncCompletionTimeout;
+  while (std::chrono::steady_clock::now() < deadline) {
     auto polled = operation.poll();
     if (!polled.has_value())
       return common::make_unexpected(polled.error());
     auto& completed = *polled;
     if (completed.has_value())
       return *completed;
-    std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
   }
   return common::make_unexpected(
       common::Status{common::StatusCode::kUnavailable, "replicated ingest test timed out"});
@@ -319,11 +323,13 @@ TEST(ReplicatedIngestCoordinatorTest, BoundsCancelsCompletesAndTimesOutCorrelate
 
   CoordinatorProgressRecorder progress;
   std::optional<network::NetworkTask> response;
-  for (std::size_t attempt = 0U; attempt < 10'000U && !response.has_value(); ++attempt) {
+  const auto deadline = std::chrono::steady_clock::now() + kAsyncCompletionTimeout;
+  while (std::chrono::steady_clock::now() < deadline && !response.has_value()) {
     auto polled = coordinator->poll(progress, start);
     ASSERT_TRUE(polled.has_value()) << polled.error().to_string();
     response = std::move(*polled);
-    std::this_thread::yield();
+    if (!response.has_value())
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
   }
   if (!response.has_value()) {
     ADD_FAILURE() << "expected a completed replicated ingest response";
