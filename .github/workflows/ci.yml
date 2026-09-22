@@ -32,7 +32,7 @@ jobs:
             werror: 'ON'
             interop: 'OFF'
           - name: macOS AppleClang
-            os: macos-14
+            os: macos-15
             cc: clang
             cxx: clang++
             cxxflags: ''
