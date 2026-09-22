@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <memory>
@@ -672,7 +673,8 @@ void elect_and_provision_multiple_tablets(ReplicatedIngestRuntime& owner) {
 }
 
 [[nodiscard]] network::NetworkTask await_response(ReplicatedIngestRuntime& owner) {
-  for (std::size_t attempt = 0U; attempt < 10'000U; ++attempt) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+  while (std::chrono::steady_clock::now() < deadline) {
     auto response = owner.coordinator()->poll();
     if (!response.has_value()) {
       ADD_FAILURE() << response.error().to_string();
@@ -681,7 +683,7 @@ void elect_and_provision_multiple_tablets(ReplicatedIngestRuntime& owner) {
     auto& available_response = *response;
     if (available_response.has_value())
       return std::move(*available_response);
-    std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
   }
   ADD_FAILURE() << "replicated database response timed out";
   return {};
