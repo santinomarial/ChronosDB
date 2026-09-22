@@ -210,10 +210,14 @@ TEST(RaftReadAuthorityTcpTest, RejectsRouteMismatchExpiresAndBoundsAdmission) {
       }
     }
   }
-  EXPECT_EQ(server->metrics().accepted_connections, 1U);
-  // Linux may retain the already-expired connect in the accept queue, while Darwin removes it.
-  EXPECT_GE(server->metrics().rejected_connections, 1U);
-  EXPECT_EQ(server->metrics().active_connections, 1U);
+  const auto metrics = server->metrics();
+  // A kernel may retain the already-expired connect long enough for the server to accept and fail
+  // it before admitting one live socket. The active bound, not the cumulative accept count, is the
+  // admission invariant.
+  EXPECT_GE(metrics.accepted_connections, 1U);
+  EXPECT_LE(metrics.accepted_connections, 2U);
+  EXPECT_GE(metrics.rejected_connections, 1U);
+  EXPECT_EQ(metrics.active_connections, 1U);
   EXPECT_TRUE(server->shutdown().is_ok());
   EXPECT_EQ(server->metrics().active_connections, 0U);
 }

@@ -747,20 +747,23 @@ void provision_replicated_cluster(const std::array<std::string, 3U>& roots,
           .value()};
   std::vector<raft::DurableRaftRequest> metadata_requests;
   metadata_requests.reserve(7U);
+  // Keep aggregate construction explicit for AppleClang portability.
+  // NOLINTBEGIN(modernize-use-emplace)
   for (std::size_t index = 0U; index < query_ports.size(); ++index) {
-    metadata_requests.push_back(
-        {replicated_metadata_group(),
-         raft::ProposeOperation{
-             raft::kRaftMetadataCommandEntryType,
-             raft::encode_metadata_command_v1(
-                 raft::ClusterNodeMetadata{static_cast<raft::NodeId>(index + 1U),
-                                           "127.0.0.1:" + std::to_string(query_ports[index])})
-                 .value()}});
+    metadata_requests.push_back(raft::DurableRaftRequest{
+        replicated_metadata_group(),
+        raft::ProposeOperation{
+            raft::kRaftMetadataCommandEntryType,
+            raft::encode_metadata_command_v1(
+                raft::ClusterNodeMetadata{static_cast<raft::NodeId>(index + 1U),
+                                          "127.0.0.1:" + std::to_string(query_ports[index])})
+                .value()}});
   }
-  metadata_requests.push_back({replicated_metadata_group(), schema});
-  metadata_requests.push_back({replicated_metadata_group(), policy});
-  metadata_requests.push_back({replicated_metadata_group(), placement});
-  metadata_requests.push_back({replicated_metadata_group(), binding});
+  metadata_requests.push_back(raft::DurableRaftRequest{replicated_metadata_group(), schema});
+  metadata_requests.push_back(raft::DurableRaftRequest{replicated_metadata_group(), policy});
+  metadata_requests.push_back(raft::DurableRaftRequest{replicated_metadata_group(), placement});
+  metadata_requests.push_back(raft::DurableRaftRequest{replicated_metadata_group(), binding});
+  // NOLINTEND(modernize-use-emplace)
   auto metadata = runtimes.front()->execute_batch(std::move(metadata_requests));
   ASSERT_TRUE(enqueue_outbound(metadata, outbound));
   ASSERT_TRUE(route_outbound(runtimes, outbound));
@@ -1164,11 +1167,33 @@ void expect_recovered_group_votes(const std::string& root, const raft::NodeId me
   return response.value_or(network::Frame{});
 }
 
+[[nodiscard]] network::Frame await_replicated_query_authority(const int client,
+                                                              std::uint64_t& next_request_id,
+                                                              const std::string_view sql) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+  network::Frame response;
+  do {
+    response = send_replicated_query(client, next_request_id++, sql);
+    if (response.header.message_type != network::MessageType::kError)
+      return response;
+    auto decoded = network::decode_error_message(response.payload);
+    if (!decoded.has_value() || decoded->code != network::ProtocolErrorCode::kExecutionFailure ||
+        byte_string(decoded->message) != "replicated query group has no authoritative leader") {
+      return response;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{25});
+  } while (std::chrono::steady_clock::now() < deadline);
+  ADD_FAILURE() << "distributed query authority did not converge before the deadline";
+  return response;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void expect_replicated_rows(const int redirect_client, const int leader_client,
                             const raft::NodeId leader_node_id, const std::uint64_t request_id,
                             const bool permit_redirect = true) {
   constexpr std::string_view rows_sql{"SELECT ts, tag FROM events ORDER BY ts ASC, tag ASC"};
-  auto response = send_replicated_query(redirect_client, request_id, rows_sql);
+  std::uint64_t next_request_id = request_id;
+  auto response = await_replicated_query_authority(redirect_client, next_request_id, rows_sql);
   int client = redirect_client;
   if (response.header.message_type == network::MessageType::kLeaderRedirect) {
     if (!permit_redirect) {
@@ -1182,7 +1207,7 @@ void expect_replicated_rows(const int redirect_client, const int leader_client,
     EXPECT_GT(redirect->leader_term, 0U);
     EXPECT_GT(redirect->placement_epoch, 0U);
     client = leader_client;
-    response = send_replicated_query(client, request_id, rows_sql);
+    response = await_replicated_query_authority(client, next_request_id, rows_sql);
   }
   if (response.header.message_type == network::MessageType::kError) {
     auto decoded = network::decode_error_message(response.payload);
@@ -1201,7 +1226,7 @@ void expect_replicated_rows(const int redirect_client, const int leader_client,
   EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
 
   response = send_replicated_query(
-      client, request_id + 1U,
+      client, next_request_id++,
       "SELECT count(*) AS rows, count(tag) AS tags, min(tag) AS first_tag FROM events");
   if (response.header.message_type == network::MessageType::kError) {
     auto decoded = network::decode_error_message(response.payload);
@@ -1232,7 +1257,7 @@ void expect_replicated_rows(const int redirect_client, const int leader_client,
   response = network::decode_frame(receive_frame(client)).value_or(network::Frame{});
   EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
 
-  response = send_replicated_query(client, request_id + 2U,
+  response = send_replicated_query(client, next_request_id++,
                                    "SELECT 7 AS marker, upper('ok') AS word FROM events LIMIT 1");
   if (response.header.message_type == network::MessageType::kError) {
     auto decoded = network::decode_error_message(response.payload);
@@ -1258,7 +1283,7 @@ void expect_replicated_rows(const int redirect_client, const int leader_client,
   EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
 
   response =
-      send_replicated_query(client, request_id + 3U,
+      send_replicated_query(client, next_request_id++,
                             "SELECT lower(tag) AS folded, NOT enabled AS disabled FROM events "
                             "WHERE enabled AND lower(tag) = 'x' ORDER BY ts LIMIT 1");
   if (response.header.message_type == network::MessageType::kError) {
@@ -1280,7 +1305,7 @@ void expect_replicated_rows(const int redirect_client, const int leader_client,
   EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
 
   response = send_replicated_query(
-      client, request_id + 4U,
+      client, next_request_id++,
       "SELECT coalesce(lower(tag), 'missing') AS bucket, enabled AS active, count(*) AS n "
       "FROM events GROUP BY coalesce(lower(tag), 'missing'), enabled "
       "ORDER BY n DESC, bucket ASC LIMIT 2");

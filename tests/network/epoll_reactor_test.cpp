@@ -277,8 +277,9 @@ TEST(EpollReactorTest, MutualTlsAuthenticatesBeforeProtocolDispatch) {
     ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
   const auto dispatched = requests.try_pop();
   ASSERT_TRUE(dispatched.has_value());
-  EXPECT_EQ(dispatched->principal_id, 77U);
-  EXPECT_EQ(dispatched->frame.header.message_type, MessageType::kQueryRequest);
+  const NetworkTask dispatched_task = dispatched.value_or(NetworkTask{});
+  EXPECT_EQ(dispatched_task.principal_id, 77U);
+  EXPECT_EQ(dispatched_task.frame.header.message_type, MessageType::kQueryRequest);
   EXPECT_GT(reactor.metrics().bytes_read, 0U);
   EXPECT_GT(reactor.metrics().bytes_written, 0U);
 
@@ -354,7 +355,7 @@ TEST(EpollReactorTest, TlsSecurityReloadIsTransactionalAndPreservesEstablishedSe
     ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
   auto dispatched = requests.try_pop();
   ASSERT_TRUE(dispatched.has_value());
-  EXPECT_EQ(dispatched->principal_id, 77U);
+  EXPECT_EQ(dispatched.value_or(NetworkTask{}).principal_id, 77U);
 
   const int replacement_socket = connect_client(reactor.bound_port());
   ASSERT_GE(replacement_socket, 0);
@@ -372,7 +373,7 @@ TEST(EpollReactorTest, TlsSecurityReloadIsTransactionalAndPreservesEstablishedSe
     ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
   dispatched = requests.try_pop();
   ASSERT_TRUE(dispatched.has_value());
-  EXPECT_EQ(dispatched->principal_id, 88U);
+  EXPECT_EQ(dispatched.value_or(NetworkTask{}).principal_id, 88U);
   EXPECT_EQ(initial_authenticator.calls, 1U);
   EXPECT_EQ(replacement_authenticator.calls, 1U);
 
@@ -518,18 +519,19 @@ TEST(EpollReactorTest, PortableClientSessionInteroperatesWithRealSocketServer) {
     ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
   const auto request = requests.try_pop();
   ASSERT_TRUE(request.has_value());
+  const std::uint64_t connection_id = request.value_or(NetworkTask{}).connection_id;
   const schema::LogicalType type =
       schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
   const std::array<QueryResultColumn, 1> columns{
       QueryResultColumn{.name = "value", .type = type, .nullable = false}};
   ASSERT_TRUE(
-      responses.try_push({.connection_id = request->connection_id,
+      responses.try_push({.connection_id = connection_id,
                           .frame = {.header = {.message_type = MessageType::kQueryResult,
                                                .flags = kFrameFlagEndStream,
                                                .request_id = request_id},
                                     .payload = *encode_query_result_batch(0U, columns, {})}}));
   ASSERT_TRUE(responses.try_push(
-      {.connection_id = request->connection_id,
+      {.connection_id = connection_id,
        .frame = {.header = {.message_type = MessageType::kQueryEnd, .request_id = request_id},
                  .payload = {}}}));
   std::size_t received_frames = 0U;
@@ -680,6 +682,7 @@ TEST(EpollReactorTest, RealSocketShortWritesPreserveLargeResultAndTerminalOrder)
     ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
   const auto request = requests.try_pop();
   ASSERT_TRUE(request.has_value());
+  const std::uint64_t connection_id = request.value_or(NetworkTask{}).connection_id;
 
   const schema::LogicalType binary =
       schema::LogicalType::create(schema::LogicalTypeKind::kBinary).value();
@@ -688,13 +691,13 @@ TEST(EpollReactorTest, RealSocketShortWritesPreserveLargeResultAndTerminalOrder)
   const std::vector<std::byte> value(std::size_t{8U} * 1024U * 1024U, std::byte{0x5a});
   const std::array<QueryResultCell, 1> cells{QueryResultCell{.value = value}};
   const std::vector<std::byte> batch = *encode_query_result_batch(1U, columns, cells);
-  ASSERT_TRUE(responses.try_push({.connection_id = request->connection_id,
+  ASSERT_TRUE(responses.try_push({.connection_id = connection_id,
                                   .frame = {.header = {.message_type = MessageType::kQueryResult,
                                                        .flags = kFrameFlagEndStream,
                                                        .request_id = request_id},
                                             .payload = batch}}));
   ASSERT_TRUE(responses.try_push(
-      {.connection_id = request->connection_id,
+      {.connection_id = connection_id,
        .frame = {.header = {.message_type = MessageType::kQueryEnd, .request_id = request_id},
                  .payload = {}}}));
   const std::uint64_t bytes_before = reactor.metrics().bytes_written;
