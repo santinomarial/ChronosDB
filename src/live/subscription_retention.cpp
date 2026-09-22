@@ -169,7 +169,8 @@ common::Result<SubscriptionRetentionReport> SubscriptionRetentionCoordinator::ad
     const raft::TabletPlacementMetadata* placement = metadata.find_tablet(member.tablet_id);
     if (placement == nullptr || placement->table_id != impl_->config.table_id ||
         placement->placement_epoch != member.placement_epoch ||
-        !std::ranges::contains(placement->replicas, impl_->config.local_node_id))
+        std::ranges::find(placement->replicas, impl_->config.local_node_id) ==
+            placement->replicas.end())
       return common::make_unexpected(
           topology_changed("subscription retention placement epoch or local replica changed"));
     if (member.source_kind == SubscriptionSourceKind::kRaft) {

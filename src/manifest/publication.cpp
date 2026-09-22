@@ -608,7 +608,7 @@ public:
 
       for (const PartDescriptor& part : request.selected_manifest->parts()) {
         if (find_part(*current->manifest_, part.part_id) == nullptr &&
-            !std::ranges::contains(matched_new_parts, part.part_id)) {
+            std::ranges::find(matched_new_parts, part.part_id) == matched_new_parts.end()) {
           return fail(corruption("durable Manifest adds a part without a sealed-head replacement"));
         }
       }

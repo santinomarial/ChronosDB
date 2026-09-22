@@ -787,7 +787,7 @@ validate_transport_membership(const chronos::raft::NodeId local_node_id,
                               const std::vector<chronos::raft::RaftGroupConfiguration>& groups,
                               const std::vector<chronos::service::ReplicatedPeer>& peers) {
   for (const auto& group : groups) {
-    if (!std::ranges::contains(group.voters, local_node_id))
+    if (std::ranges::find(group.voters, local_node_id) == group.voters.end())
       return invalid("resident Raft group does not include the local node as a voter");
     for (const chronos::raft::NodeId voter : group.voters) {
       if (std::ranges::none_of(peers, [voter](const auto& peer) { return peer.node_id == voter; }))

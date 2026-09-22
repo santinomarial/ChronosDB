@@ -33,6 +33,26 @@ void* operator new[](const std::size_t size) {
   return allocate(size);
 }
 
+// libstdc++ and GoogleTest also use the nothrow overload. It must allocate through the same
+// malloc-backed replacement as the throwing overload because our delete replacements call free.
+// NOLINTNEXTLINE(readability-inconsistent-declaration-parameter-name)
+void* operator new(const std::size_t size, const std::nothrow_t&) noexcept {
+  try {
+    return allocate(size);
+  } catch (const std::bad_alloc&) {
+    return nullptr;
+  }
+}
+
+// NOLINTNEXTLINE(readability-inconsistent-declaration-parameter-name)
+void* operator new[](const std::size_t size, const std::nothrow_t&) noexcept {
+  try {
+    return allocate(size);
+  } catch (const std::bad_alloc&) {
+    return nullptr;
+  }
+}
+
 // NOLINTNEXTLINE(readability-inconsistent-declaration-parameter-name)
 void operator delete(void* const memory) noexcept {
   std::free(memory);
@@ -52,6 +72,14 @@ void operator delete(void* const memory, const std::size_t size) noexcept {
 // NOLINTNEXTLINE(readability-inconsistent-declaration-parameter-name)
 void operator delete[](void* const memory, const std::size_t size) noexcept {
   static_cast<void>(size);
+  std::free(memory);
+}
+
+void operator delete(void* const memory, const std::nothrow_t&) noexcept {
+  std::free(memory);
+}
+
+void operator delete[](void* const memory, const std::nothrow_t&) noexcept {
   std::free(memory);
 }
 

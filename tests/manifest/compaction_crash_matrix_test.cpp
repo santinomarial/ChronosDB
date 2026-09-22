@@ -83,8 +83,10 @@ TEST_P(CompactionCrashMatrixTest, RecoverySelectsAnEquivalentOldOrNewGeneration)
     const common::Result<ManifestNamespaceSnapshot> before_cleanup = storage.scan_namespace();
     ASSERT_TRUE(before_cleanup.has_value()) << before_cleanup.error().to_string();
     ASSERT_EQ(before_cleanup->generations.back(), point.selected_generation);
-    EXPECT_TRUE(std::ranges::contains(before_cleanup->final_parts, fixture.part_id));
-    EXPECT_EQ(std::ranges::contains(before_cleanup->final_parts, output_id),
+    EXPECT_NE(std::ranges::find(before_cleanup->final_parts, fixture.part_id),
+              before_cleanup->final_parts.end());
+    EXPECT_EQ(std::ranges::find(before_cleanup->final_parts, output_id) !=
+                  before_cleanup->final_parts.end(),
               point.output_final_present);
 
     const common::Result<TemporaryCleanupReport> cleanup = storage.cleanup_temporaries();

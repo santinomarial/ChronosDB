@@ -79,7 +79,8 @@ TEST_P(ManifestFlushCrashMatrixTest, RecoverySelectsOneCompleteGenerationAndConv
     const common::Result<ManifestNamespaceSnapshot> before_cleanup = storage.scan_namespace();
     ASSERT_TRUE(before_cleanup.has_value()) << before_cleanup.error().to_string();
     ASSERT_EQ(before_cleanup->generations.back(), point.selected_generation);
-    EXPECT_EQ(std::ranges::contains(before_cleanup->final_parts, fixture.part_id),
+    EXPECT_EQ(std::ranges::find(before_cleanup->final_parts, fixture.part_id) !=
+                  before_cleanup->final_parts.end(),
               point.final_part_present);
 
     const common::Result<TemporaryCleanupReport> cleanup = storage.cleanup_temporaries();
