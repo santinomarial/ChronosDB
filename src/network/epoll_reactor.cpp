@@ -190,7 +190,7 @@ public:
   [[nodiscard]] common::Status enqueue(Connection& connection, const MessageType type,
                                        const std::uint64_t request_id,
                                        const common::ByteView payload,
-                                       const std::uint32_t flags = 0U) {
+                                       const std::uint32_t flags = 0U) const {
     const std::uint16_t major =
         type == MessageType::kServerHello ? kProtocolMajor : connection.state.negotiated_major();
     const std::uint16_t minor =
