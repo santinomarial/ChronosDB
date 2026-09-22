@@ -118,6 +118,7 @@ struct RecordedRequest {
   std::string target;
   std::map<std::string, std::string> headers;
   std::vector<std::byte> body;
+  std::chrono::steady_clock::time_point received_at;
 };
 
 struct LocalS3Behavior {
@@ -276,6 +277,7 @@ private:
       }
       const common::ByteView body = string_byte_view({bytes.data() + body_begin, content_length});
       request.body.assign(body.begin(), body.end());
+      request.received_at = std::chrono::steady_clock::now();
       return request;
     }
     return std::nullopt;
@@ -1534,12 +1536,13 @@ TEST(S3ObjectStoreTest, AppliesDeterministicJitterWithoutExceedingBackoffCeiling
   ASSERT_TRUE(store.has_value()) << store.error().to_string();
 
   const std::vector<std::byte> bytes{std::byte{0x1AU}};
-  const auto started = std::chrono::steady_clock::now();
   auto uploaded = (*store)->put_if_absent("parts/jitter", bytes, ingest::sha256(bytes).value());
-  const auto elapsed = std::chrono::steady_clock::now() - started;
   ASSERT_TRUE(uploaded.has_value()) << uploaded.error().to_string();
-  EXPECT_GE(elapsed, std::chrono::milliseconds{60});
-  EXPECT_LT(elapsed, std::chrono::milliseconds{180});
+  const auto requests = server.requests();
+  ASSERT_EQ(requests.size(), 2U);
+  const auto retry_interval = requests[1].received_at - requests[0].received_at;
+  EXPECT_GE(retry_interval, std::chrono::milliseconds{60});
+  EXPECT_LT(retry_interval, std::chrono::milliseconds{180});
 
   config.maximum_retry_jitter = std::chrono::milliseconds{-1};
   auto rejected = S3ObjectStore::create(std::move(config));
